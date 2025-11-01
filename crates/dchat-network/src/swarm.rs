@@ -186,7 +186,7 @@ impl NetworkManager {
     
     /// Get gossipsub mesh peer count for debugging
     pub fn get_mesh_peer_count(&mut self, channel_id: &str) -> usize {
-        let topic_hash = gossipsub::IdentTopic::new(channel_id).hash();
+        let topic_hash = gossipsub::IdentTopic::new(format!("dchat/channel/{}", channel_id)).hash();
         self.swarm.behaviour_mut()
             .gossipsub
             .mesh_peers(&topic_hash)
@@ -195,7 +195,7 @@ impl NetworkManager {
     
     /// Get all mesh peers for a channel
     pub fn get_mesh_peers(&mut self, channel_id: &str) -> Vec<PeerId> {
-        let topic_hash = gossipsub::IdentTopic::new(channel_id).hash();
+        let topic_hash = gossipsub::IdentTopic::new(format!("dchat/channel/{}", channel_id)).hash();
         self.swarm.behaviour_mut()
             .gossipsub
             .mesh_peers(&topic_hash)
