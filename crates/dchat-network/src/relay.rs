@@ -146,9 +146,9 @@ impl RelayNode {
         tracing::info!("   Max connections: {}", self.config.max_connections);
         tracing::info!("   Bandwidth limit: {} bytes", self.config.bandwidth_limit);
         
-        // Subscribe to test channel for message routing
-        self.network.subscribe_to_channel("test-mesh").ok();
-        tracing::info!("📡 Subscribed to test-mesh channel for message routing");
+        // Subscribe to global channel to participate in gossipsub mesh
+        self.network.subscribe_to_channel("global").ok();
+        tracing::info!("📡 Subscribed to #global channel for gossipsub mesh participation");
         
         // Stats reporting interval
         let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
