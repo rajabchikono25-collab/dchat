@@ -536,6 +536,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user4
       - DCHAT_USER_ID=user4@dchat.local
@@ -565,6 +566,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user5
       - DCHAT_USER_ID=user5@dchat.local
@@ -594,6 +596,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user6
       - DCHAT_USER_ID=user6@dchat.local
@@ -623,6 +626,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user7
       - DCHAT_USER_ID=user7@dchat.local
@@ -652,6 +656,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user8
       - DCHAT_USER_ID=user8@dchat.local
@@ -681,6 +686,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user9
       - DCHAT_USER_ID=user9@dchat.local
@@ -710,6 +716,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user10
       - DCHAT_USER_ID=user10@dchat.local
@@ -739,6 +746,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user11
       - DCHAT_USER_ID=user11@dchat.local
@@ -768,6 +776,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user12
       - DCHAT_USER_ID=user12@dchat.local
@@ -797,6 +806,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user13
       - DCHAT_USER_ID=user13@dchat.local
@@ -826,6 +836,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user14
       - DCHAT_USER_ID=user14@dchat.local
@@ -855,6 +866,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user15
       - DCHAT_USER_ID=user15@dchat.local
@@ -884,6 +896,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user16
       - DCHAT_USER_ID=user16@dchat.local
@@ -913,6 +926,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user17
       - DCHAT_USER_ID=user17@dchat.local
@@ -942,6 +956,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user18
       - DCHAT_USER_ID=user18@dchat.local
@@ -971,6 +986,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user19
       - DCHAT_USER_ID=user19@dchat.local
@@ -1000,6 +1016,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user20
       - DCHAT_USER_ID=user20@dchat.local
@@ -1029,6 +1046,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user21
       - DCHAT_USER_ID=user21@dchat.local
@@ -1058,6 +1076,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user22
       - DCHAT_USER_ID=user22@dchat.local
@@ -1087,6 +1106,7 @@ services:
     tty: true
     environment:
       - RUST_LOG=info,dchat=debug
+      - RUST_BACKTRACE=1
       - DCHAT_NODE_TYPE=user
       - DCHAT_NODE_ID=user23
       - DCHAT_USER_ID=user23@dchat.local
