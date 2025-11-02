@@ -670,12 +670,26 @@ validate_validator_keys() {
     done
     
     # Fix permissions for Docker container (UID 1000)
+    # CRITICAL: Docker containers run as UID 1000, so keys must be owned by 1000:1000
     log "Setting correct permissions for Docker containers..."
-    chown -R 1000:1000 "$keydir" || log_warning "Failed to set ownership to 1000:1000"
+    
+    # First ensure we own the directory
+    chown -R "$USER:$USER" "$keydir" 2>/dev/null || true
+    
+    # Then set Docker-compatible permissions
+    chown -R 1000:1000 "$keydir" || {
+        log_warning "Failed to set ownership to 1000:1000, trying alternative method..."
+        # If running as non-root user, use current user
+        chown -R "$(id -u):$(id -g)" "$keydir"
+    }
+    
     chmod 755 "$keydir"
     chmod 644 "$keydir"/*.key
     
-    log "Validator key permissions set (owner: 1000:1000, keys: 644) ✓"
+    # Verify permissions were set correctly
+    local actual_owner=$(stat -c '%u:%g' "$keydir" 2>/dev/null || stat -f '%u:%g' "$keydir")
+    log_info "Validator keys directory owner: $actual_owner"
+    log "Validator key permissions set (directory: 755, keys: 644) ✓"
     log "Validator keys validated ✓"
 }
 
@@ -690,8 +704,16 @@ create_data_directories() {
     # Set appropriate permissions
     chmod 755 "$REPO_ROOT/dchat_data"
     chmod 755 "$REPO_ROOT/testnet-logs"
+    chmod 755 "$REPO_ROOT/monitoring"
+    chmod 755 "$REPO_ROOT/monitoring/prometheus"
+    chmod 755 "$REPO_ROOT/monitoring/grafana"
     
-    log "Data directories created ✓"
+    # Fix ownership to current user (prevents Docker from creating as root)
+    chown -R "$USER:$USER" "$REPO_ROOT/monitoring" 2>/dev/null || true
+    chown -R "$USER:$USER" "$REPO_ROOT/dchat_data" 2>/dev/null || true
+    chown -R "$USER:$USER" "$REPO_ROOT/testnet-logs" 2>/dev/null || true
+    
+    log "Data directories created with proper permissions ✓"
 }
 
 create_config_file() {
@@ -774,10 +796,49 @@ pull_third_party_images() {
 # Network Deployment
 ################################################################################
 
+prepare_docker_mounts() {
+    log "Preparing Docker mount points..."
+    
+    # CRITICAL FIX: Docker creates directories/files as root if they don't exist
+    # This prevents permission errors during container startup
+    
+    # Ensure monitoring/prometheus.yml exists as a FILE (not directory)
+    if [[ -d "$REPO_ROOT/monitoring/prometheus.yml" ]]; then
+        log_warning "prometheus.yml exists as directory (Docker mount issue), removing..."
+        rm -rf "$REPO_ROOT/monitoring/prometheus.yml"
+    fi
+    
+    # Ensure it exists as a file
+    if [[ ! -f "$REPO_ROOT/monitoring/prometheus.yml" ]]; then
+        log_warning "prometheus.yml not found, will be created by setup_monitoring"
+    else
+        # Fix permissions on existing file
+        chmod 644 "$REPO_ROOT/monitoring/prometheus.yml"
+        chown "$USER:$USER" "$REPO_ROOT/monitoring/prometheus.yml" 2>/dev/null || true
+        log_info "prometheus.yml permissions fixed ✓"
+    fi
+    
+    # Ensure validator_keys directory is properly owned
+    if [[ -d "$REPO_ROOT/validator_keys" ]]; then
+        # Remove any incorrect directory structure
+        find "$REPO_ROOT/validator_keys" -type d ! -path "$REPO_ROOT/validator_keys" -exec rm -rf {} + 2>/dev/null || true
+        
+        # Re-apply correct permissions
+        chown -R 1000:1000 "$REPO_ROOT/validator_keys" 2>/dev/null || chown -R "$USER:$USER" "$REPO_ROOT/validator_keys"
+        chmod 755 "$REPO_ROOT/validator_keys"
+        chmod 644 "$REPO_ROOT/validator_keys"/*.key 2>/dev/null || true
+    fi
+    
+    log "Docker mount points prepared ✓"
+}
+
 start_testnet() {
     log "Starting dchat testnet..."
     
     cd "$REPO_ROOT"
+    
+    # Prepare environment to prevent mount permission issues
+    prepare_docker_mounts
     
     # Stop any existing containers
     log_info "Stopping existing containers..."
@@ -1201,6 +1262,13 @@ main() {
     create_data_directories
     create_config_file
     setup_monitoring
+    
+    # CRITICAL: Prepare environment before container startup
+    # This fixes all the permission issues we encountered:
+    # 1. Validator keys must be owned by UID 1000 (Docker user)
+    # 2. monitoring/prometheus.yml must exist as FILE (not directory)
+    # 3. All mount points must have correct permissions
+    log_info "Pre-flight checks complete, preparing for container startup..."
     
     # Build and deploy
     pull_third_party_images
