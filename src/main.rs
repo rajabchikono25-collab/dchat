@@ -94,6 +94,14 @@ enum Commands {
         /// Non-interactive mode (for testing)
         #[arg(long)]
         non_interactive: bool,
+        
+        /// Metrics server address
+        #[arg(long)]
+        metrics_addr: Option<String>,
+        
+        /// Health check server address
+        #[arg(long)]
+        health_addr: Option<String>,
     },
 
     /// Run as validator node (participates in consensus)
@@ -1108,8 +1116,10 @@ async fn main() -> Result<()> {
         } => {
             run_relay_node(config, listen, bootstrap, hsm, kms_key_id, stake, cli.metrics_addr.clone(), cli.health_addr.clone()).await
         }
-        Commands::User { bootstrap, identity, username, non_interactive } => {
-            run_user_node(config, bootstrap, identity, username, non_interactive).await
+        Commands::User { bootstrap, identity, username, non_interactive, metrics_addr, health_addr } => {
+            let metrics = metrics_addr.unwrap_or_else(|| cli.metrics_addr.clone());
+            let health = health_addr.unwrap_or_else(|| cli.health_addr.clone());
+            run_user_node(config, bootstrap, identity, username, non_interactive, metrics, health).await
         }
         Commands::Validator { key, chain_rpc, hsm, stake, producer } => {
             run_validator_node(config, key, chain_rpc, hsm, stake, producer, cli.metrics_addr.clone(), cli.health_addr.clone()).await
@@ -1365,6 +1375,8 @@ async fn run_user_node(
     identity_path: Option<PathBuf>,
     username: Option<String>,
     non_interactive: bool,
+    metrics_addr: String,
+    health_addr: String,
 ) -> Result<()> {
     info!("👤 Starting user node...");
     
@@ -1373,6 +1385,14 @@ async fn run_user_node(
     
     // Create shutdown channel
     let (shutdown_tx, _shutdown_rx) = broadcast::channel::<()>(1);
+    
+    // Start health check server
+    let _health_handle = start_health_server(&health_addr, shutdown_tx.subscribe())?;
+    info!("✓ Health server listening on {}", health_addr);
+    
+    // Start metrics server
+    let _metrics_handle = start_metrics_server(&metrics_addr, shutdown_tx.subscribe())?;
+    info!("✓ Metrics server listening on {}", metrics_addr);
     
     // Load or generate identity
     let identity = if let Some(path) = identity_path {
