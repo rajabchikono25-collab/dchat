@@ -17,8 +17,8 @@
 # 8. Monitoring stack deployment
 #
 # Usage:
-#   chmod +x deploy-ubuntu-testnet.sh
-#   sudo ./deploy-ubuntu-testnet.sh [--skip-docker] [--skip-build] [--monitoring-only] [--skip-nginx]
+#   chmod +x deploy-linux-testnet.sh
+#   sudo ./deploy-linux-testnet.sh [--skip-docker] [--skip-build] [--monitoring-only] [--skip-nginx]
 #
 # Options:
 #   --skip-docker      Skip Docker installation (if already installed)
@@ -27,6 +27,11 @@
 #   --skip-nginx       Skip nginx installation and configuration
 #   --skip-ssl         Skip Let's Encrypt SSL certificate setup
 #   --help            Show this help message
+#
+# Build Process:
+#   - Builds all images with --no-cache for clean builds
+#   - Separately builds: 4 validators, 7 relays, 3 users
+#   - Uses docker-compose for proper service configuration
 #
 # Requirements:
 #   - Ubuntu 20.04 LTS or 22.04 LTS
@@ -714,19 +719,36 @@ build_docker_images() {
         return 0
     fi
     
-    log "Building Docker images (this may take 10-30 minutes)..."
+    log "Building Docker images with --no-cache (this may take 10-30 minutes)..."
     
     cd "$REPO_ROOT"
     
-    # Build the dchat image
-    docker build \
-        --tag dchat:latest \
-        --tag dchat:testnet-$TIMESTAMP \
-        --file Dockerfile \
-        --progress=plain \
-        . 2>&1 | tee -a "$LOG_FILE" || fail "Docker build failed"
+    # Build all testnet images using docker-compose with --no-cache
+    log "Building validators, relays, and users..."
     
-    log "Docker images built successfully ✓"
+    # Build validators (validator1-4)
+    log_info "Building validator images..."
+    docker compose -f docker-compose-testnet.yml build --no-cache \
+        validator1 validator2 validator3 validator4 \
+        2>&1 | tee -a "$LOG_FILE" || fail "Validator build failed"
+    
+    # Build relays (relay1-7)
+    log_info "Building relay images..."
+    docker compose -f docker-compose-testnet.yml build --no-cache \
+        relay1 relay2 relay3 relay4 relay5 relay6 relay7 \
+        2>&1 | tee -a "$LOG_FILE" || fail "Relay build failed"
+    
+    # Build users (user1-3)
+    log_info "Building user images..."
+    docker compose -f docker-compose-testnet.yml build --no-cache \
+        user1 user2 user3 \
+        2>&1 | tee -a "$LOG_FILE" || fail "User build failed"
+    
+    log "All Docker images built successfully ✓"
+    
+    # Show built images
+    log "Built images:"
+    docker images | grep -E "dchat|validator|relay|user" | head -20 | tee -a "$LOG_FILE"
 }
 
 pull_third_party_images() {
