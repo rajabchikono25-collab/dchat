@@ -87,7 +87,7 @@ impl DchatBehavior {
             .flood_publish(true)  // Send to ALL connected peers (not just mesh)
             .do_px()              // Enable peer exchange
             .build()
-            .map_err(|e| format!("Gossipsub config error: {}", e))?
+            .map_err(|e| format!("Gossipsub config error: {}", e))?;
         
         let gossipsub = gossipsub::Behaviour::new(
             gossipsub::MessageAuthenticity::Signed(local_key.clone()),
