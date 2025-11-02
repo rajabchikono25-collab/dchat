@@ -549,6 +549,11 @@ services:
       - relay3
       - relay4
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user5:
     build:
@@ -573,6 +578,11 @@ services:
       - relay4
       - relay5
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user6:
     build:
@@ -597,6 +607,11 @@ services:
       - relay5
       - relay6
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user7:
     build:
@@ -621,6 +636,11 @@ services:
       - relay6
       - relay7
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user8:
     build:
@@ -645,6 +665,11 @@ services:
       - relay7
       - relay1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user9:
     build:
@@ -669,6 +694,11 @@ services:
       - relay1
       - relay2
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user10:
     build:
@@ -693,6 +723,11 @@ services:
       - relay2
       - relay3
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user11:
     build:
@@ -717,6 +752,11 @@ services:
       - relay4
       - relay5
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user12:
     build:
@@ -741,6 +781,11 @@ services:
       - relay5
       - relay6
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user13:
     build:
@@ -765,6 +810,11 @@ services:
       - relay6
       - relay7
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user14:
     build:
@@ -789,6 +839,11 @@ services:
       - relay7
       - relay1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user15:
     build:
@@ -813,6 +868,11 @@ services:
       - relay1
       - relay2
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user16:
     build:
@@ -837,6 +897,11 @@ services:
       - relay2
       - relay3
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user17:
     build:
@@ -861,6 +926,11 @@ services:
       - relay3
       - relay4
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user18:
     build:
@@ -885,6 +955,11 @@ services:
       - relay5
       - relay6
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user19:
     build:
@@ -909,6 +984,11 @@ services:
       - relay6
       - relay7
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user20:
     build:
@@ -933,6 +1013,11 @@ services:
       - relay7
       - relay1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user21:
     build:
@@ -957,6 +1042,11 @@ services:
       - relay1
       - relay2
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user22:
     build:
@@ -981,6 +1071,11 @@ services:
       - relay2
       - relay3
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user23:
     build:
