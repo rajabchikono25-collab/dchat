@@ -526,6 +526,486 @@ services:
       timeout: 5s
       retries: 5
 
+  user4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user4
+    hostname: user4.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user4
+      - DCHAT_USER_ID=user4@dchat.local
+    command: user --username user4 --non-interactive --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay4/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9113
+    volumes:
+      - user4_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay1
+      - relay3
+      - relay4
+    restart: unless-stopped
+
+  user5:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user5
+    hostname: user5.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user5
+      - DCHAT_USER_ID=user5@dchat.local
+    command: user --username user5 --non-interactive --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9114
+    volumes:
+      - user5_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay2
+      - relay4
+      - relay5
+    restart: unless-stopped
+
+  user6:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user6
+    hostname: user6.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user6
+      - DCHAT_USER_ID=user6@dchat.local
+    command: user --username user6 --non-interactive --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9115
+    volumes:
+      - user6_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay3
+      - relay5
+      - relay6
+    restart: unless-stopped
+
+  user7:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user7
+    hostname: user7.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user7
+      - DCHAT_USER_ID=user7@dchat.local
+    command: user --username user7 --non-interactive --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9116
+    volumes:
+      - user7_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay4
+      - relay6
+      - relay7
+    restart: unless-stopped
+
+  user8:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user8
+    hostname: user8.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user8
+      - DCHAT_USER_ID=user8@dchat.local
+    command: user --username user8 --non-interactive --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9117
+    volumes:
+      - user8_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay5
+      - relay7
+      - relay1
+    restart: unless-stopped
+
+  user9:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user9
+    hostname: user9.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user9
+      - DCHAT_USER_ID=user9@dchat.local
+    command: user --username user9 --non-interactive --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9118
+    volumes:
+      - user9_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay6
+      - relay1
+      - relay2
+    restart: unless-stopped
+
+  user10:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user10
+    hostname: user10.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user10
+      - DCHAT_USER_ID=user10@dchat.local
+    command: user --username user10 --non-interactive --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9119
+    volumes:
+      - user10_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay7
+      - relay2
+      - relay3
+    restart: unless-stopped
+
+  user11:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user11
+    hostname: user11.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user11
+      - DCHAT_USER_ID=user11@dchat.local
+    command: user --username user11 --non-interactive --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9120
+    volumes:
+      - user11_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay1
+      - relay4
+      - relay5
+    restart: unless-stopped
+
+  user12:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user12
+    hostname: user12.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user12
+      - DCHAT_USER_ID=user12@dchat.local
+    command: user --username user12 --non-interactive --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9121
+    volumes:
+      - user12_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay2
+      - relay5
+      - relay6
+    restart: unless-stopped
+
+  user13:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user13
+    hostname: user13.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user13
+      - DCHAT_USER_ID=user13@dchat.local
+    command: user --username user13 --non-interactive --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9122
+    volumes:
+      - user13_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay3
+      - relay6
+      - relay7
+    restart: unless-stopped
+
+  user14:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user14
+    hostname: user14.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user14
+      - DCHAT_USER_ID=user14@dchat.local
+    command: user --username user14 --non-interactive --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9123
+    volumes:
+      - user14_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay4
+      - relay7
+      - relay1
+    restart: unless-stopped
+
+  user15:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user15
+    hostname: user15.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user15
+      - DCHAT_USER_ID=user15@dchat.local
+    command: user --username user15 --non-interactive --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9124
+    volumes:
+      - user15_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay5
+      - relay1
+      - relay2
+    restart: unless-stopped
+
+  user16:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user16
+    hostname: user16.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user16
+      - DCHAT_USER_ID=user16@dchat.local
+    command: user --username user16 --non-interactive --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9125
+    volumes:
+      - user16_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay6
+      - relay2
+      - relay3
+    restart: unless-stopped
+
+  user17:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user17
+    hostname: user17.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user17
+      - DCHAT_USER_ID=user17@dchat.local
+    command: user --username user17 --non-interactive --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay4/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9126
+    volumes:
+      - user17_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay7
+      - relay3
+      - relay4
+    restart: unless-stopped
+
+  user18:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user18
+    hostname: user18.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user18
+      - DCHAT_USER_ID=user18@dchat.local
+    command: user --username user18 --non-interactive --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9127
+    volumes:
+      - user18_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay1
+      - relay5
+      - relay6
+    restart: unless-stopped
+
+  user19:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user19
+    hostname: user19.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user19
+      - DCHAT_USER_ID=user19@dchat.local
+    command: user --username user19 --non-interactive --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9128
+    volumes:
+      - user19_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay2
+      - relay6
+      - relay7
+    restart: unless-stopped
+
+  user20:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user20
+    hostname: user20.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user20
+      - DCHAT_USER_ID=user20@dchat.local
+    command: user --username user20 --non-interactive --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9129
+    volumes:
+      - user20_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay3
+      - relay7
+      - relay1
+    restart: unless-stopped
+
+  user21:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user21
+    hostname: user21.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user21
+      - DCHAT_USER_ID=user21@dchat.local
+    command: user --username user21 --non-interactive --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9130
+    volumes:
+      - user21_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay4
+      - relay1
+      - relay2
+    restart: unless-stopped
+
+  user22:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user22
+    hostname: user22.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user22
+      - DCHAT_USER_ID=user22@dchat.local
+    command: user --username user22 --non-interactive --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9131
+    volumes:
+      - user22_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay5
+      - relay2
+      - relay3
+    restart: unless-stopped
+
+  user23:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dchat-user23
+    hostname: user23.dchat.local
+    stdin_open: true
+    tty: true
+    environment:
+      - RUST_LOG=info,dchat=debug
+      - DCHAT_NODE_TYPE=user
+      - DCHAT_NODE_ID=user23
+      - DCHAT_USER_ID=user23@dchat.local
+    command: user --username user23 --non-interactive --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --bootstrap /dns4/relay4/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9132
+    volumes:
+      - user23_data:/var/lib/dchat/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      - relay6
+      - relay3
+      - relay4
+    restart: unless-stopped
+
   # ============================================================================
   # MONITORING & OBSERVABILITY
   # ============================================================================
@@ -600,6 +1080,26 @@ volumes:
   user1_data:
   user2_data:
   user3_data:
+  user4_data:
+  user5_data:
+  user6_data:
+  user7_data:
+  user8_data:
+  user9_data:
+  user10_data:
+  user11_data:
+  user12_data:
+  user13_data:
+  user14_data:
+  user15_data:
+  user16_data:
+  user17_data:
+  user18_data:
+  user19_data:
+  user20_data:
+  user21_data:
+  user22_data:
+  user23_data:
   
   # Monitoring
   prometheus_data:
