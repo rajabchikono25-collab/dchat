@@ -222,8 +222,8 @@ update_system() {
     if command_exists nala; then
         log "Using nala for package management"
         PKG_MGR="nala"
-        nala update --assume-yes || fail "Failed to update package lists"
-        nala upgrade --assume-yes || log_warning "Some packages failed to upgrade"
+        nala update || fail "Failed to update package lists"
+        nala upgrade || log_warning "Some packages failed to upgrade"
     else
         log "Using apt for package management"
         PKG_MGR="apt-get"
