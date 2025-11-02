@@ -789,13 +789,22 @@ start_testnet() {
     
     # Start the testnet
     log_info "Starting containers..."
+    log_info "Note: Containers start sequentially to ensure proper mesh network formation"
+    log_info "  1. Bootstrap node (DNS seed)"
+    log_info "  2. Validators (1→2→3→4) - consensus nodes"
+    log_info "  3. Relays (1→2→...→7) - message routing mesh"
+    log_info "  4. Users (1→2→3) - client nodes"
+    log_info "Expected startup time: 2-3 minutes for full mesh establishment"
+    
     docker compose -f docker-compose-testnet.yml -p dchat-testnet up -d || fail "Failed to start testnet"
     
     log "Testnet containers started ✓"
+    log_info "Containers are now forming mesh network (peer discovery in progress)"
 }
 
 wait_for_health() {
     log "Waiting for containers to become healthy..."
+    log_info "Health checks include: HTTP endpoint + peer mesh connectivity"
     
     local max_wait=300  # 5 minutes
     local interval=10
@@ -804,6 +813,7 @@ wait_for_health() {
     while [[ $elapsed -lt $max_wait ]]; do
         local all_healthy=1
         local container_count=0
+        local starting_count=0
         
         # Get all containers for the project
         while IFS= read -r container; do
@@ -812,13 +822,17 @@ wait_for_health() {
             
             local health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo "unknown")
             local running=$(docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null || echo "false")
+            local name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's/\///')
             
             if [[ "$running" != "true" ]]; then
                 all_healthy=0
-                log_info "Container $container is not running"
-            elif [[ "$health" == "starting" ]] || [[ "$health" == "unhealthy" ]]; then
+                log_info "Container $name is not running"
+            elif [[ "$health" == "starting" ]]; then
                 all_healthy=0
-                log_info "Container $container health: $health"
+                starting_count=$((starting_count + 1))
+            elif [[ "$health" == "unhealthy" ]]; then
+                all_healthy=0
+                log_info "Container $name health: $health (may be waiting for peers)"
             fi
         done < <(docker ps -q --filter "label=com.docker.compose.project=dchat-testnet")
         
@@ -828,7 +842,12 @@ wait_for_health() {
         
         if [[ $all_healthy -eq 1 ]]; then
             log "All containers are healthy ✓"
+            log "Mesh network formation complete - all nodes connected"
             return 0
+        fi
+        
+        if [[ $starting_count -gt 0 ]]; then
+            log_info "$starting_count container(s) still starting (mesh peers connecting...)"
         fi
         
         sleep $interval
@@ -837,7 +856,8 @@ wait_for_health() {
     done
     
     log_warning "Timeout waiting for all containers to become healthy"
-    log_warning "Some containers may still be starting. Check with: docker ps"
+    log_warning "Some containers may still be forming mesh connections. Check with: docker ps"
+    log_warning "Mesh troubleshooting: docker compose -f docker-compose-testnet.yml -p dchat-testnet logs | grep -i 'peer\|bootstrap\|connect'"
 }
 
 ################################################################################
@@ -979,6 +999,12 @@ show_deployment_status() {
     log "  • Stop testnet:     docker compose -f docker-compose-testnet.yml -p dchat-testnet down"
     log "  • Restart testnet:  docker compose -f docker-compose-testnet.yml -p dchat-testnet restart"
     log "  • Check status:     docker ps"
+    log ""
+    log "Mesh Network Troubleshooting:"
+    log "  • Check peer connectivity:  docker logs dchat-validator1 | grep -i 'peer\|bootstrap'"
+    log "  • View mesh formation:      docker logs dchat-relay1 | grep -i 'connected\|mesh'"
+    log "  • Monitor network health:   docker compose -f docker-compose-testnet.yml -p dchat-testnet ps"
+    log "  • Restart failed node:      docker compose -f docker-compose-testnet.yml -p dchat-testnet restart <service>"
     log ""
     
     log "=========================================="

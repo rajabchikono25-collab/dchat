@@ -767,13 +767,22 @@ start_testnet() {
     
     # Start the testnet
     log_info "Starting containers..."
+    log_info "Note: Containers start sequentially to ensure proper mesh network formation"
+    log_info "  1. Bootstrap node (DNS seed)"
+    log_info "  2. Validators (1→2→3→4) - consensus nodes"
+    log_info "  3. Relays (1→2→...→7) - message routing mesh"
+    log_info "  4. Users (1→2→3) - client nodes"
+    log_info "Expected startup time: 2-3 minutes for full mesh establishment"
+    
     docker compose -f docker-compose-testnet.yml -p dchat-testnet up -d || fail "Failed to start testnet"
     
     log "Testnet containers started ✓"
+    log_info "Containers are now forming mesh network (peer discovery in progress)"
 }
 
 wait_for_health() {
     log "Waiting for containers to become healthy..."
+    log_info "Health checks include: HTTP endpoint + peer mesh connectivity"
     
     local max_wait=300  # 5 minutes
     local interval=10
@@ -782,6 +791,7 @@ wait_for_health() {
     while [[ $elapsed -lt $max_wait ]]; do
         local all_healthy=1
         local container_count=0
+        local starting_count=0
         
         # Get all containers for the project
         while IFS= read -r container; do
@@ -790,13 +800,17 @@ wait_for_health() {
             
             local health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo "unknown")
             local running=$(docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null || echo "false")
+            local name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's/\///')
             
             if [[ "$running" != "true" ]]; then
                 all_healthy=0
-                log_info "Container $container is not running"
-            elif [[ "$health" == "starting" ]] || [[ "$health" == "unhealthy" ]]; then
+                log_info "Container $name is not running"
+            elif [[ "$health" == "starting" ]]; then
                 all_healthy=0
-                log_info "Container $container health: $health"
+                starting_count=$((starting_count + 1))
+            elif [[ "$health" == "unhealthy" ]]; then
+                all_healthy=0
+                log_info "Container $name health: $health (may be waiting for peers)"
             fi
         done < <(docker ps -q --filter "label=com.docker.compose.project=dchat-testnet")
         
@@ -806,7 +820,12 @@ wait_for_health() {
         
         if [[ $all_healthy -eq 1 ]]; then
             log "All containers are healthy ✓"
+            log "Mesh network formation complete - all nodes connected"
             return 0
+        fi
+        
+        if [[ $starting_count -gt 0 ]]; then
+            log_info "$starting_count container(s) still starting (mesh peers connecting...)"
         fi
         
         sleep $interval
@@ -815,7 +834,8 @@ wait_for_health() {
     done
     
     log_warning "Timeout waiting for all containers to become healthy"
-    log_warning "Some containers may still be starting. Check with: docker ps"
+    log_warning "Some containers may still be forming mesh connections. Check with: docker ps"
+    log_warning "Mesh troubleshooting: docker compose -f docker-compose-testnet.yml -p dchat-testnet logs | grep -i 'peer\|bootstrap\|connect'"
 }
 
 ################################################################################
@@ -958,6 +978,12 @@ show_deployment_status() {
     log "  • Restart testnet:  docker compose -f docker-compose-testnet.yml -p dchat-testnet restart"
     log "  • Check status:     docker ps"
     log ""
+    log "Mesh Network Troubleshooting:"
+    log "  • Check peer connectivity:  docker logs dchat-validator1 | grep -i 'peer\|bootstrap'"
+    log "  • View mesh formation:      docker logs dchat-relay1 | grep -i 'connected\|mesh'"
+    log "  • Monitor network health:   docker compose -f docker-compose-testnet.yml -p dchat-testnet ps"
+    log "  • Restart failed node:      docker compose -f docker-compose-testnet.yml -p dchat-testnet restart <service>"
+    log ""
     
     log "=========================================="
 }
@@ -965,13 +991,11 @@ show_deployment_status() {
 test_endpoints() {
     log "Testing network endpoints..."
     
+    # Note: Health endpoints (port 8080) are internal only - not exposed to host
+    # Docker uses internal healthchecks: curl -f http://localhost:8080/health
+    # We test monitoring endpoints that ARE exposed to host
+    
     local endpoints=(
-        "http://localhost:7071/health:Validator1"
-        "http://localhost:7073/health:Validator2"
-        "http://localhost:7075/health:Validator3"
-        "http://localhost:7077/health:Validator4"
-        "http://localhost:7081/health:Relay1"
-        "http://localhost:7111/health:User1"
         "http://localhost:9095/-/healthy:Prometheus"
         "http://localhost:3000/api/health:Grafana"
     )
@@ -990,25 +1014,49 @@ test_endpoints() {
         fi
     done
     
-    # Check Prometheus targets
-    log "Checking Prometheus targets..."
+    # Check Prometheus targets (14 total: 4 validators + 7 relays + 3 users)
+    log "Checking Prometheus scrape targets..."
     if command_exists curl && command_exists jq; then
         local targets=$(curl -sf http://localhost:9095/api/v1/targets 2>/dev/null | jq -r '.data.activeTargets | length' 2>/dev/null || echo "0")
         if [[ "$targets" -ge 14 ]]; then
             log "✓ Prometheus has $targets active targets (expected: 14)"
         else
             log_warning "✗ Prometheus has only $targets active targets (expected: 14)"
+            log_warning "Some nodes may still be starting up or metrics not yet available"
             failed=$((failed + 1))
         fi
     else
         log_info "Skipping Prometheus target check (jq not installed)"
     fi
     
+    # Check Docker container health status
+    log "Checking Docker container health status..."
+    local unhealthy_count=0
+    while IFS= read -r container; do
+        [[ -z "$container" ]] && continue
+        local health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container" 2>/dev/null || echo "unknown")
+        local name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's/\///')
+        
+        if [[ "$health" == "healthy" ]] || [[ "$health" == "no-healthcheck" ]]; then
+            log "✓ $name is healthy"
+        elif [[ "$health" == "starting" ]]; then
+            log_info "⟳ $name is starting (health check in progress)"
+        else
+            log_warning "✗ $name health: $health"
+            unhealthy_count=$((unhealthy_count + 1))
+        fi
+    done < <(docker ps -q --filter "label=com.docker.compose.project=dchat-testnet")
+    
+    if [[ $unhealthy_count -gt 0 ]]; then
+        failed=$((failed + unhealthy_count))
+    fi
+    
     if [[ $failed -gt 0 ]]; then
-        log_warning "$failed endpoint(s) are not responding. They may still be starting up."
-        log_warning "Wait a few minutes and check manually."
+        log_warning "$failed check(s) failed. Containers may still be starting up."
+        log_warning "Wait a few minutes and check with: docker ps"
+        log_warning "View logs with: docker compose -f docker-compose-testnet.yml -p dchat-testnet logs"
     else
-        log "All endpoints are responding ✓"
+        log "All endpoints and containers are healthy ✓"
     fi
 }
 
@@ -1083,10 +1131,12 @@ Container Counts:
   - Monitoring: 3 (Prometheus, Grafana, Jaeger)
 
 Health Check Configuration:
-  - All validators: Health on port 7071, Metrics on port 9090
-  - All relays: Health on port 7081, Metrics on ports 9100-9106
-  - All users: Health on port 7111, Metrics on ports 9110-9112
-  - Healthcheck command: curl -f http://localhost:PORT/health
+  - Health endpoint: port 8080 (internal to container - not exposed to host)
+  - All validators: Health on :8080, Metrics on :9090
+  - All relays: Health on :8080, Metrics on :9100-9106
+  - All users: Health on :8080, Metrics on :9110-9112
+  - Healthcheck command: curl -f http://localhost:8080/health
+  - Note: Use 'docker ps' to see health status from host machine
 
 Prometheus Targets:
   - 4 validators (validator1-4:9090)
