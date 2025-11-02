@@ -224,7 +224,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9100
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator1/tcp/7070 --bootstrap /dns4/validator4/tcp/7070 --bootstrap /dns4/relay1/tcp/7080 --stake 1000
     ports:
       - "7082:7080"
       - "7083:7081"
@@ -258,7 +258,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9102
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator2/tcp/7070 --bootstrap /dns4/validator3/tcp/7070 --bootstrap /dns4/relay1/tcp/7080 --stake 1000
     ports:
       - "7084:7080"
       - "7085:7081"
@@ -292,7 +292,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9103
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator2/tcp/7070 --bootstrap /dns4/validator4/tcp/7070 --bootstrap /dns4/relay2/tcp/7080 --stake 1000
     ports:
       - "7086:7080"
       - "7087:7081"
@@ -326,7 +326,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9104
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator3/tcp/7070 --bootstrap /dns4/validator1/tcp/7070 --bootstrap /dns4/relay3/tcp/7080 --stake 1000
     ports:
       - "7088:7080"
       - "7089:7081"
@@ -360,7 +360,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9105
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator4/tcp/7070 --bootstrap /dns4/validator2/tcp/7070 --bootstrap /dns4/relay4/tcp/7080 --stake 1000
     ports:
       - "7090:7080"
       - "7091:7081"
@@ -394,7 +394,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9106
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator1/tcp/7070 --bootstrap /dns4/validator3/tcp/7070 --bootstrap /dns4/relay5/tcp/7080 --stake 1000
     ports:
       - "7092:7080"
       - "7093:7081"
