@@ -187,7 +187,7 @@ services:
       - DCHAT_RPC_ADDR=0.0.0.0:7081
       - DCHAT_METRICS_ADDR=0.0.0.0:9100
       - DCHAT_RELAY_STAKE=100
-    command: relay --listen 0.0.0.0:7080 --stake 1000
+    command: relay --listen 0.0.0.0:7080 --bootstrap /dns4/validator1/tcp/7070 --bootstrap /dns4/validator2/tcp/7070 --bootstrap /dns4/validator3/tcp/7070 --stake 1000
     ports:
       - "7080:7080"
       - "7081:7081"
@@ -432,7 +432,7 @@ services:
       - DCHAT_BOOTSTRAP_PEERS=relay1:7080,relay2:7080,relay3:7080
       - DCHAT_RPC_ADDR=0.0.0.0:7111
       - DCHAT_METRICS_ADDR=0.0.0.0:9110
-    command: user --username user1 --non-interactive --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9110
+    command: user --username user1 --non-interactive --bootstrap /dns4/relay1/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --bootstrap /dns4/relay3/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9110
     ports:
       - "7110:7110"
       - "7111:7111"
@@ -467,9 +467,9 @@ services:
       - DCHAT_USER_ID=user2@dchat.local
       - DCHAT_LISTEN_ADDR=0.0.0.0:7110
       - DCHAT_BOOTSTRAP_PEERS=relay4:7080,relay5:7080,relay1:7080
-      - DCHAT_RPC_ADDR=0.0.0.0:7111
+      - DCHAT_RPC_ADDR=0.0.0.0:7113
       - DCHAT_METRICS_ADDR=0.0.0.0:9111
-    command: user --username user2 --non-interactive --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9111
+    command: user --username user2 --non-interactive --bootstrap /dns4/relay4/tcp/7080 --bootstrap /dns4/relay5/tcp/7080 --bootstrap /dns4/relay1/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9111
     ports:
       - "7112:7110"
       - "7113:7111"
@@ -504,9 +504,9 @@ services:
       - DCHAT_USER_ID=user3@dchat.local
       - DCHAT_LISTEN_ADDR=0.0.0.0:7110
       - DCHAT_BOOTSTRAP_PEERS=relay6:7080,relay7:7080,relay2:7080
-      - DCHAT_RPC_ADDR=0.0.0.0:7111
+      - DCHAT_RPC_ADDR=0.0.0.0:7115
       - DCHAT_METRICS_ADDR=0.0.0.0:9112
-    command: user --username user3 --non-interactive --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9112
+    command: user --username user3 --non-interactive --bootstrap /dns4/relay6/tcp/7080 --bootstrap /dns4/relay7/tcp/7080 --bootstrap /dns4/relay2/tcp/7080 --health-addr 0.0.0.0:8080 --metrics-addr 0.0.0.0:9112
     ports:
       - "7114:7110"
       - "7115:7111"
