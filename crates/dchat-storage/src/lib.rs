@@ -14,6 +14,7 @@ pub mod database;
 pub mod deduplication;
 pub mod distributed;
 pub mod economics;
+pub mod error;
 pub mod file_upload;
 pub mod lifecycle;
 pub mod migrations;
@@ -35,6 +36,7 @@ pub use distributed::{
 pub use economics::{
     EconomicsConfig, MicropaymentStream, StorageBond, StorageEconomicsManager,
 };
+pub use error::{StorageError, StorageResult};
 pub use file_upload::{
     FileUploadManager, MediaFileType, StorageStats, UploadConfig, UploadedFile,
 };
