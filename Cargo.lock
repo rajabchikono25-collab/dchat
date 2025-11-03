@@ -1273,6 +1273,23 @@ name = "dchat-data"
 version = "0.1.0"
 
 [[package]]
+name = "dchat-deployment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "dchat-distribution"
 version = "0.1.0"
 dependencies = [
