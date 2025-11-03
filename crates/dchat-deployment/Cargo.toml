@@ -23,3 +23,7 @@ path = "src/bin/deploy_validators.rs"
 [[bin]]
 name = "deploy-relays"
 path = "src/bin/deploy_relays.rs"
+
+[[bin]]
+name = "deploy-storage"
+path = "src/bin/deploy-storage.rs"
