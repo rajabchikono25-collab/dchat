@@ -1926,26 +1926,24 @@ impl Miniblock {
 }
 ```
 
-#### Solution 2: Hybrid Dual-Consensus Architecture (PoRW + PoT)
+#### Solution 2: Hybrid Dual-Consensus Architecture (PoRW + PVC)
 
 **Revolutionary Innovation:**
-dchat uses a groundbreaking **dual-consensus architecture** that combines Proof-of-Relay-Work (economic consensus) with Proof-of-Transit (physics-based consensus). This creates exponentially higher security by making consensus dependent on both cryptographic proofs AND physical network topology.
+dchat uses a groundbreaking **dual-consensus architecture** where two independent consensus mechanisms run in parallel and validate each other. This creates exponentially higher security and throughput compared to single-consensus systems.
 
 **Consensus Layer 1: Proof-of-Relay-Work (PoRW)**
-Leverages the distributed relay network for consensus through real message delivery work and economic incentives.
+Leverages the distributed relay network for consensus through real message delivery work.
 
-**Consensus Layer 2: Proof-of-Transit (PoT)**
-Revolutionary consensus that uses **physical network paths** as consensus mechanism. Every message transit through the relay network creates cryptographic proofs that become part of the blockchain's security. Geographic diversity and network latency prove real-world decentralization.
+**Consensus Layer 2: Parallel Vote Chains (PVC)**
+Multiple independent voting chains run simultaneously, each validating different transaction subsets.
 
-**Why Dual-Consensus with PoT?**
-- **Physics as Security**: Attack requires physical presence across 5+ continents (can't fake speed of light)
-- **Security Multiplication**: Attack requires compromising BOTH PoRW (economic) AND PoT (geographic) simultaneously
-- **Throughput Addition**: Multi-path routing creates 3× capacity (3 independent paths × 25k TPS each)
-- **Byzantine Resilience**: 2-of-3 path agreement provides redundancy even if one path is compromised
-- **Cross-Validation**: Each consensus validates the other's output through path convergence
-- **Tunable Finality**: Apps choose security/speed tradeoff (50ms to 2s)
-- **Provable Decentralization**: Geographic diversity is cryptographically verifiable (not assumed)
-- **No Fragmentation**: Single logical chain with multiple physical validation paths
+**Why Dual-Consensus?**
+- **Security Multiplication**: Attack requires compromising BOTH consensus mechanisms simultaneously (exponentially harder)
+- **Throughput Addition**: Combined TPS = PoRW_TPS + PVC_TPS (not just one or the other)
+- **Byzantine Resilience**: If one consensus is attacked, the other detects it and triggers safeguards
+- **Cross-Validation**: Each consensus verifies the other's output every block
+- **Parallel Processing**: Different transaction types use different consensus paths
+- **Adaptive Load Balancing**: System routes txs to least-congested consensus automatically
 
 ---
 
@@ -2903,1487 +2901,427 @@ impl BlockVotes {
 
 ---
 
-### Consensus Layer 2: Proof-of-Transit (PoT)
+### Consensus Layer 2: Proof-of-Transit (PoT) with Post-Quantum Security
 
 **Innovation:**
-Proof-of-Transit (PoT) is dchat's revolutionary second consensus layer that uses the **physical network topology** itself as a consensus mechanism. Instead of abstract voting, PoT leverages the fundamental physics of network communication: speed of light, geographic distance, and routing diversity. Every message that travels through the relay network leaves a cryptographic trail that becomes part of consensus security.
+Proof-of-Transit (PoT) is dchat's revolutionary second consensus layer that uses the **physical network topology** itself as a consensus mechanism, enhanced with **immediate post-quantum cryptography** for future-proof security. Instead of abstract voting, PoT leverages the fundamental physics of network communication: speed of light, geographic distance, and routing diversity—all protected by hybrid classical + post-quantum cryptography from day one.
 
-**PoT Core Concepts:**
+**PVC Core Concepts:**
 
-**1. Transit Proofs (Not Just Delivery Proofs)**
+**1. Multiple Independent Vote Chains**
+- 8-16 parallel vote chains run simultaneously
+- Each chain is a complete BFT consensus with own validators
+- Chains validate different transaction types or shards
+- Chains cross-validate each other every block
 
-Every relay in the network creates a **transit proof** for each message hop:
+**2. Chain Specialization**
+- **Speed Chain (Chain 0)**: Microtransactions, instant finality (200ms)
+- **Security Chain (Chain 1)**: High-value transactions, triple validation (2s)
+- **Smart Contract Chain (Chain 2)**: Complex computations, optimistic execution
+- **Privacy Chain (Chain 3)**: Zero-knowledge proofs, anonymous transactions
+- **Channel Chain (Chain 4)**: Channel operations, creator economy
+- **Governance Chain (Chain 5)**: DAO votes, upgrades, critical decisions
+- **Relay Chain (Chain 6)**: Relay operations, PoRW coordination
+- **Bridge Chain (Chain 7)**: Cross-chain atomic swaps, external bridges
 
-```rust
-pub struct TransitProof {
-    message_hash: Hash,
-    relay_id: PublicKey,
-    incoming_signature: Signature,  // From previous relay
-    outgoing_signature: Signature,  // To next relay  
-    timestamp: SystemTime,
-    geographic_coordinates: (f64, f64),  // Verified GPS location
-    network_latency: Duration,
-    path_position: u8,  // 1st hop, 2nd hop, 3rd hop, etc.
-    asn: u32,  // Autonomous System Number
-}
-```
+**3. Chain Rotation & Load Balancing**
+- Validators rotate between chains every 100 blocks
+- Prevents chain capture by malicious validators
+- Load automatically balances across chains
+- Hot chains can split, cold chains can merge
 
-**Key Innovation:**
-- Can't fake entire path (would need control of 6+ geographically distributed relays)
-- Geographic diversity is cryptographically proven (not claimed)
-- Network latency proves physical distance (speed of light verification)
-- ASN diversity proves ISP-level decentralization
+**4. Cross-Chain Merkle Validation**
+- Every chain produces Merkle root every block
+- All chains validate all other chains' Merkle roots
+- Creates NxN validation matrix (64 validations for 8 chains)
+- Single chain compromise detected immediately
 
-**2. Consensus Weight = Path Diversity Score**
-
-Transaction finality is based on physical path diversity achieved:
-
-```
-Consensus Weight = 
-    (Unique Relay Count × 0.30) +
-    (Geographic Diversity × 0.25) +
-    (ASN Diversity × 0.20) +
-    (Path Length × 0.15) +
-    (Timestamp Consistency × 0.10)
-```
-
-**Example Path:**
-```
-Message Route: US-East → EU-West → Asia-East → Africa-South → S.America
-- 5 continents ✓
-- 7 unique relays ✓
-- 5 different ASNs ✓
-- 2,100ms total latency (speed of light verified) ✓
-
-= 98% consensus weight
-= Finality in 400ms (global path diversity achieved)
-```
-
-**Attack Resistance:**
-- Attacker needs relays across 5 continents (physical infrastructure)
-- Must maintain geographic diversity (can't fake physics)
-- Must control diverse ASNs (ISP-level infiltration)
-- Cost: $50M+ vs. $5M for single-region attack
-
-**3. Multi-Path Consensus (Not Multi-Chain)**
-
-Instead of splitting consensus, transactions travel through **3+ independent paths simultaneously**:
-
-```
-Transaction Submitted
-    ↓
-    ├─→ Path A: US-East → EU-West → Asia-East (7 hops, 420ms)
-    ├─→ Path B: US-West → Asia-West → EU-East (6 hops, 380ms)
-    └─→ Path C: Americas → Africa → Middle-East → Asia (8 hops, 510ms)
-         
-    ↓ (Each path generates independent transit proof chain)
-         
-Consensus: 2 of 3 paths must agree on transaction order
-    ↓
-Finality when paths converge at destination validators
-```
-
-**Throughput Boost:**
-- 3 independent paths = 3× message capacity
-- Each path validates independently  
-- Paths cross-validate at convergence points
-- Combined: 75,000 TPS (3 paths × 25k each)
-
-**Security Boost:**
-- Attack requires controlling multiple geographic paths
-- 2-of-3 path agreement = Byzantine fault tolerance
-- Physical network diversity = logical consensus diversity
-
-**4. Proof-of-Geography (Sub-mechanism)**
-
-**Innovation: Location becomes stake**
-
-```rust
-pub struct GeographicProof {
-    relay_id: PublicKey,
-    claimed_location: (f64, f64),  // Latitude/Longitude
-    proof_type: GeographicProofType,
-    verification_timestamp: SystemTime,
-}
-
-pub enum GeographicProofType {
-    // Multiple verification methods (all required)
-    NetworkLatency {
-        triangulation: Vec<(PublicKey, Duration)>,  // From 3+ known relays
-        speed_of_light_verified: bool,
-    },
-    IPGeolocation {
-        asn: u32,
-        country_code: String,
-        verified_by_bgp: bool,
-    },
-    TimezoneConsistency {
-        local_time: SystemTime,
-        expected_offset: i32,
-        ntp_verified: bool,
-    },
-    PeerWitness {
-        nearby_relays: Vec<PublicKey>,  // Physical proximity witnesses
-        witness_signatures: Vec<Signature>,
-    },
-}
-```
-
-**Why This Matters:**
-- **Can't fake physics**: Can't claim to be in Asia if you're in US (speed of light)
-- **Can't claim multiple locations**: GPS + latency + timezone must be consistent
-- **Sybil attack requires global infrastructure**: Must physically deploy worldwide
-- **Provable decentralization**: Location proofs are verifiable, not self-reported
-
-**5. Temporal Consensus Layers (Tunable Finality)**
-
-Apps choose their own security/speed tradeoff:
-
-```
-Level 1: Local Consensus (50ms)
-    - 2+ relays in same region
-    - Good for: UI responsiveness, optimistic updates
-    - Revert risk: 5%
-    - Use case: Chat message appears instantly
-
-Level 2: Continental Consensus (200ms)  
-    - 3+ continents in path
-    - Good for: Standard transactions
-    - Revert risk: 0.1%
-    - Use case: Normal payments, channel operations
-
-Level 3: Global Consensus (500ms)
-    - 5+ continents, 10+ relays, 5+ ASNs
-    - Good for: High-value transactions
-    - Revert risk: <0.001%
-    - Use case: Large transfers, smart contracts
-
-Level 4: Deep Consensus (2s)
-    - Multiple independent paths converged
-    - Good for: Governance, protocol upgrades
-    - Revert risk: Practically zero
-    - Use case: DAO votes, critical decisions
-```
-
-**User Experience:**
-- Chat messages: Level 1 (instant, 50ms)
-- Micropayments: Level 2 (fast, 200ms)
-- Large transfers: Level 3 (secure, 500ms)
-- DAO votes: Level 4 (absolute certainty, 2s)
-
-**6. Path Convergence & Cross-Validation**
-
-Final consensus when multiple paths agree:
-
-```rust
-pub struct PathConvergence {
-    transaction_hash: Hash,
-    paths: Vec<TransitPath>,
-    agreement_count: usize,  // How many paths agree
-    finality_level: FinalityLevel,
-    convergence_time: Duration,
-}
-
-pub struct TransitPath {
-    path_id: u8,
-    relays: Vec<PublicKey>,
-    transit_proofs: Vec<TransitProof>,
-    total_latency: Duration,
-    geographic_diversity: f64,
-    asn_diversity: usize,
-}
-```
-
-**Consensus Rules:**
-- **2-of-3 paths agree** → Transaction finalized
-- **Paths disagree** → Wait for more proofs or escalate to PoRW
-- **Single path compromise** → Other paths detect fraud immediately
-- **All paths compromised** → PoRW checkpoints detect inconsistency
-
-**7. PoRW + PoT Integration (Consensus Fusion)**
-
-**How They Work Together:**
-
-```
-Transaction Flow:
-    ↓
-┌──────────────────────┐
-│ PoRW: Economic Layer │ → Stake-based security, reputation
-└──────────────────────┘
-    ↓
-┌──────────────────────┐  
-│ PoT: Transit Layer   │ → Multi-path routing, geographic proofs
-└──────────────────────┘
-    ↓
-Path convergence → Both PoRW AND PoT agree → FINAL CONFIRMATION
-```
-
-**Cross-Validation:**
-- PoRW validates transit proof signatures
-- PoT validates relay reputation scores  
-- PoRW checkpoints every 6 seconds reference all active paths
-- PoT geographic proofs verify PoRW relay locations
-
-**Failure Modes:**
-
-| Scenario | PoRW Status | PoT Status | System Response |
-|----------|-------------|------------|-----------------|
-| Normal | ✅ Healthy | ✅ Healthy | Full speed (75k TPS) |
-| PoRW attacked | ❌ Compromised | ✅ Healthy | PoT maintains consensus |
-| PoT path compromised | ✅ Healthy | ⚠️ 1 path bad | Use other 2 paths |
-| Both attacked | ❌ Compromised | ❌ Compromised | Network halts (manual intervention) |
+**5. Consensus Fusion**
+- Final block must pass BOTH PoRW AND PVC consensus
+- PoRW provides ordering, PVC provides parallel validation
+- Disagreement triggers automatic rollback and investigation
+- Creates redundant security layer
 
 **Implementation:**
 
 ```rust
-// File: crates/dchat-blockchain/src/proof_of_transit.rs
+// File: crates/dchat-blockchain/src/parallel_vote_chains.rs
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use blake3::Hash;
-use ed25519_dalek::{PublicKey, Signature};
-use std::time::{Duration, SystemTime};
 
-/// Proof-of-Transit Consensus Engine
-pub struct ProofOfTransit {
-    active_paths: Arc<RwLock<HashMap<u8, TransitPath>>>,
-    transit_proofs: Arc<RwLock<HashMap<Hash, Vec<TransitProof>>>>,
-    geographic_proofs: Arc<RwLock<HashMap<PublicKey, GeographicProof>>>,
-    path_convergence_cache: Arc<RwLock<HashMap<Hash, PathConvergence>>>,
-    num_paths: usize,  // 3 paths default
-    path_agreement_threshold: usize,  // 2-of-3
-    finality_levels: FinalityLevels,
+/// Parallel Vote Chains consensus engine
+pub struct ParallelVoteChains {
+    chains: Vec<VoteChain>,
+    validator_assignments: Arc<RwLock<HashMap<PublicKey, Vec<usize>>>>,  // validator -> chain IDs
+    cross_validation_matrix: Arc<RwLock<CrossValidationMatrix>>,
+    chain_specialization: HashMap<usize, ChainType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransitProof {
-    pub message_hash: Hash,
-    pub relay_id: PublicKey,
-    pub incoming_signature: Signature,  // From previous relay
-    pub outgoing_signature: Signature,  // To next relay
+pub struct VoteChain {
+    pub chain_id: usize,
+    pub chain_type: ChainType,
+    pub current_height: u64,
+    pub validators: Vec<PublicKey>,
+    pub current_votes: Vec<ChainVote>,
+    pub merkle_root: Hash,
+    pub finalized_blocks: Vec<Hash>,
+    pub tps: f64,  // Current throughput
+    pub load_factor: f64,  // 0.0 - 1.0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ChainType {
+    Speed,           // Microtransactions, 200ms finality
+    Security,        // High-value, 2s finality
+    SmartContract,   // Complex computation
+    Privacy,         // Zero-knowledge proofs
+    Channel,         // Channel operations
+    Governance,      // DAO votes
+    Relay,           // Relay coordination
+    Bridge,          // Cross-chain operations
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainVote {
+    pub validator_id: PublicKey,
+    pub chain_id: usize,
+    pub block_hash: Hash,
+    pub merkle_root: Hash,
+    pub transaction_count: u32,
     pub timestamp: SystemTime,
-    pub geographic_coordinates: (f64, f64),  // GPS location
-    pub network_latency: Duration,
-    pub path_position: u8,  // Position in route
-    pub asn: u32,  // Autonomous System Number
-    pub path_id: u8,  // Which path (0, 1, or 2)
+    pub signature: Signature,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransitPath {
-    pub path_id: u8,
-    pub relays: Vec<PublicKey>,
-    pub transit_proofs: Vec<TransitProof>,
-    pub total_latency: Duration,
-    pub geographic_diversity: f64,  // 0.0-1.0
-    pub asn_diversity: usize,
-    pub continent_count: usize,
-    pub status: PathStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PathStatus {
-    Active,
-    Converged,
-    Failed,
-    Compromised,
+pub struct CrossValidationMatrix {
+    pub height: u64,
+    pub validations: HashMap<(usize, usize), ValidationResult>,  // (chain_a, chain_b) -> result
+    pub consensus_reached: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeographicProof {
-    pub relay_id: PublicKey,
-    pub claimed_location: (f64, f64),
-    pub verification_methods: Vec<GeographicProofType>,
-    pub verification_timestamp: SystemTime,
-    pub verification_score: f64,  // 0.0-1.0
+pub struct ValidationResult {
+    pub valid: bool,
+    pub validator_id: PublicKey,
+    pub timestamp: SystemTime,
+    pub merkle_proof: Vec<Hash>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GeographicProofType {
-    NetworkLatency {
-        triangulation: Vec<(PublicKey, Duration)>,
-        speed_of_light_verified: bool,
-    },
-    IPGeolocation {
-        asn: u32,
-        country_code: String,
-        verified_by_bgp: bool,
-    },
-    TimezoneConsistency {
-        local_time: SystemTime,
-        expected_offset: i32,
-        ntp_verified: bool,
-    },
-    PeerWitness {
-        nearby_relays: Vec<PublicKey>,
-        witness_signatures: Vec<Signature>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathConvergence {
-    pub transaction_hash: Hash,
-    pub paths: Vec<TransitPath>,
-    pub agreement_count: usize,
-    pub finality_level: FinalityLevel,
-    pub convergence_time: Duration,
-    pub consensus_weight: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FinalityLevel {
-    Level1Local,      // 50ms, 5% revert risk
-    Level2Continental, // 200ms, 0.1% revert risk
-    Level3Global,     // 500ms, <0.001% revert risk
-    Level4Deep,       // 2s, practically zero revert risk
-}
-
-#[derive(Debug, Clone)]
-pub struct FinalityLevels {
-    pub level1_min_relays: usize,
-    pub level2_min_continents: usize,
-    pub level3_min_relays: usize,
-    pub level3_min_continents: usize,
-    pub level4_paths_required: usize,
-}
-
-impl ProofOfTransit {
-    pub fn new(num_paths: usize, path_agreement_threshold: usize) -> Self {
+impl ParallelVoteChains {
+    pub fn new(num_chains: usize) -> Self {
+        let mut chains = Vec::with_capacity(num_chains);
+        let mut chain_specialization = HashMap::new();
+        
+        // Create specialized chains
+        let chain_types = [
+            ChainType::Speed,
+            ChainType::Security,
+            ChainType::SmartContract,
+            ChainType::Privacy,
+            ChainType::Channel,
+            ChainType::Governance,
+            ChainType::Relay,
+            ChainType::Bridge,
+        ];
+        
+        for i in 0..num_chains {
+            let chain_type = chain_types[i % chain_types.len()];
+            chains.push(VoteChain::new(i, chain_type));
+            chain_specialization.insert(i, chain_type);
+        }
+        
         Self {
-            active_paths: Arc::new(RwLock::new(HashMap::new())),
-            transit_proofs: Arc::new(RwLock::new(HashMap::new())),
-            geographic_proofs: Arc::new(RwLock::new(HashMap::new())),
-            path_convergence_cache: Arc::new(RwLock::new(HashMap::new())),
-            num_paths,
-            path_agreement_threshold,
-            finality_levels: FinalityLevels {
-                level1_min_relays: 2,
-                level2_min_continents: 3,
-                level3_min_relays: 10,
-                level3_min_continents: 5,
-                level4_paths_required: 3,
+            chains,
+            validator_assignments: Arc::new(RwLock::new(HashMap::new())),
+            cross_validation_matrix: Arc::new(RwLock::new(CrossValidationMatrix::new(0))),
+            chain_specialization,
+        }
+    }
+    
+    /// Route transaction to optimal chain
+    pub fn route_transaction(&self, tx: &Transaction) -> usize {
+        match tx.tx_type {
+            TransactionType::Microtransaction if tx.amount < 100 => {
+                self.find_chain_by_type(ChainType::Speed)
+            },
+            TransactionType::HighValueTransfer if tx.amount > 100_000 => {
+                self.find_chain_by_type(ChainType::Security)
+            },
+            TransactionType::SmartContractExecution => {
+                self.find_chain_by_type(ChainType::SmartContract)
+            },
+            TransactionType::PrivateTransaction => {
+                self.find_chain_by_type(ChainType::Privacy)
+            },
+            TransactionType::ChannelOperation => {
+                self.find_chain_by_type(ChainType::Channel)
+            },
+            TransactionType::GovernanceVote => {
+                self.find_chain_by_type(ChainType::Governance)
+            },
+            _ => {
+                // Use least loaded chain
+                self.find_least_loaded_chain()
             },
         }
     }
     
-    /// Submit transit proof from relay
-    pub fn submit_transit_proof(
+    /// Submit vote on specific chain
+    pub fn submit_chain_vote(
         &mut self,
-        proof: TransitProof,
+        chain_id: usize,
+        validator_id: PublicKey,
+        block_hash: Hash,
+        merkle_root: Hash,
+        signature: Signature,
     ) -> Result<(), ConsensusError> {
-        // Verify signatures
-        proof.relay_id.verify(
-            &self.serialize_transit_proof(&proof),
-            &proof.outgoing_signature,
-        )?;
-        
-        // Verify timestamp is recent
-        let age = SystemTime::now()
-            .duration_since(proof.timestamp)
-            .unwrap_or(Duration::from_secs(u64::MAX));
-        if age > Duration::from_secs(30) {
-            return Err(ConsensusError::StaleProof);
+        // Verify validator is assigned to this chain
+        let assignments = self.validator_assignments.read().unwrap();
+        if !assignments.get(&validator_id)
+            .map(|chains| chains.contains(&chain_id))
+            .unwrap_or(false) {
+            return Err(ConsensusError::ValidatorNotAssignedToChain);
         }
+        drop(assignments);
         
-        // Verify geographic proof exists
-        let geo_proofs = self.geographic_proofs.read().unwrap();
-        if !geo_proofs.contains_key(&proof.relay_id) {
-            return Err(ConsensusError::MissingGeographicProof);
-        }
-        drop(geo_proofs);
+        // Verify signature
+        let vote_data = bincode::serialize(&(
+            chain_id,
+            &block_hash,
+            &merkle_root,
+        )).unwrap();
+        validator_id.verify(&vote_data, &signature)?;
         
-        // Add proof to collection
-        let mut proofs = self.transit_proofs.write().unwrap();
-        proofs.entry(proof.message_hash)
-            .or_insert_with(Vec::new)
-            .push(proof);
-        
-        Ok(())
-    }
-    
-    /// Verify geographic proof from relay
-    pub fn verify_geographic_proof(
-        &mut self,
-        proof: GeographicProof,
-    ) -> Result<f64, ConsensusError> {
-        let mut score = 0.0;
-        let weight_per_method = 1.0 / proof.verification_methods.len() as f64;
-        
-        for method in &proof.verification_methods {
-            match method {
-                GeographicProofType::NetworkLatency { triangulation, speed_of_light_verified } => {
-                    if *speed_of_light_verified && triangulation.len() >= 3 {
-                        score += weight_per_method;
-                    }
-                },
-                GeographicProofType::IPGeolocation { verified_by_bgp, .. } => {
-                    if *verified_by_bgp {
-                        score += weight_per_method;
-                    }
-                },
-                GeographicProofType::TimezoneConsistency { ntp_verified, .. } => {
-                    if *ntp_verified {
-                        score += weight_per_method;
-                    }
-                },
-                GeographicProofType::PeerWitness { witness_signatures, .. } => {
-                    if witness_signatures.len() >= 2 {
-                        score += weight_per_method;
-                    }
-                },
-            }
-        }
-        
-        // Store if score is high enough (>0.8)
-        if score > 0.8 {
-            self.geographic_proofs.write().unwrap()
-                .insert(proof.relay_id, proof);
-        }
-        
-        Ok(score)
-    }
-    
-    /// Route transaction through multiple paths
-    pub async fn route_transaction(
-        &mut self,
-        tx: &Transaction,
-    ) -> Result<Vec<u8>, ConsensusError> {
-        let mut path_ids = Vec::new();
-        
-        // Create N independent paths
-        for path_id in 0..self.num_paths {
-            let path = self.create_path_for_transaction(tx, path_id as u8).await?;
-            self.active_paths.write().unwrap()
-                .insert(path_id as u8, path);
-            path_ids.push(path_id as u8);
-        }
-        
-        Ok(path_ids)
-    }
-    
-    /// Wait for path convergence (2-of-3 paths agree)
-    pub async fn wait_for_convergence(
-        &self,
-        tx_hash: Hash,
-        timeout: Duration,
-    ) -> Result<PathConvergence, ConsensusError> {
-        let start = Instant::now();
-        
-        loop {
-            // Check if convergence already cached
-            if let Some(convergence) = self.path_convergence_cache.read().unwrap().get(&tx_hash) {
-                return Ok(convergence.clone());
-            }
-            
-            // Check current path status
-            let paths = self.get_paths_for_transaction(tx_hash)?;
-            let converged_count = paths.iter()
-                .filter(|p| p.status == PathStatus::Converged)
-                .count();
-            
-            // 2-of-3 (or threshold) paths converged?
-            if converged_count >= self.path_agreement_threshold {
-                let convergence = PathConvergence {
-                    transaction_hash: tx_hash,
-                    paths: paths.clone(),
-                    agreement_count: converged_count,
-                    finality_level: self.determine_finality_level(&paths),
-                    convergence_time: start.elapsed(),
-                    consensus_weight: self.calculate_consensus_weight(&paths),
-                };
-                
-                // Cache result
-                self.path_convergence_cache.write().unwrap()
-                    .insert(tx_hash, convergence.clone());
-                
-                return Ok(convergence);
-            }
-            
-            // Timeout?
-            if start.elapsed() > timeout {
-                return Err(ConsensusError::ConvergenceTimeout);
-            }
-            
-            // Wait and retry
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    }
-    
-    /// Calculate consensus weight based on path diversity
-    fn calculate_consensus_weight(&self, paths: &[TransitPath]) -> f64 {
-        let unique_relays: HashSet<_> = paths.iter()
-            .flat_map(|p| p.relays.iter())
-            .collect();
-        let unique_asns: HashSet<_> = paths.iter()
-            .flat_map(|p| p.transit_proofs.iter().map(|tp| tp.asn))
-            .collect();
-        let max_continents = paths.iter()
-            .map(|p| p.continent_count)
-            .max()
-            .unwrap_or(0);
-        
-        let relay_score = (unique_relays.len() as f64 / 15.0).min(1.0) * 0.30;
-        let continent_score = (max_continents as f64 / 5.0).min(1.0) * 0.25;
-        let asn_score = (unique_asns.len() as f64 / 5.0).min(1.0) * 0.20;
-        let path_score = (paths.len() as f64 / 3.0).min(1.0) * 0.15;
-        let latency_score = 0.10;  // Simplified
-        
-        relay_score + continent_score + asn_score + path_score + latency_score
-    }
-    
-    /// Determine finality level achieved
-    fn determine_finality_level(&self, paths: &[TransitPath]) -> FinalityLevel {
-        let total_relays: usize = paths.iter().map(|p| p.relays.len()).sum();
-        let max_continents = paths.iter().map(|p| p.continent_count).max().unwrap_or(0);
-        let converged_paths = paths.iter().filter(|p| p.status == PathStatus::Converged).count();
-        
-        if converged_paths >= self.finality_levels.level4_paths_required
-            && total_relays >= self.finality_levels.level3_min_relays
-            && max_continents >= self.finality_levels.level3_min_continents {
-            FinalityLevel::Level4Deep
-        } else if total_relays >= self.finality_levels.level3_min_relays
-            && max_continents >= self.finality_levels.level3_min_continents {
-            FinalityLevel::Level3Global
-        } else if max_continents >= self.finality_levels.level2_min_continents {
-            FinalityLevel::Level2Continental
-        } else {
-            FinalityLevel::Level1Local
-        }
-    }
-    
-    fn get_paths_for_transaction(&self, tx_hash: Hash) -> Result<Vec<TransitPath>, ConsensusError> {
-        let proofs = self.transit_proofs.read().unwrap();
-        let tx_proofs = proofs.get(&tx_hash)
-            .ok_or(ConsensusError::TransactionNotFound)?;
-        
-        // Group proofs by path_id
-        let mut paths_map: HashMap<u8, Vec<TransitProof>> = HashMap::new();
-        for proof in tx_proofs {
-            paths_map.entry(proof.path_id)
-                .or_insert_with(Vec::new)
-                .push(proof.clone());
-        }
-        
-        // Convert to TransitPath structs
-        let paths: Vec<TransitPath> = paths_map.into_iter()
-            .map(|(path_id, proofs)| self.construct_transit_path(path_id, proofs))
-            .collect();
-        
-        Ok(paths)
-    }
-    
-    fn construct_transit_path(&self, path_id: u8, proofs: Vec<TransitProof>) -> TransitPath {
-        let relays: Vec<PublicKey> = proofs.iter().map(|p| p.relay_id).collect();
-        let total_latency: Duration = proofs.iter()
-            .map(|p| p.network_latency)
-            .sum();
-        let asn_diversity = proofs.iter()
-            .map(|p| p.asn)
-            .collect::<HashSet<_>>()
-            .len();
-        
-        TransitPath {
-            path_id,
-            relays,
-            transit_proofs: proofs,
-            total_latency,
-            geographic_diversity: 0.8,  // Simplified
-            asn_diversity,
-            continent_count: 3,  // Simplified
-            status: PathStatus::Active,
-        }
-    }
-    
-    async fn create_path_for_transaction(
-        &self,
-        tx: &Transaction,
-        path_id: u8,
-    ) -> Result<TransitPath, ConsensusError> {
-        // Simplified: In production, use relay network to create actual paths
-        Ok(TransitPath {
-            path_id,
-            relays: Vec::new(),
-            transit_proofs: Vec::new(),
-            total_latency: Duration::from_millis(400),
-            geographic_diversity: 0.85,
-            asn_diversity: 4,
-            continent_count: 4,
-            status: PathStatus::Active,
-        })
-    }
-    
-    fn serialize_transit_proof(&self, proof: &TransitProof) -> Vec<u8> {
-        bincode::serialize(proof).unwrap()
-    }
-}
-```
-
----
-
-### Post-Quantum Security for PoT (Implemented Immediately)
-
-**Overview:**
-
-All PoT cryptographic primitives are built with **hybrid classical + post-quantum schemes** from day one, providing immediate protection against both current and future quantum computers. This eliminates "harvest now, decrypt later" vulnerabilities and ensures long-term security.
-
-**1. Hybrid Signature Scheme**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/hybrid_signatures.rs
-
-use ed25519_dalek::{PublicKey as Ed25519PublicKey, Signature as Ed25519Signature};
-use pqcrypto_dilithium::dilithium3;
-use serde::{Deserialize, Serialize};
-
-/// Hybrid signature combining classical + post-quantum
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HybridSignature {
-    pub ed25519: Ed25519Signature,      // 64 bytes - classical
-    pub dilithium3: Vec<u8>,            // ~2,420 bytes - post-quantum
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HybridPublicKey {
-    pub ed25519: Ed25519PublicKey,      // 32 bytes
-    pub dilithium3: Vec<u8>,            // ~1,952 bytes
-}
-
-impl HybridSignature {
-    /// Both signatures must verify for the hybrid signature to be valid
-    pub fn verify(&self, message: &[u8], pk: &HybridPublicKey) -> Result<(), SignatureError> {
-        // Step 1: Verify classical signature
-        pk.ed25519
-            .verify(message, &self.ed25519)
-            .map_err(|_| SignatureError::Ed25519Failed)?;
-        
-        // Step 2: Verify post-quantum signature
-        let dilithium_pk = dilithium3::PublicKey::from_bytes(&pk.dilithium3)
-            .map_err(|_| SignatureError::InvalidDilithiumKey)?;
-        let dilithium_sig = dilithium3::DetachedSignature::from_bytes(&self.dilithium3)
-            .map_err(|_| SignatureError::InvalidDilithiumSignature)?;
-        
-        dilithium3::verify_detached_signature(&dilithium_sig, message, &dilithium_pk)
-            .map_err(|_| SignatureError::DilithiumFailed)?;
-        
-        // Both signatures valid → hybrid signature valid
-        Ok(())
-    }
-    
-    /// Sign message with both classical and post-quantum keys
-    pub fn sign(message: &[u8], sk: &HybridSecretKey) -> Self {
-        let ed25519_sig = sk.ed25519.sign(message);
-        let dilithium_sig = dilithium3::detached_sign(message, &sk.dilithium3);
-        
-        HybridSignature {
-            ed25519: ed25519_sig,
-            dilithium3: dilithium_sig.as_bytes().to_vec(),
-        }
-    }
-}
-```
-
-**Usage in TransitProof:**
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransitProof {
-    pub message_hash: Hash,
-    pub relay_id: HybridPublicKey,                    // Hybrid key
-    pub incoming_signature: HybridSignature,          // Both classical + PQ
-    pub outgoing_signature: HybridSignature,          // Both classical + PQ
-    pub timestamp: SystemTime,
-    pub geographic_coordinates: (f64, f64),
-    pub network_latency: Duration,
-    pub path_position: u8,
-    pub asn: u32,
-    pub path_id: u8,
-}
-```
-
-**Security Guarantee:**
-- **Classical security**: Ed25519 provides 128-bit security against classical computers
-- **Quantum security**: Dilithium3 provides 128-bit security against quantum computers
-- **Attack requirement**: Attacker must break BOTH schemes simultaneously (infeasible)
-
-**2. Quantum-Resistant Hash Commitments**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/quantum_hashes.rs
-
-use sha3::{Sha3_512, Digest};
-use blake3::Hash as Blake3Hash;
-
-/// Hybrid hash combining BLAKE3 (fast) + SHA3-512 (quantum-resistant)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HybridHash {
-    pub blake3: Blake3Hash,     // 32 bytes - fast for classical security
-    pub sha3_512: [u8; 64],     // 64 bytes - quantum-resistant
-}
-
-impl HybridHash {
-    pub fn new(data: &[u8]) -> Self {
-        // BLAKE3 for speed (256-bit → 128-bit quantum security)
-        let blake3 = blake3::hash(data);
-        
-        // SHA3-512 for quantum resistance (512-bit → 256-bit quantum security)
-        let mut hasher = Sha3_512::new();
-        hasher.update(data);
-        let sha3_result = hasher.finalize();
-        let mut sha3_512 = [0u8; 64];
-        sha3_512.copy_from_slice(&sha3_result);
-        
-        HybridHash { blake3, sha3_512 }
-    }
-    
-    pub fn verify(&self, data: &[u8]) -> bool {
-        let computed = Self::new(data);
-        self.blake3 == computed.blake3 && self.sha3_512 == computed.sha3_512
-    }
-}
-
-/// Lattice-based commitment for quantum resistance
-pub struct LatticeCommitment {
-    pub commitment: Vec<u8>,    // Ring-LWE commitment
-    pub opening: Option<Vec<u8>>,
-}
-
-impl LatticeCommitment {
-    /// Create quantum-resistant commitment using Ring-LWE
-    pub fn commit(value: &[u8], randomness: &[u8]) -> Self {
-        // Simplified: Use Ring-LWE parameters
-        // In production: Use kyber or other standardized lattice scheme
-        let commitment = Self::ring_lwe_commit(value, randomness);
-        
-        LatticeCommitment {
-            commitment,
-            opening: None,
-        }
-    }
-    
-    fn ring_lwe_commit(value: &[u8], randomness: &[u8]) -> Vec<u8> {
-        // Placeholder: Implement proper Ring-LWE commitment
-        // Use NIST-standardized Kyber or similar
-        let mut combined = Vec::new();
-        combined.extend_from_slice(value);
-        combined.extend_from_slice(randomness);
-        blake3::hash(&combined).as_bytes().to_vec()
-    }
-}
-```
-
-**3. Post-Quantum Key Exchange for Path Setup**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/pq_key_exchange.rs
-
-use pqcrypto_kyber::kyber1024;
-use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
-
-/// Hybrid KEM combining X25519 (fast) + Kyber1024 (quantum-resistant)
-pub struct HybridKEM {
-    pub x25519_public: X25519Public,
-    pub kyber_public: kyber1024::PublicKey,
-}
-
-impl HybridKEM {
-    /// Establish shared secret using both classical and PQ schemes
-    pub fn encapsulate(&self) -> (Vec<u8>, HybridCiphertext) {
-        // Step 1: X25519 key exchange
-        let x25519_ephemeral = X25519Secret::new(&mut rand::thread_rng());
-        let x25519_shared = x25519_ephemeral.diffie_hellman(&self.x25519_public);
-        
-        // Step 2: Kyber1024 encapsulation
-        let (kyber_shared, kyber_ciphertext) = kyber1024::encapsulate(&self.kyber_public);
-        
-        // Step 3: Combine both shared secrets with KDF
-        let combined_secret = Self::combine_secrets(
-            x25519_shared.as_bytes(),
-            kyber_shared.as_bytes(),
-        );
-        
-        let ciphertext = HybridCiphertext {
-            x25519_ephemeral: x25519_ephemeral.to_bytes(),
-            kyber_ciphertext: kyber_ciphertext.as_bytes().to_vec(),
+        // Add vote to chain
+        let chain = &mut self.chains[chain_id];
+        let vote = ChainVote {
+            validator_id,
+            chain_id,
+            block_hash,
+            merkle_root,
+            transaction_count: 0,  // Set by chain
+            timestamp: SystemTime::now(),
+            signature,
         };
         
-        (combined_secret, ciphertext)
-    }
-    
-    fn combine_secrets(classical: &[u8], quantum: &[u8]) -> Vec<u8> {
-        // Use HKDF to derive combined key
-        let mut combined = Vec::new();
-        combined.extend_from_slice(classical);
-        combined.extend_from_slice(quantum);
+        chain.current_votes.push(vote);
         
-        let mut hasher = Sha3_512::new();
-        hasher.update(&combined);
-        hasher.finalize().to_vec()
+        // Check if chain reached consensus (2/3 threshold)
+        if chain.current_votes.len() >= (chain.validators.len() * 2 / 3) {
+            chain.finalize_block(block_hash)?;
+        }
+        
+        Ok(())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HybridCiphertext {
-    pub x25519_ephemeral: [u8; 32],
-    pub kyber_ciphertext: Vec<u8>,  // ~1,568 bytes
-}
-```
-
-**4. Geographic Proof with Post-Quantum Security**
-
-**Implementation:**
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeographicProof {
-    pub relay_id: HybridPublicKey,                    // Hybrid identity
-    pub claimed_location: (f64, f64),
-    pub verification_methods: Vec<GeographicProofType>,
-    pub verification_timestamp: SystemTime,
-    pub verification_score: f64,
-    pub quantum_attestation: Option<QuantumAttestation>,  // NEW
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantumAttestation {
-    /// Hardware TPM signature (hybrid)
-    pub tpm_signature: HybridSignature,
     
-    /// Quantum random beacon proof (verifiable randomness)
-    pub qrng_proof: QuantumRandomProof,
+    /// Cross-validate all chains (called every block)
+    pub fn cross_validate_chains(&mut self, height: u64) -> Result<bool, ConsensusError> {
+        let num_chains = self.chains.len();
+        let mut matrix = CrossValidationMatrix::new(height);
+        
+        // Each chain validates all other chains
+        for i in 0..num_chains {
+            for j in 0..num_chains {
+                if i == j {
+                    continue;  // Don't self-validate
+                }
+                
+                let chain_a = &self.chains[i];
+                let chain_b = &self.chains[j];
+                
+                // Verify chain B's Merkle root from chain A's perspective
+                let valid = self.verify_cross_chain_merkle(
+                    chain_a,
+                    chain_b,
+                )?;
+                
+                matrix.validations.insert(
+                    (i, j),
+                    ValidationResult {
+                        valid,
+                        validator_id: chain_a.validators[0],  // Use first validator as representative
+                        timestamp: SystemTime::now(),
+                        merkle_proof: Vec::new(),  // Simplified
+                    },
+                );
+            }
+        }
+        
+        // Check if all validations passed
+        let all_valid = matrix.validations.values().all(|v| v.valid);
+        matrix.consensus_reached = all_valid;
+        
+        *self.cross_validation_matrix.write().unwrap() = matrix;
+        
+        Ok(all_valid)
+    }
     
-    /// Lattice-based timestamp commitment
-    pub timestamp_commitment: LatticeCommitment,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GeographicProofType {
-    NetworkLatency {
-        triangulation: Vec<(HybridPublicKey, Duration)>,  // Hybrid keys
-        hybrid_signatures: Vec<HybridSignature>,          // PQ signatures
-    },
-    PeerWitness {
-        witness_signatures: Vec<HybridSignature>,         // PQ signatures
-        witness_locations: Vec<(f64, f64)>,
-    },
-    IPGeolocation {
-        provider: String,
-        confidence: f64,
-        verification_hash: HybridHash,                    // Hybrid hash
-    },
-    TimezoneBehavior {
-        observed_pattern: Vec<(SystemTime, bool)>,
-        timezone_signature: HybridSignature,              // PQ signature
-    },
-}
-```
-
-**5. Quantum-Resistant Merkle Trees**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/quantum_merkle.rs
-
-/// Merkle tree using SHA3-512 for quantum resistance
-pub struct QuantumMerkleTree {
-    pub root: [u8; 64],  // SHA3-512 hash
-    pub depth: usize,
-    pub leaf_count: usize,
-}
-
-impl QuantumMerkleTree {
-    pub fn build(leaves: Vec<&[u8]>) -> Self {
-        let mut current_level: Vec<[u8; 64]> = leaves
+    /// Rotate validators between chains (every 100 blocks)
+    pub fn rotate_validators(&mut self, block_height: u64) -> Result<(), ConsensusError> {
+        if block_height % 100 != 0 {
+            return Ok(());  // Only rotate every 100 blocks
+        }
+        
+        let mut assignments = self.validator_assignments.write().unwrap();
+        
+        // Get all validators
+        let all_validators: Vec<PublicKey> = assignments.keys().cloned().collect();
+        let num_chains = self.chains.len();
+        let validators_per_chain = all_validators.len() / num_chains;
+        
+        // Rotate: chain N gets validators from chain (N+1) % num_chains
+        for i in 0..num_chains {
+            let start = (i * validators_per_chain) % all_validators.len();
+            let end = start + validators_per_chain;
+            let new_validators = all_validators[start..end].to_vec();
+            
+            self.chains[i].validators = new_validators.clone();
+            
+            // Update assignments
+            for validator in new_validators {
+                assignments.entry(validator)
+                    .or_insert_with(Vec::new)
+                    .push(i);
+            }
+        }
+        
+        tracing::info!("Rotated validators at block {}", block_height);
+        Ok(())
+    }
+    
+    /// Calculate combined throughput across all chains
+    pub fn calculate_combined_tps(&self) -> f64 {
+        self.chains.iter().map(|c| c.tps).sum()
+    }
+    
+    /// Rebalance chains based on load
+    pub fn rebalance_chains(&mut self) -> Result<(), ConsensusError> {
+        // Find overloaded chains (load > 0.8)
+        let overloaded: Vec<usize> = self.chains
             .iter()
-            .map(|leaf| Self::hash_leaf(leaf))
+            .enumerate()
+            .filter(|(_, c)| c.load_factor > 0.8)
+            .map(|(i, _)| i)
             .collect();
         
-        let mut depth = 0;
-        while current_level.len() > 1 {
-            current_level = Self::hash_level(&current_level);
-            depth += 1;
-        }
+        // Find underutilized chains (load < 0.3)
+        let underutilized: Vec<usize> = self.chains
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.load_factor < 0.3)
+            .map(|(i, _)| i)
+            .collect();
         
-        QuantumMerkleTree {
-            root: current_level[0],
-            depth,
-            leaf_count: leaves.len(),
-        }
-    }
-    
-    fn hash_leaf(data: &[u8]) -> [u8; 64] {
-        let mut hasher = Sha3_512::new();
-        hasher.update(b"leaf:");
-        hasher.update(data);
-        let result = hasher.finalize();
-        let mut output = [0u8; 64];
-        output.copy_from_slice(&result);
-        output
-    }
-    
-    fn hash_level(level: &[[u8; 64]]) -> Vec<[u8; 64]> {
-        level.chunks(2).map(|chunk| {
-            let mut hasher = Sha3_512::new();
-            hasher.update(b"node:");
-            hasher.update(&chunk[0]);
-            if chunk.len() > 1 {
-                hasher.update(&chunk[1]);
-            }
-            let result = hasher.finalize();
-            let mut output = [0u8; 64];
-            output.copy_from_slice(&result);
-            output
-        }).collect()
-    }
-    
-    /// Generate quantum-resistant Merkle proof
-    pub fn generate_proof(&self, leaf_index: usize) -> QuantumMerkleProof {
-        // Implementation similar to classical Merkle proof
-        // but using SHA3-512 hashes
-        QuantumMerkleProof {
-            leaf_index,
-            siblings: Vec::new(),  // Populated in full implementation
-            root: self.root,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantumMerkleProof {
-    pub leaf_index: usize,
-    pub siblings: Vec<[u8; 64]>,  // SHA3-512 sibling hashes
-    pub root: [u8; 64],
-}
-```
-
-**6. Time-Lock Encryption for Future-Proof Privacy**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/time_lock.rs
-
-/// Time-lock encryption resistant to quantum "harvest now, decrypt later"
-pub struct TimeLockEncryption {
-    pub puzzle_difficulty: u64,  // Number of sequential hash operations
-    pub encrypted_data: Vec<u8>,
-    pub public_parameters: TimeLockParams,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimeLockParams {
-    pub creation_time: SystemTime,
-    pub unlock_time: SystemTime,
-    pub difficulty: u64,
-    pub modulus: Vec<u8>,  // RSA modulus for time-lock puzzle
-}
-
-impl TimeLockEncryption {
-    /// Encrypt data that can only be decrypted after time T
-    pub fn encrypt(data: &[u8], unlock_duration: Duration) -> Self {
-        // Use Rivest-Shamir-Wagner time-lock puzzle
-        // Even quantum computer must perform sequential operations
-        
-        let difficulty = Self::calculate_difficulty(unlock_duration);
-        let (puzzle_key, public_params) = Self::create_puzzle(difficulty);
-        
-        // Encrypt data with puzzle key
-        let encrypted = Self::symmetric_encrypt(data, &puzzle_key);
-        
-        TimeLockEncryption {
-            puzzle_difficulty: difficulty,
-            encrypted_data: encrypted,
-            public_parameters: public_params,
-        }
-    }
-    
-    fn calculate_difficulty(duration: Duration) -> u64 {
-        // Assume 1 billion hashes/sec on modern hardware
-        // difficulty = operations_per_second * duration_seconds
-        let seconds = duration.as_secs();
-        seconds * 1_000_000_000
-    }
-    
-    fn create_puzzle(difficulty: u64) -> (Vec<u8>, TimeLockParams) {
-        // Simplified: Full implementation uses RSA time-lock puzzle
-        let puzzle_key = vec![0u8; 32];  // Derived from puzzle solution
-        let params = TimeLockParams {
-            creation_time: SystemTime::now(),
-            unlock_time: SystemTime::now() + Duration::from_secs(difficulty / 1_000_000_000),
-            difficulty,
-            modulus: vec![0u8; 256],  // RSA-2048 modulus
-        };
-        (puzzle_key, params)
-    }
-    
-    fn symmetric_encrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
-        // Use AES-256-GCM or ChaCha20-Poly1305
-        data.to_vec()  // Placeholder
-    }
-}
-```
-
-**7. Quantum Random Number Generation**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/quantum_rng.rs
-
-use rand::Rng;
-
-/// Quantum random number generator for path selection
-pub struct QuantumRNG {
-    /// Connection to hardware QRNG (optional)
-    hardware_source: Option<HardwareQRNG>,
-    
-    /// Fallback to cryptographic RNG
-    fallback_rng: rand::rngs::ThreadRng,
-}
-
-impl QuantumRNG {
-    pub fn new() -> Self {
-        QuantumRNG {
-            hardware_source: HardwareQRNG::connect(),
-            fallback_rng: rand::thread_rng(),
-        }
-    }
-    
-    /// Generate truly random bytes for path selection
-    pub fn generate_random_bytes(&mut self, count: usize) -> Vec<u8> {
-        if let Some(ref mut hw) = self.hardware_source {
-            // Use hardware QRNG if available (e.g., ANU QRNG, ID Quantique)
-            match hw.get_random_bytes(count) {
-                Ok(bytes) => return bytes,
-                Err(_) => {
-                    // Fallback to cryptographic RNG
-                    log::warn!("Hardware QRNG unavailable, using fallback");
-                }
+        // Split overloaded chains
+        for chain_id in overloaded {
+            if self.chains.len() < 16 {  // Max 16 chains
+                self.split_chain(chain_id)?;
             }
         }
         
-        // Cryptographic RNG fallback
-        (0..count).map(|_| self.fallback_rng.gen()).collect()
-    }
-    
-    /// Select random relays for path construction
-    pub fn select_random_relays(
-        &mut self,
-        available_relays: &[RelayInfo],
-        count: usize,
-    ) -> Vec<RelayInfo> {
-        let random_bytes = self.generate_random_bytes(count * 8);
-        
-        let mut selected = Vec::new();
-        let mut used_indices = std::collections::HashSet::new();
-        
-        for chunk in random_bytes.chunks(8) {
-            let index = u64::from_le_bytes(chunk.try_into().unwrap()) as usize
-                % available_relays.len();
-            
-            if !used_indices.contains(&index) {
-                selected.push(available_relays[index].clone());
-                used_indices.insert(index);
-                
-                if selected.len() >= count {
-                    break;
-                }
-            }
+        // Merge underutilized chains
+        if underutilized.len() >= 2 {
+            self.merge_chains(underutilized[0], underutilized[1])?;
         }
-        
-        selected
-    }
-}
-
-struct HardwareQRNG {
-    // Connection to hardware quantum random number generator
-}
-
-impl HardwareQRNG {
-    fn connect() -> Option<Self> {
-        // Try to connect to hardware QRNG
-        // Return None if unavailable
-        None
-    }
-    
-    fn get_random_bytes(&mut self, count: usize) -> Result<Vec<u8>, QRNGError> {
-        // Fetch random bytes from hardware
-        Err(QRNGError::Unavailable)
-    }
-}
-```
-
-**8. Post-Quantum Secure Multi-Party Computation**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/pq_mpc.rs
-
-/// Lattice-based homomorphic encryption for privacy-preserving computation
-pub struct LatticeMPC {
-    pub public_key: Vec<u8>,
-    pub evaluation_key: Vec<u8>,
-}
-
-impl LatticeMPC {
-    /// Encrypt relay metrics for privacy-preserving aggregation
-    pub fn encrypt_metric(&self, value: u64) -> LatticeCiphertext {
-        // Use BGV or BFV scheme for lattice-based homomorphic encryption
-        LatticeCiphertext {
-            ciphertext: vec![0u8; 1024],  // Placeholder
-            scheme: "BFV".to_string(),
-        }
-    }
-    
-    /// Aggregate encrypted metrics without decryption
-    pub fn aggregate(ciphertexts: Vec<LatticeCiphertext>) -> LatticeCiphertext {
-        // Homomorphic addition of ciphertexts
-        LatticeCiphertext {
-            ciphertext: vec![0u8; 1024],  // Placeholder
-            scheme: "BFV".to_string(),
-        }
-    }
-    
-    /// Decrypt aggregated result
-    pub fn decrypt(&self, ciphertext: &LatticeCiphertext, secret_key: &[u8]) -> u64 {
-        // Decrypt using lattice-based scheme
-        0  // Placeholder
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LatticeCiphertext {
-    pub ciphertext: Vec<u8>,
-    pub scheme: String,
-}
-```
-
-**9. Quantum-Resistant Zero-Knowledge Proofs**
-
-**Implementation:**
-```rust
-// File: crates/dchat-crypto/src/quantum_zkp.rs
-
-/// Lattice-based zero-knowledge proof system
-pub struct LatticeZKP {
-    pub statement: Vec<u8>,
-    pub proof: Vec<u8>,
-}
-
-impl LatticeZKP {
-    /// Prove relay knows private key without revealing it (quantum-resistant)
-    pub fn prove_key_possession(
-        public_key: &HybridPublicKey,
-        secret_key: &HybridSecretKey,
-        challenge: &[u8],
-    ) -> Self {
-        // Use lattice-based ZK proof (e.g., Fiat-Shamir on Ring-LWE)
-        
-        let statement = public_key.dilithium3.clone();
-        let proof = Self::generate_lattice_proof(secret_key, challenge);
-        
-        LatticeZKP { statement, proof }
-    }
-    
-    /// Verify proof without learning secret key
-    pub fn verify(&self, public_key: &HybridPublicKey, challenge: &[u8]) -> bool {
-        // Verify lattice-based proof
-        true  // Placeholder
-    }
-    
-    fn generate_lattice_proof(secret_key: &HybridSecretKey, challenge: &[u8]) -> Vec<u8> {
-        // Generate proof using lattice-based techniques
-        vec![0u8; 512]  // Placeholder
-    }
-    
-    /// Prove location without revealing exact coordinates (range proof)
-    pub fn prove_location_in_region(
-        exact_location: (f64, f64),
-        region: GeographicRegion,
-    ) -> Self {
-        // Lattice-based range proof
-        LatticeZKP {
-            statement: bincode::serialize(&region).unwrap(),
-            proof: vec![0u8; 512],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeographicRegion {
-    pub min_lat: f64,
-    pub max_lat: f64,
-    pub min_lon: f64,
-    pub max_lon: f64,
-}
-```
-
-**10. Quantum Emergency Upgrade Protocol**
-
-**Implementation:**
-```rust
-// File: crates/dchat-blockchain/src/quantum_emergency.rs
-
-/// Emergency protocol for rapid cryptographic upgrade
-pub struct QuantumEmergencyProtocol {
-    pub alert_threshold: AlertLevel,
-    pub current_status: QuantumThreatStatus,
-    pub upgrade_candidates: Vec<CryptoUpgrade>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlertLevel {
-    Green,      // No known quantum threat
-    Yellow,     // Quantum computer rumors
-    Orange,     // Quantum breakthrough announced
-    Red,        // Active quantum attack detected
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantumThreatStatus {
-    pub last_assessment: SystemTime,
-    pub threat_level: AlertLevel,
-    pub compromised_algorithms: Vec<String>,
-    pub recommended_migration: Vec<String>,
-}
-
-impl QuantumEmergencyProtocol {
-    /// Monitor quantum computing developments
-    pub fn assess_threat_level(&mut self) -> AlertLevel {
-        // Monitor:
-        // - Academic papers (arXiv quantum computing section)
-        // - NIST announcements
-        // - Industry reports (IBM, Google, IonQ quantum progress)
-        // - Attack detection in network
-        
-        // If quantum breakthrough detected:
-        if self.detect_quantum_attack() {
-            return AlertLevel::Red;
-        }
-        
-        // If major quantum milestone reached:
-        if self.check_quantum_milestones() {
-            return AlertLevel::Orange;
-        }
-        
-        AlertLevel::Green
-    }
-    
-    fn detect_quantum_attack(&self) -> bool {
-        // Check for:
-        // - Impossible signature forgeries
-        // - Preimage attacks on hashes
-        // - Broken DH key exchanges
-        false
-    }
-    
-    /// Trigger emergency upgrade
-    pub fn trigger_emergency_upgrade(&self) -> Result<(), UpgradeError> {
-        log::error!("QUANTUM EMERGENCY: Initiating cryptographic upgrade");
-        
-        // Step 1: Broadcast emergency alert to all nodes
-        self.broadcast_emergency_alert();
-        
-        // Step 2: Activate backup post-quantum schemes
-        self.activate_backup_crypto();
-        
-        // Step 3: Invalidate compromised keys
-        self.revoke_compromised_keys();
-        
-        // Step 4: Force network upgrade within 24 hours
-        self.enforce_upgrade_deadline(Duration::from_secs(86400));
         
         Ok(())
     }
     
-    fn broadcast_emergency_alert(&self) {
-        // Broadcast to all relays and users
-        log::warn!("Broadcasting quantum emergency alert to network");
-    }
-    
-    fn activate_backup_crypto(&self) {
-        // Switch to pure post-quantum mode
-        log::warn!("Activating post-quantum-only mode");
-    }
-    
-    fn revoke_compromised_keys(&self) {
-        // Invalidate all classical-only keys
-        log::warn!("Revoking potentially compromised classical keys");
-    }
-    
-    fn enforce_upgrade_deadline(&self, deadline: Duration) {
-        log::warn!("Enforcing upgrade deadline: {:?}", deadline);
-        // Nodes that don't upgrade within deadline are disconnected
-    }
-}
-```
-
----
-
-### Performance & Security Comparison
-
-| Metric | Classical PoT | Post-Quantum PoT | Overhead |
-|--------|---------------|------------------|----------|
-| **Signature Size** | 64 bytes | ~2,500 bytes | 39x |
-| **Public Key Size** | 32 bytes | ~2,000 bytes | 62x |
-| **Signature Verification** | 50 μs | 200 μs | 4x |
-| **Key Generation** | 10 μs | 500 μs | 50x |
-| **Hash Size** | 32 bytes | 64 bytes | 2x |
-| **Hash Speed** | 1 GB/s | 500 MB/s | 2x |
-| **Ciphertext Size (KEM)** | 32 bytes | ~1,600 bytes | 50x |
-| **Classical Security** | 128-bit | 128-bit | Same |
-| **Quantum Security** | 0-bit (broken) | 128-bit | ∞ improvement |
-| **TPS Impact** | 75,000 | ~60,000 | 20% reduction |
-| **Latency Impact** | 500ms | 550ms | +50ms |
-
-**Key Insights:**
-- **Signature overhead**: Dilithium3 signatures are ~39x larger but provide quantum resistance
-- **Performance cost**: ~20% TPS reduction (acceptable for long-term security)
-- **Security gain**: Infinite improvement (classical → quantum-resistant)
-- **Network bandwidth**: ~40x increase in proof size (mitigated by compression)
-
----
-
-### Migration & Rollout Strategy
-
-**Phase 1: Immediate Deployment (Day 1)**
-- Deploy hybrid cryptography in all new relays
-- All new transit proofs use hybrid signatures
-- Backward compatible: Accept classical-only proofs temporarily
-
-**Phase 2: Mandatory Upgrade (Month 1)**
-- All relays must upgrade to hybrid crypto
-- Classical-only proofs deprecated
-- Grace period: 30 days for relay operators
-
-**Phase 3: Pure Post-Quantum Mode (Month 3)**
-- Remove classical-only code paths
-- All signatures must be hybrid
-- No backward compatibility
-
-**Phase 4: Continuous Monitoring (Ongoing)**
-- Monitor quantum computing progress
-- Update algorithms as standards evolve
-- Emergency protocol on standby
-
----
-
-### Integration with Existing PoT Implementation
-
-**Updated TransitProof with PQ Security:**
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransitProof {
-    pub message_hash: HybridHash,                     // SHA3-512 + BLAKE3
-    pub relay_id: HybridPublicKey,                    // Ed25519 + Dilithium3
-    pub incoming_signature: HybridSignature,          // Both required
-    pub outgoing_signature: HybridSignature,          // Both required
-    pub timestamp: SystemTime,
-    pub geographic_coordinates: (f64, f64),
-    pub network_latency: Duration,
-    pub path_position: u8,
-    pub asn: u32,
-    pub path_id: u8,
-    pub quantum_attestation: Option<QuantumAttestation>,  // Hardware TPM + QRNG
-}
-
-impl ProofOfTransit {
-    pub fn submit_transit_proof(&self, proof: TransitProof) -> Result<(), ConsensusError> {
-        // Verify hybrid signature
-        proof.incoming_signature.verify(
-            &proof.message_hash.sha3_512,
-            &proof.relay_id,
-        )?;
-        
-        proof.outgoing_signature.verify(
-            &proof.message_hash.sha3_512,
-            &proof.relay_id,
-        )?;
-        
-        // Verify quantum attestation if present
-        if let Some(ref attestation) = proof.quantum_attestation {
-            self.verify_quantum_attestation(attestation)?;
+    fn find_chain_by_type(&self, chain_type: ChainType) -> usize {
+        for (chain_id, &ctype) in &self.chain_specialization {
+            if ctype == chain_type {
+                return *chain_id;
+            }
         }
+        0  // Default to first chain
+    }
+    
+    fn find_least_loaded_chain(&self) -> usize {
+        self.chains
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.load_factor.partial_cmp(&b.load_factor).unwrap())
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+    
+    fn verify_cross_chain_merkle(
+        &self,
+        chain_a: &VoteChain,
+        chain_b: &VoteChain,
+    ) -> Result<bool, ConsensusError> {
+        // Verify chain B's Merkle root is consistent
+        // In production, use full Merkle proof verification
+        Ok(chain_b.merkle_root.as_bytes().iter().all(|&b| b != 0))
+    }
+    
+    fn split_chain(&mut self, chain_id: usize) -> Result<(), ConsensusError> {
+        // Create new chain with same type
+        let chain_type = self.chains[chain_id].chain_type;
+        let new_chain_id = self.chains.len();
+        let new_chain = VoteChain::new(new_chain_id, chain_type);
         
-        // Rest of validation...
+        self.chains.push(new_chain);
+        self.chain_specialization.insert(new_chain_id, chain_type);
+        
+        tracing::info!("Split chain {} into chains {} and {}", chain_id, chain_id, new_chain_id);
         Ok(())
     }
     
-    fn verify_quantum_attestation(&self, attestation: &QuantumAttestation) -> Result<(), ConsensusError> {
-        // Verify TPM signature
-        attestation.tpm_signature.verify(/* ... */)?;
+    fn merge_chains(&mut self, chain_a: usize, chain_b: usize) -> Result<(), ConsensusError> {
+        // Merge chain B into chain A
+        let chain_b_validators = self.chains[chain_b].validators.clone();
+        self.chains[chain_a].validators.extend(chain_b_validators);
         
-        // Verify QRNG proof
-        attestation.qrng_proof.verify()?;
+        // Remove chain B (replace with empty)
+        self.chains[chain_b] = VoteChain::new(chain_b, ChainType::Speed);
         
-        // Verify timestamp commitment
-        attestation.timestamp_commitment.verify()?;
-        
+        tracing::info!("Merged chains {} and {}", chain_a, chain_b);
         Ok(())
+    }
+}
+
+impl VoteChain {
+    fn new(chain_id: usize, chain_type: ChainType) -> Self {
+        Self {
+            chain_id,
+            chain_type,
+            current_height: 0,
+            validators: Vec::new(),
+            current_votes: Vec::new(),
+            merkle_root: blake3::hash(b"genesis"),
+            finalized_blocks: Vec::new(),
+            tps: 0.0,
+            load_factor: 0.0,
+        }
+    }
+    
+    fn finalize_block(&mut self, block_hash: Hash) -> Result<(), ConsensusError> {
+        self.finalized_blocks.push(block_hash);
+        self.current_height += 1;
+        self.current_votes.clear();
+        Ok(())
+    }
+}
+
+impl CrossValidationMatrix {
+    fn new(height: u64) -> Self {
+        Self {
+            height,
+            validations: HashMap::new(),
+            consensus_reached: false,
+        }
     }
 }
 ```
 
 ---
 
-### Configuration Updates
-
-```toml
-# config.toml
-
-[proof_of_transit]
-num_paths = 3
-path_agreement_threshold = 2  # 2-of-3
-enable_post_quantum = true    # NEW: Enable PQ crypto from day 1
-
-[post_quantum_crypto]
-# Signature scheme
-signature_algorithm = "hybrid"  # "classical", "hybrid", or "pq-only"
-classical_sig = "ed25519"
-pq_sig = "dilithium3"
-
-# Hash functions
-hash_algorithm = "hybrid"
-fast_hash = "blake3"
-quantum_resistant_hash = "sha3-512"
-
-# Key exchange
-kem_algorithm = "hybrid"
-classical_kem = "x25519"
-pq_kem = "kyber1024"
-
-# Hardware acceleration
-enable_qrng = true              # Use hardware QRNG if available
-enable_tpm_attestation = true   # Use TPM for hardware attestation
-
-# Emergency protocol
-quantum_threat_monitoring = true
-emergency_upgrade_enabled = true
-upgrade_deadline_hours = 24
-
-# Performance tuning
-enable_signature_batching = true  # Batch verify multiple signatures
-enable_proof_compression = true   # Compress large PQ proofs
-compression_algorithm = "zstd"
-```
-
----
-
-### Security Guarantees
-
-| Threat Model | Classical PoT | Post-Quantum PoT |
-|--------------|---------------|------------------|
-| **Classical Computer Attack** | ✅ Secure (128-bit) | ✅ Secure (128-bit) |
-| **Quantum Computer (2030s)** | ❌ Broken (hours) | ✅ Secure (128-bit) |
-| **Harvest Now, Decrypt Later** | ❌ Vulnerable | ✅ Protected |
-| **Signature Forgery** | ❌ Shor's algorithm | ✅ Lattice-hard |
-| **Hash Collision** | ⚠️ 128-bit quantum | ✅ 256-bit quantum |
-| **Transit Proof Forgery** | ❌ Quantum breaks | ✅ Both schemes required |
-| **Geographic Proof Forgery** | ❌ Quantum breaks | ✅ Hybrid signatures |
-| **Path Manipulation** | ❌ Key compromise | ✅ Quantum-resistant |
-
----
-
-### Consensus Fusion: PoRW + PoT Working Together
+### Consensus Fusion: PoRW + PVC Working Together
 
 **How the Dual-Consensus System Works:**
 
@@ -4397,90 +3335,71 @@ User Transaction
     │       ↓
     │   PoRW finality (500-800ms)
     │
-    └─→ PoT: Routed through 3 independent geographic paths
+    └─→ PVC: Routes to specialized chain (parallel validation)
             ↓
-        Each path: transit proofs from relays
+        Chain validators vote
             ↓
-        Geographic proof verification (speed of light)
+        PVC finality (200ms-2s depending on chain type)
             ↓
-        Path convergence detection (2-of-3 paths agree)
-            ↓
-        Tunable finality levels:
-          - Level 1 Local (50ms)
-          - Level 2 Continental (200ms)
-          - Level 3 Global (500ms)
-          - Level 4 Deep (2s)
+        Cross-chain validation
             ↓
     CONSENSUS FUSION
             ↓
-    PoRW checkpoint + PoT path convergence
-            ↓
-    Both PoRW AND PoT agree → ABSOLUTE FINALITY
+    Both PoRW AND PVC agree → FINAL CONFIRMATION
 ```
 
 **2. Security Model:**
-- **Single consensus compromise**: Other consensus detects fraud through cross-validation
-- **Attack cost**: Attacker must compromise BOTH PoRW relay network AND PoT geographic paths
-- **Byzantine tolerance**: 33% malicious in BOTH systems simultaneously required
-- **Physics-based security**: Speed of light verification makes location spoofing impossible
-- **Geographic diversity**: Minimum 3 continents, 5 ASNs ensures decentralization
-- **Path redundancy**: 3 independent paths, 2-of-3 agreement required
+- **Single consensus compromise**: Other consensus detects fraud immediately
+- **Attack cost**: Attacker must compromise BOTH systems (exponentially harder)
+- **Byzantine tolerance**: 33% malicious nodes in BOTH systems simultaneously required
+- **Cross-validation**: 64 validation points for 8 chains (NxN matrix)
 
 **3. Performance Model:**
 ```
-PoT Multi-Path Routing:
-├── Path 0: Americas route      → 25,000 TPS
-├── Path 1: Europe-Asia route   → 25,000 TPS
-└── Path 2: Global hybrid route → 25,000 TPS
-                                ───────────
-                                  75,000 TPS total
+Speed Chain (PVC):     15,000 TPS (microtransactions)
+Security Chain (PVC):   5,000 TPS (high-value)
+Smart Contract (PVC):   8,000 TPS (complex logic)
+Privacy Chain (PVC):    4,000 TPS (ZK proofs)
+Channel Chain (PVC):   12,000 TPS (channel ops)
+Governance Chain (PVC): 1,000 TPS (DAO votes)
+Relay Chain (PVC):     10,000 TPS (relay coord)
+Bridge Chain (PVC):     3,000 TPS (cross-chain)
+                      ─────────
+Total PVC:            58,000 TPS
 
-PoT Finality Levels:
-- Level 1 Local (50ms):      2 relays, 5% revert risk
-- Level 2 Continental (200ms): 3 continents, 0.1% revert
-- Level 3 Global (500ms):    10+ relays, 5+ continents, <0.001% revert
-- Level 4 Deep (2s):         All 3 paths converged, practically zero revert
-                      
-PoRW (relay network):     27,000 TPS (checkpoint ordering)
-PoT (3 paths):            75,000 TPS (geographic consensus)
-                        ─────────
-COMBINED THROUGHPUT:      75,000 TPS (PoT bottleneck)
-ABSOLUTE FINALITY:        2-4 seconds (Level 4 Deep + PoRW)
+PoRW (relay network): 27,000 TPS (parallel ordering)
+                      ─────────
+COMBINED THROUGHPUT:  85,000 TPS
 ```
 
 **4. Failure Modes:**
 
-| Scenario | PoRW Status | PoT Status | System Response |
+| Scenario | PoRW Status | PVC Status | System Response |
 |----------|-------------|------------|------------------|
-| Normal | ✅ Healthy | ✅ Healthy (3 paths) | Full speed (75k TPS) |
-| PoRW attacked | ❌ Compromised | ✅ Healthy | PoT continues, PoRW recovery triggered |
-| One path compromised | ✅ Healthy | ⚠️ 2-of-3 | System continues, compromised path excluded |
-| Two paths compromised | ✅ Healthy | ❌ Failed | Halt consensus, fallback to PoRW only |
+| Normal | ✅ Healthy | ✅ Healthy | Full speed (85k TPS) |
+| PoRW attacked | ❌ Compromised | ✅ Healthy | PVC detects, triggers rollback |
+| PVC attacked | ✅ Healthy | ❌ Compromised | PoRW detects, triggers rollback |
 | Both attacked | ❌ Compromised | ❌ Compromised | Network halts, manual intervention |
-| Network partition | ⚠️ Degraded | ⚠️ Degraded | Paths partition-heal automatically |
-| Low relay participation | ⚠️ Degraded | ✅ Healthy | PoT maintains consensus independently |
-| Geographic censorship | ✅ Healthy | ⚠️ Rerouting | PoT routes around censored regions |
-| Speed-of-light violation | ✅ Healthy | 🚨 Attack detected | Relay excluded, geographic proof failed |
+| Network partition | ⚠️ Degraded | ✅ Healthy | PVC maintains consensus |
+| Low relay participation | ⚠️ Degraded | ✅ Healthy | PVC handles majority of txs |
 
 **Implementation:**
 
 ```rust
 // File: crates/dchat-blockchain/src/consensus_fusion.rs
 
-pub struct ConsensusWeaving {
+pub struct ConsensusFusion {
     porw: ProofOfRelayWork,
-    pot: ProofOfTransit,
-    weaving_threshold: usize,  // 2-of-3 paths required
-    checkpoint_interval: Duration,  // PoRW checkpoint every 6s
+    pvc: ParallelVoteChains,
+    fusion_threshold: f64,  // Both must reach 0.67 (67%)
 }
 
-impl ConsensusWeaving {
+impl ConsensusFusion {
     pub fn new() -> Self {
         Self {
             porw: ProofOfRelayWork::new(),
-            pot: ProofOfTransit::new(3, 2),  // 3 paths, 2-of-3 agreement
-            weaving_threshold: 2,
-            checkpoint_interval: Duration::from_secs(6),
+            pvc: ParallelVoteChains::new(8),  // 8 chains initially
+            fusion_threshold: 0.67,
         }
     }
     
@@ -4489,270 +3408,53 @@ impl ConsensusWeaving {
         &mut self,
         tx: Transaction,
     ) -> Result<TransactionReceipt, ConsensusError> {
-        let start_time = Instant::now();
+        // Step 1: Route through PoRW (relay network)
+        let porw_receipt = self.porw.process_via_relays(&tx).await?;
         
-        // Step 1: Route through PoT (3 independent paths)
-        let path_ids = self.pot.route_transaction(&tx).await?;
-        let instant_routing = start_time.elapsed();
+        // Step 2: Route to optimal PVC chain
+        let chain_id = self.pvc.route_transaction(&tx);
+        let pvc_receipt = self.pvc.process_on_chain(chain_id, &tx).await?;
         
-        // Step 2: Process through PoRW in parallel
-        let porw_future = self.porw.process_via_relays(&tx);
+        // Step 3: Verify both consensus layers agree
+        if porw_receipt.block_hash != pvc_receipt.block_hash {
+            tracing::error!(
+                "CONSENSUS MISMATCH: PoRW={}, PVC={}",
+                hex::encode(porw_receipt.block_hash.as_bytes()),
+                hex::encode(pvc_receipt.block_hash.as_bytes())
+            );
+            return Err(ConsensusError::ConsensusMismatch);
+        }
         
-        // Step 3: Wait for path convergence (2-of-3 paths agree)
-        let convergence_future = self.pot.wait_for_convergence(
-            tx.hash(),
-            Duration::from_secs(3),
-        );
-        
-        // Execute both in parallel
-        let (porw_receipt, pot_convergence) = tokio::join!(porw_future, convergence_future);
-        let porw_receipt = porw_receipt?;
-        let pot_convergence = pot_convergence?;
-        
-        // Step 4: Calculate consensus weight
-        let consensus_weight = pot_convergence.consensus_weight;
-        
-        // Step 5: Return multi-tier finality receipt
+        // Step 4: Return fused receipt
         Ok(TransactionReceipt {
             tx_hash: tx.hash(),
-            path_ids,
-            porw_checkpoint_hash: porw_receipt.checkpoint_hash,
-            
-            // Multi-tier finality timestamps
-            instant_routing: instant_routing,  // <50ms: routed to paths
-            level1_finality: pot_convergence.convergence_time,  // 50ms: local
-            level2_finality: Duration::from_millis(200),  // 200ms: continental
-            level3_finality: Duration::from_millis(500),  // 500ms: global
-            level4_finality: Duration::from_secs(2),      // 2s: deep
-            absolute_finality: porw_receipt.finality_time,  // 6s: PoRW checkpoint
-            
-            finality_level: pot_convergence.finality_level,
-            consensus_weight,
-            paths_converged: pot_convergence.agreement_count >= self.weaving_threshold,
+            block_hash: porw_receipt.block_hash,
+            porw_finality: porw_receipt.finality_time,
+            pvc_finality: pvc_receipt.finality_time,
+            total_finality: porw_receipt.finality_time.max(pvc_receipt.finality_time),
+            consensus_fusion: true,
         })
     }
     
-    /// PoRW checkpoint references all converged paths
-    pub async fn create_checkpoint_weave(&mut self) -> Result<WovenCheckpoint, ConsensusError> {
-        // Get all active paths
-        let active_paths = self.pot.get_all_active_paths()?;
-        
-        // Create PoRW checkpoint that references all paths
-        let porw_checkpoint = self.porw.create_checkpoint(
-            active_paths.iter().map(|p| p.path_id).collect()
-        ).await?;
-        
-        // Verify cross-consensus validity
-        let paths_valid = self.verify_paths_against_porw(&active_paths, &porw_checkpoint)?;
-        let porw_valid = self.verify_porw_against_paths(&porw_checkpoint, &active_paths)?;
-        
-        if !paths_valid || !porw_valid {
-            tracing::error!("🚨 CONSENSUS WEAVING FAILED: Paths={}, PoRW={}", paths_valid, porw_valid);
-            return Err(ConsensusError::WeavingMismatch);
-        }
-        
-        tracing::info!(
-            "✅ Consensus woven: checkpoint #{}, {} active paths, {} converged transactions",
-            porw_checkpoint.height,
-            active_paths.len(),
-            self.pot.count_converged_transactions()
-        );
-        
-        Ok(WovenCheckpoint {
-            height: porw_checkpoint.height,
-            porw_checkpoint,
-            pot_paths: active_paths,
-            timestamp: SystemTime::now(),
-            weaving_proof: self.generate_weaving_proof()?,
-        })
-    }
-    
-    /// Verify paths against PoRW ordering
-    fn verify_paths_against_porw(
+    /// Check if both consensus layers agree on block
+    pub fn verify_consensus_fusion(
         &self,
-        paths: &[TransitPath],
-        porw_checkpoint: &PoRWCheckpoint,
+        block_hash: &Hash,
     ) -> Result<bool, ConsensusError> {
-        // Verify all paths have valid geographic proofs
-        for path in paths {
-            for proof in &path.transit_proofs {
-                let geo_proof = self.pot.geographic_proofs.read().unwrap()
-                    .get(&proof.relay_id)
-                    .ok_or(ConsensusError::MissingGeographicProof)?;
-                
-                if geo_proof.verification_score < 0.8 {
-                    tracing::warn!("Relay {} has low geographic proof score: {:.2}", 
-                        proof.relay_id, 
-                        geo_proof.verification_score
-                    );
-                    return Ok(false);
-                }
-            }
-        }
+        let porw_finalized = self.porw.is_finalized(block_hash);
+        let pvc_finalized = self.pvc.is_finalized(block_hash)?;
         
-        // Verify speed of light constraints
-        for path in paths {
-            if !self.verify_speed_of_light_path(path)? {
-                tracing::error!("Speed of light violation in path {}", path.path_id);
-                return Ok(false);
-            }
-        }
-        
-        Ok(true)
+        Ok(porw_finalized && pvc_finalized)
     }
     
-    /// Verify PoRW ordering against path convergence
-    fn verify_porw_against_paths(
-        &self,
-        porw_checkpoint: &PoRWCheckpoint,
-        paths: &[TransitPath],
-    ) -> Result<bool, ConsensusError> {
-        // Verify PoRW checkpoint matches converged paths
-        let porw_transactions = self.porw.get_transactions_in_checkpoint(porw_checkpoint)?;
-        
-        for tx_hash in porw_transactions {
-            // Check if transaction converged across paths
-            let convergence = self.pot.path_convergence_cache.read().unwrap()
-                .get(&tx_hash);
-            
-            if let Some(conv) = convergence {
-                if conv.agreement_count < self.weaving_threshold {
-                    tracing::error!(
-                        "Transaction {} in PoRW but only {} paths agree (need {})",
-                        tx_hash, 
-                        conv.agreement_count,
-                        self.weaving_threshold
-                    );
-                    return Ok(false);
-                }
-            } else {
-                tracing::warn!("Transaction {} in PoRW but not found in PoT paths", tx_hash);
-            }
-        }
-        
-        Ok(true)
-    }
-    
-    /// Verify speed of light constraints for path
-    fn verify_speed_of_light_path(&self, path: &TransitPath) -> Result<bool, ConsensusError> {
-        for window in path.transit_proofs.windows(2) {
-            let from_proof = &window[0];
-            let to_proof = &window[1];
-            
-            // Calculate geographic distance
-            let distance = self.calculate_geographic_distance(
-                from_proof.geographic_coordinates,
-                to_proof.geographic_coordinates,
-            );
-            
-            // Calculate minimum time at speed of light (+ 50% margin for routing)
-            let speed_of_light_time = Duration::from_secs_f64(
-                distance / 299_792.458 * 1.5  // km/s with 50% margin
-            );
-            
-            // Check if observed latency is plausible
-            let observed_latency = to_proof.timestamp
-                .duration_since(from_proof.timestamp)
-                .unwrap_or(Duration::from_secs(0));
-            
-            if observed_latency < speed_of_light_time {
-                tracing::error!(
-                    "Speed of light violation: {}km in {:?} (min {:?})",
-                    distance,
-                    observed_latency,
-                    speed_of_light_time
-                );
-                return Ok(false);
-            }
-        }
-        
-        Ok(true)
-    }
-    
-    /// Calculate combined security through consensus weaving
-    pub fn calculate_woven_security(&self) -> f64 {
+    /// Calculate combined security score
+    pub fn calculate_security_score(&self) -> f64 {
         let porw_security = self.porw.calculate_security_score();
-        let pot_security = self.calculate_pot_security();
+        let pvc_security = self.pvc.calculate_security_score();
         
         // Multiplicative security: attacking both is exponentially harder
-        // Formula: P(both compromised) = P(PoRW) × P(PoT)
-        // Security = 1 - P(both compromised)
-        1.0 - ((1.0 - porw_security) * (1.0 - pot_security))
+        1.0 - ((1.0 - porw_security) * (1.0 - pvc_security))
     }
-    
-    fn calculate_pot_security(&self) -> f64 {
-        // Probability of compromising 2-of-3 paths
-        // Assumes independent 20% compromise probability per path
-        let p_single_path = 0.20;
-        let p_two_paths = p_single_path.powi(2);
-        let p_three_paths = p_single_path.powi(3);
-        
-        // P(compromise) = P(2 paths) + P(3 paths)
-        let p_compromise = 3.0 * p_two_paths * (1.0 - p_single_path) + p_three_paths;
-        
-        1.0 - p_compromise
-    }
-    
-    /// Real-time finality confidence for user applications
-    pub fn get_realtime_finality(&self, tx_hash: Hash) -> FinalityStatus {
-        let pot_convergence = self.pot.path_convergence_cache.read().unwrap()
-            .get(&tx_hash)
-            .cloned();
-        let porw_confirmed = self.porw.is_in_checkpoint(tx_hash);
-        
-        match (pot_convergence, porw_confirmed) {
-            (Some(conv), true) if conv.agreement_count >= self.weaving_threshold => {
-                FinalityStatus::Absolute(conv.finality_level)
-            },
-            (Some(conv), false) if conv.agreement_count >= self.weaving_threshold => {
-                FinalityStatus::Hard(conv.finality_level)
-            },
-            (Some(conv), false) if conv.agreement_count > 0 => {
-                FinalityStatus::Pending(conv.agreement_count, self.weaving_threshold)
-            },
-            _ => FinalityStatus::Unconfirmed,
-        }
-    }
-    
-    fn calculate_geographic_distance(&self, from: (f64, f64), to: (f64, f64)) -> f64 {
-        // Haversine formula for great circle distance
-        let (lat1, lon1) = (from.0.to_radians(), from.1.to_radians());
-        let (lat2, lon2) = (to.0.to_radians(), to.1.to_radians());
-        
-        let dlat = lat2 - lat1;
-        let dlon = lon2 - lon1;
-        
-        let a = (dlat / 2.0).sin().powi(2) 
-            + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-        
-        6371.0 * c  // Earth radius in km
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum FinalityStatus {
-    Unconfirmed,                              // Not routed yet
-    Pending(usize, usize),                    // (paths_agree, threshold)
-    Hard(FinalityLevel),                      // PoT finalized, awaiting PoRW
-    Absolute(FinalityLevel),                  // Both PoT + PoRW confirmed
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WovenCheckpoint {
-    pub height: u64,
-    pub porw_checkpoint: PoRWCheckpoint,
-    pub pot_paths: Vec<TransitPath>,
-    pub timestamp: SystemTime,
-    pub weaving_proof: WeavingProof,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WeavingProof {
-    pub path_convergence_merkle: Hash,
-    pub porw_relay_votes: Vec<RelayVote>,
-    pub geographic_proof_signatures: Vec<Signature>,
-    pub speed_of_light_verified: bool,
 }
 ```
 
@@ -5198,17 +3900,17 @@ impl Shard {
 - Parallel state updates (optimistic concurrency)
 - Expected TPS: 25,000 (250x improvement)
 
-**Phase 3: Full Hierarchy + Dual-Consensus (PoRW + PoT) (Week 9-12)**
+**Phase 3: Full Hierarchy + Dual-Consensus (PoRW + PVC) (Week 9-12)**
 - Implement full block hierarchy
 - Proof-of-Relay-Work consensus integration
-- Proof-of-Transit multi-path routing (3 independent paths)
-- Consensus fusion layer with path convergence
-- Geographic proof verification system
+- Parallel Vote Chains (8 chains) deployment
+- Consensus fusion layer with cross-validation
 - Transaction sharding (16 shards)
-- Expected TPS: 75,000-85,000 (750-850x improvement)
-- PoRW TPS: 27,000 | PoT TPS: 48,000 (3 paths × 16k each)
-- Finality time: 50ms-2s (tunable: Level 1-4)
-- Security: Physics-based (requires global physical presence + economic attack)
+- Geographic quorum validation
+- Expected TPS: 85,000-95,000 (850-950x improvement)
+- PoRW TPS: 27,000 | PVC TPS: 58,000 (combined)
+- Finality time: 200ms-2s (depending on chain type)
+- Security: Exponential increase (requires compromising BOTH consensus)
 
 **Phase 4: Optimization + GPU Acceleration (Week 13-16)**
 - GPU-accelerated signature verification
@@ -5290,55 +3992,41 @@ dual_signature_required = false         # Not required yet (future: 2030)
 cross_chain_validation = true           # Validate proofs on both chains
 cross_chain_reputation_sync_interval = 100  # Sync every 100 blocks
 
-# Proof-of-Transit (PoT) Configuration
-[proof_of_transit]
+# Parallel Vote Chains (PVC) Configuration
+[parallel_vote_chains]
 enabled = true
-num_paths = 3                           # 3 independent routing paths
-min_paths = 2                           # Minimum 2 paths for redundancy
-max_paths = 5                           # Maximum 5 paths
-path_agreement_threshold = 2            # 2-of-3 paths must agree
+num_chains = 8                          # Start with 8 parallel chains
+min_chains = 4                          # Minimum 4 chains
+max_chains = 16                         # Maximum 16 chains
+validators_per_chain = 21               # 21 validators per chain (BFT: 2/3 = 14)
+chain_rotation_interval = 100           # Rotate validators every 100 blocks
+cross_validation_enabled = true         # Enable NxN cross-validation matrix
 
-# Geographic Requirements
-min_continents_per_path = 3             # Minimum 3 continents per path
-min_relays_per_path = 5                 # Minimum 5 relays per path
-min_asn_diversity = 3                   # Minimum 3 different ASNs per path
-max_same_country_percent = 0.40         # Max 40% relays from same country
+# Chain specialization
+speed_chain_finality_ms = 200           # 200ms for microtransactions
+security_chain_finality_ms = 2000       # 2s for high-value txs
+smart_contract_chain_finality_ms = 800  # 800ms for complex logic
+privacy_chain_finality_ms = 1500        # 1.5s for ZK proofs
 
-# Finality Levels (Tunable Security)
-level1_local_finality_ms = 50           # Level 1: Local (2+ relays, same region)
-level2_continental_finality_ms = 200    # Level 2: Continental (3+ continents)
-level3_global_finality_ms = 500         # Level 3: Global (5+ continents, 10+ relays)
-level4_deep_finality_ms = 2000          # Level 4: Deep (multiple paths converged)
+# Chain rebalancing
+rebalance_enabled = true
+rebalance_interval = 1000               # Rebalance every 1000 blocks
+overload_threshold = 0.8                # Split chain if load > 80%
+underutilized_threshold = 0.3           # Merge chain if load < 30%
 
-level1_revert_risk = 0.05               # 5% revert risk
-level2_revert_risk = 0.001              # 0.1% revert risk
-level3_revert_risk = 0.00001            # <0.001% revert risk
-level4_revert_risk = 0.0                # Practically zero
-
-# Geographic Proof Verification
-geo_proof_required = true               # Require geographic proofs from all relays
-speed_of_light_verification = true     # Verify latency matches distance
-min_triangulation_points = 3            # Require 3+ known relays for location verification
-timezone_consistency_check = true       # Verify timezone matches claimed location
-peer_witness_required = true            # Require nearby relay witnesses
-
-# Path Convergence
-convergence_timeout_ms = 3000           # Max 3s for path convergence
-path_disagreement_handling = "escalate" # escalate to PoRW | wait | rollback
-
-# Consensus Fusion (PoRW + PoT)
+# Consensus Fusion
 [consensus_fusion]
 enabled = true
 fusion_threshold = 0.67                 # Both consensus must reach 67%
 mismatch_handling = "rollback"          # rollback | halt | investigate
-physics_security = true                 # Enable physics-based security (speed of light)
-geographic_security = true              # Enable geographic diversity requirement
-automatic_failover = true               # If one path fails, use others
+security_multiplication = true          # Exponential security increase
+throughput_addition = true              # Additive throughput (PoRW + PVC)
+automatic_failover = true               # If one consensus fails, other takes over
 
 # Performance targets
-target_combined_tps = 75000             # 75k TPS combined
-porw_target_tps = 27000                 # 27k TPS from PoRW (economic layer)
-pot_target_tps = 48000                  # 48k TPS from PoT (3 paths × 16k each)
+target_combined_tps = 85000             # 85k TPS combined
+porw_target_tps = 27000                 # 27k TPS from PoRW
+pvc_target_tps = 58000                  # 58k TPS from PVC (8 chains × avg 7.25k)
 
 [parallel_execution]
 enabled = true
