@@ -32,3 +32,7 @@ path = "src/bin/deploy-storage.rs"
 [[bin]]
 name = "deploy-backup"
 path = "src/bin/deploy-backup.rs"
+
+[[bin]]
+name = "deploy-monitoring"
+path = "src/bin/deploy-monitoring.rs"

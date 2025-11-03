@@ -19,6 +19,13 @@ sqlx = { workspace = true, features = ["postgres", "chrono", "uuid"] }
 
 # Distributed storage
 redis = { version = "0.24", features = ["cluster-async", "tokio-comp"] }
+
+# Encryption
+chacha20poly1305 = "0.10"
+rand = "0.8"
+
+# Image processing
+image = "0.24"
 rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 tikv-client = "0.3"
 

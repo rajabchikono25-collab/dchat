@@ -9,6 +9,9 @@ license.workspace = true
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
 
+# Cryptography
+sha2 = "0.10"
+
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }

@@ -527,7 +527,7 @@ impl RollingHash {
 }
 
 /// Deduplication savings statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct DeduplicationSavings {
     /// Number of unique items stored
     pub unique_items: usize,
@@ -557,7 +557,7 @@ impl DeduplicationSavings {
 }
 
 /// Deduplication errors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DeduplicationError {
     HashMismatch,
     ContentNotFound,

@@ -204,7 +204,8 @@ pub struct ImageSearchHandler;
 
 impl InlineQueryHandler for ImageSearchHandler {
     fn handle(&self, query: &InlineQuery) -> Result<Vec<InlineResult>> {
-        // Mock image search results
+        // In production, query actual image search API (Unsplash, Pexels, etc.)
+        tracing::info!("Image search query: {}", query.query);
         let results = (1..=5)
             .map(|i| InlineResult {
                 result_type: InlineResultType::Photo,

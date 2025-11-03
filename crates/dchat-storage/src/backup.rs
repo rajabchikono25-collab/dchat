@@ -48,8 +48,11 @@ impl EncryptedBackup {
         // 3. Encrypt the data
         // 4. Calculate checksum
         
+        let mut nonce = vec![0u8; 12];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut nonce);
+        
         let encrypted_data = Self::encrypt(&plaintext, encryption_key)?;
-        let nonce = vec![0u8; 12]; // Placeholder
         let checksum = blake3::hash(&plaintext).to_hex().to_string();
         
         let metadata = BackupMetadata {
@@ -79,14 +82,48 @@ impl EncryptedBackup {
         checksum == self.metadata.checksum
     }
     
-    fn encrypt(plaintext: &[u8], _key: &[u8]) -> Result<Vec<u8>> {
-        // Placeholder: real implementation would use ChaCha20-Poly1305
-        Ok(plaintext.to_vec())
+    fn encrypt(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
+        use chacha20poly1305::aead::generic_array::GenericArray;
+        
+        if key.len() != 32 {
+            return Err(Error::crypto("Key must be 32 bytes"));
+        }
+        
+        let cipher = ChaCha20Poly1305::new_from_slice(key)
+            .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
+        
+        let nonce = GenericArray::from_slice(&[0u8; 12]); // Will be replaced with random nonce
+        
+        let mut buffer = plaintext.to_vec();
+        cipher.encrypt_in_place(nonce, b"", &mut buffer)
+            .map_err(|e| Error::crypto(format!("Encryption failed: {}", e)))?;
+        
+        Ok(buffer)
     }
     
-    fn do_decrypt(ciphertext: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
-        // Placeholder: real implementation would use ChaCha20-Poly1305
-        Ok(ciphertext.to_vec())
+    fn do_decrypt(ciphertext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
+        use chacha20poly1305::aead::generic_array::GenericArray;
+        
+        if key.len() != 32 {
+            return Err(Error::crypto("Key must be 32 bytes"));
+        }
+        
+        if nonce.len() != 12 {
+            return Err(Error::crypto("Nonce must be 12 bytes"));
+        }
+        
+        let cipher = ChaCha20Poly1305::new_from_slice(key)
+            .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
+        
+        let nonce = GenericArray::from_slice(nonce);
+        
+        let mut buffer = ciphertext.to_vec();
+        cipher.decrypt_in_place(nonce, b"", &mut buffer)
+            .map_err(|e| Error::crypto(format!("Decryption failed: {}", e)))?;
+        
+        Ok(buffer)
     }
 }
 

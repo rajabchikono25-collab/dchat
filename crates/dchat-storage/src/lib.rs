@@ -29,9 +29,9 @@ pub use compression::{
 pub use database::{Database, DatabaseConfig, MessageRow};
 pub use deduplication::{ContentAddressable, DeduplicationStore};
 pub use distributed::{
-    ChainState, ConsistencyLevel, DistributedCache, DistributedDatabase,
-    DistributedObjectStorage, ObjectMetadata, RegionHealth, StorageConfig, StorageHealthReport,
-    StorageManager, TiKVStorage,
+    ChainState, BlockMetadata, CacheConfig, DatabaseConfig as DistributedDatabaseConfig, 
+    DistributedCache, DistributedDatabase, DistributedObjectStorage, ObjectMetadata, 
+    ObjectStorageConfig, StorageTier, TiKVConfig, TiKVStorage,
 };
 pub use economics::{
     EconomicsConfig, MicropaymentStream, StorageBond, StorageEconomicsManager,

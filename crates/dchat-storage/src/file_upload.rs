@@ -255,30 +255,42 @@ impl FileUploadManager {
         // Get original file
         let file_data = self.get_file(source_file_id).await?;
 
-        // TODO: Use image processing library (e.g., image crate) to generate thumbnail
-        // For now, we'll just return a placeholder implementation
+        // Generate thumbnail using image processing
+        use image::GenericImageView;
         
         let thumbnail_id = format!("thumb_{}", Uuid::new_v4());
-        let checksum = self.compute_checksum(&file_data);
         
         let thumbnail_path = self.config.storage_path
             .join("thumbnails")
             .join(format!("{}.jpg", thumbnail_id));
 
-        // In a real implementation, you would:
-        // 1. Decode the image/video frame
-        // 2. Resize to max_width x max_height maintaining aspect ratio
-        // 3. Encode as JPEG
-        // 4. Write to thumbnail_path
-
-        // Placeholder: Just copy the file
-        let mut file = fs::File::create(&thumbnail_path)
+        // Decode image
+        let img = image::load_from_memory(&file_data)
+            .map_err(|e| Error::storage(format!("Failed to decode image: {}", e)))?;
+        
+        // Calculate new dimensions maintaining aspect ratio
+        let (orig_width, orig_height) = img.dimensions();
+        let (new_width, new_height) = if orig_width > orig_height {
+            let ratio = max_width as f32 / orig_width as f32;
+            (max_width, (orig_height as f32 * ratio) as u32)
+        } else {
+            let ratio = max_height as f32 / orig_height as f32;
+            ((orig_width as f32 * ratio) as u32, max_height)
+        };
+        
+        // Resize image
+        let thumbnail = img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
+        
+        // Save as JPEG
+        thumbnail.save(&thumbnail_path)
+            .map_err(|e| Error::storage(format!("Failed to save thumbnail: {}", e)))?;
+        
+        // Read back the saved file for checksum
+        let thumbnail_data = fs::read(&thumbnail_path)
             .await
-            .map_err(|e| Error::storage(format!("Failed to create thumbnail: {}", e)))?;
-
-        file.write_all(&file_data)
-            .await
-            .map_err(|e| Error::storage(format!("Failed to write thumbnail: {}", e)))?;
+            .map_err(|e| Error::storage(format!("Failed to read thumbnail: {}", e)))?;
+        
+        let checksum = self.compute_checksum(&thumbnail_data);
 
         Ok(UploadedFile {
             file_id: thumbnail_id.clone(),

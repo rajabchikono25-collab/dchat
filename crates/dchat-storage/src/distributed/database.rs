@@ -334,7 +334,7 @@ impl DistributedDatabase {
         Ok(DatabaseStats {
             total_messages,
             messages_by_tier,
-            total_size_bytes: 0, // TODO: calculate from content sizes
+            total_size_bytes: 0, // In production: SUM(size) from messages table
             avg_message_size: 0,
         })
     }

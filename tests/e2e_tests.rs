@@ -391,14 +391,14 @@ async fn test_storage_and_persistence() {
     let mut dedup_store = DeduplicationStore::new();
     
     // Store some content hashes
-    let msg1_hash = dedup_store.store(b"Message 1 content".to_vec());
-    let msg2_hash = dedup_store.store(b"Message 2 content".to_vec());
-    let msg3_hash = dedup_store.store(b"Message 1 content".to_vec()); // Duplicate
+    let (msg1_hash, _) = dedup_store.store(b"Message 1 content", None).unwrap();
+    let (msg2_hash, _) = dedup_store.store(b"Message 2 content", None).unwrap();
+    let (msg3_hash, _) = dedup_store.store(b"Message 1 content", None).unwrap(); // Duplicate
     
     println!("✅ Content stored with deduplication");
-    println!("  Message 1 hash: {:?}", &msg1_hash[..8]);
-    println!("  Message 2 hash: {:?}", &msg2_hash[..8]);
-    println!("  Message 3 hash: {:?}", &msg3_hash[..8]);
+    println!("  Message 1 hash: {:?}", &msg1_hash.as_bytes()[..8]);
+    println!("  Message 2 hash: {:?}", &msg2_hash.as_bytes()[..8]);
+    println!("  Message 3 hash: {:?}", &msg3_hash.as_bytes()[..8]);
     
     // Check deduplication
     assert_eq!(msg1_hash, msg3_hash, "Identical content should have identical hash");

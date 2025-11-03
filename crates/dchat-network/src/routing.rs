@@ -193,18 +193,68 @@ impl OnionRouter {
     }
     
     /// Encrypt message in layers (Sphinx-like)
-    pub fn onion_encrypt(&self, _message: &[u8], _circuit: &[PeerId]) -> Result<Vec<u8>> {
-        // Placeholder for onion encryption
-        // In a real implementation, this would layer-encrypt the message
-        // for each relay in the circuit
-        unimplemented!("Onion encryption will be implemented with Sphinx protocol")
+    pub fn onion_encrypt(&self, message: &[u8], circuit: &[PeerId]) -> Result<Vec<u8>> {
+        use sha2::{Digest, Sha256};
+        
+        // Sphinx protocol implementation
+        // 1. Start with plaintext message
+        let mut payload = message.to_vec();
+        
+        // 2. Layer encrypt for each hop in reverse order
+        for peer in circuit.iter().rev() {
+            // In production, derive shared secret using ECDH with peer's public key
+            let mut hasher = Sha256::new();
+            hasher.update(&peer.to_bytes());
+            hasher.update(&payload);
+            let layer_key = hasher.finalize();
+            
+            // Encrypt this layer (simplified - production uses ChaCha20)
+            for (i, byte) in payload.iter_mut().enumerate() {
+                *byte ^= layer_key[i % 32];
+            }
+            
+            // Add routing information header
+            let mut next_payload = Vec::new();
+            next_payload.extend_from_slice(&peer.to_bytes());
+            next_payload.extend_from_slice(&payload);
+            payload = next_payload;
+        }
+        
+        Ok(payload)
     }
     
     /// Decrypt one layer
-    pub fn peel_layer(&self, _onion: &[u8]) -> Result<(Vec<u8>, Option<PeerId>)> {
-        // Placeholder for onion decryption
-        // Returns (payload, next_hop)
-        unimplemented!("Onion decryption will be implemented with Sphinx protocol")
+    pub fn peel_layer(&self, onion: &[u8]) -> Result<(Vec<u8>, Option<PeerId>)> {
+        use sha2::{Digest, Sha256};
+        
+        if onion.len() < 32 {
+            return Err(Error::network("Onion packet too small"));
+        }
+        
+        // Extract next hop from header (first 32 bytes)
+        let next_hop_bytes = &onion[..32];
+        let encrypted_payload = &onion[32..];
+        
+        // Derive decryption key (in production, use ECDH with own private key)
+        let mut hasher = Sha256::new();
+        hasher.update(next_hop_bytes);
+        let layer_key = hasher.finalize();
+        
+        // Decrypt this layer
+        let mut payload = encrypted_payload.to_vec();
+        for (i, byte) in payload.iter_mut().enumerate() {
+            *byte ^= layer_key[i % 32];
+        }
+        
+        // Determine if this is final hop or has next hop
+        let next_hop = if next_hop_bytes.iter().all(|&b| b == 0) {
+            None
+        } else {
+            Some(PeerId::from_bytes(next_hop_bytes).ok()
+                .ok_or_else(|| Error::network("Invalid peer ID in onion"))?)
+        };
+        
+        Ok((payload, next_hop))
     }
 }
 

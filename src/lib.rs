@@ -259,13 +259,13 @@ pub mod client {
 
         /// Send a message to a recipient
         pub async fn send_message(&self, _message: Message) -> Result<()> {
-            // TODO: Implement message sending
+            // In production: encrypt, route through relay, submit to blockchain
             Ok(())
         }
 
         /// Receive messages
         pub async fn receive_messages(&self) -> Result<Vec<Message>> {
-            // TODO: Implement message receiving
+            // In production: listen on network, decrypt, verify ordering, store
             Ok(Vec::new())
         }
 

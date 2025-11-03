@@ -188,9 +188,9 @@ fn test_message_deduplication() {
     let content = b"Hello, World!".to_vec();
     
     // Store same content multiple times
-    let hash1 = dedup_store.store(content.clone());
-    let hash2 = dedup_store.store(content.clone());
-    let hash3 = dedup_store.store(content.clone());
+    let (hash1, _) = dedup_store.store(&content, None).unwrap();
+    let (hash2, _) = dedup_store.store(&content, None).unwrap();
+    let (hash3, _) = dedup_store.store(&content, None).unwrap();
     
     // All should have same hash
     assert_eq!(hash1, hash2);
@@ -202,7 +202,7 @@ fn test_message_deduplication() {
     
     // Calculate savings
     let savings = dedup_store.savings();
-    assert!(savings > 0);
+    assert!(savings.saved_bytes > 0);
 }
 
 #[test]
