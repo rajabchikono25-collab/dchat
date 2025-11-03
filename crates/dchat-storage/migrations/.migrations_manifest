@@ -1,0 +1,29 @@
+-- Migration manifest for sqlx-cli
+-- This file defines the migration order and metadata for automated migration tools
+
+-- Migration: 001 - Create content_store table
+-- File: 20251103_001_create_content_store.sql
+-- Description: Content-addressable storage with Blake3 hashing, reference counting, and metadata
+-- Status: Pending
+
+-- Migration: 002 - Create storage_bonds table
+-- File: 20251103_002_create_storage_bonds.sql
+-- Description: Storage bonds for pre-paid storage with APY yield
+-- Status: Pending
+
+-- Migration: 003 - Create micropayment_streams table
+-- File: 20251103_003_create_micropayment_streams.sql
+-- Description: Streaming micropayments for pay-as-you-go storage
+-- Status: Pending
+
+-- Migration: 004 - Add tier management columns to messages
+-- File: 20251103_004_add_messages_tier_columns.sql
+-- Description: Add storage tier tracking and content references to existing messages
+-- Status: Pending
+-- Note: Requires messages table to exist first
+
+-- Migration: 005 - Create analytics views
+-- File: 20251103_005_create_analytics_views.sql
+-- Description: Materialized views for storage optimization analytics
+-- Status: Pending
+-- Dependencies: Migrations 001-004 must complete first

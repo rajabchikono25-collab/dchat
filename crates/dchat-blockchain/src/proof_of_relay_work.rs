@@ -466,6 +466,7 @@ impl Default for ProofOfRelayWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
 
     #[test]
     fn test_vote_weight_calculation() {
@@ -487,7 +488,7 @@ mod tests {
     #[test]
     fn test_finality_threshold() {
         let porw = ProofOfRelayWork::new();
-        let block_hash = Hash::from(blake3::hash(b"test_block"));
+        let block_hash = *blake3::hash(b"test_block").as_bytes();
         
         let mut votes = BlockVotes::new(block_hash);
         votes.total_weight = 0.68;
@@ -501,7 +502,7 @@ mod tests {
     #[test]
     fn test_geographic_diversity_required() {
         let porw = ProofOfRelayWork::new();
-        let block_hash = Hash::from(blake3::hash(b"test_block"));
+        let block_hash = *blake3::hash(b"test_block").as_bytes();
         
         let mut votes = BlockVotes::new(block_hash);
         votes.total_weight = 0.70;

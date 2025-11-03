@@ -9,8 +9,7 @@
 /// All tiers support multi-region replication with eventual consistency.
 
 use std::time::{Duration, SystemTime};
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -53,7 +52,9 @@ pub enum ConsistencyLevel {
 // ============================================================================
 
 pub struct DistributedDatabase {
+    #[allow(dead_code)]
     config: StorageConfig,
+    #[allow(dead_code)]
     connection_string: String,
 }
 
@@ -195,7 +196,9 @@ pub struct RegionHealth {
 // ============================================================================
 
 pub struct DistributedCache {
+    #[allow(dead_code)]
     config: StorageConfig,
+    #[allow(dead_code)]
     cluster_urls: Vec<String>,
 }
 
@@ -381,7 +384,9 @@ pub struct ObjectMetadata {
 // ============================================================================
 
 pub struct TiKVStorage {
+    #[allow(dead_code)]
     config: StorageConfig,
+    #[allow(dead_code)]
     pd_endpoints: Vec<String>,
 }
 
@@ -467,9 +472,13 @@ pub struct ChainState {
 // ============================================================================
 
 pub struct StorageManager {
+    #[allow(dead_code)]
     database: DistributedDatabase,
+    #[allow(dead_code)]
     cache: DistributedCache,
+    #[allow(dead_code)]
     object_storage: DistributedObjectStorage,
+    #[allow(dead_code)]
     tikv: TiKVStorage,
 }
 
