@@ -27,3 +27,7 @@ path = "src/bin/deploy_relays.rs"
 [[bin]]
 name = "deploy-storage"
 path = "src/bin/deploy-storage.rs"
+
+[[bin]]
+name = "deploy-backup"
+path = "src/bin/deploy-backup.rs"

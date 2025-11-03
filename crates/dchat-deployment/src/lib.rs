@@ -1,9 +1,10 @@
 // dchat Deployment Infrastructure
-// Handles multi-region validator deployment, relay network, and distributed storage
+// Handles multi-region validator deployment, relay network, distributed storage, and disaster recovery
 
 pub mod multi_region_config;
 pub mod relay_network;
 pub mod distributed_storage;
+pub mod backup_system;
 
 pub use multi_region_config::{
     GeographicRegion, ValidatorConfig, ConsensusConfig, StorageConfig,
@@ -19,4 +20,11 @@ pub use distributed_storage::{
     CockroachDBConfig, CockroachDBNode, DistributedStorageConfig, MinIOConfig, MinIONode,
     RedisConfig, RedisNode, RedisNodeRole, StorageBackendType, StorageError, StorageTier,
     TiKVConfig, TiKVPDNode, TiKVStorageNode,
+};
+
+pub use backup_system::{
+    DisasterRecoveryConfig, S3BackupConfig, GCSBackupConfig, IPFSBackupConfig,
+    LocalReplicaConfig, SnapshotSchedule, WALArchiveConfig, BackendBackupConfig,
+    RestoreConfig, VerificationConfig, BackupMonitoring, BackupTier, BackupType,
+    RestoreType, CompressionAlgorithm, EncryptionConfig, BackupError,
 };
