@@ -1,0 +1,457 @@
+# Multi-Region Validator Deployment for Kubernetes
+#
+# This StatefulSet deploys dchat validators across multiple geographic regions
+# with proper anti-affinity rules to ensure true decentralization.
+#
+# Architecture:
+# - 7 validator replicas distributed across 7 geographic regions
+# - Each validator has 16 CPU cores, 32GB RAM, 1TB NVMe SSD
+# - BFT consensus requires 5 of 7 signatures
+# - Geographic diversity enforced via pod anti-affinity
+#
+# Usage:
+#   kubectl apply -f k8s/validator-statefulset.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dchat-prod
+  labels:
+    name: dchat-prod
+    environment: production
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validator-config
+  namespace: dchat-prod
+data:
+  validator.toml: |
+    [network]
+    listen_addresses = [
+        "/ip4/0.0.0.0/tcp/7070",
+        "/ip4/0.0.0.0/udp/7070/quic-v1"
+    ]
+    
+    # Bootstrap peers (will be populated by init container)
+    bootstrap_peers = []
+    
+    [consensus]
+    # BFT configuration: 5 of 7 required
+    required_signatures = 5
+    min_regions = 3
+    max_region_percentage = 0.40
+    
+    [rpc]
+    bind_address = "0.0.0.0:9545"
+    
+    [storage]
+    backend = "tikv"
+    replication_factor = 3
+    data_dir = "/data/validator"
+    
+    [logging]
+    level = "info"
+    format = "json"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dchat-validator-service
+  namespace: dchat-prod
+  labels:
+    app: dchat-validator
+spec:
+  type: LoadBalancer
+  selector:
+    app: dchat-validator
+  ports:
+  - name: p2p-tcp
+    port: 7070
+    targetPort: 7070
+    protocol: TCP
+  - name: p2p-quic
+    port: 7070
+    targetPort: 7070
+    protocol: UDP
+  - name: rpc
+    port: 9545
+    targetPort: 9545
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dchat-validator-headless
+  namespace: dchat-prod
+  labels:
+    app: dchat-validator
+spec:
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: dchat-validator
+  ports:
+  - name: p2p-tcp
+    port: 7070
+    targetPort: 7070
+    protocol: TCP
+  - name: rpc
+    port: 9545
+    targetPort: 9545
+    protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dchat-validator
+  namespace: dchat-prod
+  labels:
+    app: dchat-validator
+    component: blockchain
+spec:
+  serviceName: dchat-validator-headless
+  replicas: 7  # 7 validators for BFT (tolerates 2 Byzantine failures)
+  
+  selector:
+    matchLabels:
+      app: dchat-validator
+  
+  # Rolling update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0  # Update all pods
+  
+  # Pod management policy
+  podManagementPolicy: Parallel  # Start all pods simultaneously
+  
+  template:
+    metadata:
+      labels:
+        app: dchat-validator
+        component: blockchain
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    
+    spec:
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      # Anti-affinity: spread validators across regions and nodes
+      affinity:
+        podAntiAffinity:
+          # REQUIRED: No two validators on the same node
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - dchat-validator
+            topologyKey: kubernetes.io/hostname
+          
+          # PREFERRED: Spread across different regions
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - dchat-validator
+              topologyKey: topology.kubernetes.io/region
+          
+          # PREFERRED: Spread across different availability zones
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - dchat-validator
+              topologyKey: topology.kubernetes.io/zone
+      
+      # Node selector for high-performance nodes
+      nodeSelector:
+        dchat.network/node-type: validator
+        dchat.network/storage-type: nvme
+      
+      # Tolerations for dedicated validator nodes
+      tolerations:
+      - key: "dchat.network/validator"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # Init container to generate validator keys and config
+      initContainers:
+      - name: init-validator
+        image: dchat/validator:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Initializing validator node..."
+          
+          # Generate validator keys if not exists
+          if [ ! -f /data/validator/keys/validator.key ]; then
+            echo "Generating validator keys..."
+            /usr/local/bin/dchat-validator keygen \
+              --output /data/validator/keys/validator.key
+          fi
+          
+          # Set hostname based on pod ordinal
+          HOSTNAME="validator-${HOSTNAME##*-}.dchat.network"
+          echo "Hostname: $HOSTNAME"
+          
+          # Copy config template
+          cp /config/validator.toml /data/validator/config.toml
+          
+          # Update config with pod-specific values
+          sed -i "s|__HOSTNAME__|$HOSTNAME|g" /data/validator/config.toml
+          
+          echo "Validator initialization complete"
+        volumeMounts:
+        - name: validator-data
+          mountPath: /data/validator
+        - name: validator-config
+          mountPath: /config
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+      
+      # Main validator container
+      containers:
+      - name: validator
+        image: dchat/validator:latest
+        imagePullPolicy: Always
+        
+        command:
+        - /usr/local/bin/dchat-validator
+        - start
+        - --config
+        - /data/validator/config.toml
+        
+        # Environment variables
+        env:
+        - name: RUST_LOG
+          value: "info,dchat_validator=debug"
+        - name: RUST_BACKTRACE
+          value: "1"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        
+        # Ports
+        ports:
+        - name: p2p-tcp
+          containerPort: 7070
+          protocol: TCP
+        - name: p2p-quic
+          containerPort: 7070
+          protocol: UDP
+        - name: rpc
+          containerPort: 9545
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 9545
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 9545
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 9545
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 30  # Allow 5 minutes for startup
+        
+        # Resource requirements (production-grade)
+        resources:
+          requests:
+            cpu: "8000m"      # 8 cores guaranteed
+            memory: "16Gi"    # 16GB RAM guaranteed
+            ephemeral-storage: "100Gi"
+          limits:
+            cpu: "16000m"     # 16 cores max
+            memory: "32Gi"    # 32GB RAM max
+            ephemeral-storage: "200Gi"
+        
+        # Volume mounts
+        volumeMounts:
+        - name: validator-data
+          mountPath: /data/validator
+        - name: validator-config
+          mountPath: /config
+          readOnly: true
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false  # Need write for logs
+      
+      # Sidecar: Metrics exporter
+      - name: metrics-exporter
+        image: dchat/metrics-exporter:latest
+        ports:
+        - name: exporter
+          containerPort: 9091
+          protocol: TCP
+        env:
+        - name: VALIDATOR_RPC_URL
+          value: "http://localhost:9545"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+      
+      # Volumes
+      volumes:
+      - name: validator-config
+        configMap:
+          name: validator-config
+  
+  # Persistent volume claims
+  volumeClaimTemplates:
+  - metadata:
+      name: validator-data
+      labels:
+        app: dchat-validator
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: fast-nvme  # Use NVMe SSD storage class
+      resources:
+        requests:
+          storage: 1000Gi  # 1TB per validator
+      
+      # Volume expansion enabled
+      volumeMode: Filesystem
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dchat-validator-pdb
+  namespace: dchat-prod
+spec:
+  minAvailable: 5  # Always keep at least 5 validators (BFT requirement)
+  selector:
+    matchLabels:
+      app: dchat-validator
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dchat-validator-hpa
+  namespace: dchat-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: dchat-validator
+  minReplicas: 7
+  maxReplicas: 13  # Scale up to 13 validators if needed
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling up
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Wait 10 minutes before scaling down
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dchat-validator-monitor
+  namespace: dchat-prod
+  labels:
+    app: dchat-validator
+spec:
+  selector:
+    matchLabels:
+      app: dchat-validator
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+  - port: exporter
+    interval: 30s
+    path: /metrics

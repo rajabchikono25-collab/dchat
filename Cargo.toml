@@ -8,6 +8,7 @@ members = [
     "crates/dchat-storage",
     "crates/dchat-chain",
     "crates/dchat-blockchain",
+    "crates/dchat-validator",
     "crates/dchat-privacy",
     "crates/dchat-governance",
     "crates/dchat-distribution",

@@ -1,0 +1,33 @@
+[package]
+name = "dchat-validator"
+version = "0.1.0"
+edition = "2021"
+authors = ["dchat team"]
+description = "Validator node functionality for dchat blockchain"
+
+[dependencies]
+# Cryptography
+ed25519-dalek = { version = "2.1", features = ["serde", "rand_core"] }
+blake3 = "1.5"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Networking
+reqwest = { version = "0.11", features = ["json"] }
+
+# Random
+rand = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"

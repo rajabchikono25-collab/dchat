@@ -1,0 +1,157 @@
+# Distributed Storage Configuration for dchat
+# 
+# This configuration defines connection parameters for all 4 storage tiers
+# in a multi-region production deployment.
+
+[storage]
+# Replication and consistency
+replication_factor = 3
+consistency_level = "strong"  # Options: "strong", "eventual", "bounded_staleness"
+
+# ============================================================================
+# Tier 1: CockroachDB (Distributed SQL Database)
+# ============================================================================
+
+[storage.database]
+# Multi-region CockroachDB cluster endpoints
+database_urls = [
+    "postgresql://dchat:changeme@cockroach-us-east.dchat.net:26257/dchat?sslmode=require",
+    "postgresql://dchat:changeme@cockroach-eu-west.dchat.net:26257/dchat?sslmode=require",
+    "postgresql://dchat:changeme@cockroach-ap-se.dchat.net:26257/dchat?sslmode=require",
+]
+
+# Connection pool settings
+max_connections = 50
+acquire_timeout_seconds = 10
+idle_timeout_seconds = 600
+max_lifetime_seconds = 1800
+
+# Geographic regions for data locality
+regions = ["us-east-1", "eu-west-1", "ap-southeast-1"]
+
+# ============================================================================
+# Tier 2: Redis Cluster (Distributed Cache)
+# ============================================================================
+
+[storage.cache]
+# Redis Cluster endpoints (3 masters)
+redis_cluster_urls = [
+    "redis://redis-master-1.dchat.net:6379",
+    "redis://redis-master-2.dchat.net:6379",
+    "redis://redis-master-3.dchat.net:6379",
+]
+
+# Cache TTL settings (seconds)
+cache_ttl_seconds = 3600
+message_cache_ttl = 1800
+user_cache_ttl = 7200
+channel_cache_ttl = 300
+
+# Connection pool
+redis_pool_size = 10
+redis_timeout_seconds = 5
+
+# ============================================================================
+# Tier 3: MinIO (Distributed Object Storage)
+# ============================================================================
+
+[storage.object_storage]
+# S3-compatible object storage
+object_storage_endpoint = "https://s3.dchat.network"
+object_storage_bucket = "dchat-media"
+object_storage_region = "us-east-1"
+cdn_url = "https://cdn.dchat.network"
+
+# MinIO/S3 credentials (use environment variables in production)
+# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+access_key = "minio-admin"
+secret_key = "changeme"
+
+# Upload limits
+max_file_size_mb = 100
+allowed_content_types = [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "video/mp4",
+    "video/webm",
+    "audio/mpeg",
+    "audio/ogg",
+    "application/pdf",
+]
+
+# Presigned URL expiry (seconds)
+presigned_url_expiry = 3600
+
+# ============================================================================
+# Tier 4: TiKV (Distributed KV Store for Blockchain State)
+# ============================================================================
+
+[storage.tikv]
+# TiKV Placement Driver (PD) endpoints
+tikv_pd_endpoints = [
+    "tikv-pd-0.tikv-pd.dchat-storage.svc.cluster.local:2379",
+    "tikv-pd-1.tikv-pd.dchat-storage.svc.cluster.local:2379",
+    "tikv-pd-2.tikv-pd.dchat-storage.svc.cluster.local:2379",
+]
+
+# Connection timeout
+tikv_timeout_seconds = 10
+
+# Key prefix for blockchain state
+blockchain_key_prefix = "chain:"
+
+# ============================================================================
+# Backup Configuration
+# ============================================================================
+
+[storage.backup]
+# Backup schedule
+snapshot_interval_hours = 6
+incremental_interval_minutes = 30
+wal_archive_interval_minutes = 5
+
+# Backup destinations
+backup_destinations = [
+    { type = "s3", bucket = "dchat-backups", region = "us-east-1" },
+    { type = "gcs", bucket = "dchat-backups-gcs" },
+    { type = "local", path = "/var/backups/dchat" },
+]
+
+# Retention policy
+snapshot_retention_days = 30
+incremental_retention_days = 7
+wal_retention_hours = 48
+
+# ============================================================================
+# Monitoring & Health Checks
+# ============================================================================
+
+[storage.monitoring]
+# Health check intervals (seconds)
+health_check_interval = 30
+failover_timeout = 60
+
+# Prometheus metrics
+enable_metrics = true
+metrics_port = 9090
+
+# Alerting thresholds
+max_latency_ms = 1000
+min_healthy_nodes = 3
+
+# ============================================================================
+# Development & Testing Overrides
+# ============================================================================
+
+[storage.dev]
+# Local development uses single-node instances
+database_urls = ["postgresql://dchat:dev@localhost:26257/dchat"]
+redis_cluster_urls = ["redis://localhost:6379"]
+object_storage_endpoint = "http://localhost:9000"
+tikv_pd_endpoints = ["localhost:2379"]
+
+# Disable TLS in dev
+use_tls = false
+consistency_level = "eventual"

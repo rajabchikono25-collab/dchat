@@ -979,13 +979,19 @@ dependencies = [
 name = "dchat-blockchain"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "blake3",
  "chrono",
  "dchat-chain",
  "dchat-core",
+ "ed25519-dalek",
  "hex",
+ "rand 0.8.5",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -1300,6 +1306,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dchat-validator"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1428,6 +1450,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
  "pkcs8",
+ "serde",
  "signature",
 ]
 

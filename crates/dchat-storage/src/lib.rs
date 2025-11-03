@@ -1,7 +1,8 @@
-//! dchat-storage: Local data persistence layer
+//! dchat-storage: Local and distributed data persistence layer
 //!
 //! This crate provides:
-//! - SQLite database for messages, identities, and metadata
+//! - SQLite database for messages, identities, and metadata (local)
+//! - Distributed storage architecture (CockroachDB, Redis, MinIO, TiKV)
 //! - Encrypted backup and restore
 //! - Message deduplication via content addressing
 //! - TTL-based data lifecycle management
@@ -10,6 +11,7 @@
 pub mod backup;
 pub mod database;
 pub mod deduplication;
+pub mod distributed;
 pub mod file_upload;
 pub mod lifecycle;
 pub mod schema;
@@ -17,6 +19,11 @@ pub mod schema;
 pub use backup::{BackupManager, EncryptedBackup};
 pub use database::{Database, DatabaseConfig, MessageRow};
 pub use deduplication::{ContentAddressable, DeduplicationStore};
+pub use distributed::{
+    ChainState, ConsistencyLevel, DistributedCache, DistributedDatabase,
+    DistributedObjectStorage, ObjectMetadata, RegionHealth, StorageConfig, StorageHealthReport,
+    StorageManager, TiKVStorage,
+};
 pub use file_upload::{
     FileUploadManager, MediaFileType, StorageStats, UploadConfig, UploadedFile,
 };
