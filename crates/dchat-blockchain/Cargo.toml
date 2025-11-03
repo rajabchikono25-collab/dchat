@@ -20,5 +20,15 @@ tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
+# Post-quantum cryptography (Gap Fix #1)
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+
+# GeoIP database integration (Gap Fix #3)
+maxminddb = "0.24"
+
+# Vote persistence layer (Gap Fix #2)
+sqlx = { workspace = true, features = ["postgres", "chrono", "uuid"] }
+
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }

@@ -14,6 +14,8 @@
 use crate::block_hierarchy::Hash;
 use crate::proof_of_relay_work::GeographicRegion;
 use ed25519_dalek::{Signature, VerifyingKey};
+use pqcrypto_dilithium::dilithium3;
+use pqcrypto_traits::sign::{DetachedSignature, PublicKey as PQPublicKey, SecretKey as PQSecretKey, SignedMessage};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -21,10 +23,60 @@ use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tracing;
 
-/// Post-quantum signature algorithm (placeholder - will use pqcrypto crate)
+/// Post-quantum Dilithium3 signature (CRYSTALS-Dilithium Level 3)
+/// Provides 128-bit security against quantum attacks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dilithium3Signature {
+    /// Dilithium3 signature bytes (2420 bytes)
     pub bytes: Vec<u8>,
+}
+
+impl Dilithium3Signature {
+    /// Create signature from raw bytes
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, PoTError> {
+        if bytes.len() != dilithium3::signature_bytes() {
+            return Err(PoTError::InvalidSignature(format!(
+                "Invalid Dilithium3 signature length: expected {}, got {}",
+                dilithium3::signature_bytes(),
+                bytes.len()
+            )));
+        }
+        Ok(Self { bytes })
+    }
+    
+    /// Verify signature against message and public key
+    pub fn verify(&self, message: &[u8], public_key_bytes: &[u8]) -> Result<(), PoTError> {
+        let public_key = dilithium3::PublicKey::from_bytes(public_key_bytes)
+            .map_err(|e| PoTError::InvalidSignature(format!("Invalid public key: {:?}", e)))?;
+        
+        let signature = dilithium3::DetachedSignature::from_bytes(&self.bytes)
+            .map_err(|e| PoTError::InvalidSignature(format!("Invalid signature: {:?}", e)))?;
+        
+        dilithium3::verify_detached_signature(&signature, message, &public_key)
+            .map_err(|e| PoTError::InvalidSignature(format!("Signature verification failed: {:?}", e)))
+    }
+}
+
+/// Dilithium3 key pair for signing
+pub struct Dilithium3KeyPair {
+    pub public_key: dilithium3::PublicKey,
+    pub secret_key: dilithium3::SecretKey,
+}
+
+impl Dilithium3KeyPair {
+    /// Generate new key pair
+    pub fn generate() -> Self {
+        let (public_key, secret_key) = dilithium3::keypair();
+        Self { public_key, secret_key }
+    }
+    
+    /// Sign message
+    pub fn sign(&self, message: &[u8]) -> Dilithium3Signature {
+        let signature = dilithium3::detached_sign(message, &self.secret_key);
+        Dilithium3Signature {
+            bytes: signature.as_bytes().to_vec(),
+        }
+    }
 }
 
 /// Hybrid signature combining classical and post-quantum algorithms
@@ -62,8 +114,11 @@ impl GeoLocation {
 /// Transit path through relay network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransitPath {
-    /// Relay nodes in path order
+    /// Relay nodes in path order (Ed25519 keys)
     pub relays: Vec<VerifyingKey>,
+    
+    /// Dilithium3 public keys for post-quantum verification
+    pub dilithium_keys: Vec<Vec<u8>>,
     
     /// Geographic locations of each relay
     pub locations: Vec<GeoLocation>,
@@ -124,20 +179,31 @@ impl TransitPath {
     }
     
     /// Verify all hybrid signatures in the path
-    pub fn verify_signatures(&self, _message_hash: &Hash) -> Result<(), PoTError> {
+    pub fn verify_signatures(&self, message_hash: &Hash, dilithium_public_keys: &[Vec<u8>]) -> Result<(), PoTError> {
         if self.relays.len() != self.signatures.len() {
             return Err(PoTError::SignatureMismatch);
         }
         
-        for (i, (_relay, _signature)) in self.relays.iter().zip(self.signatures.iter()).enumerate() {
+        if self.relays.len() != dilithium_public_keys.len() {
+            return Err(PoTError::SignatureMismatch);
+        }
+        
+        let message_bytes = message_hash.as_bytes();
+        
+        for (i, (relay, signature)) in self.relays.iter().zip(self.signatures.iter()).enumerate() {
             // Verify Ed25519 signature
-            // TODO: Implement actual signature verification
-            // relay.verify(message_hash.as_bytes(), &signature.ed25519)?;
+            relay
+                .verify_strict(message_bytes, &signature.ed25519)
+                .map_err(|e| PoTError::InvalidSignature(format!("Ed25519 verification failed for relay {}: {:?}", i, e)))?;
             
-            // Verify Dilithium3 signature
-            // TODO: Integrate pqcrypto library for post-quantum verification
+            // Verify Dilithium3 signature (post-quantum security)
+            signature.dilithium3.verify(message_bytes, &dilithium_public_keys[i])
+                .map_err(|e| {
+                    tracing::warn!("Dilithium3 verification failed for relay {}: {:?}", i, e);
+                    e
+                })?;
             
-            tracing::debug!("Verified hybrid signature for relay {} in path", i);
+            tracing::debug!("Verified hybrid signature (Ed25519 + Dilithium3) for relay {} in path", i);
         }
         
         Ok(())
@@ -238,7 +304,7 @@ impl TransitProof {
         for (i, path) in self.paths.iter().enumerate() {
             path.verify_speed_of_light()
                 .map_err(|e| PoTError::PathVerificationFailed(i, Box::new(e)))?;
-            path.verify_signatures(&self.message_hash)
+            path.verify_signatures(&self.message_hash, &path.dilithium_keys)
                 .map_err(|e| PoTError::PathVerificationFailed(i, Box::new(e)))?;
         }
         
@@ -328,7 +394,7 @@ impl ProofOfTransit {
     ) -> Result<(), PoTError> {
         // Verify path
         path.verify_speed_of_light()?;
-        path.verify_signatures(&message_hash)?;
+        path.verify_signatures(&message_hash, &path.dilithium_keys)?;
         
         // Add to active proof
         let mut proofs = self.active_proofs.write().unwrap();
@@ -404,6 +470,9 @@ pub enum PoTError {
     #[error("Signature verification failed")]
     SignatureVerificationFailed,
     
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+    
     #[error("Signature count mismatch")]
     SignatureMismatch,
     
@@ -470,6 +539,7 @@ mod tests {
         
         let path = TransitPath {
             relays,
+            dilithium_keys: vec![vec![0u8; 1952], vec![0u8; 1952]], // Placeholder Dilithium3 public keys
             locations,
             timestamps,
             signatures: vec![
