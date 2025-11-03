@@ -5,6 +5,7 @@ pub mod multi_region_config;
 pub mod relay_network;
 pub mod distributed_storage;
 pub mod backup_system;
+pub mod health_monitor;
 
 pub use multi_region_config::{
     GeographicRegion, ValidatorConfig, ConsensusConfig, StorageConfig,
@@ -27,4 +28,11 @@ pub use backup_system::{
     LocalReplicaConfig, SnapshotSchedule, WALArchiveConfig, BackendBackupConfig,
     RestoreConfig, VerificationConfig, BackupMonitoring, BackupTier, BackupType,
     RestoreType, CompressionAlgorithm, EncryptionConfig, BackupError,
+};
+
+pub use health_monitor::{
+    HealthMonitorConfig, HealthCheckConfig, DNSFailoverConfig, AutoScalingConfig,
+    AlertChannel, BFTMonitorConfig, PrometheusConfig, GrafanaConfig,
+    ComponentType, HealthStatus, HealthCheckResult, ComponentHealthTracker,
+    Alert, HealthError, FailoverPolicy,
 };
