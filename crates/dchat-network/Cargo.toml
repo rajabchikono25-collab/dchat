@@ -41,5 +41,9 @@ blake3 = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 
+# HTTP client for UPnP and external services
+reqwest = { version = "0.11", features = ["default"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
+
 [dev-dependencies]
 tokio-test = "0.4"

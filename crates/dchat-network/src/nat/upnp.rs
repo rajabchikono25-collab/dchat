@@ -131,7 +131,7 @@ impl UpnpClient {
         description: String,
         lease_duration: Duration,
     ) -> Result<PortMapping> {
-        let _control_url = self.control_url.as_ref()
+        let control_url = self.control_url.as_ref()
             .ok_or_else(|| dchat_core::Error::network("No UPnP gateway discovered"))?;
         
         // Get local IP
@@ -141,7 +141,7 @@ impl UpnpClient {
         let external_port = internal_port;
         
         // SOAP request for AddPortMapping
-        let _soap_request = format!(
+        let soap_request = format!(
             "<?xml version=\"1.0\"?>\
              <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
              s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\
@@ -166,10 +166,22 @@ impl UpnpClient {
             lease_duration.as_secs(),
         );
         
-        // Send SOAP request (simplified - real implementation would use HTTP client)
-        // In production, use reqwest or hyper for HTTP POST
+        // Send SOAP request via HTTP POST
+        let client = reqwest::Client::new();
+        let response = client.post(control_url)
+            .header("Content-Type", "text/xml; charset=\"utf-8\"")
+            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"")
+            .body(soap_request)
+            .send()
+            .await
+            .map_err(|e| dchat_core::Error::network(format!("UPnP AddPortMapping request failed: {}", e)))?;
         
-        // For now, return mock mapping
+        if !response.status().is_success() {
+            return Err(dchat_core::Error::network(
+                format!("UPnP AddPortMapping failed with status: {}", response.status())
+            ));
+        }
+        
         let external_ip = self.get_external_ip().await?;
         
         Ok(PortMapping {
@@ -188,8 +200,11 @@ impl UpnpClient {
         external_port: u16,
         protocol: Protocol,
     ) -> Result<()> {
+        let control_url = self.control_url.as_ref()
+            .ok_or_else(|| dchat_core::Error::network("No UPnP gateway discovered"))?;
+        
         // SOAP DeletePortMapping request
-        let _soap_request = format!(
+        let soap_request = format!(
             "<?xml version=\"1.0\"?>\
              <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
              s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\
@@ -205,7 +220,22 @@ impl UpnpClient {
             protocol.as_str(),
         );
         
-        // Send request (implementation omitted for brevity)
+        // Send SOAP request via HTTP POST
+        let client = reqwest::Client::new();
+        let response = client.post(control_url)
+            .header("Content-Type", "text/xml; charset=\"utf-8\"")
+            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#DeletePortMapping\"")
+            .body(soap_request)
+            .send()
+            .await
+            .map_err(|e| dchat_core::Error::network(format!("UPnP DeletePortMapping request failed: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(dchat_core::Error::network(
+                format!("UPnP DeletePortMapping failed with status: {}", response.status())
+            ));
+        }
+        
         Ok(())
     }
     
@@ -213,26 +243,66 @@ impl UpnpClient {
     async fn get_external_ip(&self) -> Result<IpAddr> {
         // Try SOAP request to UPnP gateway first
         if let Some(control_url) = &self.control_url {
-            let soap_request = format!(
-                r#"<?xml version="1.0"?>
+            let soap_request = r#"<?xml version="1.0"?>
                 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" 
                            s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
                 <s:Body>
                 <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
                 </u:GetExternalIPAddress>
                 </s:Body>
-                </s:Envelope>"#
-            );
+                </s:Envelope>"#;
             
-            // In production, send HTTP POST to control_url with SOAP request
-            // Parse XML response to extract IP address
-            // For now, fallback to external service
+            let client = reqwest::Client::new();
+            if let Ok(response) = client.post(control_url)
+                .header("Content-Type", "text/xml; charset=\"utf-8\"")
+                .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress\"")
+                .body(soap_request)
+                .send()
+                .await
+            {
+                if let Ok(body) = response.text().await {
+                    // Parse XML response to extract IP address
+                    if let Some(ip_str) = Self::parse_external_ip_from_soap(&body) {
+                        if let Ok(ip) = ip_str.parse() {
+                            return Ok(ip);
+                        }
+                    }
+                }
+            }
         }
         
-        // Fallback: Query external IP service (ipify.org, icanhazip.com, etc.)
-        // This would require tokio::net or reqwest HTTP client
-        // For now, attempt to get from local network interfaces
+        // Fallback: Query external IP service (ipify.org)
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| dchat_core::Error::network(format!("HTTP client creation failed: {}", e)))?;
+        
+        if let Ok(response) = client.get("https://api.ipify.org?format=text").send().await {
+            if let Ok(ip_text) = response.text().await {
+                if let Ok(ip) = ip_text.trim().parse() {
+                    return Ok(ip);
+                }
+            }
+        }
+        
+        // Last resort: return local IP
         self.get_local_ip().await
+    }
+    
+    /// Parse external IP address from SOAP XML response
+    fn parse_external_ip_from_soap(xml: &str) -> Option<String> {
+        // Simple XML parsing for <NewExternalIPAddress> tag
+        for line in xml.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("<NewExternalIPAddress>") {
+                return trimmed
+                    .trim_start_matches("<NewExternalIPAddress>")
+                    .trim_end_matches("</NewExternalIPAddress>")
+                    .to_string()
+                    .into();
+            }
+        }
+        None
     }
     
     /// Get local IP address from network interfaces

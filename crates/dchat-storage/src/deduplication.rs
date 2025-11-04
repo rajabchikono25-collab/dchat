@@ -115,10 +115,49 @@ impl DeduplicationStore {
         
         // Check for similar content (delta encoding opportunity)
         if let Some(similar_hash) = self.find_similar_content(content, 0.85) {
-            if let Some(_delta) = self.delta_encoder.encode_delta(similar_hash, content) {
-                // Store as delta reference
-                // TODO: Implement delta storage in production
-                // For now, fall through to full storage
+            if let Some(delta) = self.delta_encoder.encode_delta(similar_hash, content) {
+                // Store as delta reference if delta is smaller than compressed full content
+                let (compressed_delta, delta_algorithm) = if delta.len() >= self.compression_config.min_size_bytes 
+                    && delta.len() <= self.compression_config.max_size_bytes 
+                {
+                    match CompressionEngine::compress(&delta, &self.compression_config) {
+                        Ok(result) => (result.data, result.algorithm),
+                        Err(_) => (delta.clone(), CompressionAlgorithm::None),
+                    }
+                } else {
+                    (delta.clone(), CompressionAlgorithm::None)
+                };
+                
+                // Only store as delta if it saves significant space
+                let full_compressed_size = if content.len() >= self.compression_config.min_size_bytes {
+                    CompressionEngine::compress(content, &self.compression_config)
+                        .map(|r| r.data.len())
+                        .unwrap_or(content.len())
+                } else {
+                    content.len()
+                };
+                
+                if compressed_delta.len() < full_compressed_size * 80 / 100 {
+                    // Delta saves >20% space - store it
+                    let now = chrono::Utc::now();
+                    let delta_metadata = ContentMetadata {
+                        original_size: content.len(),
+                        compressed_size: compressed_delta.len(),
+                        compression_algorithm: format!("{:?}-delta-{}", delta_algorithm, similar_hash.to_hex()).to_lowercase(),
+                        ref_count: 1,
+                        content_type: content_type.clone(),
+                        created_at: now,
+                        last_accessed: now,
+                    };
+                    
+                    // Ensure base version is stored (clone the content to avoid borrow issues)
+                    if let Some((base_content, _)) = self.content_store.get(&similar_hash) {
+                        self.delta_encoder.store_base(similar_hash, base_content.clone());
+                    }
+                    
+                    self.content_store.insert(hash, (compressed_delta, delta_metadata));
+                    return Ok((hash, false));
+                }
             }
         }
         
@@ -155,7 +194,36 @@ impl DeduplicationStore {
         if let Some((compressed_content, metadata)) = self.content_store.get_mut(hash) {
             metadata.last_accessed = chrono::Utc::now();
             
-            // Decompress if needed
+            // Check if this is delta-encoded content
+            if metadata.compression_algorithm.contains("-delta-") {
+                // Parse base hash from compression algorithm field
+                let parts: Vec<&str> = metadata.compression_algorithm.split("-delta-").collect();
+                if parts.len() == 2 {
+                    if let Ok(base_hash_bytes) = hex::decode(parts[1]) {
+                        if base_hash_bytes.len() == 32 {
+                            let mut hash_array = [0u8; 32];
+                            hash_array.copy_from_slice(&base_hash_bytes);
+                            let base_hash = Blake3Hash::from_bytes(hash_array);
+                            
+                            // Decompress delta if needed
+                            let delta = if parts[0].starts_with("zstd") {
+                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Zstd).ok()?
+                            } else if parts[0].starts_with("brotli") {
+                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Brotli).ok()?
+                            } else if parts[0].starts_with("lz4") {
+                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Lz4).ok()?
+                            } else {
+                                compressed_content.clone()
+                            };
+                            
+                            // Apply delta to base
+                            return self.delta_encoder.decode_delta(base_hash, &delta);
+                        }
+                    }
+                }
+            }
+            
+            // Not delta-encoded - decompress normally
             let algorithm = match metadata.compression_algorithm.as_str() {
                 "zstd" => CompressionAlgorithm::Zstd,
                 "brotli" => CompressionAlgorithm::Brotli,

@@ -218,33 +218,141 @@ impl BotClient {
     }
     
     /// Send message
-    pub async fn send_message(&self, _request: SendMessageRequest) -> Result<Uuid> {
-        // TODO: HTTP request to API
-        Ok(Uuid::new_v4())
+    pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
+        let url = format!("{}/bot/sendMessage", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let response = client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Failed to send message: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "API request failed with status: {}", response.status()
+            )));
+        }
+        
+        #[derive(Deserialize)]
+        struct ApiResponse {
+            message_id: Uuid,
+        }
+        
+        let api_response: ApiResponse = response.json().await
+            .map_err(|e| Error::network(format!("Failed to parse response: {}", e)))?;
+        
+        Ok(api_response.message_id)
     }
     
     /// Edit message
-    pub async fn edit_message(&self, _request: EditMessageRequest) -> Result<()> {
-        // TODO: HTTP request to API
+    pub async fn edit_message(&self, request: EditMessageRequest) -> Result<()> {
+        let url = format!("{}/bot/editMessage", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let response = client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Failed to edit message: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "API request failed with status: {}", response.status()
+            )));
+        }
+        
         Ok(())
     }
     
     /// Delete message
-    pub async fn delete_message(&self, _request: DeleteMessageRequest) -> Result<()> {
-        // TODO: HTTP request to API
+    pub async fn delete_message(&self, request: DeleteMessageRequest) -> Result<()> {
+        let url = format!("{}/bot/deleteMessage", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let response = client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Failed to delete message: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "API request failed with status: {}", response.status()
+            )));
+        }
+        
         Ok(())
     }
     
     /// Answer callback query
-    pub async fn answer_callback_query(&self, _request: AnswerCallbackQueryRequest) -> Result<()> {
-        // TODO: HTTP request to API
+    pub async fn answer_callback_query(&self, request: AnswerCallbackQueryRequest) -> Result<()> {
+        let url = format!("{}/bot/answerCallbackQuery", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let response = client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Failed to answer callback: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "API request failed with status: {}", response.status()
+            )));
+        }
+        
         Ok(())
     }
     
     /// Get updates (long polling)
-    pub async fn get_updates(&self, _offset: Option<i64>, _timeout: Option<u32>) -> Result<Vec<BotMessage>> {
-        // TODO: HTTP request to API for updates
-        Ok(Vec::new())
+    pub async fn get_updates(&self, offset: Option<i64>, timeout: Option<u32>) -> Result<Vec<BotMessage>> {
+        let mut url = format!("{}/bot/getUpdates", self.base_url);
+        
+        // Add query parameters
+        let mut params = Vec::new();
+        if let Some(offset) = offset {
+            params.push(format!("offset={}", offset));
+        }
+        if let Some(timeout) = timeout {
+            params.push(format!("timeout={}", timeout));
+        }
+        
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+        
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout.unwrap_or(30) as u64 + 5))
+            .build()
+            .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
+        
+        let response = client.get(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Failed to get updates: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "API request failed with status: {}", response.status()
+            )));
+        }
+        
+        #[derive(Deserialize)]
+        struct ApiResponse {
+            updates: Vec<BotMessage>,
+        }
+        
+        let api_response: ApiResponse = response.json().await
+            .map_err(|e| Error::network(format!("Failed to parse response: {}", e)))?;
+        
+        Ok(api_response.updates)
     }
 }
 

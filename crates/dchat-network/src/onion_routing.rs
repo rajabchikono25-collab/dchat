@@ -197,7 +197,24 @@ impl OnionRoutingManager {
             
             shared_secrets.push(secret);
             
-            // TODO: Send CREATE cell with our_public to hop and wait for CREATED response
+            // Send CREATE cell with our_public to hop and wait for CREATED response
+            // CREATE cell format: version(1) || circuit_id(16) || command(1) || public_key(32)
+            let create_cell = self.build_create_cell(&circuit_id, &_our_public);
+            
+            // Send CREATE cell to hop and await CREATED response
+            // In production, this would use libp2p stream to the hop's address
+            match self.send_create_cell(&hop.address, create_cell).await {
+                Ok(_) => {
+                    // Successfully established this hop
+                    tracing::debug!("Established hop with {}", hop.node_id);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to establish hop {}: {}", hop.node_id, e);
+                    return Err(Error::network(format!(
+                        "Circuit build failed at hop {}: {}", hop.node_id, e
+                    )));
+                }
+            }
         }
 
         let circuit = Circuit {
@@ -205,16 +222,11 @@ impl OnionRoutingManager {
             hops: path,
             created_at: Instant::now(),
             last_used: Instant::now(),
-            status: CircuitStatus::Building,
+            status: CircuitStatus::Active, // Set to active after all hops succeed
             shared_secrets,
         };
 
         self.circuits.insert(circuit_id.clone(), circuit);
-
-        // Mark as active (in production, wait for CREATED cells from each hop)
-        if let Some(circuit) = self.circuits.get_mut(&circuit_id) {
-            circuit.status = CircuitStatus::Active;
-        }
 
         Ok(circuit_id)
     }
@@ -440,6 +452,66 @@ impl OnionRoutingManager {
             building_circuits: building,
             available_relays: self.available_relays.len(),
         }
+    }
+    
+    /// Build CREATE cell for circuit handshake
+    fn build_create_cell(&self, circuit_id: &CircuitId, public_key: &x25519_dalek::PublicKey) -> Vec<u8> {
+        use std::io::Write;
+        
+        let mut cell = Vec::new();
+        
+        // Version (1 byte)
+        cell.push(1u8);
+        
+        // Circuit ID (16 bytes - use first 16 bytes of circuit ID string hash)
+        let mut hasher = Hasher::new();
+        hasher.update(circuit_id.0.as_bytes());
+        let id_hash = hasher.finalize();
+        cell.extend_from_slice(&id_hash.as_bytes()[..16]);
+        
+        // Command (1 byte): CREATE = 0x01
+        cell.push(0x01);
+        
+        // Public key (32 bytes)
+        cell.extend_from_slice(public_key.as_bytes());
+        
+        cell
+    }
+    
+    /// Send CREATE cell to relay node and await CREATED response
+    async fn send_create_cell(&self, relay_address: &str, create_cell: Vec<u8>) -> Result<()> {
+        use tokio::net::TcpStream;
+        use tokio::io::{AsyncWriteExt, AsyncReadExt};
+        
+        // Connect to relay
+        let mut stream = TcpStream::connect(relay_address).await
+            .map_err(|e| Error::network(format!("Failed to connect to relay: {}", e)))?;
+        
+        // Send CREATE cell
+        stream.write_all(&create_cell).await
+            .map_err(|e| Error::network(format!("Failed to send CREATE cell: {}", e)))?;
+        
+        // Wait for CREATED response
+        // CREATED format: version(1) || circuit_id(16) || command(1=CREATED) || public_key(32) || status(1)
+        let mut response = vec![0u8; 51];
+        stream.read_exact(&mut response).await
+            .map_err(|e| Error::network(format!("Failed to read CREATED response: {}", e)))?;
+        
+        // Verify response
+        if response[0] != 1 {
+            return Err(Error::network("Invalid CREATED response version"));
+        }
+        
+        if response[17] != 0x02 { // CREATED command = 0x02
+            return Err(Error::network("Invalid CREATED response command"));
+        }
+        
+        let status = response[50];
+        if status != 0x00 { // 0x00 = success
+            return Err(Error::network(format!("Circuit creation failed with status: {}", status)));
+        }
+        
+        Ok(())
     }
 }
 
