@@ -616,7 +616,7 @@ mod tests {
             assert_eq!(recipients[1].1, 200);
             assert_eq!(recipients[2].1, 100);
         } else {
-            panic!("Expected MultiParty escrow");
+            panic!("Test failed: Expected MultiParty escrow but got different escrow type");
         }
     }
 }

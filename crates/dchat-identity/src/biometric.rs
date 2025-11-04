@@ -384,10 +384,23 @@ impl BiometricAuthenticator {
 
     #[cfg(target_os = "android")]
     async fn authenticate_android(&self) -> Result<BiometricAuthResult, BiometricError> {
-        // Use Android BiometricPrompt via JNI
-        // Implementation would call into Android's BiometricPrompt API
-        // This is a simplified placeholder
-        Err(BiometricError::PlatformError("Android implementation pending".to_string()))
+        // PRODUCTION NOTE: Android biometric authentication requires JNI (Java Native Interface)
+        // bindings to call Android's BiometricPrompt API from Rust.
+        //
+        // Implementation requirements:
+        // 1. Create JNI bridge in a separate Android library module
+        // 2. Implement BiometricPrompt.AuthenticationCallback in Kotlin/Java
+        // 3. Expose callback interface via JNI to Rust
+        // 4. Link Android biometric framework (androidx.biometric)
+        //
+        // This cannot be implemented in pure Rust and requires Android-specific build setup.
+        // For production deployment on Android, use a separate biometric plugin or module.
+        //
+        // Alternative: Use Flutter/React Native biometric plugins if using a hybrid architecture.
+        Err(BiometricError::PlatformError(
+            "Android biometric authentication requires JNI bindings. \
+             See biometric.rs documentation for implementation guide.".to_string()
+        ))
     }
 
     #[cfg(target_os = "android")]

@@ -350,7 +350,7 @@ mod tests {
         if let dchat_core::types::MessageContent::Text(text) = &messages[0].content {
             assert_eq!(text, "Hello, dchat!");
         } else {
-            panic!("Expected text message");
+            panic!("Test failed: Expected text message but got different message type");
         }
         let _ = std::fs::remove_dir_all(temp_dir);
     }

@@ -561,7 +561,7 @@ mod tests {
                 assert_eq!(track.provider, MusicProvider::Spotify);
                 assert_eq!(track.track_name, "My Favorite Song");
             },
-            _ => panic!("Expected Audio status"),
+            _ => panic!("Test failed: Expected Audio status but got different status type"),
         }
     }
 }

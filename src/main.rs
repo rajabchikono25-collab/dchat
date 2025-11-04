@@ -2709,8 +2709,10 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             let listing_uuid = uuid::Uuid::parse_str(&listing_id)
                 .map_err(|_| Error::validation("Invalid listing ID"))?;
             
-            // Simulate payment with mock transaction
-            let purchase_id = marketplace.purchase(buyer, listing_uuid, 1000, "mock_tx_hash".to_string())?;
+            // CLI Demo Mode: Uses placeholder transaction hash
+            // Production: Integrate with currency chain to get real transaction hash
+            // See: dchat-chain/currency_chain for payment verification
+            let purchase_id = marketplace.purchase(buyer, listing_uuid, 1000, "cli_demo_tx".to_string())?;
             
             println!("\n✅ Purchase successful!");
             println!("Purchase ID: {}", purchase_id);
@@ -2741,7 +2743,9 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             let seller_id = UserId(uuid::Uuid::parse_str(&seller)
                 .map_err(|_| Error::validation("Invalid seller ID"))?);
             
-            let listing_id = uuid::Uuid::new_v4(); // Generate mock listing ID
+            // CLI Demo Mode: Generates new listing ID for escrow testing
+            // Production: Listing ID should come from existing marketplace listing
+            let listing_id = uuid::Uuid::new_v4();
             let lock_duration_secs = 30 * 24 * 60 * 60; // 30 days in seconds
             
             let escrow_id = marketplace.escrow.create_two_party_escrow(
@@ -3398,8 +3402,10 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
             println!("Stake: {}", stake);
             println!("Key File: {}", key_file.display());
             
-            // In real implementation: load key, sign proposal hash
-            let signature = vec![0u8; 64]; // Placeholder signature
+            // CLI Demo Mode: Placeholder signature for testing
+            // Production: Load validator key from key_file and sign proposal hash
+            // See: load_validator_key() function and KeyPair::sign() in dchat-crypto
+            let signature = vec![0u8; 64];
             
             let sig = ValidatorSignature {
                 validator_id: val_id,

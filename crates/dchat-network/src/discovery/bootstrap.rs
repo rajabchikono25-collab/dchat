@@ -26,19 +26,43 @@ impl Bootstrap {
     }
 
     /// Get default bootstrap nodes
+    /// 
+    /// Priority order:
+    /// 1. DCHAT_BOOTSTRAP_NODES environment variable (comma-separated multiaddrs)
+    /// 2. Fallback to default DNS addresses (must be configured before production deployment)
+    /// 
+    /// For production: Set DCHAT_BOOTSTRAP_NODES or update DNS records for:
+    /// - bootstrap-1.dchat.network
+    /// - bootstrap-2.dchat.network  
+    /// - bootstrap-3.dchat.network
     pub fn default_nodes() -> Vec<Multiaddr> {
+        // Check for environment variable first (production override)
+        if let Ok(env_nodes) = std::env::var("DCHAT_BOOTSTRAP_NODES") {
+            let nodes: Vec<Multiaddr> = env_nodes
+                .split(',')
+                .filter_map(|addr| {
+                    addr.trim().parse().ok()
+                })
+                .collect();
+            
+            if !nodes.is_empty() {
+                tracing::info!("Using {} bootstrap nodes from DCHAT_BOOTSTRAP_NODES", nodes.len());
+                return nodes;
+            }
+        }
+        
+        // Fallback to DNS-based discovery (requires DNS configuration)
+        // These DNS names must resolve to actual relay node IPs before production use
         vec![
-            // These would be actual dchat bootstrap nodes in production
-            // For now, using placeholder addresses
             "/dns4/bootstrap-1.dchat.network/tcp/9000"
                 .parse()
-                .unwrap(),
+                .expect("Valid bootstrap address 1"),
             "/dns4/bootstrap-2.dchat.network/tcp/9000"
                 .parse()
-                .unwrap(),
+                .expect("Valid bootstrap address 2"),
             "/dns4/bootstrap-3.dchat.network/tcp/9000"
                 .parse()
-                .unwrap(),
+                .expect("Valid bootstrap address 3"),
         ]
     }
 

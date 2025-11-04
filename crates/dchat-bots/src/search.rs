@@ -449,7 +449,7 @@ mod tests {
         
         match &results[0] {
             SearchResult::User(p) => assert_eq!(p.username, "testuser"),
-            _ => panic!("Expected user result"),
+            _ => panic!("Test failed: Expected user result but got different result type"),
         }
     }
     
