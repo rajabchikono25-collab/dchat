@@ -285,26 +285,53 @@ impl OnionRoutingManager {
         })
     }
 
-    /// Encrypt a single layer
+    /// Encrypt a single layer using ChaCha20Poly1305 AEAD
     fn encrypt_layer(&self, data: &[u8], key: &[u8]) -> Vec<u8> {
-        // Placeholder: Use ChaCha20Poly1305 or AES-GCM in production
-        let mut hasher = Hasher::new();
-        hasher.update(key);
-        hasher.update(data);
-        hasher.finalize().as_bytes().to_vec()
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit},
+            ChaCha20Poly1305, Nonce,
+        };
+        use rand::RngCore;
+        
+        // Derive encryption key from shared secret
+        let key_bytes: [u8; 32] = key[..32].try_into()
+            .expect("Key must be 32 bytes");
+        let cipher = ChaCha20Poly1305::new(&key_bytes.into());
+        
+        // Generate random nonce (12 bytes)
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        
+        // Encrypt with AEAD
+        let ciphertext = cipher.encrypt(nonce, data)
+            .expect("Encryption failed");
+        
+        // Return nonce || ciphertext for decryption
+        let mut result = nonce_bytes.to_vec();
+        result.extend_from_slice(&ciphertext);
+        result
     }
 
-    /// Create encrypted routing header
+    /// Create encrypted routing header with proper node addressing
     fn create_routing_header(&self, circuit: &Circuit) -> Result<Vec<u8>> {
-        // Placeholder: Encode next hop info for each node
+        use std::io::Write;
+        
+        // Encode routing information: [hop_count, (node_id_len, node_id, port)*]
         let mut header = Vec::new();
+        header.push(circuit.hops.len() as u8);
         
         for hop in &circuit.hops {
-            header.extend_from_slice(hop.node_id.as_bytes());
-            header.push(0); // Separator
+            let node_id_bytes = hop.node_id.as_bytes();
+            // Write length-prefixed node ID
+            header.push(node_id_bytes.len() as u8);
+            header.extend_from_slice(node_id_bytes);
+            // Write port as big-endian u16
+            let port_bytes = 7070u16.to_be_bytes(); // Default relay port
+            header.extend_from_slice(&port_bytes);
         }
 
-        // Encrypt header in layers
+        // Encrypt header in layers (reverse order for onion)
         for secret in circuit.shared_secrets.iter().rev() {
             header = self.encrypt_layer(&header, secret);
         }

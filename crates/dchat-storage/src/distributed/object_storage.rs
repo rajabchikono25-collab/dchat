@@ -52,8 +52,8 @@ impl Default for ObjectStorageConfig {
 
 /// Distributed object storage client
 pub struct DistributedObjectStorage {
-    /// S3 bucket handle
-    bucket: Bucket,
+    /// S3 bucket handle (boxed in rust-s3 0.35)
+    bucket: Box<Bucket>,
     /// Configuration
     config: ObjectStorageConfig,
 }
@@ -135,7 +135,7 @@ impl DistributedObjectStorage {
         let data = fs::read(file_path).await
             .map_err(|e| {
                 error!("Failed to read file: {}", e);
-                StorageError::Io(e.to_string())
+                StorageError::Io(e)
             })?;
         
         self.upload_bytes(&data, object_key, content_type).await
@@ -166,7 +166,7 @@ impl DistributedObjectStorage {
         let etag = response
             .headers()
             .get("etag")
-            .and_then(|v| v.to_str().ok())
+            .map(|v| v.as_str())
             .unwrap_or("")
             .to_string();
         
@@ -219,7 +219,7 @@ impl DistributedObjectStorage {
         fs::write(dest_path, data).await
             .map_err(|e| {
                 error!("Failed to write file: {}", e);
-                StorageError::Io(e.to_string())
+                StorageError::Io(e)
             })?;
         
         info!("Downloaded to: {}", dest_path.display());
@@ -246,10 +246,15 @@ impl DistributedObjectStorage {
         
         match result {
             Ok(_) => Ok(true),
-            Err(s3::error::S3Error::Http(404, _)) => Ok(false),
             Err(e) => {
-                error!("Head object failed: {}", e);
-                Err(StorageError::ObjectStorage(format!("Head object failed: {}", e)))
+                // Check if it's a 404 Not Found error
+                let err_str = e.to_string();
+                if err_str.contains("404") || err_str.contains("Not Found") {
+                    Ok(false)
+                } else {
+                    error!("Head object failed: {}", e);
+                    Err(StorageError::ObjectStorage(format!("Head object failed: {}", e)))
+                }
             }
         }
     }
@@ -266,8 +271,7 @@ impl DistributedObjectStorage {
         
         let size_bytes = head_object
             .content_length
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+            .unwrap_or(0) as u64;
         
         let content_type = head_object
             .content_type
@@ -332,7 +336,7 @@ impl DistributedObjectStorage {
     ) -> StorageResult<String> {
         debug!("Generating pre-signed URL for: {}", object_key);
         
-        let url = self.bucket.presign_get(object_key, expires_in_seconds)
+        let url = self.bucket.presign_get(object_key, expires_in_seconds, None).await
             .map_err(|e| {
                 error!("Pre-sign failed: {}", e);
                 StorageError::ObjectStorage(format!("Pre-sign failed: {}", e))

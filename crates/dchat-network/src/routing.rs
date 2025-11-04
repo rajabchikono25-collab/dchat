@@ -204,7 +204,7 @@ impl OnionRouter {
         for peer in circuit.iter().rev() {
             // In production, derive shared secret using ECDH with peer's public key
             let mut hasher = Sha256::new();
-            hasher.update(&peer.to_bytes());
+            hasher.update(peer.to_bytes());
             hasher.update(&payload);
             let layer_key = hasher.finalize();
             

@@ -452,8 +452,8 @@ impl MpcSigner {
         // Hash message for signature verification
         use sha2::{Sha512, Digest};
         let mut hasher = Sha512::new();
-        hasher.update(&r_bytes);
-        hasher.update(&pk_bytes);
+        hasher.update(r_bytes);
+        hasher.update(pk_bytes);
         hasher.update(message);
         let h = Scalar::from_hash(hasher);
         
@@ -703,7 +703,7 @@ impl MpcCoordinator {
         
         // 3. Compute challenge h = H(R || PK || m)
         let mut hasher = Sha512::new();
-        hasher.update(&r_bytes);
+        hasher.update(r_bytes);
         hasher.update(&signer.public_key_share);
         hasher.update(message);
         let h = Scalar::from_hash(hasher);

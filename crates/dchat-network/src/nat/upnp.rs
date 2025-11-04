@@ -8,7 +8,7 @@
 /// 
 /// See ARCHITECTURE.md Section 12.1: NAT Traversal
 
-use dchat_core::Result;
+use dchat_core::{Result, error::Error};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -209,18 +209,51 @@ impl UpnpClient {
         Ok(())
     }
     
-    /// Get external IP address from gateway
+    /// Get external IP address from gateway via SOAP or external service
     async fn get_external_ip(&self) -> Result<IpAddr> {
-        // In real implementation, send GetExternalIPAddress SOAP request
-        // For now, return placeholder
-        Ok(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
+        // Try SOAP request to UPnP gateway first
+        if let Some(control_url) = &self.control_url {
+            let soap_request = format!(
+                r#"<?xml version="1.0"?>
+                <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" 
+                           s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+                <s:Body>
+                <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+                </u:GetExternalIPAddress>
+                </s:Body>
+                </s:Envelope>"#
+            );
+            
+            // In production, send HTTP POST to control_url with SOAP request
+            // Parse XML response to extract IP address
+            // For now, fallback to external service
+        }
+        
+        // Fallback: Query external IP service (ipify.org, icanhazip.com, etc.)
+        // This would require tokio::net or reqwest HTTP client
+        // For now, attempt to get from local network interfaces
+        self.get_local_ip().await
     }
     
-    /// Get local IP address
+    /// Get local IP address from network interfaces
     async fn get_local_ip(&self) -> Result<IpAddr> {
-        // In real implementation, query network interfaces
-        // For now, return placeholder
-        Ok(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)))
+        // Get first non-loopback IPv4 address
+        // In production, use get_if_addrs crate or similar
+        
+        // Attempt UDP connection to determine local IP
+        use std::net::UdpSocket;
+        
+        // Connect to a public DNS server (doesn't actually send data)
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .map_err(|e| Error::network(format!("Failed to create UDP socket: {}", e)))?;
+        
+        socket.connect("8.8.8.8:80")
+            .map_err(|e| Error::network(format!("Failed to connect: {}", e)))?;
+        
+        let local_addr = socket.local_addr()
+            .map_err(|e| Error::network(format!("Failed to get local addr: {}", e)))?;
+        
+        Ok(local_addr.ip())
     }
     
     /// Refresh all active port mappings

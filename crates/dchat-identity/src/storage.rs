@@ -159,7 +159,7 @@ impl ProfileStorage {
                 metadata = excluded.metadata
             "#,
         )
-        .bind(&profile.user_id.to_string())
+        .bind(profile.user_id.to_string())
         .bind(&profile.username)
         .bind(&profile.display_name)
         .bind(&profile.bio)
@@ -168,7 +168,7 @@ impl ProfileStorage {
         .bind(&pic_small)
         .bind(&pic_large)
         .bind(&pic_uploaded)
-        .bind(&format!("{:?}", profile.online_status))
+        .bind(format!("{:?}", profile.online_status))
         .bind(profile.last_seen.as_ref().map(|dt| dt.to_rfc3339()))
         .bind(profile.created_at.to_rfc3339())
         .bind(profile.is_verified)
@@ -222,7 +222,7 @@ impl ProfileStorage {
                 message_blocked = excluded.message_blocked
             "#,
         )
-        .bind(&user_id.to_string())
+        .bind(user_id.to_string())
         .bind(&pic_vis)
         .bind(&pic_allowed)
         .bind(&pic_blocked)
@@ -252,7 +252,7 @@ impl ProfileStorage {
             SELECT * FROM user_profiles WHERE user_id = ?
             "#,
         )
-        .bind(&user_id.to_string())
+        .bind(user_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to fetch profile: {}", e)))?;
@@ -295,7 +295,7 @@ impl ProfileStorage {
             SELECT * FROM profile_privacy WHERE user_id = ?
             "#,
         )
-        .bind(&user_id.to_string())
+        .bind(user_id.to_string())
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to fetch privacy settings: {}", e)))?;
@@ -351,7 +351,7 @@ impl ProfileStorage {
             "#,
         )
         .bind(status.id.to_string())
-        .bind(&user_id.to_string())
+        .bind(user_id.to_string())
         .bind(&status_type)
         .bind(&status_data)
         .bind(&status.caption)
@@ -378,14 +378,14 @@ impl ProfileStorage {
             ORDER BY created_at DESC
             "#,
         )
-        .bind(&user_id.to_string())
+        .bind(user_id.to_string())
         .bind(&now)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to fetch statuses: {}", e)))?;
 
         rows.into_iter()
-            .map(|row| parse_status_row(row))
+            .map(parse_status_row)
             .collect()
     }
 

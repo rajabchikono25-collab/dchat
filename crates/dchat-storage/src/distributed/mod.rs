@@ -11,48 +11,18 @@
 // For deployment, configure these dependencies and enable the modules.
 
 pub mod database;
-// Enable production-ready distributed storage implementations
-// TODO: Fix type errors in cache.rs and object_storage.rs before enabling
-// pub mod cache;
-// pub mod object_storage;
-// TODO: Fix TiKV API compatibility before enabling
-// pub mod tikv_backend;
+// PRODUCTION NOTE: Distributed storage backends now ENABLED
+// Dependencies updated:
+// - redis 0.25 (cluster async support)
+// - rust-s3 0.35 (S3Error API compatibility fixed)
+// - tikv-client 0.3 (Key type conversions correct)
 
+pub mod cache;
+pub mod object_storage;
+pub mod tikv_backend;
+
+// Re-export types from submodules for convenient access
 pub use database::{DistributedDatabase, DatabaseConfig};
-// pub use cache::{DistributedCache, CacheConfig};
-// pub use object_storage::{DistributedObjectStorage, ObjectStorageConfig, StorageTier, ObjectMetadata};
-
-// Stub types until cache and object_storage are fixed
-#[derive(Debug, Clone)]
-pub struct DistributedCache;
-#[derive(Debug, Clone)]
-pub struct CacheConfig;
-#[derive(Debug, Clone)]
-pub struct DistributedObjectStorage;
-#[derive(Debug, Clone)]
-pub struct ObjectStorageConfig;
-#[derive(Debug, Clone)]
-pub struct StorageTier;
-#[derive(Debug, Clone)]
-pub struct ObjectMetadata;
-// pub use tikv_backend::{TiKVStorage, TiKVConfig, ChainState, BlockMetadata};
-
-// TiKV stub types (will be enabled after dependency resolution)
-#[derive(Debug, Clone)]
-pub struct TiKVConfig {
-    pub pd_endpoints: Vec<String>,
-    pub enable_pessimistic_txn: bool,
-}
-#[derive(Debug, Clone)]
-pub struct TiKVStorage;
-#[derive(Debug, Clone)]
-pub struct ChainState {
-    pub block_height: u64,
-    pub block_hash: [u8; 32],
-    pub state_root: [u8; 32],
-}
-#[derive(Debug, Clone)]
-pub struct BlockMetadata {
-    pub height: u64,
-    pub timestamp: i64,
-}
+pub use cache::{DistributedCache, CacheConfig};
+pub use object_storage::{DistributedObjectStorage, ObjectStorageConfig, StorageTier, ObjectMetadata};
+pub use tikv_backend::{TiKVStorage, TiKVConfig, ChainState, BlockMetadata};

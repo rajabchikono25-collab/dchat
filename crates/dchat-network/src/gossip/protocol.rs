@@ -129,7 +129,7 @@ impl GossipMessage {
         hasher.update(message_id.as_bytes());
         hasher.update(payload);
         hasher.update(timestamp.to_le_bytes());
-        hasher.update(&[ttl]);
+        hasher.update([ttl]);
         
         hasher.finalize().to_vec()
     }

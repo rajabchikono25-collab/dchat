@@ -71,10 +71,8 @@ impl TiKVStorage {
     pub async fn new(config: TiKVConfig) -> StorageResult<Self> {
         info!("Connecting to TiKV cluster with {} PD endpoints", config.pd_endpoints.len());
         
-        let tikv_config = Config::new(config.pd_endpoints.clone())
-            .with_timeout(Duration::from_secs(config.connection_timeout_seconds));
-        
-        let client = RawClient::new(tikv_config).await
+        // tikv-client 0.3 API: RawClient::new() takes Vec<String> directly
+        let client = RawClient::new(config.pd_endpoints.clone()).await
             .map_err(|e| {
                 error!("Failed to create TiKV client: {}", e);
                 StorageError::TiKV(format!("Connection failed: {}", e))
@@ -336,16 +334,22 @@ impl TiKVStorage {
         debug!("Scanning keys with prefix: {}, limit: {}", prefix, limit);
         
         let start_key = Key::from(prefix.as_bytes().to_vec());
+        // Create end key by incrementing last byte of prefix for range scan
+        let mut end_bytes = prefix.as_bytes().to_vec();
+        if let Some(last) = end_bytes.last_mut() {
+            *last = last.saturating_add(1);
+        }
+        let end_key = Key::from(end_bytes);
         
         let result = tokio::time::timeout(
             Duration::from_secs(self.config.operation_timeout_seconds),
-            self.client.scan_keys(start_key, limit)
+            self.client.scan_keys(start_key..end_key, limit)
         ).await;
         
         match result {
             Ok(Ok(keys)) => {
                 let string_keys = keys.into_iter()
-                    .map(|k| String::from_utf8_lossy(&k).to_string())
+                    .map(|k| String::from_utf8_lossy((&k).into()).to_string())
                     .collect();
                 Ok(string_keys)
             }

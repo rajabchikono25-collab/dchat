@@ -1,8 +1,9 @@
 /**
  * Cryptographic utilities for key management
+ * Uses @noble/ed25519 for real Ed25519 cryptography
  */
 
-import { randomBytes } from 'crypto';
+import * as ed25519 from '@noble/ed25519';
 
 export interface KeyPair {
   publicKey: string;
@@ -11,38 +12,46 @@ export interface KeyPair {
 
 /**
  * Generate a new Ed25519 key pair
- * Note: This is a placeholder implementation
- * In production, use a proper Ed25519 library like @noble/ed25519 or tweetnacl
+ * Uses @noble/ed25519 for secure key generation
  */
-export function generateKeyPair(): KeyPair {
-  // Generate random 32-byte keys (placeholder)
-  const privateKey = randomBytes(32).toString('hex');
-  const publicKey = randomBytes(32).toString('hex');
+export async function generateKeyPair(): Promise<KeyPair> {
+  const privateKey = ed25519.utils.randomPrivateKey();
+  const publicKey = await ed25519.getPublicKeyAsync(privateKey);
 
   return {
-    publicKey,
-    privateKey,
+    publicKey: Buffer.from(publicKey).toString('hex'),
+    privateKey: Buffer.from(privateKey).toString('hex'),
   };
 }
 
 /**
  * Sign a message with a private key
- * Note: Placeholder implementation
+ * Uses Ed25519 signature algorithm
  */
-export function sign(_message: string, _privateKey: string): string {
-  // TODO: Implement proper Ed25519 signing
-  return randomBytes(64).toString('hex');
+export async function sign(message: string, privateKey: string): Promise<string> {
+  const messageBytes = Buffer.from(message, 'utf8');
+  const privateKeyBytes = Buffer.from(privateKey, 'hex');
+  
+  const signature = await ed25519.signAsync(messageBytes, privateKeyBytes);
+  return Buffer.from(signature).toString('hex');
 }
 
 /**
  * Verify a signature
- * Note: Placeholder implementation
+ * Uses Ed25519 signature verification
  */
-export function verify(
-  _message: string,
-  _signature: string,
-  _publicKey: string
-): boolean {
-  // TODO: Implement proper Ed25519 verification
-  return true;
+export async function verify(
+  message: string,
+  signature: string,
+  publicKey: string
+): Promise<boolean> {
+  try {
+    const messageBytes = Buffer.from(message, 'utf8');
+    const signatureBytes = Buffer.from(signature, 'hex');
+    const publicKeyBytes = Buffer.from(publicKey, 'hex');
+    
+    return await ed25519.verifyAsync(signatureBytes, messageBytes, publicKeyBytes);
+  } catch (error) {
+    return false;
+  }
 }

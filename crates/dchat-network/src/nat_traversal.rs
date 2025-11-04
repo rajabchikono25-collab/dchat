@@ -130,8 +130,7 @@ impl NatTraversalManager {
         use tokio::time::timeout;
         
         // Parse STUN server addresses
-        let primary_stun: SocketAddr = self.config.stun_servers
-            .get(0)
+        let primary_stun: SocketAddr = self.config.stun_servers.first()
             .ok_or_else(|| Error::network("No STUN servers configured"))?
             .parse()
             .map_err(|_| Error::network("Invalid STUN server address"))?;
@@ -220,7 +219,7 @@ impl NatTraversalManager {
         }
         
         // Check magic cookie
-        if &data[4..8] != &[0x21, 0x12, 0xA4, 0x42] {
+        if data[4..8] != [0x21, 0x12, 0xA4, 0x42] {
             return Err(Error::network("Invalid STUN response: bad magic cookie"));
         }
         
@@ -319,14 +318,12 @@ impl NatTraversalManager {
             .map_err(|e| Error::network(format!("Failed to set broadcast: {}", e)))?;
         
         // SSDP M-SEARCH request
-        let search_request = format!(
-            "M-SEARCH * HTTP/1.1\r\n\
+        let search_request = "M-SEARCH * HTTP/1.1\r\n\
              HOST: 239.255.255.250:1900\r\n\
              MAN: \"ssdp:discover\"\r\n\
              MX: 3\r\n\
              ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
-             \r\n"
-        );
+             \r\n".to_string();
         
         socket.send_to(search_request.as_bytes(), ssdp_addr).await
             .map_err(|e| Error::network(format!("SSDP send failed: {}", e)))?;
@@ -334,8 +331,7 @@ impl NatTraversalManager {
         // Wait for response
         let mut buf = vec![0u8; 2048];
         let (len, _) = timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await
-            .map_err(|_| Error::network("UPnP gateway discovery timeout"))??
-            .into();
+            .map_err(|_| Error::network("UPnP gateway discovery timeout"))??;
         
         let response = String::from_utf8_lossy(&buf[..len]);
         
@@ -364,15 +360,13 @@ impl NatTraversalManager {
         // Send SOAP request to get external IP
         // This is a simplified implementation - production would use full SOAP client
         
-        let _soap_request = format!(
-            "<?xml version=\"1.0\"?>\n\
+        let _soap_request = "<?xml version=\"1.0\"?>\n\
              <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
                          s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n\
                <s:Body>\n\
                  <u:GetExternalIPAddress xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"/>\n\
                </s:Body>\n\
-             </s:Envelope>"
-        );
+             </s:Envelope>".to_string();
         
         // For now, return a detected IP or error
         // Production would make HTTP POST request to gateway control URL
@@ -418,8 +412,7 @@ impl NatTraversalManager {
         // 2. Receive Allocate Response
         let mut buf = vec![0u8; 2048];
         let (len, _) = timeout(Duration::from_secs(10), local_socket.recv_from(&mut buf)).await
-            .map_err(|_| Error::network("TURN allocate timeout"))??
-            .into();
+            .map_err(|_| Error::network("TURN allocate timeout"))??;
         
         // 3. Parse allocated relay address
         let relay_addr = self.parse_turn_allocate_response(&buf[..len])?;
@@ -563,14 +556,16 @@ impl NatTraversalManager {
         // 3. Allocate relay address
         // 4. Maintain connection with keep-alives
 
+        // Real TURN allocation using the new setup_turn method
+        let allocated_addr = self.setup_turn(username.clone(), credential.clone()).await?;
+        
         let turn_conn = TurnConnection {
             server_addr: server_addr.clone(),
-            allocated_addr: Some("198.51.100.1:50000".parse().unwrap()), // Placeholder
+            allocated_addr: Some(allocated_addr),
             username,
             credential,
         };
 
-        let allocated_addr = turn_conn.allocated_addr.unwrap();
         self.turn_connections.push(turn_conn);
         self.active_strategy = Some(NatStrategy::TURN);
 

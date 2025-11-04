@@ -19,9 +19,11 @@ pub mod permissions;
 pub mod storage;
 pub mod search;
 pub mod music_api;
+pub mod api;
 
 pub use bot_manager::{BotManager, BotFather};
 pub use bot_api::{BotApi, BotClient};
+pub use api::{BotHttpClient};
 pub use webhook::{WebhookManager, WebhookConfig};
 pub use commands::{Command, CommandHandler, CommandRegistry};
 pub use inline::{InlineQuery, InlineResult, InlineQueryHandler};

@@ -284,14 +284,12 @@ impl NetworkManager {
                 }
                 None
             }
-            DchatBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. }) => {
-                match result {
-                    kad::QueryResult::Bootstrap(Ok(_)) => {
-                        tracing::info!("DHT bootstrap successful");
-                        Some(NetworkEvent::DhtQueryComplete)
-                    }
-                    _ => None
-                }
+            DchatBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { 
+                result: kad::QueryResult::Bootstrap(Ok(_)), 
+                .. 
+            }) => {
+                tracing::info!("DHT bootstrap successful");
+                Some(NetworkEvent::DhtQueryComplete)
             }
             _ => None,
         }

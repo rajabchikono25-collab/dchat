@@ -1,36 +1,55 @@
 """
 Cryptographic utilities for key management
+Uses PyNaCl for real Ed25519 cryptography
 """
 
 import hashlib
-import os
 from typing import Tuple
 
-# Note: For production, use a proper Ed25519 library like PyNaCl or cryptography
-# This is a simplified implementation
+try:
+    from nacl.signing import SigningKey, VerifyKey
+    from nacl.encoding import RawEncoder
+    PYNACL_AVAILABLE = True
+except ImportError:
+    PYNACL_AVAILABLE = False
+    import os
 
 
 class KeyPair:
-    """Ed25519 key pair for identity management"""
+    """Ed25519 key pair for identity management using PyNaCl"""
 
     def __init__(self, public_key: bytes, private_key: bytes):
         self.public_key = public_key
         self.private_key = private_key
+        if PYNACL_AVAILABLE:
+            self._signing_key = SigningKey(private_key, encoder=RawEncoder)
+            self._verify_key = VerifyKey(public_key, encoder=RawEncoder)
 
     @classmethod
     def generate(cls) -> "KeyPair":
-        """Generate a new random key pair"""
-        # TODO: Use proper Ed25519 key generation
-        # For now, using random bytes as placeholder
-        private_key = os.urandom(32)
-        public_key = os.urandom(32)  # Should be derived from private key
+        """Generate a new random Ed25519 key pair"""
+        if not PYNACL_AVAILABLE:
+            raise ImportError("PyNaCl is required for Ed25519 cryptography. Install: pip install PyNaCl")
+        
+        # Generate Ed25519 key pair using PyNaCl
+        signing_key = SigningKey.generate()
+        verify_key = signing_key.verify_key
+        
+        private_key = bytes(signing_key)
+        public_key = bytes(verify_key)
+        
         return cls(public_key, private_key)
 
     @classmethod
     def from_private_key(cls, private_key: bytes) -> "KeyPair":
         """Create from existing private key"""
-        # TODO: Derive public key from private key using Ed25519
-        public_key = os.urandom(32)  # Placeholder
+        if not PYNACL_AVAILABLE:
+            raise ImportError("PyNaCl is required for Ed25519 cryptography. Install: pip install PyNaCl")
+        
+        # Derive public key from private key using Ed25519
+        signing_key = SigningKey(private_key, encoder=RawEncoder)
+        public_key = bytes(signing_key.verify_key)
+        
         return cls(public_key, private_key)
 
     @property
@@ -44,17 +63,26 @@ class KeyPair:
         return self.private_key.hex()
 
     def sign(self, message: bytes) -> bytes:
-        """Sign a message"""
-        # TODO: Implement proper Ed25519 signing
-        # Placeholder implementation
-        return hashlib.sha256(message + self.private_key).digest()
+        """Sign a message using Ed25519"""
+        if not PYNACL_AVAILABLE:
+            raise ImportError("PyNaCl is required for Ed25519 signing")
+        
+        # Sign message using Ed25519
+        signed = self._signing_key.sign(message, encoder=RawEncoder)
+        # Return only the signature (first 64 bytes)
+        return signed.signature
 
     def verify(self, message: bytes, signature: bytes) -> bool:
-        """Verify a signature"""
-        # TODO: Implement proper Ed25519 verification
-        # Placeholder implementation
-        expected = hashlib.sha256(message + self.private_key).digest()
-        return signature == expected
+        """Verify an Ed25519 signature"""
+        if not PYNACL_AVAILABLE:
+            return False
+        
+        try:
+            # Verify signature using Ed25519
+            self._verify_key.verify(message, signature, encoder=RawEncoder)
+            return True
+        except Exception:
+            return False
 
     def to_dict(self) -> dict:
         """Export key pair to dictionary"""

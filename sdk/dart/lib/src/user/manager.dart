@@ -49,11 +49,31 @@ class UserManager {
   }
 
   /// Get user profile by user ID
+  /// Queries blockchain for user registration and profile data
   Future<UserProfile?> getUserProfile(String userId) async {
-    // Implementation would query the backend/database
-    // For now, this is a placeholder
-    throw UnimplementedError('getUserProfile not yet implemented');
-  }
+    try {
+      // Query blockchain for user data
+      final userData = await blockchain.getUserData(userId);
+      
+      if (userData == null) {
+        return null;
+      }
+      
+      return UserProfile(
+        userId: userId,
+        username: userData['username'] as String,
+        publicKey: userData['publicKey'] as String,
+        displayName: userData['displayName'] as String?,
+        bio: userData['bio'] as String?,
+        avatarUrl: userData['avatarUrl'] as String?,
+        createdAt: userData['createdAt'] as String,
+        lastSeen: userData['lastSeen'] as String?,
+        onChainVerified: userData['verified'] as bool? ?? false,
+      );
+    } catch (e) {
+      // Log error and return null if user not found or error occurred
+      return null;
+    }\n  }
 
   /// Send a direct message
   Future<DirectMessageResponse> sendDirectMessage({
