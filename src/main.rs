@@ -26,6 +26,16 @@ use uuid::Uuid;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CONFIG_PATH: &str = "config.toml";
+const PUBLIC_TLS_PORT: u16 = 443;
+const PUBLIC_HTTP_PORT: u16 = 80;
+
+fn default_relay_listen() -> String {
+    format!("0.0.0.0:{}", PUBLIC_TLS_PORT)
+}
+
+fn default_health_addr() -> String {
+    format!("0.0.0.0:{}", PUBLIC_HTTP_PORT)
+}
 
 #[derive(Parser)]
 #[command(name = "dchat")]
@@ -49,7 +59,7 @@ struct Cli {
     metrics_addr: String,
 
     /// Health check server listen address
-    #[arg(long, default_value = "0.0.0.0:8080")]
+    #[arg(long, default_value_t = default_health_addr())]
     health_addr: String,
 
     #[command(subcommand)]
@@ -61,7 +71,7 @@ enum Commands {
     /// Run as relay node (routes messages between peers)
     Relay {
         /// Relay listen address
-        #[arg(long, default_value = "0.0.0.0:7070")]
+        #[arg(long, default_value_t = default_relay_listen())]
         listen: String,
 
         /// Bootstrap peer addresses (multiaddr format)
@@ -1364,18 +1374,11 @@ async fn run_relay_node(
     if let Ok(relay_id) = std::env::var("DCHAT_RELAY_ID") {
         info!("📡 Attempting to connect to other relay nodes in Docker network...");
         let relay_hosts = ["dchat-relay1", "dchat-relay2", "dchat-relay3"];
-        let relay_ports = [7070, 7072, 7074];
+        let relay_ports = [PUBLIC_TLS_PORT; 3];
 
         for (host, port) in relay_hosts.iter().zip(relay_ports.iter()) {
             // Don't dial ourselves
-            let self_check = format!(
-                "{}-{}",
-                host.strip_prefix("dchat-").unwrap_or(host),
-                relay_id
-            );
-            if host.contains(&relay_id)
-                || self_check == format!("relay{}-{}", port / 2 - 3535, relay_id)
-            {
+            if host.contains(&relay_id) {
                 continue;
             }
 
@@ -4657,7 +4660,7 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
-        let cli = Cli::parse_from(["dchat", "relay", "--listen", "0.0.0.0:7070"]);
+        let cli = Cli::parse_from(["dchat", "relay", "--listen", "0.0.0.0:443"]);
         assert!(matches!(cli.command, Commands::Relay { .. }));
     }
 

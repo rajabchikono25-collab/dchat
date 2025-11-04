@@ -7,6 +7,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Default public TLS port for validator/libp2p traffic
+const VALIDATOR_P2P_PORT: u16 = 443;
+/// Default public HTTP port for validator RPC and health endpoints
+const VALIDATOR_RPC_PORT: u16 = 80;
+
 /// Geographic region for validator distribution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GeographicRegion {
@@ -221,12 +226,10 @@ impl MultiRegionConfig {
                     region,
                     public_address: public_address.clone(),
                     listen_addresses: vec![
-                        format!("/ip4/0.0.0.0/tcp/{}", 7070 + validator_index),
-                        format!("/ip4/0.0.0.0/udp/{}/quic-v1", 7070 + validator_index),
+                        format!("/ip4/0.0.0.0/tcp/{}", VALIDATOR_P2P_PORT),
+                        format!("/ip4/0.0.0.0/udp/{}/quic-v1", VALIDATOR_P2P_PORT),
                     ],
-                    rpc_address: format!("0.0.0.0:{}", 9545 + validator_index)
-                        .parse()
-                        .unwrap(),
+                    rpc_address: format!("0.0.0.0:{}", VALIDATOR_RPC_PORT).parse().unwrap(),
                     bootstrap_peers: Vec::new(), // Will be filled later
                     consensus: ConsensusConfig {
                         validator_addresses: Vec::new(), // Will be filled later
@@ -266,7 +269,7 @@ impl MultiRegionConfig {
         let total = validators.len();
         let all_validator_addresses: Vec<String> = validators
             .iter()
-            .map(|v| format!("{}:9545", v.public_address))
+            .map(|v| format!("{}:{}", v.public_address, VALIDATOR_RPC_PORT))
             .collect();
 
         for i in 0..total {
@@ -295,9 +298,7 @@ impl MultiRegionConfig {
 
                     let peer_address = format!(
                         "/dns4/{}/tcp/{}/p2p/{}",
-                        validators[j].public_address,
-                        7070 + j,
-                        peer_id
+                        validators[j].public_address, VALIDATOR_P2P_PORT, peer_id
                     );
                     bootstrap_peers.push(peer_address);
 

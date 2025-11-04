@@ -140,8 +140,9 @@ pub async fn generate_full_plan(
         })?;
 
     // Relays
-    let relay_config = RelayNetworkConfig::new_recommended(network.to_string(), relay_count)
-        .map_err(|e| {
+    let relay_config =
+        RelayNetworkConfig::new_recommended(network.to_string(), domain.to_string(), relay_count)
+            .map_err(|e| {
             Error::Config(format!(
                 "Relay network configuration error for {network}: {e}"
             ))

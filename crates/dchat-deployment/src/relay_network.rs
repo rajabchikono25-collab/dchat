@@ -15,6 +15,11 @@ use thiserror::Error;
 
 use crate::multi_region_config::GeographicRegion;
 
+/// Default public-facing TLS port for relays (shared with libp2p + WebSocket)
+const RELAY_PUBLIC_PORT: u16 = 443;
+/// Default public HTTP port for relay RPC and health endpoints
+const RELAY_HTTP_PORT: u16 = 80;
+
 #[derive(Debug, Error)]
 pub enum RelayError {
     #[error("Invalid relay configuration: {0}")]
@@ -327,6 +332,9 @@ pub struct RelayNetworkConfig {
     /// Network name
     pub network_name: String,
 
+    /// Base domain used for relay hostnames (e.g. schikuno.top)
+    pub base_domain: String,
+
     /// All relay configurations
     pub relays: Vec<RelayConfig>,
 
@@ -348,7 +356,11 @@ pub struct RelayNetworkConfig {
 
 impl RelayNetworkConfig {
     /// Create recommended relay network (20-50 relays across regions)
-    pub fn new_recommended(network_name: String, relay_count: usize) -> Result<Self, RelayError> {
+    pub fn new_recommended(
+        network_name: String,
+        base_domain: String,
+        relay_count: usize,
+    ) -> Result<Self, RelayError> {
         if relay_count < 20 || relay_count > 50 {
             return Err(RelayError::InvalidConfig(
                 "Relay count must be between 20 and 50".to_string(),
@@ -394,13 +406,13 @@ impl RelayNetworkConfig {
                     _ => RelayTier::Trial,
                 };
 
-                let ws_port = 8080 + relay_id_counter;
-                let rpc_port = 9090 + relay_id_counter;
+                let ws_port = RELAY_PUBLIC_PORT;
+                let rpc_port = RELAY_HTTP_PORT;
 
                 relays.push(RelayConfig {
                     relay_id: relay_id.clone(),
                     region: *region,
-                    public_address: format!("{}.dchat.network", relay_id),
+                    public_address: format!("{}.{}", relay_id, base_domain),
                     listen_addresses: vec![
                         format!("/ip4/0.0.0.0/tcp/{}", ws_port),
                         format!("/ip4/0.0.0.0/udp/{}/quic-v1", ws_port),
@@ -411,9 +423,24 @@ impl RelayNetworkConfig {
                     stake_amount: tier.min_stake(),
                     operator_address: format!("dchat_{}_operator", relay_id),
                     validator_addresses: vec![
-                        "validator-us-east-1.dchat.network:9545".to_string(),
-                        "validator-eu-west-1.dchat.network:9547".to_string(),
-                        "validator-ap-southeast-1.dchat.network:9549".to_string(),
+                        format!(
+                            "validator-{}-1.{}:{}",
+                            GeographicRegion::USEast.dns_suffix(),
+                            base_domain,
+                            RELAY_HTTP_PORT
+                        ),
+                        format!(
+                            "validator-{}-1.{}:{}",
+                            GeographicRegion::EUWest.dns_suffix(),
+                            base_domain,
+                            RELAY_HTTP_PORT
+                        ),
+                        format!(
+                            "validator-{}-1.{}:{}",
+                            GeographicRegion::AsiaPacificSE.dns_suffix(),
+                            base_domain,
+                            RELAY_HTTP_PORT
+                        ),
                     ],
                     max_connections: match tier {
                         RelayTier::Premium => 10000,
@@ -436,6 +463,7 @@ impl RelayNetworkConfig {
 
         Ok(Self {
             network_name,
+            base_domain,
             relays,
             incentives: IncentiveConfig::default(),
             min_relays_per_region: 2,
@@ -636,8 +664,12 @@ mod tests {
 
     #[test]
     fn test_relay_network_creation() {
-        let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 30)
-            .expect("Failed to create relay network");
+        let network = RelayNetworkConfig::new_recommended(
+            "dchat-mainnet".to_string(),
+            "example.com".to_string(),
+            30,
+        )
+        .expect("Failed to create relay network");
 
         assert_eq!(network.relays.len(), 30);
         assert_eq!(network.network_name, "dchat-mainnet");
@@ -645,8 +677,12 @@ mod tests {
 
     #[test]
     fn test_relay_network_diversity() {
-        let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 40)
-            .expect("Failed to create relay network");
+        let network = RelayNetworkConfig::new_recommended(
+            "dchat-mainnet".to_string(),
+            "example.com".to_string(),
+            40,
+        )
+        .expect("Failed to create relay network");
 
         network.verify_diversity().expect("Diversity check failed");
     }
@@ -665,10 +701,10 @@ mod tests {
         let relay = RelayConfig {
             relay_id: "test-relay".to_string(),
             region: GeographicRegion::USEast,
-            public_address: "test.dchat.network".to_string(),
+            public_address: "relay.test.example.com".to_string(),
             listen_addresses: vec![],
-            websocket_address: "0.0.0.0:8080".parse().unwrap(),
-            rpc_address: "0.0.0.0:9090".parse().unwrap(),
+            websocket_address: format!("0.0.0.0:{}", RELAY_PUBLIC_PORT).parse().unwrap(),
+            rpc_address: format!("0.0.0.0:{}", RELAY_HTTP_PORT).parse().unwrap(),
             tier: RelayTier::Premium,
             stake_amount: 10000,
             operator_address: "test_operator".to_string(),
@@ -700,8 +736,12 @@ mod tests {
 
     #[test]
     fn test_relay_selection() {
-        let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 30)
-            .expect("Failed to create relay network");
+        let network = RelayNetworkConfig::new_recommended(
+            "dchat-mainnet".to_string(),
+            "example.com".to_string(),
+            30,
+        )
+        .expect("Failed to create relay network");
 
         let mut reputations = HashMap::new();
         for relay in &network.relays {
@@ -719,8 +759,12 @@ mod tests {
 
     #[test]
     fn test_relay_toml_generation() {
-        let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 20)
-            .expect("Failed to create relay network");
+        let network = RelayNetworkConfig::new_recommended(
+            "dchat-mainnet".to_string(),
+            "example.com".to_string(),
+            20,
+        )
+        .expect("Failed to create relay network");
 
         let relay_id = &network.relays[0].relay_id;
         let toml = network

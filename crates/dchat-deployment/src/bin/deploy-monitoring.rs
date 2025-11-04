@@ -209,13 +209,13 @@ scrape_configs:
   - job_name: 'validators'
     static_configs:
       - targets:
-          - 'validator-1.us-east-1.dchat.internal:9090'
-          - 'validator-2.us-west-2.dchat.internal:9090'
-          - 'validator-3.eu-west-1.dchat.internal:9090'
-          - 'validator-4.eu-central-1.dchat.internal:9090'
-          - 'validator-5.ap-southeast-1.dchat.internal:9090'
-          - 'validator-6.ap-northeast-1.dchat.internal:9090'
-          - 'validator-7.us-east-1.dchat.internal:9090'
+          - 'validator-1.us-east-1.dchat.internal:80'
+          - 'validator-2.us-west-2.dchat.internal:80'
+          - 'validator-3.eu-west-1.dchat.internal:80'
+          - 'validator-4.eu-central-1.dchat.internal:80'
+          - 'validator-5.ap-southeast-1.dchat.internal:80'
+          - 'validator-6.ap-northeast-1.dchat.internal:80'
+          - 'validator-7.us-east-1.dchat.internal:80'
 
   # Relay network metrics
   - job_name: 'relays'
@@ -494,7 +494,7 @@ check_bft_consensus() {
     healthy_validators=0
 
     for i in {1..7}; do
-        if check_component "Validator $i" "http://validator-$i.dchat.internal:9090/health" 5; then
+        if check_component "Validator $i" "http://validator-$i.dchat.internal:80/health" 5; then
             ((healthy_validators++))
         fi
     done

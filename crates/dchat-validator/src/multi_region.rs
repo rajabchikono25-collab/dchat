@@ -505,11 +505,11 @@ mod tests {
         ValidatorConfig {
             id: id.to_string(),
             region,
-            rpc_address: "127.0.0.1:9545".parse().unwrap(),
-            p2p_address: "127.0.0.1:7070".parse().unwrap(),
+            rpc_address: "127.0.0.1:80".parse().unwrap(),
+            p2p_address: "127.0.0.1:443".parse().unwrap(),
             public_key: public_key.to_bytes().to_vec(),
             hardware: HardwareRequirements::default(),
-            hostname: format!("validator-{}.dchat.network", id),
+            hostname: format!("validator-{}.schikuno.top", id),
         }
     }
 

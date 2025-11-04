@@ -516,9 +516,9 @@ async fn deploy_container(
 ) -> Result<()> {
     let script = format!(
         r#"
-        docker run -d --name dchat-validator-{} \
-          --restart unless-stopped \
-          -p 7070:7070 -p 9545:9545 \
+                docker run -d --name dchat-validator-{} \
+                    --restart unless-stopped \
+                    -p 443:443 -p 80:80 \
           -v /data:/data \
           -e RUST_LOG=info \
           dchat/validator:latest \
@@ -531,7 +531,7 @@ async fn deploy_container(
 }
 
 async fn check_validator_health(server: &str, _validator_id: &str) -> Result<()> {
-    let url = format!("http://{}:9545/health", server);
+    let url = format!("http://{}:80/health", server);
     check_health_endpoint(&url, 60).await?;
     Ok(())
 }
@@ -611,9 +611,9 @@ spec:
       - name: validator
         image: dchat/validator:latest
         ports:
-        - containerPort: 7070
+                - containerPort: 443
           name: p2p
-        - containerPort: 9545
+                - containerPort: 80
           name: rpc
         volumeMounts:
         - name: validator-data
@@ -651,11 +651,11 @@ spec:
     app: dchat-validator
   ports:
   - name: p2p
-    port: 7070
-    targetPort: 7070
+        port: 443
+        targetPort: 443
   - name: rpc
-    port: 9545
-    targetPort: 9545
+        port: 80
+        targetPort: 80
 "#
     .to_string())
 }

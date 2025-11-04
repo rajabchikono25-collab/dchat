@@ -346,7 +346,7 @@ impl OnionRoutingManager {
             header.push(node_id_bytes.len() as u8);
             header.extend_from_slice(node_id_bytes);
             // Write port as big-endian u16
-            let port_bytes = 7070u16.to_be_bytes(); // Default relay port
+            let port_bytes = 443u16.to_be_bytes(); // Default relay port (TLS)
             header.extend_from_slice(&port_bytes);
         }
 

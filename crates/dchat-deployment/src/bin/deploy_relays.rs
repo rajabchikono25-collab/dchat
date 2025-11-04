@@ -29,6 +29,10 @@ enum Commands {
         #[arg(long, default_value = "dchat-mainnet")]
         network: String,
 
+        /// Base domain for relay hostnames (e.g. schikuno.top)
+        #[arg(long, default_value = "schikuno.top")]
+        domain: String,
+
         /// Number of relays to deploy (20-50)
         #[arg(long, default_value = "30")]
         count: usize,
@@ -131,9 +135,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::GenerateConfig {
             network,
+            domain,
             count,
             output,
-        } => generate_relay_config(network, count, output).await,
+        } => generate_relay_config(network, domain, count, output).await,
         Commands::DeployRelay {
             relay_id,
             config,
@@ -158,13 +163,18 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn generate_relay_config(network: String, count: usize, output: PathBuf) -> Result<()> {
+async fn generate_relay_config(
+    network: String,
+    domain: String,
+    count: usize,
+    output: PathBuf,
+) -> Result<()> {
     info!(
         "Generating relay network configuration for {} relays",
         count
     );
 
-    let config = RelayNetworkConfig::new_recommended(network.clone(), count)
+    let config = RelayNetworkConfig::new_recommended(network.clone(), domain.clone(), count)
         .context("Failed to create relay network config")?;
 
     config
