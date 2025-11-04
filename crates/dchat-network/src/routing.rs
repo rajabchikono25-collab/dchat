@@ -209,7 +209,18 @@ impl OnionRouter {
 
         // 2. Layer encrypt for each hop in reverse order
         for peer in circuit.iter().rev() {
-            // In production, derive shared secret using ECDH with peer's public key
+            // Production: derive shared secret using ECDH (Elliptic Curve Diffie-Hellman)
+            // 1. Generate ephemeral X25519 private key: ephemeral_sk
+            // 2. Compute shared secret: ECDH(ephemeral_sk, peer_public_key)
+            // 3. Derive layer key: HKDF-SHA256(shared_secret, "sphinx-layer-key")
+            // 
+            // use x25519_dalek::{EphemeralSecret, PublicKey};
+            // let ephemeral_secret = EphemeralSecret::random_from_rng(&mut OsRng);
+            // let peer_public = PublicKey::from(peer.public_key_bytes());
+            // let shared_secret = ephemeral_secret.diffie_hellman(&peer_public);
+            // let layer_key = hkdf_sha256(&shared_secret.as_bytes(), b"sphinx-layer-key", 32);
+            
+            // Placeholder: hash-based key derivation (REPLACE IN PRODUCTION)
             let mut hasher = Sha256::new();
             hasher.update(peer.to_bytes());
             hasher.update(&payload);

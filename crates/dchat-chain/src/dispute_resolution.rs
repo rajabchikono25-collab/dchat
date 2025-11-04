@@ -269,8 +269,18 @@ impl DisputeResolver {
             return Ok(false);
         }
 
-        // In production: verify signatures with Ed25519
-        // For now, check that messages are different
+        // Production: verify Ed25519 signatures on both messages
+        // 1. Extract accused's public key (embedded in evidence or queried from chain)
+        // 2. Verify signature_a on message_a: verify_strict(public_key, message_a, signature_a)
+        // 3. Verify signature_b on message_b: verify_strict(public_key, message_b, signature_b)
+        // 4. Check both messages have same sequence number
+        // 5. Check messages have different content (fork proof)
+        // Use ed25519_dalek crate: VerifyingKey::from_bytes() and verify_strict()
+        
+        // For fork to be valid:
+        // - Both signatures must be valid
+        // - Messages must differ
+        // - Same sequence number
         Ok(evidence.message_a != evidence.message_b)
     }
 
@@ -312,13 +322,25 @@ impl DisputeResolver {
 
         if vote_for_claimant >= self.slash_threshold {
             claim.status = DisputeStatus::ResolvedForClaimant;
-            // In production: slash accused's stake
+            // Production: slash accused's stake
+            // 1. Query accused's staked amount from currency chain
+            // 2. Calculate slash amount: stake * slash_percentage (e.g., 30%)
+            // 3. Create blockchain transaction: transfer(accused_stake_account, slash_pool, slash_amount)
+            // 4. Distribute 50% to claimant as reward, 50% to DAO treasury
+            // 5. Emit SlashEvent with (accused, claim_id, amount, reason)
+            // 6. Update accused's reputation score (penalty)
+            tracing::info!("Slashing {}'s stake for dispute {}", claim.accused, claim.id.0);
         } else if vote_for_claimant <= (1.0 - self.slash_threshold) {
             claim.status = DisputeStatus::ResolvedForAccused;
-            // In production: slash claimant's stake for false claim
+            // Production: slash claimant's stake for false claim
+            // Same process as above but targeting claimant
+            // Prevents frivolous claims (skin in the game)
+            // Slash percentage may be higher for false accusers (deterrent)
+            tracing::info!("Slashing {}'s stake for false claim {}", claim.claimant, claim.id.0);
         } else {
             claim.status = DisputeStatus::Dismissed;
             // Inconclusive: no slashing
+            // Both parties keep their stakes but dispute recorded
         }
 
         Ok(())

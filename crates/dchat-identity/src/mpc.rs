@@ -172,7 +172,11 @@ impl MpcSigner {
     }
 
     /// Perform distributed key generation (DKG)
-    /// In production, this would use a library like TSS, GG20, or FROST
+    /// Production implementations should use:
+    /// - FROST (Flexible Round-Optimized Schnorr Threshold) for Ed25519
+    /// - GG20 for ECDSA threshold signatures
+    /// - TSS (Threshold Signature Scheme) libraries like tss-esapi or multi-party-ecdsa
+    /// Current implementation: Shamir Secret Sharing with Ed25519 curve
     pub async fn distributed_key_generation(
         &mut self,
         signer_ids: Vec<SignerId>,
@@ -380,8 +384,19 @@ impl MpcSigner {
             (shares, signers)
         };
 
-        // Aggregate shares using Lagrange interpolation
-        // In production, use proper threshold signature aggregation (e.g., BLS, Schnorr)
+        // Production threshold signature aggregation:
+        // Use Lagrange interpolation to reconstruct signature from t-of-n shares
+        // 
+        // For FROST (Ed25519):
+        // 1. Each signer contributes partial signature: s_i = r_i + c * share_i
+        // 2. Aggregate using Lagrange coefficients:
+        //    s = Σ(λ_i * s_i) where λ_i = Π(j/(j-i)) for j ≠ i
+        // 3. Final signature: (R, s) where R = Σ(R_i)
+        // 
+        // For Schnorr:
+        // Similar aggregation but with different challenge derivation
+        // 
+        // Current: Simple share aggregation (UPGRADE TO FROST/GG20 IN PRODUCTION)
         let aggregated_sig = self.aggregate_shares(&shares)?;
 
         // Update session status

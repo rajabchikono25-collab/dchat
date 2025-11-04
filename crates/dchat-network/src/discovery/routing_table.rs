@@ -239,10 +239,34 @@ impl std::ops::BitAnd for U256 {
 impl std::ops::Shl<usize> for U256 {
     type Output = Self;
 
-    fn shl(self, _rhs: usize) -> Self::Output {
-        // Simplified shift for demonstration
-        // In production, implement proper 256-bit shift
-        self
+    fn shl(self, rhs: usize) -> Self::Output {
+        // Production 256-bit left shift:
+        // Shift amount can be 0-255 bits
+        if rhs >= 256 {
+            return U256::zero();
+        }
+
+        let word_shift = rhs / 64; // How many u64 words to shift
+        let bit_shift = (rhs % 64) as u32; // Bits to shift within words
+        let mut result = [0u64; 4];
+
+        if bit_shift == 0 {
+            // Simple word-aligned shift
+            for i in word_shift..4 {
+                result[i] = self.0[i - word_shift];
+            }
+        } else {
+            // Shift with bit offset
+            for i in word_shift..4 {
+                result[i] = self.0[i - word_shift] << bit_shift;
+                // Carry bits from next lower word
+                if i > word_shift {
+                    result[i] |= self.0[i - word_shift - 1] >> (64 - bit_shift);
+                }
+            }
+        }
+
+        U256(result)
     }
 }
 

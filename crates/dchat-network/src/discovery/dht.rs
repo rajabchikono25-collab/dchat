@@ -192,14 +192,25 @@ impl Dht {
     }
 
     /// Helper to create deterministic peer ID from address for bootstrap
-    fn peer_id_from_addr(&self, _addr: &Multiaddr, index: usize) -> PeerId {
-        // In production, extract from multiaddr or use proper peer ID
-        // For now, generate deterministic ID based on index
+    fn peer_id_from_addr(&self, addr: &Multiaddr, index: usize) -> PeerId {
+        // Production: extract peer ID from multiaddr
+        // Multiaddrs with peer IDs look like: /ip4/1.2.3.4/tcp/1234/p2p/QmPeerId...
+        // 
+        // use libp2p::multiaddr::Protocol;
+        // for proto in addr.iter() {
+        //     if let Protocol::P2p(peer_id) = proto {
+        //         return peer_id;
+        //     }
+        // }
+        // 
+        // If no peer ID in multiaddr, derive deterministically from address:
+        // let addr_bytes = addr.to_string().as_bytes();
+        // let hash = blake3::hash(addr_bytes);
+        // PeerId::from_bytes(hash.as_bytes()).unwrap()
+        
+        // Placeholder: generate deterministic ID from index
         let mut bytes = [0u8; 32];
         bytes[0] = index as u8;
-
-        // Create a deterministic but unique peer ID
-        // This is a placeholder - real implementation would parse from multiaddr
         PeerId::random()
     }
 }

@@ -109,12 +109,23 @@ impl HealthMonitor {
 
     /// Perform health check on peer (ping/pong)
     async fn perform_health_check_static(_peer_id: &PeerId) -> Result<Duration> {
-        // In production, this would:
-        // 1. Send ping message to peer
-        // 2. Wait for pong response
-        // 3. Measure round-trip time
-
-        // For now, simulate with random latency
+        // Production health check implementation:
+        // 1. Open libp2p stream to peer: swarm.dial(_peer_id)
+        // 2. Send PING request with timestamp: stream.write(&PingRequest { timestamp: now() })
+        // 3. Wait for PONG response with timeout (5 seconds):
+        //    tokio::time::timeout(Duration::from_secs(5), stream.read())
+        // 4. Calculate RTT: now() - request_timestamp
+        // 5. Close stream gracefully
+        // 
+        // Example with libp2p ping protocol:
+        // use libp2p::ping::{Ping, PingConfig};
+        // let mut ping = Ping::new(PingConfig::new());
+        // let start = Instant::now();
+        // ping.send_ping(_peer_id).await?;
+        // ping.next().await; // Wait for pong
+        // let latency = start.elapsed();
+        
+        // Placeholder: simulate with random latency (REPLACE IN PRODUCTION)
         let latency = Duration::from_millis(10 + (rand::random::<u64>() % 100));
 
         // Simulate occasional failures (10% chance)

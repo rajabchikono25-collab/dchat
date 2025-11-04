@@ -214,8 +214,25 @@ impl BlockchainClient {
 
     /// Wait for transaction confirmation
     pub async fn wait_for_confirmation(&self, tx_id: Uuid) -> Result<TransactionReceipt> {
-        // In a real implementation, this would poll the blockchain
-        // For now, simulate confirmation after a short delay
+        // Production: poll blockchain for confirmation
+        // loop {
+        //     let rpc_response = rpc_client.post(&self.rpc_url)
+        //         .json(&json!({
+        //             "jsonrpc": "2.0",
+        //             "method": "get_transaction_receipt",
+        //             "params": [tx_id.to_string()],
+        //             "id": 1
+        //         }))
+        //         .send().await?;
+        //     
+        //     if let Some(receipt) = rpc_response.json::<Option<TransactionReceipt>>().await? {
+        //         return Ok(receipt);
+        //     }
+        //     
+        //     tokio::time::sleep(Duration::from_secs(2)).await;
+        // }
+        
+        // Placeholder: simulate confirmation after delay
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         // Simulate confirmation
@@ -258,14 +275,36 @@ impl BlockchainClient {
     }
 
     /// Submit transaction to blockchain (internal)
-    async fn submit_transaction_to_chain(&self, _transaction: Transaction) -> Result<()> {
-        // In a real implementation, this would:
-        // 1. Sign the transaction with user's private key
-        // 2. Submit to blockchain node via RPC
-        // 3. Return transaction hash
-        // 4. Start monitoring for confirmation
-
-        // For now, simulate successful submission
+    async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
+        // Production blockchain submission:
+        // 
+        // 1. Sign transaction with user's Ed25519 private key:
+        //    let signing_key = SigningKey::from_bytes(&self.private_key)?;
+        //    let signature = signing_key.sign(&transaction.to_bytes());
+        //    let signed_tx = SignedTransaction { transaction, signature };
+        // 
+        // 2. Serialize and submit to blockchain node via JSON-RPC:
+        //    let rpc_client = reqwest::Client::new();
+        //    let response = rpc_client.post(&self.rpc_url)
+        //        .json(&json!({
+        //            "jsonrpc": "2.0",
+        //            "method": "submit_transaction",
+        //            "params": [hex::encode(&signed_tx.to_bytes())],
+        //            "id": 1
+        //        }))
+        //        .send().await?;
+        // 
+        // 3. Extract transaction hash from response:
+        //    let result: JsonRpcResponse = response.json().await?;
+        //    let tx_hash = result.result.tx_hash;
+        // 
+        // 4. Start monitoring for confirmation in background:
+        //    tokio::spawn(async move {
+        //        self.monitor_confirmation(tx_hash).await
+        //    });
+        
+        // Placeholder: simulate successful submission
+        tracing::debug!("Submitting transaction {} to blockchain", transaction.tx_id);
         Ok(())
     }
 

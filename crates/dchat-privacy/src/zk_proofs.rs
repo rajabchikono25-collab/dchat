@@ -194,14 +194,30 @@ impl ZkVerifier {
         }
 
         // Verify Schnorr equation: g^r = C * PK^c
-        // (Simplified verification for demonstration)
-        let _response_scalar = Scalar::from_bytes_mod_order(proof.proof.response);
-        let _challenge_scalar = Scalar::from_bytes_mod_order(proof.proof.challenge);
+        let response_scalar = Scalar::from_bytes_mod_order(proof.proof.response);
+        let challenge_scalar = Scalar::from_bytes_mod_order(proof.proof.challenge);
 
-        // In production, would verify: g^response == commitment * public_key^challenge
-        // For now, accept if challenge matches (Fiat-Shamir verified)
+        // Compute g^response
+        let g_response = &response_scalar * curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 
-        Ok(true)
+        // Parse commitment point
+        use curve25519_dalek::ristretto::CompressedRistretto;
+        let commitment_point = CompressedRistretto(proof.proof.commitment)
+            .decompress()
+            .ok_or_else(|| Error::validation("Invalid commitment point"))?;
+
+        // Reconstruct public key from contact_id (in production, query from blockchain)
+        let mut pk_bytes = [0u8; 32];
+        pk_bytes[..16].copy_from_slice(&contact_id.as_bytes()[..16]);
+        let pk_scalar = Scalar::from_bytes_mod_order(pk_bytes);
+        let public_key = &pk_scalar * curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
+
+        // Compute C * PK^c
+        let pk_challenge = public_key * challenge_scalar;
+        let right_side = commitment_point + pk_challenge;
+
+        // Verify: g^r == C * PK^c
+        Ok(g_response == right_side)
     }
 
     /// Verify a reputation threshold proof
@@ -219,14 +235,31 @@ impl ZkVerifier {
             return Ok(false);
         }
 
-        // Verify Schnorr equation (simplified)
-        let _response_scalar = Scalar::from_bytes_mod_order(proof.proof.response);
-        let _challenge_scalar = Scalar::from_bytes_mod_order(proof.proof.challenge);
+        // Verify Schnorr equation
+        let response_scalar = Scalar::from_bytes_mod_order(proof.proof.response);
+        let challenge_scalar = Scalar::from_bytes_mod_order(proof.proof.challenge);
 
-        // In production, would verify: g^response == commitment * public_key^challenge
-        // For now, accept if challenge matches (Fiat-Shamir verified)
+        // Compute g^response
+        let g_response = &response_scalar * curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 
-        Ok(true)
+        // Parse commitment point
+        use curve25519_dalek::ristretto::CompressedRistretto;
+        let commitment_point = CompressedRistretto(proof.proof.commitment)
+            .decompress()
+            .ok_or_else(|| Error::validation("Invalid commitment point"))?;
+
+        // Derive public key from reputation proof (in production, query user's public key from blockchain)
+        let mut pk_bytes = [0u8; 32];
+        pk_bytes[0..4].copy_from_slice(&proof.min_reputation.to_le_bytes());
+        let pk_scalar = Scalar::from_bytes_mod_order(pk_bytes);
+        let public_key = &pk_scalar * curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
+
+        // Compute C * PK^c
+        let pk_challenge = public_key * challenge_scalar;
+        let right_side = commitment_point + pk_challenge;
+
+        // Verify: g^r == C * PK^c
+        Ok(g_response == right_side)
     }
 }
 

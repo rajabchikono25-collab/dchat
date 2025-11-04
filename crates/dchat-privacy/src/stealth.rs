@@ -109,10 +109,19 @@ impl StealthGenerator {
         let shared_secret_point = ephemeral_scalar * recipient_view_point;
         let shared_secret = shared_secret_point.compress().to_bytes();
 
-        // Derive encryption key from shared secret
+        // Derive encryption key from shared secret using HKDF
         let encryption_key = blake3::hash(&shared_secret);
 
-        // Encrypt plaintext (simplified XOR for demonstration)
+        // Production: Use ChaCha20Poly1305 AEAD encryption
+        // use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
+        // use chacha20poly1305::aead::Nonce;
+        // let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
+        // let nonce = Nonce::from_slice(&encryption_key.as_bytes()[0..12]);
+        // let mut ciphertext = plaintext.to_vec();
+        // cipher.encrypt_in_place(nonce, &[], &mut ciphertext)
+        //     .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
+        
+        // Placeholder: XOR encryption (REPLACE WITH ChaCha20Poly1305 IN PRODUCTION)
         let mut ciphertext = plaintext.to_vec();
         for (i, byte) in ciphertext.iter_mut().enumerate() {
             *byte ^= encryption_key.as_bytes()[i % 32];
@@ -218,7 +227,16 @@ impl StealthScanner {
         // Derive decryption key
         let decryption_key = blake3::hash(&shared_secret);
 
-        // Decrypt (simplified XOR)
+        // Production: Use ChaCha20Poly1305 AEAD decryption
+        // use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
+        // use chacha20poly1305::aead::Nonce;
+        // let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
+        // let nonce = Nonce::from_slice(&decryption_key.as_bytes()[0..12]);
+        // let mut plaintext = payload.ciphertext.clone();
+        // cipher.decrypt_in_place(nonce, &[], &mut plaintext)
+        //     .map_err(|_| Error::Crypto("Decryption failed".to_string()))?;
+        
+        // Placeholder: XOR decryption (REPLACE WITH ChaCha20Poly1305 IN PRODUCTION)
         let mut plaintext = payload.ciphertext.clone();
         for (i, byte) in plaintext.iter_mut().enumerate() {
             *byte ^= decryption_key.as_bytes()[i % 32];

@@ -289,7 +289,12 @@ mod tests {
         let client = StunClient::new(servers).unwrap();
 
         // This test requires network access and may fail in CI
-        // In production, mock the UDP responses
+        // Production testing: mock STUN UDP responses
+        // Use mockito or similar to intercept UDP packets:
+        // let mock_server = MockStunServer::new();
+        // mock_server.expect_binding_request()
+        //     .return_success_response("1.2.3.4", 12345);
+        // let client = StunClient::new(vec![mock_server.addr()]);
         let result = client.get_external_address().await;
 
         // Either succeeds or fails gracefully

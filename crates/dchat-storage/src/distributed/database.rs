@@ -337,11 +337,22 @@ impl DistributedDatabase {
             }
         }
 
+        // Production: calculate actual message sizes
+        // let size_query = sqlx::query_as::<_, (i64, i64)>(
+        //     "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(metadata)), 0) as total_bytes,
+        //      COALESCE(AVG(LENGTH(content) + LENGTH(metadata)), 0) as avg_bytes
+        //      FROM messages"
+        // ).fetch_one(&self.pool).await?;
+        // let (total_size_bytes, avg_message_size) = size_query;
+        
+        let total_size_bytes = 0; // Placeholder
+        let avg_message_size = 0; // Placeholder
+
         Ok(DatabaseStats {
             total_messages,
             messages_by_tier,
-            total_size_bytes: 0, // In production: SUM(size) from messages table
-            avg_message_size: 0,
+            total_size_bytes,
+            avg_message_size,
         })
     }
 

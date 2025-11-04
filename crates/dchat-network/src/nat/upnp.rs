@@ -344,8 +344,15 @@ impl UpnpClient {
 
     /// Get local IP address from network interfaces
     async fn get_local_ip(&self) -> Result<IpAddr> {
-        // Get first non-loopback IPv4 address
-        // In production, use get_if_addrs crate or similar
+        // Production: use get_if_addrs crate for proper network interface detection
+        // use get_if_addrs::get_if_addrs;
+        // for iface in get_if_addrs()? {
+        //     if !iface.is_loopback() && iface.ip().is_ipv4() {
+        //         return Ok(iface.ip());
+        //     }
+        // }
+        // 
+        // Fallback method below (UDP trick):
 
         // Attempt UDP connection to determine local IP
         use std::net::UdpSocket;

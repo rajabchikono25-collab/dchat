@@ -77,8 +77,16 @@ impl Bootstrap {
         // 1. Connect to bootstrap nodes
         for node in &self.nodes {
             tracing::debug!("Attempting to connect to bootstrap node: {}", node);
-            // In production, this would actually connect via libp2p
-            // For now, we just log the attempt
+            // Production: connect via libp2p swarm
+            // swarm.dial(node.clone()).map_err(|e| {
+            //     Error::network(format!("Failed to dial bootstrap node {}: {}", node, e))
+            // })?;
+            // 
+            // Wait for connection with timeout:
+            // tokio::time::timeout(
+            //     self.connection_timeout,
+            //     async { swarm.next_event().await }
+            // ).await?;
         }
 
         // 2. Bootstrap the DHT
