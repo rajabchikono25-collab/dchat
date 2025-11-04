@@ -3,15 +3,16 @@
 //! Provides HTTP-based communication with the dchat Bot API,
 //! including automatic retries, rate limiting, and error handling.
 
-use crate::{
-    BotMessage, SendMessageRequest, EditMessageRequest, DeleteMessageRequest,
+use crate::BotMessage;
+use crate::bot_api::{
+    SendMessageRequest, EditMessageRequest, DeleteMessageRequest,
     AnswerCallbackQueryRequest,
 };
 use dchat_core::{Error, Result};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// HTTP client for Bot API with automatic retries and error handling
