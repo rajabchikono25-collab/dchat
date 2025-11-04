@@ -98,96 +98,116 @@ impl BotApi {
     pub fn new(bot: Arc<Bot>) -> Self {
         Self { bot }
     }
-    
+
     /// Send a text message
     pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would:
         // 1. Create a Message with bot as sender
         // 2. Encrypt if needed using Noise Protocol
         // 3. Route through messaging system
         // 4. Submit to blockchain for ordering
         let message_id = Uuid::new_v4();
-        tracing::info!("Bot {} sending message to {}", self.bot.username, request.chat_id);
-        
+        tracing::info!(
+            "Bot {} sending message to {}",
+            self.bot.username,
+            request.chat_id
+        );
+
         Ok(message_id)
     }
-    
+
     /// Edit a message
     pub async fn edit_message(&self, request: EditMessageRequest) -> Result<()> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would:
         // 1. Verify bot owns the message
         // 2. Create edit transaction
         // 3. Submit to messaging system
-        tracing::info!("Bot {} editing message {}", self.bot.username, request.message_id);
-        
+        tracing::info!(
+            "Bot {} editing message {}",
+            self.bot.username,
+            request.message_id
+        );
+
         Ok(())
     }
-    
+
     /// Delete a message
     pub async fn delete_message(&self, request: DeleteMessageRequest) -> Result<()> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would:
         // 1. Verify bot owns the message or has permissions
         // 2. Create delete transaction
         // 3. Submit to messaging system
-        tracing::info!("Bot {} deleting message {}", self.bot.username, request.message_id);
-        
+        tracing::info!(
+            "Bot {} deleting message {}",
+            self.bot.username,
+            request.message_id
+        );
+
         Ok(())
     }
-    
+
     /// Answer a callback query
     pub async fn answer_callback_query(&self, request: AnswerCallbackQueryRequest) -> Result<()> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would:
         // 1. Send callback response to user through messaging system
         // 2. Update UI state if needed
-        tracing::info!("Bot {} answering callback {}", self.bot.username, request.callback_query_id);
-        
+        tracing::info!(
+            "Bot {} answering callback {}",
+            self.bot.username,
+            request.callback_query_id
+        );
+
         Ok(())
     }
-    
+
     /// Get chat member
     pub async fn get_chat_member(&self, request: GetChatMemberRequest) -> Result<ChatMember> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would query channel/chat membership from blockchain
-        tracing::info!("Bot {} querying member {} in chat {}", 
-            self.bot.username, request.user_id, request.chat_id);
-        
+        tracing::info!(
+            "Bot {} querying member {} in chat {}",
+            self.bot.username,
+            request.user_id,
+            request.chat_id
+        );
+
         Ok(ChatMember {
             user_id: request.user_id,
             status: ChatMemberStatus::Member,
             permissions: ChatPermissions::default(),
         })
     }
-    
+
     /// Get bot info
     pub fn get_me(&self) -> &Bot {
         &self.bot
     }
-    
+
     /// Set bot commands
     pub async fn set_commands(&self, _commands: Vec<crate::BotCommand>) -> Result<()> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
-        
+
         // In production, this would:
         // 1. Validate commands
         // 2. Store in database
@@ -195,7 +215,7 @@ impl BotApi {
         tracing::info!("Bot {} updating commands", self.bot.username);
         Ok(())
     }
-    
+
     /// Get bot commands
     pub async fn get_commands(&self) -> Result<Vec<crate::BotCommand>> {
         Ok(self.bot.commands.clone())
@@ -210,109 +230,123 @@ impl BotClient {
             base_url: "https://api.dchat.network".to_string(),
         }
     }
-    
+
     /// Set custom API base URL
     pub fn with_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
         self
     }
-    
+
     /// Send message
     pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
         let url = format!("{}/bot/sendMessage", self.base_url);
-        
+
         let client = reqwest::Client::new();
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .json(&request)
             .send()
             .await
             .map_err(|e| Error::network(format!("Failed to send message: {}", e)))?;
-        
+
         if !response.status().is_success() {
             return Err(Error::network(format!(
-                "API request failed with status: {}", response.status()
+                "API request failed with status: {}",
+                response.status()
             )));
         }
-        
+
         #[derive(Deserialize)]
         struct ApiResponse {
             message_id: Uuid,
         }
-        
-        let api_response: ApiResponse = response.json().await
+
+        let api_response: ApiResponse = response
+            .json()
+            .await
             .map_err(|e| Error::network(format!("Failed to parse response: {}", e)))?;
-        
+
         Ok(api_response.message_id)
     }
-    
+
     /// Edit message
     pub async fn edit_message(&self, request: EditMessageRequest) -> Result<()> {
         let url = format!("{}/bot/editMessage", self.base_url);
-        
+
         let client = reqwest::Client::new();
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .json(&request)
             .send()
             .await
             .map_err(|e| Error::network(format!("Failed to edit message: {}", e)))?;
-        
+
         if !response.status().is_success() {
             return Err(Error::network(format!(
-                "API request failed with status: {}", response.status()
+                "API request failed with status: {}",
+                response.status()
             )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Delete message
     pub async fn delete_message(&self, request: DeleteMessageRequest) -> Result<()> {
         let url = format!("{}/bot/deleteMessage", self.base_url);
-        
+
         let client = reqwest::Client::new();
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .json(&request)
             .send()
             .await
             .map_err(|e| Error::network(format!("Failed to delete message: {}", e)))?;
-        
+
         if !response.status().is_success() {
             return Err(Error::network(format!(
-                "API request failed with status: {}", response.status()
+                "API request failed with status: {}",
+                response.status()
             )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Answer callback query
     pub async fn answer_callback_query(&self, request: AnswerCallbackQueryRequest) -> Result<()> {
         let url = format!("{}/bot/answerCallbackQuery", self.base_url);
-        
+
         let client = reqwest::Client::new();
-        let response = client.post(&url)
+        let response = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .json(&request)
             .send()
             .await
             .map_err(|e| Error::network(format!("Failed to answer callback: {}", e)))?;
-        
+
         if !response.status().is_success() {
             return Err(Error::network(format!(
-                "API request failed with status: {}", response.status()
+                "API request failed with status: {}",
+                response.status()
             )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Get updates (long polling)
-    pub async fn get_updates(&self, offset: Option<i64>, timeout: Option<u32>) -> Result<Vec<BotMessage>> {
+    pub async fn get_updates(
+        &self,
+        offset: Option<i64>,
+        timeout: Option<u32>,
+    ) -> Result<Vec<BotMessage>> {
         let mut url = format!("{}/bot/getUpdates", self.base_url);
-        
+
         // Add query parameters
         let mut params = Vec::new();
         if let Some(offset) = offset {
@@ -321,37 +355,43 @@ impl BotClient {
         if let Some(timeout) = timeout {
             params.push(format!("timeout={}", timeout));
         }
-        
+
         if !params.is_empty() {
             url.push('?');
             url.push_str(&params.join("&"));
         }
-        
+
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout.unwrap_or(30) as u64 + 5))
+            .timeout(std::time::Duration::from_secs(
+                timeout.unwrap_or(30) as u64 + 5,
+            ))
             .build()
             .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
-        
-        let response = client.get(&url)
+
+        let response = client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .send()
             .await
             .map_err(|e| Error::network(format!("Failed to get updates: {}", e)))?;
-        
+
         if !response.status().is_success() {
             return Err(Error::network(format!(
-                "API request failed with status: {}", response.status()
+                "API request failed with status: {}",
+                response.status()
             )));
         }
-        
+
         #[derive(Deserialize)]
         struct ApiResponse {
             updates: Vec<BotMessage>,
         }
-        
-        let api_response: ApiResponse = response.json().await
+
+        let api_response: ApiResponse = response
+            .json()
+            .await
             .map_err(|e| Error::network(format!("Failed to parse response: {}", e)))?;
-        
+
         Ok(api_response.updates)
     }
 }
@@ -376,21 +416,21 @@ mod tests {
     use super::*;
     use crate::BotFather;
     use dchat_core::types::UserId;
-    
+
     #[tokio::test]
     async fn test_send_message() {
         let bot_father = BotFather::new();
         let owner_id = UserId::new();
-        
+
         let request = crate::CreateBotRequest {
             username: "testbot".to_string(),
             display_name: "Test Bot".to_string(),
             description: None,
         };
-        
+
         let bot = bot_father.create_bot(owner_id, request).unwrap();
         let api = BotApi::new(Arc::new(bot));
-        
+
         let send_request = SendMessageRequest {
             chat_id: "chat123".to_string(),
             text: "Hello, World!".to_string(),
@@ -399,16 +439,16 @@ mod tests {
             inline_keyboard: None,
             disable_notification: false,
         };
-        
+
         let result = api.send_message(send_request).await;
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_bot_client() {
-        let client = BotClient::new("test_token".to_string())
-            .with_base_url("https://test.api".to_string());
-        
+        let client =
+            BotClient::new("test_token".to_string()).with_base_url("https://test.api".to_string());
+
         assert_eq!(client.base_url, "https://test.api");
     }
 }

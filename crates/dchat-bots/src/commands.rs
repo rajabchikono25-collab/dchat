@@ -13,16 +13,16 @@ pub type CommandHandlerFn = Arc<dyn Fn(&BotMessage) -> Result<BotResponse> + Sen
 pub struct Command {
     /// Command name (without slash)
     pub name: String,
-    
+
     /// Command description
     pub description: String,
-    
+
     /// Handler function
     pub handler: CommandHandlerFn,
-    
+
     /// Is command hidden?
     pub hidden: bool,
-    
+
     /// Required permissions
     pub required_permissions: Vec<String>,
 }
@@ -36,10 +36,10 @@ pub struct CommandRegistry {
 pub trait CommandHandler {
     /// Handle a command
     fn handle(&self, message: &BotMessage) -> Result<BotResponse>;
-    
+
     /// Get command name
     fn command_name(&self) -> &str;
-    
+
     /// Get command description
     fn description(&self) -> &str;
 }
@@ -62,17 +62,17 @@ impl CommandRegistry {
             commands: HashMap::new(),
         }
     }
-    
+
     /// Register a command
     pub fn register(&mut self, command: Command) {
         self.commands.insert(command.name.clone(), command);
     }
-    
+
     /// Register a command with handler trait
     pub fn register_handler<H: CommandHandler + Send + Sync + 'static>(&mut self, handler: H) {
         let name = handler.command_name().to_string();
         let description = handler.description().to_string();
-        
+
         let handler = Arc::new(handler);
         let command = Command {
             name: name.clone(),
@@ -81,40 +81,41 @@ impl CommandRegistry {
             hidden: false,
             required_permissions: Vec::new(),
         };
-        
+
         self.register(command);
     }
-    
+
     /// Get command by name
     pub fn get(&self, command_name: &str) -> Option<&Command> {
         self.commands.get(command_name)
     }
-    
+
     /// Handle a command message
     pub fn handle(&self, message: &BotMessage) -> Result<BotResponse> {
         if !message.is_command {
             return Err(Error::validation("Not a command"));
         }
-        
-        let command_name = message.command.as_ref()
+
+        let command_name = message
+            .command
+            .as_ref()
             .ok_or_else(|| Error::validation("No command specified"))?;
-        
-        let command = self.get(command_name)
+
+        let command = self
+            .get(command_name)
             .ok_or_else(|| Error::validation(format!("Unknown command: /{}", command_name)))?;
-        
+
         (command.handler)(message)
     }
-    
+
     /// Get all registered commands
     pub fn get_all_commands(&self) -> Vec<&Command> {
         self.commands.values().collect()
     }
-    
+
     /// Get visible commands (non-hidden)
     pub fn get_visible_commands(&self) -> Vec<&Command> {
-        self.commands.values()
-            .filter(|c| !c.hidden)
-            .collect()
+        self.commands.values().filter(|c| !c.hidden).collect()
     }
 }
 
@@ -129,11 +130,11 @@ impl CommandHandler for StartCommandHandler {
             disable_notification: false,
         })
     }
-    
+
     fn command_name(&self) -> &str {
         "start"
     }
-    
+
     fn description(&self) -> &str {
         "Start the bot"
     }
@@ -149,13 +150,13 @@ impl HelpCommandHandler {
 impl CommandHandler for HelpCommandHandler {
     fn handle(&self, message: &BotMessage) -> Result<BotResponse> {
         let mut help_text = "📚 **Available Commands**\n\n".to_string();
-        
+
         for cmd in &self.commands {
             if !cmd.hidden {
                 help_text.push_str(&format!("/{} - {}\n", cmd.command, cmd.description));
             }
         }
-        
+
         Ok(BotResponse {
             chat_id: message.chat_id.clone(),
             text: help_text,
@@ -165,11 +166,11 @@ impl CommandHandler for HelpCommandHandler {
             disable_notification: false,
         })
     }
-    
+
     fn command_name(&self) -> &str {
         "help"
     }
-    
+
     fn description(&self) -> &str {
         "Show help message"
     }
@@ -177,8 +178,8 @@ impl CommandHandler for HelpCommandHandler {
 
 impl CommandHandler for SettingsCommandHandler {
     fn handle(&self, message: &BotMessage) -> Result<BotResponse> {
-        use crate::{InlineKeyboardButton, ButtonAction};
-        
+        use crate::{ButtonAction, InlineKeyboardButton};
+
         let keyboard = vec![
             vec![
                 InlineKeyboardButton {
@@ -201,7 +202,7 @@ impl CommandHandler for SettingsCommandHandler {
                 },
             ],
         ];
-        
+
         Ok(BotResponse {
             chat_id: message.chat_id.clone(),
             text: "⚙️ **Settings**\n\nChoose a category:".to_string(),
@@ -211,11 +212,11 @@ impl CommandHandler for SettingsCommandHandler {
             disable_notification: false,
         })
     }
-    
+
     fn command_name(&self) -> &str {
         "settings"
     }
-    
+
     fn description(&self) -> &str {
         "Bot settings"
     }
@@ -230,13 +231,13 @@ impl Default for CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use dchat_core::types::UserId;
-    
+    use uuid::Uuid;
+
     #[test]
     fn test_command_registry() {
         let mut registry = CommandRegistry::new();
-        
+
         let command = Command {
             name: "test".to_string(),
             description: "Test command".to_string(),
@@ -253,13 +254,13 @@ mod tests {
             hidden: false,
             required_permissions: Vec::new(),
         };
-        
+
         registry.register(command);
-        
+
         assert!(registry.get("test").is_some());
         assert!(registry.get("nonexistent").is_none());
     }
-    
+
     #[test]
     fn test_start_command() {
         let handler = StartCommandHandler;
@@ -269,18 +270,18 @@ mod tests {
             "chat123".to_string(),
             "/start".to_string(),
         );
-        
+
         let response = handler.handle(&message).unwrap();
         assert!(response.text.contains("Welcome"));
     }
-    
+
     #[test]
     fn test_help_command() {
         let commands = vec![
             crate::BotCommand::new("start".to_string(), "Start bot".to_string()),
             crate::BotCommand::new("help".to_string(), "Show help".to_string()),
         ];
-        
+
         let handler = HelpCommandHandler::new(commands);
         let message = BotMessage::from_message(
             Uuid::new_v4(),
@@ -288,12 +289,12 @@ mod tests {
             "chat123".to_string(),
             "/help".to_string(),
         );
-        
+
         let response = handler.handle(&message).unwrap();
         assert!(response.text.contains("Available Commands"));
         assert!(response.text.contains("/start"));
     }
-    
+
     #[test]
     fn test_settings_command() {
         let handler = SettingsCommandHandler;
@@ -303,27 +304,27 @@ mod tests {
             "chat123".to_string(),
             "/settings".to_string(),
         );
-        
+
         let response = handler.handle(&message).unwrap();
         assert!(response.text.contains("Settings"));
         assert!(response.inline_keyboard.is_some());
-        
+
         let keyboard = response.inline_keyboard.unwrap();
         assert_eq!(keyboard.len(), 2); // 2 rows
     }
-    
+
     #[test]
     fn test_command_handler_trait() {
         let mut registry = CommandRegistry::new();
         registry.register_handler(StartCommandHandler);
-        
+
         let message = BotMessage::from_message(
             Uuid::new_v4(),
             UserId::new(),
             "chat123".to_string(),
             "/start".to_string(),
         );
-        
+
         let response = registry.handle(&message).unwrap();
         assert!(response.text.contains("Welcome"));
     }

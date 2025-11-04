@@ -78,9 +78,7 @@ impl ReputationFactors {
             self.protocol_compliance,
         ];
 
-        let weighted_sum: f64 = weights.iter().zip(scores.iter())
-            .map(|(w, s)| w * s)
-            .sum();
+        let weighted_sum: f64 = weights.iter().zip(scores.iter()).map(|(w, s)| w * s).sum();
 
         ReputationScore::new(weighted_sum)
     }
@@ -113,7 +111,7 @@ impl TokenBucket {
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        
+
         let new_tokens = elapsed * self.refill_rate;
         self.tokens = (self.tokens + new_tokens).min(self.capacity as f64);
         self.last_refill = now;
@@ -122,7 +120,7 @@ impl TokenBucket {
     /// Try to consume tokens
     pub fn try_consume(&mut self, amount: usize) -> bool {
         self.refill();
-        
+
         if self.tokens >= amount as f64 {
             self.tokens -= amount as f64;
             true
@@ -201,7 +199,7 @@ pub struct PeerRateLimiter {
 impl PeerRateLimiter {
     pub fn new(peer_id: String, config: &RateLimitConfig) -> Self {
         let bucket = TokenBucket::new(config.base_capacity, config.base_refill_rate);
-        
+
         Self {
             peer_id,
             bucket,
@@ -227,7 +225,7 @@ impl PeerRateLimiter {
 
         // Calculate token cost based on priority
         let cost = match priority {
-            MessagePriority::Critical => 1,  // Critical always costs 1
+            MessagePriority::Critical => 1, // Critical always costs 1
             MessagePriority::High => 2,
             MessagePriority::Normal => 3,
             MessagePriority::Low => 5,
@@ -249,13 +247,13 @@ impl PeerRateLimiter {
     pub fn update_reputation(&mut self, factors: ReputationFactors) {
         self.reputation_factors = factors.clone();
         let new_score = factors.calculate_score();
-        
+
         // Smooth transition (exponential moving average)
         let alpha = 0.3; // Weight for new score
         let smoothed = self.reputation.value() * (1.0 - alpha) + new_score.value() * alpha;
-        
+
         self.reputation = ReputationScore::new(smoothed);
-        
+
         // Adjust bucket refill rate based on reputation
         self.bucket.adjust_refill_rate(self.reputation);
     }
@@ -264,11 +262,10 @@ impl PeerRateLimiter {
     pub fn detect_spam(&mut self, config: &RateLimitConfig) -> bool {
         let window = Duration::from_secs(config.anomaly_window_secs);
         let now = Instant::now();
-        
+
         // Remove old entries
-        self.message_history.retain(|(timestamp, _)| {
-            now.duration_since(*timestamp) < window
-        });
+        self.message_history
+            .retain(|(timestamp, _)| now.duration_since(*timestamp) < window);
 
         // Calculate message rate
         let message_count = self.message_history.len();
@@ -276,7 +273,7 @@ impl PeerRateLimiter {
 
         // Flag if rate exceeds threshold
         self.spam_detected = rate > config.spam_threshold;
-        
+
         self.spam_detected
     }
 
@@ -312,7 +309,8 @@ impl RateLimitManager {
 
     /// Get or create rate limiter for peer
     pub fn get_limiter(&mut self, peer_id: &str) -> &mut PeerRateLimiter {
-        self.peer_limiters.entry(peer_id.to_string())
+        self.peer_limiters
+            .entry(peer_id.to_string())
             .or_insert_with(|| PeerRateLimiter::new(peer_id.to_string(), &self.config))
     }
 
@@ -345,7 +343,9 @@ impl RateLimitManager {
     pub fn cleanup_inactive(&mut self, max_age: Duration) {
         let now = Instant::now();
         self.peer_limiters.retain(|_, limiter| {
-            limiter.message_history.last()
+            limiter
+                .message_history
+                .last()
                 .map(|(timestamp, _)| now.duration_since(*timestamp) < max_age)
                 .unwrap_or(false)
         });
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn test_token_bucket() {
         let mut bucket = TokenBucket::new(10, 1.0);
-        
+
         // Should succeed
         assert!(bucket.try_consume(5));
         assert_eq!(bucket.available_tokens(), 5);
@@ -414,7 +414,7 @@ mod tests {
         // Now we've sent 33 messages * 3 tokens = 99 tokens used, 1 left
         // Next Normal message costs 3, should fail
         assert!(limiter.try_send(MessagePriority::Normal).is_err());
-        
+
         // But Critical (cost 1) should succeed
         assert!(limiter.try_send(MessagePriority::Critical).is_ok());
     }
@@ -434,7 +434,7 @@ mod tests {
         assert!(limiter.try_send(MessagePriority::High).is_ok());
         // Normal costs 3
         assert!(limiter.try_send(MessagePriority::Normal).is_ok());
-        
+
         // Should have 10 - 1 - 2 - 3 = 4 tokens left
         assert_eq!(limiter.bucket.available_tokens(), 4);
     }
@@ -464,7 +464,7 @@ mod tests {
 
         // Initial reputation is 50.0 (average)
         assert!(limiter.reputation().is_average());
-        
+
         let initial_rate = limiter.bucket.refill_rate;
 
         // Improve reputation with excellent scores
@@ -480,7 +480,7 @@ mod tests {
 
         // Refill rate should increase with better reputation
         assert!(limiter.bucket.refill_rate > initial_rate);
-        
+
         // Reputation improves but is smoothed with EMA
         // Initial 50.0, new ~94.5, with alpha=0.3: 50*0.7 + 94.5*0.3 ≈ 63.35
         assert!(limiter.reputation().value() > 50.0);

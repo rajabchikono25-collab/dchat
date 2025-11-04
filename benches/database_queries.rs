@@ -1,30 +1,34 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use dchat_core::types::{MessageContent, UserId};
 use dchat_messaging::MessageBuilder;
-use dchat_core::types::{UserId, MessageContent};
 use std::hint::black_box;
 
 fn bench_message_retrieval(c: &mut Criterion) {
     let mut group = c.benchmark_group("message_retrieval");
-    
+
     for db_size in [100, 1000].iter() {
-        group.bench_with_input(BenchmarkId::new("creation", db_size), db_size, |b, &db_size| {
-            b.iter(|| {
-                let user_id = UserId::default();
-                let messages: Vec<_> = (0..db_size)
-                    .map(|i| {
-                        MessageBuilder::new()
-                            .direct(user_id.clone(), user_id.clone())
-                            .content(MessageContent::Text(format!("Message {}", i)))
-                            .encrypted_payload(vec![1, 2, 3])
-                            .build()
-                            .unwrap()
-                    })
-                    .collect();
-                black_box(messages)
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("creation", db_size),
+            db_size,
+            |b, &db_size| {
+                b.iter(|| {
+                    let user_id = UserId::default();
+                    let messages: Vec<_> = (0..db_size)
+                        .map(|i| {
+                            MessageBuilder::new()
+                                .direct(user_id.clone(), user_id.clone())
+                                .content(MessageContent::Text(format!("Message {}", i)))
+                                .encrypted_payload(vec![1, 2, 3])
+                                .build()
+                                .unwrap()
+                        })
+                        .collect();
+                    black_box(messages)
+                })
+            },
+        );
     }
-    
+
     group.finish();
 }
 

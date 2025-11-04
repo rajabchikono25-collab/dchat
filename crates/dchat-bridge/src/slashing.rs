@@ -221,7 +221,14 @@ mod tests {
         let validator2 = UserId::new();
 
         manager
-            .slash_validator(validator1, SlashReason::FalseProof, 1000, None, vec![], None)
+            .slash_validator(
+                validator1,
+                SlashReason::FalseProof,
+                1000,
+                None,
+                vec![],
+                None,
+            )
             .unwrap();
 
         manager

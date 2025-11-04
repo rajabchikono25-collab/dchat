@@ -26,11 +26,11 @@ impl Bootstrap {
     }
 
     /// Get default bootstrap nodes
-    /// 
+    ///
     /// Priority order:
     /// 1. DCHAT_BOOTSTRAP_NODES environment variable (comma-separated multiaddrs)
     /// 2. Fallback to default DNS addresses (must be configured before production deployment)
-    /// 
+    ///
     /// For production: Set DCHAT_BOOTSTRAP_NODES or update DNS records for:
     /// - bootstrap-1.dchat.network
     /// - bootstrap-2.dchat.network  
@@ -40,17 +40,18 @@ impl Bootstrap {
         if let Ok(env_nodes) = std::env::var("DCHAT_BOOTSTRAP_NODES") {
             let nodes: Vec<Multiaddr> = env_nodes
                 .split(',')
-                .filter_map(|addr| {
-                    addr.trim().parse().ok()
-                })
+                .filter_map(|addr| addr.trim().parse().ok())
                 .collect();
-            
+
             if !nodes.is_empty() {
-                tracing::info!("Using {} bootstrap nodes from DCHAT_BOOTSTRAP_NODES", nodes.len());
+                tracing::info!(
+                    "Using {} bootstrap nodes from DCHAT_BOOTSTRAP_NODES",
+                    nodes.len()
+                );
                 return nodes;
             }
         }
-        
+
         // Fallback to DNS-based discovery (requires DNS configuration)
         // These DNS names must resolve to actual relay node IPs before production use
         vec![
@@ -68,7 +69,10 @@ impl Bootstrap {
 
     /// Connect to the network using bootstrap nodes
     pub async fn connect_to_network(&self, dht: &mut Dht) -> Result<()> {
-        tracing::info!("Connecting to network via {} bootstrap nodes", self.nodes.len());
+        tracing::info!(
+            "Connecting to network via {} bootstrap nodes",
+            self.nodes.len()
+        );
 
         // 1. Connect to bootstrap nodes
         for node in &self.nodes {
@@ -117,13 +121,10 @@ impl Default for Bootstrap {
 }
 
 /// Helper to create a configured DHT with bootstrap nodes
-pub async fn create_dht_with_bootstrap(
-    config: DhtConfig,
-    bootstrap: &Bootstrap,
-) -> Result<Dht> {
+pub async fn create_dht_with_bootstrap(config: DhtConfig, bootstrap: &Bootstrap) -> Result<Dht> {
     let mut dht_config = config;
     dht_config.bootstrap_nodes = bootstrap.nodes().to_vec();
-    
+
     Dht::new(dht_config).await
 }
 
@@ -134,11 +135,9 @@ mod tests {
 
     #[test]
     fn test_bootstrap_creation() {
-        let nodes = vec![
-            "/ip4/127.0.0.1/tcp/9000".parse().unwrap(),
-        ];
+        let nodes = vec!["/ip4/127.0.0.1/tcp/9000".parse().unwrap()];
         let bootstrap = Bootstrap::new(nodes.clone());
-        
+
         assert_eq!(bootstrap.nodes().len(), nodes.len());
     }
 
@@ -152,10 +151,10 @@ mod tests {
     fn test_add_node() {
         let mut bootstrap = Bootstrap::new(vec![]);
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
-        
+
         bootstrap.add_node(addr.clone());
         assert_eq!(bootstrap.nodes().len(), 1);
-        
+
         // Adding same node again should not duplicate
         bootstrap.add_node(addr.clone());
         assert_eq!(bootstrap.nodes().len(), 1);
@@ -165,9 +164,9 @@ mod tests {
     fn test_remove_node() {
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let mut bootstrap = Bootstrap::new(vec![addr.clone()]);
-        
+
         assert_eq!(bootstrap.nodes().len(), 1);
-        
+
         bootstrap.remove_node(&addr);
         assert_eq!(bootstrap.nodes().len(), 0);
     }
@@ -182,7 +181,7 @@ mod tests {
             alpha: 3,
             query_timeout: Duration::from_secs(30),
         };
-        
+
         let result = create_dht_with_bootstrap(config, &bootstrap).await;
         assert!(result.is_ok());
     }

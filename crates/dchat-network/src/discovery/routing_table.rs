@@ -18,7 +18,7 @@ impl RoutingTable {
     pub fn new(local_id: PeerId, k: usize) -> Self {
         // Create 256 buckets (one for each bit position in PeerId)
         let buckets = (0..256).map(|_| KBucket::new(k)).collect();
-        
+
         Self {
             local_id,
             buckets,
@@ -45,13 +45,13 @@ impl RoutingTable {
     /// Find the k closest peers to a target
     pub fn find_closest(&self, target: &PeerId, count: usize) -> Vec<PeerInfo> {
         let mut peers = Vec::new();
-        
+
         // Start from the bucket closest to target
         let bucket_index = self.bucket_index(target);
-        
+
         // Collect from closest bucket first
         peers.extend(self.buckets[bucket_index].peers());
-        
+
         // Then spiral outward
         let mut offset = 1;
         while peers.len() < count && offset < 256 {
@@ -63,11 +63,11 @@ impl RoutingTable {
             }
             offset += 1;
         }
-        
+
         // Sort by XOR distance and take closest
         peers.sort_by_key(|p| xor_distance(&p.peer_id, target));
         peers.truncate(count);
-        
+
         peers
     }
 
@@ -110,7 +110,7 @@ impl RoutingTable {
     /// Calculate which bucket a peer should go in
     fn bucket_index(&self, peer_id: &PeerId) -> usize {
         let distance = xor_distance(&self.local_id, peer_id);
-        
+
         // Find the most significant bit position
         // This gives us the bucket index (0-255)
         for i in (0..256).rev() {
@@ -119,7 +119,7 @@ impl RoutingTable {
                 return 255 - i;
             }
         }
-        
+
         0 // Default to bucket 0 if all bits are zero
     }
 }
@@ -219,12 +219,7 @@ impl U256 {
     }
 
     fn from(val: u128) -> Self {
-        U256([
-            val as u64,
-            (val >> 64) as u64,
-            0,
-            0,
-        ])
+        U256([val as u64, (val >> 64) as u64, 0, 0])
     }
 }
 
@@ -256,14 +251,14 @@ fn xor_distance(a: &PeerId, b: &PeerId) -> U256 {
     // Convert PeerIds to bytes and XOR them
     let a_bytes = a.to_bytes();
     let b_bytes = b.to_bytes();
-    
+
     let mut result = [0u64; 4];
-    
+
     // XOR the bytes (simplified - assumes 32-byte peer IDs)
     for i in 0..4 {
         let mut a_part = 0u64;
         let mut b_part = 0u64;
-        
+
         for j in 0..8 {
             let idx = i * 8 + j;
             if idx < a_bytes.len() {
@@ -273,10 +268,10 @@ fn xor_distance(a: &PeerId, b: &PeerId) -> U256 {
                 b_part |= (b_bytes[idx] as u64) << (j * 8);
             }
         }
-        
+
         result[i] = a_part ^ b_part;
     }
-    
+
     U256(result)
 }
 
@@ -289,7 +284,7 @@ mod tests {
     fn test_routing_table_creation() {
         let local_id = PeerId::random();
         let table = RoutingTable::new(local_id, 20);
-        
+
         assert_eq!(table.peer_count(), 0);
         assert_eq!(table.buckets.len(), 256);
     }
@@ -298,11 +293,11 @@ mod tests {
     fn test_add_peer() {
         let local_id = PeerId::random();
         let mut table = RoutingTable::new(local_id, 20);
-        
+
         let peer_id = PeerId::random();
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let peer_info = PeerInfo::new(peer_id, vec![addr]);
-        
+
         assert!(table.add_peer(peer_info).is_ok());
         assert_eq!(table.peer_count(), 1);
     }
@@ -311,10 +306,10 @@ mod tests {
     fn test_cannot_add_self() {
         let local_id = PeerId::random();
         let mut table = RoutingTable::new(local_id, 20);
-        
+
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let peer_info = PeerInfo::new(local_id, vec![addr]);
-        
+
         assert!(table.add_peer(peer_info).is_err());
     }
 
@@ -322,14 +317,14 @@ mod tests {
     fn test_remove_peer() {
         let local_id = PeerId::random();
         let mut table = RoutingTable::new(local_id, 20);
-        
+
         let peer_id = PeerId::random();
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let peer_info = PeerInfo::new(peer_id, vec![addr]);
-        
+
         table.add_peer(peer_info).unwrap();
         assert_eq!(table.peer_count(), 1);
-        
+
         table.remove_peer(&peer_id);
         assert_eq!(table.peer_count(), 0);
     }
@@ -338,7 +333,7 @@ mod tests {
     fn test_find_closest() {
         let local_id = PeerId::random();
         let mut table = RoutingTable::new(local_id, 20);
-        
+
         // Add some peers
         for _ in 0..10 {
             let peer_id = PeerId::random();
@@ -346,20 +341,20 @@ mod tests {
             let peer_info = PeerInfo::new(peer_id, vec![addr]);
             table.add_peer(peer_info).unwrap();
         }
-        
+
         let target = PeerId::random();
         let closest = table.find_closest(&target, 5);
-        
+
         assert!(closest.len() <= 5);
     }
 
     #[test]
     fn test_k_bucket() {
         let mut bucket = KBucket::new(3);
-        
+
         assert_eq!(bucket.len(), 0);
         assert!(bucket.is_empty());
-        
+
         // Add peers
         for i in 0..3 {
             let peer_id = PeerId::random();
@@ -367,15 +362,15 @@ mod tests {
             let peer_info = PeerInfo::new(peer_id, vec![addr]);
             bucket.add_peer(peer_info).unwrap();
         }
-        
+
         assert_eq!(bucket.len(), 3);
-        
+
         // Adding 4th peer should evict oldest
         let peer_id = PeerId::random();
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9003".parse().unwrap();
         let peer_info = PeerInfo::new(peer_id, vec![addr]);
         bucket.add_peer(peer_info).unwrap();
-        
+
         assert_eq!(bucket.len(), 3);
     }
 }

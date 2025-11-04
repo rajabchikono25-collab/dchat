@@ -10,43 +10,45 @@
 //! - Bot API endpoints
 //! - Permission management
 
-pub mod bot_manager;
+pub mod api;
 pub mod bot_api;
-pub mod webhook;
+pub mod bot_manager;
 pub mod commands;
 pub mod inline;
-pub mod permissions;
-pub mod storage;
-pub mod search;
 pub mod music_api;
-pub mod api;
+pub mod permissions;
+pub mod search;
+pub mod storage;
+pub mod webhook;
 
-pub use bot_manager::{BotManager, BotFather};
+pub use api::BotHttpClient;
 pub use bot_api::{BotApi, BotClient};
-pub use api::{BotHttpClient};
-pub use webhook::{WebhookManager, WebhookConfig};
+pub use bot_manager::{BotFather, BotManager};
 pub use commands::{Command, CommandHandler, CommandRegistry};
-pub use inline::{InlineQuery, InlineResult, InlineQueryHandler};
-pub use permissions::{BotPermissions, BotScope};
-pub use dchat_messaging::media::{
-    Audio, Document, EnhancedBotMessage, EntityType, LinkPreview, Location, MediaType,
-    MessageEntity, Photo, PhotoSize, Poll, Sticker, Video, Voice,
-};
 pub use dchat_identity::profile::{
     MusicApiTrack, MusicProvider, OnlineStatus, PrivacySettings, ProfileManager, ProfilePicture,
     StatusType, UserProfile, UserStatus, VisibilityLevel,
 };
-pub use search::{BotMetadata, BotSearchResult, SearchFilters, SearchManager, SearchResult, SearchType};
-pub use music_api::MusicApiClient;
 pub use dchat_identity::storage::ProfileStorage;
+pub use dchat_messaging::media::{
+    Audio, Document, EnhancedBotMessage, EntityType, LinkPreview, Location, MediaType,
+    MessageEntity, Photo, PhotoSize, Poll, Sticker, Video, Voice,
+};
 pub use dchat_storage::file_upload::{
     FileUploadManager, MediaFileType, StorageStats, UploadConfig, UploadedFile,
 };
+pub use inline::{InlineQuery, InlineQueryHandler, InlineResult};
+pub use music_api::MusicApiClient;
+pub use permissions::{BotPermissions, BotScope};
+pub use search::{
+    BotMetadata, BotSearchResult, SearchFilters, SearchManager, SearchResult, SearchType,
+};
+pub use webhook::{WebhookConfig, WebhookManager};
 
+use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// Bot unique identifier
 pub type BotId = Uuid;
@@ -56,46 +58,46 @@ pub type BotId = Uuid;
 pub struct Bot {
     /// Unique bot ID
     pub id: BotId,
-    
+
     /// Bot username (must be unique, ends with "bot")
     pub username: String,
-    
+
     /// Display name
     pub display_name: String,
-    
+
     /// Bot description
     pub description: Option<String>,
-    
+
     /// Bot about text
     pub about: Option<String>,
-    
+
     /// Owner user ID
     pub owner_id: dchat_core::types::UserId,
-    
+
     /// Authentication token
     pub token: String,
-    
+
     /// Bot avatar hash
     pub avatar_hash: Option<String>,
-    
+
     /// Is bot active?
     pub is_active: bool,
-    
+
     /// Bot permissions
     pub permissions: BotPermissions,
-    
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
-    
+
     /// Last activity timestamp
     pub last_active_at: Option<DateTime<Utc>>,
-    
+
     /// Webhook configuration
     pub webhook_url: Option<String>,
-    
+
     /// Commands supported by this bot
     pub commands: Vec<BotCommand>,
-    
+
     /// Statistics
     pub stats: BotStatistics,
 }
@@ -105,13 +107,13 @@ pub struct Bot {
 pub struct BotCommand {
     /// Command name (without leading slash)
     pub command: String,
-    
+
     /// Command description
     pub description: String,
-    
+
     /// Is command hidden from command list?
     pub hidden: bool,
-    
+
     /// Required permissions to use this command
     pub required_permissions: Vec<String>,
 }
@@ -121,22 +123,22 @@ pub struct BotCommand {
 pub struct BotStatistics {
     /// Total messages received
     pub total_messages: u64,
-    
+
     /// Total commands executed
     pub total_commands: u64,
-    
+
     /// Total inline queries
     pub total_inline_queries: u64,
-    
+
     /// Total callback queries
     pub total_callback_queries: u64,
-    
+
     /// Total webhooks sent
     pub total_webhooks: u64,
-    
+
     /// Active users (last 30 days)
     pub active_users: u64,
-    
+
     /// Average response time (milliseconds)
     pub avg_response_time_ms: u64,
 }
@@ -146,10 +148,10 @@ pub struct BotStatistics {
 pub struct CreateBotRequest {
     /// Bot username (must end with "bot")
     pub username: String,
-    
+
     /// Display name
     pub display_name: String,
-    
+
     /// Optional description
     pub description: Option<String>,
 }
@@ -159,16 +161,16 @@ pub struct CreateBotRequest {
 pub struct UpdateBotRequest {
     /// New display name
     pub display_name: Option<String>,
-    
+
     /// New description
     pub description: Option<String>,
-    
+
     /// New about text
     pub about: Option<String>,
-    
+
     /// Update avatar
     pub avatar_data: Option<Vec<u8>>,
-    
+
     /// Update commands
     pub commands: Option<Vec<BotCommand>>,
 }
@@ -178,28 +180,28 @@ pub struct UpdateBotRequest {
 pub struct BotMessage {
     /// Message ID
     pub message_id: Uuid,
-    
+
     /// Sender user ID
     pub from: dchat_core::types::UserId,
-    
+
     /// Chat ID (channel or DM)
     pub chat_id: String,
-    
+
     /// Message text
     pub text: Option<String>,
-    
+
     /// Message timestamp
     pub timestamp: DateTime<Utc>,
-    
+
     /// Is this a command?
     pub is_command: bool,
-    
+
     /// Parsed command (if is_command = true)
     pub command: Option<String>,
-    
+
     /// Command arguments
     pub command_args: Vec<String>,
-    
+
     /// Reply to message ID
     pub reply_to_message_id: Option<Uuid>,
 }
@@ -209,19 +211,19 @@ pub struct BotMessage {
 pub struct BotResponse {
     /// Chat ID to send to
     pub chat_id: String,
-    
+
     /// Response text
     pub text: String,
-    
+
     /// Parse mode (Markdown, HTML, or None)
     pub parse_mode: Option<ParseMode>,
-    
+
     /// Reply to message ID
     pub reply_to_message_id: Option<Uuid>,
-    
+
     /// Inline keyboard
     pub inline_keyboard: Option<Vec<Vec<InlineKeyboardButton>>>,
-    
+
     /// Disable notification
     pub disable_notification: bool,
 }
@@ -238,7 +240,7 @@ pub enum ParseMode {
 pub struct InlineKeyboardButton {
     /// Button text
     pub text: String,
-    
+
     /// Button action
     pub action: ButtonAction,
 }
@@ -248,10 +250,10 @@ pub struct InlineKeyboardButton {
 pub enum ButtonAction {
     /// Callback data (sent back to bot when clicked)
     CallbackData(String),
-    
+
     /// URL to open
     Url(String),
-    
+
     /// Inline query
     InlineQuery(String),
 }
@@ -261,16 +263,16 @@ pub enum ButtonAction {
 pub struct CallbackQuery {
     /// Query ID
     pub id: Uuid,
-    
+
     /// User who clicked
     pub from: dchat_core::types::UserId,
-    
+
     /// Original message
     pub message: BotMessage,
-    
+
     /// Callback data
     pub data: String,
-    
+
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -285,13 +287,13 @@ impl Bot {
         if !username.ends_with("bot") {
             return Err(Error::validation("Bot username must end with 'bot'"));
         }
-        
+
         if username.len() < 5 || username.len() > 32 {
             return Err(Error::validation("Bot username must be 5-32 characters"));
         }
-        
+
         let token = Self::generate_token();
-        
+
         Ok(Self {
             id: BotId::new_v4(),
             username,
@@ -310,53 +312,56 @@ impl Bot {
             stats: BotStatistics::default(),
         })
     }
-    
+
     /// Generate a secure authentication token
     fn generate_token() -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let uuid = uuid::Uuid::new_v4();
         let random_bytes = uuid.as_bytes();
         let mut hasher = Sha256::new();
         hasher.update(random_bytes);
         let result = hasher.finalize();
         use base64::Engine;
-        format!("dchat_bot_{}", base64::engine::general_purpose::STANDARD.encode(result))
+        format!(
+            "dchat_bot_{}",
+            base64::engine::general_purpose::STANDARD.encode(result)
+        )
     }
-    
+
     /// Verify token
     pub fn verify_token(&self, token: &str) -> bool {
         self.token == token
     }
-    
+
     /// Add command
     pub fn add_command(&mut self, command: BotCommand) {
         self.commands.push(command);
     }
-    
+
     /// Remove command
     pub fn remove_command(&mut self, command_name: &str) {
         self.commands.retain(|c| c.command != command_name);
     }
-    
+
     /// Get command
     pub fn get_command(&self, command_name: &str) -> Option<&BotCommand> {
         self.commands.iter().find(|c| c.command == command_name)
     }
-    
+
     /// Update statistics
     pub fn record_message(&mut self) {
         self.stats.total_messages += 1;
         self.last_active_at = Some(Utc::now());
     }
-    
+
     pub fn record_command(&mut self) {
         self.stats.total_commands += 1;
     }
-    
+
     pub fn record_inline_query(&mut self) {
         self.stats.total_inline_queries += 1;
     }
-    
+
     pub fn record_callback_query(&mut self) {
         self.stats.total_callback_queries += 1;
     }
@@ -372,13 +377,13 @@ impl BotCommand {
             required_permissions: Vec::new(),
         }
     }
-    
+
     /// Set command as hidden
     pub fn hidden(mut self, hidden: bool) -> Self {
         self.hidden = hidden;
         self
     }
-    
+
     /// Add required permission
     pub fn require_permission(mut self, permission: String) -> Self {
         self.required_permissions.push(permission);
@@ -395,7 +400,7 @@ impl BotMessage {
         text: String,
     ) -> Self {
         let (is_command, command, command_args) = Self::parse_command(&text);
-        
+
         Self {
             message_id,
             from,
@@ -408,21 +413,21 @@ impl BotMessage {
             reply_to_message_id: None,
         }
     }
-    
+
     /// Parse command from text
     fn parse_command(text: &str) -> (bool, Option<String>, Vec<String>) {
         if !text.starts_with('/') {
             return (false, None, Vec::new());
         }
-        
+
         let parts: Vec<&str> = text[1..].split_whitespace().collect();
         if parts.is_empty() {
             return (false, None, Vec::new());
         }
-        
+
         let command = parts[0].to_string();
         let args = parts[1..].iter().map(|s| s.to_string()).collect();
-        
+
         (true, Some(command), args)
     }
 }
@@ -430,43 +435,31 @@ impl BotMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_create_bot() {
         let owner_id = dchat_core::types::UserId::new();
-        let bot = Bot::new(
-            "testbot".to_string(),
-            "Test Bot".to_string(),
-            owner_id,
-        ).unwrap();
-        
+        let bot = Bot::new("testbot".to_string(), "Test Bot".to_string(), owner_id).unwrap();
+
         assert_eq!(bot.username, "testbot");
         assert_eq!(bot.display_name, "Test Bot");
         assert!(!bot.token.is_empty());
         assert!(bot.is_active);
     }
-    
+
     #[test]
     fn test_bot_username_validation() {
         let owner_id = dchat_core::types::UserId::new();
-        
+
         // Should fail - doesn't end with "bot"
-        let result = Bot::new(
-            "test".to_string(),
-            "Test".to_string(),
-            owner_id.clone(),
-        );
+        let result = Bot::new("test".to_string(), "Test".to_string(), owner_id.clone());
         assert!(result.is_err());
-        
+
         // Should fail - too short
-        let result = Bot::new(
-            "bot".to_string(),
-            "Test".to_string(),
-            owner_id,
-        );
+        let result = Bot::new("bot".to_string(), "Test".to_string(), owner_id);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_parse_command() {
         let owner_id = dchat_core::types::UserId::new();
@@ -476,64 +469,49 @@ mod tests {
             "chat123".to_string(),
             "/start hello world".to_string(),
         );
-        
+
         assert!(message.is_command);
         assert_eq!(message.command, Some("start".to_string()));
         assert_eq!(message.command_args, vec!["hello", "world"]);
     }
-    
+
     #[test]
     fn test_add_remove_commands() {
         let owner_id = dchat_core::types::UserId::new();
-        let mut bot = Bot::new(
-            "testbot".to_string(),
-            "Test Bot".to_string(),
-            owner_id,
-        ).unwrap();
-        
-        let cmd = BotCommand::new(
-            "start".to_string(),
-            "Start the bot".to_string(),
-        );
-        
+        let mut bot = Bot::new("testbot".to_string(), "Test Bot".to_string(), owner_id).unwrap();
+
+        let cmd = BotCommand::new("start".to_string(), "Start the bot".to_string());
+
         bot.add_command(cmd);
         assert_eq!(bot.commands.len(), 1);
-        
+
         assert!(bot.get_command("start").is_some());
         assert!(bot.get_command("help").is_none());
-        
+
         bot.remove_command("start");
         assert_eq!(bot.commands.len(), 0);
     }
-    
+
     #[test]
     fn test_token_verification() {
         let owner_id = dchat_core::types::UserId::new();
-        let bot = Bot::new(
-            "testbot".to_string(),
-            "Test Bot".to_string(),
-            owner_id,
-        ).unwrap();
-        
+        let bot = Bot::new("testbot".to_string(), "Test Bot".to_string(), owner_id).unwrap();
+
         assert!(bot.verify_token(&bot.token));
         assert!(!bot.verify_token("invalid_token"));
     }
-    
+
     #[test]
     fn test_record_statistics() {
         let owner_id = dchat_core::types::UserId::new();
-        let mut bot = Bot::new(
-            "testbot".to_string(),
-            "Test Bot".to_string(),
-            owner_id,
-        ).unwrap();
-        
+        let mut bot = Bot::new("testbot".to_string(), "Test Bot".to_string(), owner_id).unwrap();
+
         assert_eq!(bot.stats.total_messages, 0);
-        
+
         bot.record_message();
         assert_eq!(bot.stats.total_messages, 1);
         assert!(bot.last_active_at.is_some());
-        
+
         bot.record_command();
         assert_eq!(bot.stats.total_commands, 1);
     }

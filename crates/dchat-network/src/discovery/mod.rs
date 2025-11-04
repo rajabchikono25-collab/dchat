@@ -22,25 +22,25 @@ use std::time::Duration;
 pub struct DiscoveryConfig {
     /// Local peer ID
     pub local_peer_id: PeerId,
-    
+
     /// Bootstrap nodes for initial DHT seeding
     pub bootstrap_nodes: Vec<(PeerId, Multiaddr)>,
-    
+
     /// Enable mDNS for local discovery
     pub enable_mdns: bool,
-    
+
     /// Minimum number of peers to maintain
     pub min_peers: usize,
-    
+
     /// Maximum number of peers to maintain
     pub max_peers: usize,
-    
+
     /// DHT query timeout
     pub query_timeout: Duration,
-    
+
     /// K-bucket size
     pub k_bucket_size: usize,
-    
+
     /// DHT alpha (concurrency parameter)
     pub alpha: usize,
 }
@@ -64,7 +64,11 @@ impl From<DiscoveryConfig> for DhtConfig {
     fn from(config: DiscoveryConfig) -> Self {
         DhtConfig {
             local_peer_id: config.local_peer_id,
-            bootstrap_nodes: config.bootstrap_nodes.into_iter().map(|(_, addr)| addr).collect(),
+            bootstrap_nodes: config
+                .bootstrap_nodes
+                .into_iter()
+                .map(|(_, addr)| addr)
+                .collect(),
             k_bucket_size: config.k_bucket_size,
             alpha: config.alpha,
             query_timeout: config.query_timeout,
@@ -180,7 +184,7 @@ impl Discovery {
 pub struct EclipseGuard {
     /// Track ASN diversity of connected peers
     peer_asns: std::collections::HashMap<PeerId, u32>,
-    
+
     /// Maximum fraction of peers from same ASN
     max_asn_fraction: f64,
 }
@@ -192,24 +196,24 @@ impl EclipseGuard {
             max_asn_fraction,
         }
     }
-    
+
     /// Check if connecting to a peer would violate diversity constraints
     pub fn should_allow_peer(&self, _peer_id: &PeerId, asn: u32, total_peers: usize) -> bool {
         if total_peers == 0 {
             return true;
         }
-        
+
         let asn_count = self.peer_asns.values().filter(|&&a| a == asn).count();
         let fraction = (asn_count + 1) as f64 / (total_peers + 1) as f64;
-        
+
         fraction <= self.max_asn_fraction
     }
-    
+
     /// Register a peer's ASN
     pub fn register_peer(&mut self, peer_id: PeerId, asn: u32) {
         self.peer_asns.insert(peer_id, asn);
     }
-    
+
     /// Remove a peer
     pub fn remove_peer(&mut self, peer_id: &PeerId) {
         self.peer_asns.remove(peer_id);
@@ -252,10 +256,10 @@ mod tests {
     async fn test_discovery_basic() {
         let config = test_config();
         let mut discovery = Discovery::new(config).await.unwrap();
-        
+
         assert_eq!(discovery.connected_count(), 0);
         assert!(discovery.needs_more_peers());
-        
+
         let peer_id = PeerId::random();
         discovery.peer_connected(peer_id);
         assert_eq!(discovery.connected_count(), 1);
@@ -264,27 +268,27 @@ mod tests {
     #[test]
     fn test_eclipse_guard() {
         let mut guard = EclipseGuard::new(0.5); // Max 50% from same ASN
-        
+
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
         let peer3 = PeerId::random();
         let peer4 = PeerId::random();
-        
+
         // First peer always allowed
         assert!(guard.should_allow_peer(&peer1, 100, guard.peer_asns.len()));
         guard.register_peer(peer1, 100);
-        
+
         // Second peer from different ASN
         assert!(guard.should_allow_peer(&peer2, 200, guard.peer_asns.len()));
         guard.register_peer(peer2, 200);
-        
+
         // Third peer from ASN 100 - should be rejected
         assert!(!guard.should_allow_peer(&peer3, 100, guard.peer_asns.len()));
-        
+
         // Third peer from new ASN 300 - should be allowed
         assert!(guard.should_allow_peer(&peer3, 300, guard.peer_asns.len()));
         guard.register_peer(peer3, 300);
-        
+
         // Fourth peer from ASN 100 - exactly at threshold
         assert!(guard.should_allow_peer(&peer4, 100, guard.peer_asns.len()));
     }

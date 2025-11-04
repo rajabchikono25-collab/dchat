@@ -19,7 +19,6 @@ impl Schema {
                 reputation_relay INTEGER DEFAULT 0
             )
             "#,
-            
             // Identities table (for multi-identity support)
             r#"
             CREATE TABLE IF NOT EXISTS identities (
@@ -32,7 +31,6 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Devices table
             r#"
             CREATE TABLE IF NOT EXISTS devices (
@@ -46,7 +44,6 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Messages table
             r#"
             CREATE TABLE IF NOT EXISTS messages (
@@ -66,7 +63,6 @@ impl Schema {
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Channels table
             r#"
             CREATE TABLE IF NOT EXISTS channels (
@@ -80,7 +76,6 @@ impl Schema {
                 FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Channel members table
             r#"
             CREATE TABLE IF NOT EXISTS channel_members (
@@ -93,7 +88,6 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Guardians table
             r#"
             CREATE TABLE IF NOT EXISTS guardians (
@@ -105,7 +99,6 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Recovery requests table
             r#"
             CREATE TABLE IF NOT EXISTS recovery_requests (
@@ -119,7 +112,6 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
-            
             // Delivery proofs table
             r#"
             CREATE TABLE IF NOT EXISTS delivery_proofs (
@@ -131,7 +123,6 @@ impl Schema {
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
             )
             "#,
-            
             // Key rotation history
             r#"
             CREATE TABLE IF NOT EXISTS key_rotations (
@@ -146,7 +137,7 @@ impl Schema {
             "#,
         ]
     }
-    
+
     /// Create indexes for performance
     pub fn create_indexes() -> Vec<&'static str> {
         vec![
@@ -171,7 +162,7 @@ mod tests {
     fn test_schema_definitions() {
         let tables = Schema::create_tables();
         assert!(tables.len() > 0);
-        
+
         let indexes = Schema::create_indexes();
         assert!(indexes.len() > 0);
     }

@@ -22,7 +22,9 @@ pub mod object_storage;
 pub mod tikv_backend;
 
 // Re-export types from submodules for convenient access
-pub use database::{DistributedDatabase, DatabaseConfig};
-pub use cache::{DistributedCache, CacheConfig};
-pub use object_storage::{DistributedObjectStorage, ObjectStorageConfig, StorageTier, ObjectMetadata};
-pub use tikv_backend::{TiKVStorage, TiKVConfig, ChainState, BlockMetadata};
+pub use cache::{CacheConfig, DistributedCache};
+pub use database::{DatabaseConfig, DistributedDatabase};
+pub use object_storage::{
+    DistributedObjectStorage, ObjectMetadata, ObjectStorageConfig, StorageTier,
+};
+pub use tikv_backend::{BlockMetadata, ChainState, TiKVConfig, TiKVStorage};

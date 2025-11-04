@@ -67,7 +67,7 @@ impl GeographicRegion {
         if self == other {
             return 5; // Same region
         }
-        
+
         // Speed of light + routing overhead estimates
         match (self, other) {
             (Self::USEast, Self::USWest) | (Self::USWest, Self::USEast) => 80,
@@ -87,31 +87,31 @@ impl GeographicRegion {
 pub struct ValidatorConfig {
     /// Unique validator identifier
     pub validator_id: String,
-    
+
     /// Geographic region
     pub region: GeographicRegion,
-    
+
     /// Public IP address or DNS hostname
     pub public_address: String,
-    
+
     /// P2P listen addresses (libp2p multiaddrs)
     pub listen_addresses: Vec<String>,
-    
+
     /// RPC endpoint address
     pub rpc_address: SocketAddr,
-    
+
     /// Bootstrap peers from OTHER regions (critical for decentralization)
     pub bootstrap_peers: Vec<String>,
-    
+
     /// BFT consensus configuration
     pub consensus: ConsensusConfig,
-    
+
     /// Storage backend configuration
     pub storage: StorageConfig,
-    
+
     /// Private key path (for signing)
     pub private_key_path: PathBuf,
-    
+
     /// Staking amount (DCHAT tokens)
     pub stake_amount: u64,
 }
@@ -121,16 +121,16 @@ pub struct ValidatorConfig {
 pub struct ConsensusConfig {
     /// All validator RPC addresses (for BFT voting)
     pub validator_addresses: Vec<String>,
-    
+
     /// Required signatures for finality (e.g., 5 of 7)
     pub required_signatures: usize,
-    
+
     /// Total validator count
     pub total_validators: usize,
-    
+
     /// Block time (milliseconds)
     pub block_time_ms: u64,
-    
+
     /// Finality confirmation blocks
     pub finality_blocks: u64,
 }
@@ -140,10 +140,10 @@ pub struct ConsensusConfig {
 pub struct StorageConfig {
     /// Storage backend type
     pub backend: StorageBackend,
-    
+
     /// Replication factor
     pub replication_factor: usize,
-    
+
     /// Maximum connections
     pub max_connections: usize,
 }
@@ -154,10 +154,10 @@ pub struct StorageConfig {
 pub enum StorageBackend {
     /// TiKV distributed key-value store
     TiKV { pd_endpoints: Vec<String> },
-    
+
     /// CockroachDB distributed SQL
     CockroachDB { database_urls: Vec<String> },
-    
+
     /// PostgreSQL (single or replicated)
     PostgreSQL { database_url: String },
 }
@@ -167,16 +167,16 @@ pub enum StorageBackend {
 pub struct MultiRegionConfig {
     /// Network name
     pub network_name: String,
-    
+
     /// Base domain (e.g., dchat.network)
     pub base_domain: String,
-    
+
     /// All validator configurations
     pub validators: Vec<ValidatorConfig>,
-    
+
     /// BFT threshold (e.g., 0.67 for 67% = 5 of 7)
     pub bft_threshold: f64,
-    
+
     /// Geographic diversity requirements
     pub min_continents: usize,
     pub max_concentration_per_region: f64, // e.g., 0.40 = 40%
@@ -184,14 +184,11 @@ pub struct MultiRegionConfig {
 
 impl MultiRegionConfig {
     /// Create a new multi-region configuration with recommended settings
-    pub fn new_recommended(
-        network_name: String,
-        base_domain: String,
-    ) -> Self {
+    pub fn new_recommended(network_name: String, base_domain: String) -> Self {
         let validators = Self::generate_recommended_validators(&base_domain);
         let total = validators.len();
         let required = (total * 2 / 3) + 1; // 67% + 1 for BFT
-        
+
         Self {
             network_name,
             base_domain,
@@ -218,7 +215,7 @@ impl MultiRegionConfig {
             for i in 0..count {
                 let validator_id = format!("validator-{}-{}", region.dns_suffix(), i + 1);
                 let public_address = format!("{}.{}", validator_id, base_domain);
-                
+
                 let config = ValidatorConfig {
                     validator_id: validator_id.clone(),
                     region,
@@ -233,17 +230,18 @@ impl MultiRegionConfig {
                     bootstrap_peers: Vec::new(), // Will be filled later
                     consensus: ConsensusConfig {
                         validator_addresses: Vec::new(), // Will be filled later
-                        required_signatures: 5, // 5 of 7
+                        required_signatures: 5,          // 5 of 7
                         total_validators: 7,
                         block_time_ms: 2000, // 2 seconds
                         finality_blocks: 3,
                     },
                     storage: StorageConfig {
                         backend: StorageBackend::CockroachDB {
-                            database_urls: vec![
-                                format!("postgresql://dchat:pass@cockroach-{}.{}:26257/dchat", 
-                                    region.dns_suffix(), base_domain),
-                            ],
+                            database_urls: vec![format!(
+                                "postgresql://dchat:pass@cockroach-{}.{}:26257/dchat",
+                                region.dns_suffix(),
+                                base_domain
+                            )],
                         },
                         replication_factor: 3,
                         max_connections: 50,
@@ -279,22 +277,22 @@ impl MultiRegionConfig {
             for j in 0..total {
                 if i != j && validators[j].region != current_region {
                     // Generate proper libp2p peer ID from validator ID
-                    use sha2::{Sha256, Digest};
+                    use sha2::{Digest, Sha256};
                     let mut hasher = Sha256::new();
                     hasher.update(validators[j].validator_id.as_bytes());
                     hasher.update(b"dchat-libp2p-peer");
                     let hash = hasher.finalize();
-                    
+
                     // Create base58btc encoded peer ID (libp2p format)
                     // Prefix with identity multihash code (0x00) and length (32)
                     let mut peer_id_bytes = vec![0x00, 0x20];
                     peer_id_bytes.extend_from_slice(&hash[..]);
-                    
+
                     // Encode as base58 with "12D3Koo" prefix (standard libp2p peer ID)
                     use bs58;
                     let peer_id_suffix = bs58::encode(&peer_id_bytes).into_string();
                     let peer_id = format!("12D3Koo{}", &peer_id_suffix[..44]);
-                    
+
                     let peer_address = format!(
                         "/dns4/{}/tcp/{}/p2p/{}",
                         validators[j].public_address,
@@ -519,11 +517,8 @@ max_concentration_per_region = {}
                     let v1 = &self.validators[i];
                     let v2 = &self.validators[j];
                     let latency = v1.region.latency_to(&v2.region);
-                    
-                    matrix.insert(
-                        (v1.validator_id.clone(), v2.validator_id.clone()),
-                        latency,
-                    );
+
+                    matrix.insert((v1.validator_id.clone(), v2.validator_id.clone()), latency);
                 }
             }
         }
@@ -574,10 +569,8 @@ mod tests {
 
     #[test]
     fn test_geographic_diversity() {
-        let config = MultiRegionConfig::new_recommended(
-            "dchat".to_string(),
-            "dchat.network".to_string(),
-        );
+        let config =
+            MultiRegionConfig::new_recommended("dchat".to_string(), "dchat.network".to_string());
 
         let mut regions = std::collections::HashSet::new();
         for validator in &config.validators {
@@ -589,10 +582,8 @@ mod tests {
 
     #[test]
     fn test_no_region_dominance() {
-        let config = MultiRegionConfig::new_recommended(
-            "dchat".to_string(),
-            "dchat.network".to_string(),
-        );
+        let config =
+            MultiRegionConfig::new_recommended("dchat".to_string(), "dchat.network".to_string());
 
         let mut region_counts: HashMap<GeographicRegion, usize> = HashMap::new();
         for validator in &config.validators {
@@ -607,10 +598,8 @@ mod tests {
 
     #[test]
     fn test_bootstrap_peers_cross_region() {
-        let config = MultiRegionConfig::new_recommended(
-            "dchat".to_string(),
-            "dchat.network".to_string(),
-        );
+        let config =
+            MultiRegionConfig::new_recommended("dchat".to_string(), "dchat.network".to_string());
 
         for validator in &config.validators {
             // Each validator should have bootstrap peers
@@ -624,10 +613,8 @@ mod tests {
 
     #[test]
     fn test_toml_generation() {
-        let config = MultiRegionConfig::new_recommended(
-            "dchat".to_string(),
-            "dchat.network".to_string(),
-        );
+        let config =
+            MultiRegionConfig::new_recommended("dchat".to_string(), "dchat.network".to_string());
 
         let toml = config
             .generate_toml(&config.validators[0].validator_id)

@@ -91,7 +91,9 @@ impl NetworkSimulator {
     /// Set packet loss rate (0.0 to 1.0)
     pub fn set_packet_loss(&mut self, rate: f32) -> Result<()> {
         if !(0.0..=1.0).contains(&rate) {
-            return Err(Error::validation("Packet loss rate must be between 0.0 and 1.0"));
+            return Err(Error::validation(
+                "Packet loss rate must be between 0.0 and 1.0",
+            ));
         }
         self.packet_loss_rate = rate;
         Ok(())

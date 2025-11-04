@@ -349,7 +349,10 @@ alerting_rules:
 
     let prometheus_path = output.join("prometheus.yml");
     fs::write(&prometheus_path, prometheus_config)?;
-    println!("✓ Generated Prometheus config: {}", prometheus_path.display());
+    println!(
+        "✓ Generated Prometheus config: {}",
+        prometheus_path.display()
+    );
 
     Ok(())
 }
@@ -447,7 +450,10 @@ fn generate_grafana_dashboards(output: &PathBuf) -> Result<(), Box<dyn std::erro
 
     let dashboard_path = output.join("grafana-dashboard.json");
     fs::write(&dashboard_path, dashboard)?;
-    println!("✓ Generated Grafana dashboard: {}", dashboard_path.display());
+    println!(
+        "✓ Generated Grafana dashboard: {}",
+        dashboard_path.display()
+    );
 
     Ok(())
 }
@@ -745,7 +751,10 @@ fn setup_autoscaling(min: u32, max: u32, cpu: f64) -> Result<(), Box<dyn std::er
     println!("  - Scale down: CPU < {}% and Memory < 40%", cpu * 0.5);
     println!("  - Scale up step: +{} instances", config.scale_up_step);
     println!("  - Scale down step: -{} instance", config.scale_down_step);
-    println!("  - Cooldown: {}s up, {}s down", config.scale_up_cooldown, config.scale_down_cooldown);
+    println!(
+        "  - Cooldown: {}s up, {}s down",
+        config.scale_up_cooldown, config.scale_down_cooldown
+    );
 
     Ok(())
 }
@@ -771,8 +780,14 @@ fn setup_bft_monitor(total: u32, min_healthy: u32) -> Result<(), Box<dyn std::er
     println!("✓ BFT monitoring configured!");
     println!("\nConsensus requirements:");
     println!("  - BFT threshold: {}/{} validators", min_healthy, total);
-    println!("  - Alert threshold: ≤{} validators", config.alert_threshold);
-    println!("  - Consensus %: {:.1}%+", (min_healthy as f64 / total as f64) * 100.0);
+    println!(
+        "  - Alert threshold: ≤{} validators",
+        config.alert_threshold
+    );
+    println!(
+        "  - Consensus %: {:.1}%+",
+        (min_healthy as f64 / total as f64) * 100.0
+    );
     println!("  - Participation tracking: enabled");
 
     Ok(())
@@ -787,19 +802,62 @@ fn health_check(component_type: Option<String>) -> Result<(), Box<dyn std::error
 
     // Simulate health checks
     let components = vec![
-        ("validator-1", ComponentType::Validator, HealthStatus::Healthy, 45),
-        ("validator-2", ComponentType::Validator, HealthStatus::Healthy, 52),
-        ("validator-3", ComponentType::Validator, HealthStatus::Healthy, 38),
-        ("validator-4", ComponentType::Validator, HealthStatus::Degraded, 850),
-        ("validator-5", ComponentType::Validator, HealthStatus::Healthy, 41),
-        ("validator-6", ComponentType::Validator, HealthStatus::Healthy, 47),
-        ("validator-7", ComponentType::Validator, HealthStatus::Healthy, 39),
+        (
+            "validator-1",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            45,
+        ),
+        (
+            "validator-2",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            52,
+        ),
+        (
+            "validator-3",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            38,
+        ),
+        (
+            "validator-4",
+            ComponentType::Validator,
+            HealthStatus::Degraded,
+            850,
+        ),
+        (
+            "validator-5",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            41,
+        ),
+        (
+            "validator-6",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            47,
+        ),
+        (
+            "validator-7",
+            ComponentType::Validator,
+            HealthStatus::Healthy,
+            39,
+        ),
         ("relay-1", ComponentType::Relay, HealthStatus::Healthy, 23),
-        ("storage-1", ComponentType::CockroachDB, HealthStatus::Healthy, 102),
+        (
+            "storage-1",
+            ComponentType::CockroachDB,
+            HealthStatus::Healthy,
+            102,
+        ),
         ("storage-2", ComponentType::Redis, HealthStatus::Healthy, 15),
     ];
 
-    println!("\n{:<20} {:<15} {:<12} {:<10}", "Component", "Type", "Status", "Response");
+    println!(
+        "\n{:<20} {:<15} {:<12} {:<10}",
+        "Component", "Type", "Status", "Response"
+    );
     println!("{}", "-".repeat(60));
 
     let mut healthy_validators = 0;
@@ -813,7 +871,13 @@ fn health_check(component_type: Option<String>) -> Result<(), Box<dyn std::error
             HealthStatus::Unknown => "? Unknown",
         };
 
-        println!("{:<20} {:<15} {:<12} {}ms", id, format!("{:?}", comp_type), status_str, response_ms);
+        println!(
+            "{:<20} {:<15} {:<12} {}ms",
+            id,
+            format!("{:?}", comp_type),
+            status_str,
+            response_ms
+        );
 
         if comp_type == ComponentType::Validator && status == HealthStatus::Healthy {
             healthy_validators += 1;
@@ -821,8 +885,11 @@ fn health_check(component_type: Option<String>) -> Result<(), Box<dyn std::error
     }
 
     println!("\n{}", "=".repeat(60));
-    println!("BFT Consensus: {}/{} validators healthy", healthy_validators, total_validators);
-    
+    println!(
+        "BFT Consensus: {}/{} validators healthy",
+        healthy_validators, total_validators
+    );
+
     if healthy_validators >= 5 {
         println!("✓ Consensus healthy (≥5 validators)");
     } else {
@@ -872,12 +939,20 @@ fn test_autoscaling(cpu_percent: f64) -> Result<(), Box<dyn std::error::Error>> 
     if config.should_scale_up(cpu_percent, 70.0, current_instances) {
         let target = config.calculate_target_instances(cpu_percent, current_instances);
         println!("\n✓ Scale-up triggered");
-        println!("  - New target: {} instances (+{})", target, target - current_instances);
+        println!(
+            "  - New target: {} instances (+{})",
+            target,
+            target - current_instances
+        );
         println!("  - Reason: CPU > {}%", config.target_cpu_percent);
     } else if config.should_scale_down(cpu_percent, 40.0, current_instances) {
         let target = config.calculate_target_instances(cpu_percent, current_instances);
         println!("\n✓ Scale-down triggered");
-        println!("  - New target: {} instances ({})", target, target - current_instances);
+        println!(
+            "  - New target: {} instances ({})",
+            target,
+            target - current_instances
+        );
         println!("  - Reason: CPU < {}%", config.target_cpu_percent * 0.5);
     } else {
         println!("\n✓ No scaling needed");

@@ -16,31 +16,36 @@ pub mod gossip; // Sprint 9: Gossip protocol for message propagation
 pub mod gossip_sync; // Phase 3: Gossip-based synchronization
 pub mod nat;
 pub mod nat_traversal; // Phase 2: Enhanced NAT traversal (UPnP/TURN)
-pub mod rate_limiting; // Phase 2: Reputation-based rate limiting
-pub mod rate_limit; // Sprint 5: Token bucket rate limiting
 pub mod onion_routing; // Phase 2: Metadata-resistant routing
+pub mod rate_limit; // Sprint 5: Token bucket rate limiting
+pub mod rate_limiting; // Phase 2: Reputation-based rate limiting
 pub mod relay;
 pub mod relay_network; // Phase 3: Full relay network coordination
 pub mod routing;
 pub mod swarm;
 pub mod transport;
 pub use behavior::{DchatBehavior, DchatBehaviorEvent, DchatMessage};
-pub use connection::{ConnectionManager, ConnectionConfig, ConnectionInfo, ConnectionState, ConnectionStats};
+pub use connection::{
+    ConnectionConfig, ConnectionInfo, ConnectionManager, ConnectionState, ConnectionStats,
+};
 pub use discovery::{Discovery, DiscoveryConfig};
-pub use eclipse_prevention::{EclipsePreventionManager, PeerInfo, RelayPath, EclipseIndicator, DiversityStats};
+pub use eclipse_prevention::{
+    DiversityStats, EclipseIndicator, EclipsePreventionManager, PeerInfo, RelayPath,
+};
 pub use gossip::{Gossip, GossipConfig, GossipMessage as GossipProtoMessage, MessageId};
-pub use gossip_sync::{GossipSyncManager, GossipMessage, VectorClock, ConflictResolution};
-pub use nat::{NatTraversal, NatConfig};
-pub use nat_traversal::{NatTraversalManager, NatStrategy, NatType};
+pub use gossip_sync::{ConflictResolution, GossipMessage, GossipSyncManager, VectorClock};
+pub use nat::{NatConfig, NatTraversal};
+pub use nat_traversal::{NatStrategy, NatTraversalManager, NatType};
+pub use onion_routing::{CircuitId, CircuitStatus, OnionRoutingManager};
+pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use rate_limiting::{RateLimitManager, ReputationScore};
-pub use rate_limit::{RateLimiter, RateLimitConfig};
-pub use onion_routing::{OnionRoutingManager, CircuitId, CircuitStatus};
-pub use relay::{RelayNode, RelayClient, RelayConfig};
-pub use relay_network::{RelayNetworkManager, RelayInfo, Continent, LoadStrategy, ProofBatch, NetworkStats};
+pub use relay::{RelayClient, RelayConfig, RelayNode};
+pub use relay_network::{
+    Continent, LoadStrategy, NetworkStats, ProofBatch, RelayInfo, RelayNetworkManager,
+};
 pub use routing::{Router, RoutingTable};
-pub use swarm::{NetworkManager, NetworkConfig, NetworkEvent};
+pub use swarm::{NetworkConfig, NetworkEvent, NetworkManager};
 pub use transport::build_transport;
 
 // Re-export libp2p types for convenience
 pub use libp2p::{Multiaddr, PeerId};
-

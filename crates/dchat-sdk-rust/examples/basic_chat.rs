@@ -19,7 +19,10 @@ async fn main() -> Result<()> {
 
     println!("✅ Client created for: {}", alice.identity().username);
     println!("📍 User ID: {}", alice.identity().user_id);
-    println!("🔑 Public key fingerprint: {}\n", alice.identity().fingerprint());
+    println!(
+        "🔑 Public key fingerprint: {}\n",
+        alice.identity().fingerprint()
+    );
 
     // Connect to the network
     println!("🌐 Connecting to dchat network...");

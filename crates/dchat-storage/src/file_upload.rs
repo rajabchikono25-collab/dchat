@@ -2,11 +2,11 @@
 
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
-use sha2::{Sha256, Digest};
 
 /// Media file type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,10 +41,10 @@ pub struct UploadedFile {
 #[derive(Debug, Clone)]
 pub struct UploadConfig {
     pub storage_path: PathBuf,
-    pub max_photo_size: u64,      // 10 MB
-    pub max_video_size: u64,      // 100 MB
-    pub max_audio_size: u64,      // 50 MB
-    pub max_document_size: u64,   // 100 MB
+    pub max_photo_size: u64,    // 10 MB
+    pub max_video_size: u64,    // 100 MB
+    pub max_audio_size: u64,    // 50 MB
+    pub max_document_size: u64, // 100 MB
     pub allowed_photo_types: Vec<String>,
     pub allowed_video_types: Vec<String>,
     pub allowed_audio_types: Vec<String>,
@@ -55,10 +55,10 @@ impl Default for UploadConfig {
     fn default() -> Self {
         Self {
             storage_path: PathBuf::from("./data/uploads"),
-            max_photo_size: 10 * 1024 * 1024,      // 10 MB
-            max_video_size: 100 * 1024 * 1024,     // 100 MB
-            max_audio_size: 50 * 1024 * 1024,      // 50 MB
-            max_document_size: 100 * 1024 * 1024,  // 100 MB
+            max_photo_size: 10 * 1024 * 1024,     // 10 MB
+            max_video_size: 100 * 1024 * 1024,    // 100 MB
+            max_audio_size: 50 * 1024 * 1024,     // 50 MB
+            max_document_size: 100 * 1024 * 1024, // 100 MB
             allowed_photo_types: vec![
                 "image/jpeg".to_string(),
                 "image/png".to_string(),
@@ -83,7 +83,8 @@ impl Default for UploadConfig {
                 "application/zip".to_string(),
                 "text/plain".to_string(),
                 "application/msword".to_string(),
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    .to_string(),
             ],
         }
     }
@@ -112,11 +113,20 @@ impl FileUploadManager {
             .map_err(|e| Error::storage(format!("Failed to create storage directory: {}", e)))?;
 
         // Create subdirectories for each media type
-        for subdir in &["photos", "videos", "audio", "voice", "documents", "stickers", "animations", "thumbnails"] {
+        for subdir in &[
+            "photos",
+            "videos",
+            "audio",
+            "voice",
+            "documents",
+            "stickers",
+            "animations",
+            "thumbnails",
+        ] {
             let path = self.config.storage_path.join(subdir);
-            fs::create_dir_all(&path)
-                .await
-                .map_err(|e| Error::storage(format!("Failed to create subdirectory {}: {}", subdir, e)))?;
+            fs::create_dir_all(&path).await.map_err(|e| {
+                Error::storage(format!("Failed to create subdirectory {}: {}", subdir, e))
+            })?;
         }
 
         Ok(())
@@ -147,7 +157,8 @@ impl FileUploadManager {
         let checksum = self.compute_checksum(&file_data);
 
         // Determine file extension from MIME type
-        let extension = mime_type.as_ref()
+        let extension = mime_type
+            .as_ref()
             .and_then(|m| self.get_extension_from_mime(m))
             .unwrap_or("bin");
 
@@ -198,14 +209,22 @@ impl FileUploadManager {
     /// Get file by ID
     pub async fn get_file(&self, file_id: &str) -> Result<Vec<u8>> {
         // Search all subdirectories for the file
-        for subdir in &["photos", "videos", "audio", "voice", "documents", "stickers", "animations"] {
+        for subdir in &[
+            "photos",
+            "videos",
+            "audio",
+            "voice",
+            "documents",
+            "stickers",
+            "animations",
+        ] {
             let dir_path = self.config.storage_path.join(subdir);
-            
+
             if let Ok(mut entries) = fs::read_dir(&dir_path).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     let filename = entry.file_name();
                     let filename_str = filename.to_string_lossy();
-                    
+
                     if filename_str.starts_with(file_id) {
                         let file_path = entry.path();
                         let file_data = fs::read(&file_path)
@@ -223,14 +242,23 @@ impl FileUploadManager {
     /// Delete file by ID
     pub async fn delete_file(&self, file_id: &str) -> Result<()> {
         // Search all subdirectories for the file
-        for subdir in &["photos", "videos", "audio", "voice", "documents", "stickers", "animations", "thumbnails"] {
+        for subdir in &[
+            "photos",
+            "videos",
+            "audio",
+            "voice",
+            "documents",
+            "stickers",
+            "animations",
+            "thumbnails",
+        ] {
             let dir_path = self.config.storage_path.join(subdir);
-            
+
             if let Ok(mut entries) = fs::read_dir(&dir_path).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     let filename = entry.file_name();
                     let filename_str = filename.to_string_lossy();
-                    
+
                     if filename_str.starts_with(file_id) {
                         let file_path = entry.path();
                         fs::remove_file(&file_path)
@@ -257,17 +285,19 @@ impl FileUploadManager {
 
         // Generate thumbnail using image processing
         use image::GenericImageView;
-        
+
         let thumbnail_id = format!("thumb_{}", Uuid::new_v4());
-        
-        let thumbnail_path = self.config.storage_path
+
+        let thumbnail_path = self
+            .config
+            .storage_path
             .join("thumbnails")
             .join(format!("{}.jpg", thumbnail_id));
 
         // Decode image
         let img = image::load_from_memory(&file_data)
             .map_err(|e| Error::storage(format!("Failed to decode image: {}", e)))?;
-        
+
         // Calculate new dimensions maintaining aspect ratio
         let (orig_width, orig_height) = img.dimensions();
         let (new_width, new_height) = if orig_width > orig_height {
@@ -277,19 +307,20 @@ impl FileUploadManager {
             let ratio = max_height as f32 / orig_height as f32;
             ((orig_width as f32 * ratio) as u32, max_height)
         };
-        
+
         // Resize image
         let thumbnail = img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
-        
+
         // Save as JPEG
-        thumbnail.save(&thumbnail_path)
+        thumbnail
+            .save(&thumbnail_path)
             .map_err(|e| Error::storage(format!("Failed to save thumbnail: {}", e)))?;
-        
+
         // Read back the saved file for checksum
         let thumbnail_data = fs::read(&thumbnail_path)
             .await
             .map_err(|e| Error::storage(format!("Failed to read thumbnail: {}", e)))?;
-        
+
         let checksum = self.compute_checksum(&thumbnail_data);
 
         Ok(UploadedFile {
@@ -383,9 +414,18 @@ impl FileUploadManager {
     pub async fn get_storage_stats(&self) -> Result<StorageStats> {
         let mut stats = StorageStats::default();
 
-        for subdir in &["photos", "videos", "audio", "voice", "documents", "stickers", "animations", "thumbnails"] {
+        for subdir in &[
+            "photos",
+            "videos",
+            "audio",
+            "voice",
+            "documents",
+            "stickers",
+            "animations",
+            "thumbnails",
+        ] {
             let dir_path = self.config.storage_path.join(subdir);
-            
+
             if let Ok(mut entries) = fs::read_dir(&dir_path).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     if let Ok(metadata) = entry.metadata().await {
@@ -440,29 +480,37 @@ mod tests {
     #[tokio::test]
     async fn test_file_size_validation() {
         let manager = FileUploadManager::with_defaults();
-        
+
         // Valid size
-        assert!(manager.validate_file_size(MediaFileType::Photo, 1024 * 1024).is_ok());
-        
+        assert!(manager
+            .validate_file_size(MediaFileType::Photo, 1024 * 1024)
+            .is_ok());
+
         // Too large
-        assert!(manager.validate_file_size(MediaFileType::Photo, 20 * 1024 * 1024).is_err());
+        assert!(manager
+            .validate_file_size(MediaFileType::Photo, 20 * 1024 * 1024)
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_mime_type_validation() {
         let manager = FileUploadManager::with_defaults();
-        
+
         // Valid MIME type
-        assert!(manager.validate_mime_type(MediaFileType::Photo, "image/jpeg").is_ok());
-        
+        assert!(manager
+            .validate_mime_type(MediaFileType::Photo, "image/jpeg")
+            .is_ok());
+
         // Invalid MIME type
-        assert!(manager.validate_mime_type(MediaFileType::Photo, "application/pdf").is_err());
+        assert!(manager
+            .validate_mime_type(MediaFileType::Photo, "application/pdf")
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_extension_from_mime() {
         let manager = FileUploadManager::with_defaults();
-        
+
         assert_eq!(manager.get_extension_from_mime("image/jpeg"), Some("jpg"));
         assert_eq!(manager.get_extension_from_mime("video/mp4"), Some("mp4"));
         assert_eq!(manager.get_extension_from_mime("audio/mpeg"), Some("mp3"));

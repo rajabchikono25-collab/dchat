@@ -148,7 +148,10 @@ async fn main() -> Result<()> {
 
 /// Generate multi-region configuration files
 async fn generate_config(network: String, domain: String, output: PathBuf) -> Result<()> {
-    info!("Generating multi-region configuration for {} on {}", network, domain);
+    info!(
+        "Generating multi-region configuration for {} on {}",
+        network, domain
+    );
 
     let config = MultiRegionConfig::new_recommended(network.clone(), domain.clone());
 
@@ -183,12 +186,18 @@ async fn generate_config(network: String, domain: String, output: PathBuf) -> Re
         .await
         .context("Failed to write summary")?;
 
-    info!("✅ Generated {} validator configurations in {:?}", config.validators.len(), output);
+    info!(
+        "✅ Generated {} validator configurations in {:?}",
+        config.validators.len(),
+        output
+    );
     info!("   - BFT threshold: {:.1}%", config.bft_threshold * 100.0);
     info!("   - Geographic regions: {}", count_unique_regions(&config));
-    info!("   - Required signatures: {} of {}", 
-          config.validators[0].consensus.required_signatures,
-          config.validators[0].consensus.total_validators);
+    info!(
+        "   - Required signatures: {} of {}",
+        config.validators[0].consensus.required_signatures,
+        config.validators[0].consensus.total_validators
+    );
 
     Ok(())
 }
@@ -235,7 +244,10 @@ async fn deploy_validator(
     info!("Step 7/7: Performing health check...");
     check_validator_health(server, validator_id).await?;
 
-    info!("✅ Successfully deployed validator {} to {}", validator_id, server);
+    info!(
+        "✅ Successfully deployed validator {} to {}",
+        validator_id, server
+    );
 
     Ok(())
 }
@@ -261,7 +273,10 @@ async fn deploy_all(
     let config: MultiRegionConfig = serde_json::from_str(&summary_json)?;
 
     if parallel {
-        info!("Deploying {} validators in PARALLEL mode", config.validators.len());
+        info!(
+            "Deploying {} validators in PARALLEL mode",
+            config.validators.len()
+        );
         warn!("Parallel deployment is faster but riskier. Use sequential for production.");
 
         let mut tasks = Vec::new();
@@ -276,8 +291,14 @@ async fn deploy_all(
             let key = key.cloned();
 
             let task = tokio::spawn(async move {
-                deploy_validator(&validator_id, &validator_config, &server, &user, key.as_ref())
-                    .await
+                deploy_validator(
+                    &validator_id,
+                    &validator_config,
+                    &server,
+                    &user,
+                    key.as_ref(),
+                )
+                .await
             });
             tasks.push(task);
         }
@@ -287,7 +308,10 @@ async fn deploy_all(
             task.await??;
         }
     } else {
-        info!("Deploying {} validators in SEQUENTIAL mode", config.validators.len());
+        info!(
+            "Deploying {} validators in SEQUENTIAL mode",
+            config.validators.len()
+        );
 
         for validator in &config.validators {
             let server = servers[&validator.validator_id]
@@ -295,7 +319,14 @@ async fn deploy_all(
                 .context("Server not found in mapping")?;
             let validator_config = config_dir.join(format!("{}.toml", validator.validator_id));
 
-            deploy_validator(&validator.validator_id, &validator_config, server, user, key).await?;
+            deploy_validator(
+                &validator.validator_id,
+                &validator_config,
+                server,
+                user,
+                key,
+            )
+            .await?;
 
             // Wait between deployments to avoid overload
             sleep(Duration::from_secs(5)).await;
@@ -320,9 +351,11 @@ async fn health_check(config_path: &PathBuf, timeout_secs: u64) -> Result<()> {
     let mut unhealthy = 0;
 
     for validator in &config.validators {
-        let rpc_url = format!("http://{}:{}/health", 
-                             validator.public_address, 
-                             validator.rpc_address.port());
+        let rpc_url = format!(
+            "http://{}:{}/health",
+            validator.public_address,
+            validator.rpc_address.port()
+        );
 
         match check_health_endpoint(&rpc_url, timeout_secs).await {
             Ok(true) => {
@@ -340,17 +373,25 @@ async fn health_check(config_path: &PathBuf, timeout_secs: u64) -> Result<()> {
         }
     }
 
-    info!("Health check complete: {} healthy, {} unhealthy", healthy, unhealthy);
+    info!(
+        "Health check complete: {} healthy, {} unhealthy",
+        healthy, unhealthy
+    );
 
     // Check BFT threshold
     let required = config.validators[0].consensus.required_signatures;
     if healthy < required {
-        error!("⚠️  CRITICAL: Only {}/{} validators healthy, below BFT threshold!", 
-               healthy, required);
+        error!(
+            "⚠️  CRITICAL: Only {}/{} validators healthy, below BFT threshold!",
+            healthy, required
+        );
         anyhow::bail!("Insufficient healthy validators for consensus");
     } else {
-        info!("✅ Network has {}/{} healthy validators (above BFT threshold)", 
-              healthy, config.validators.len());
+        info!(
+            "✅ Network has {}/{} healthy validators (above BFT threshold)",
+            healthy,
+            config.validators.len()
+        );
     }
 
     Ok(())
@@ -408,7 +449,10 @@ async fn check_ssh_connectivity(server: &str, user: &str, key: Option<&PathBuf>)
     let output = cmd.output().context("SSH connection failed")?;
 
     if !output.status.success() {
-        anyhow::bail!("SSH connection test failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "SSH connection test failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     Ok(())
@@ -447,7 +491,12 @@ async fn copy_config(
     Ok(())
 }
 
-async fn generate_keys(server: &str, user: &str, key: Option<&PathBuf>, validator_id: &str) -> Result<()> {
+async fn generate_keys(
+    server: &str,
+    user: &str,
+    key: Option<&PathBuf>,
+    validator_id: &str,
+) -> Result<()> {
     let script = format!(
         r#"
         mkdir -p /data/keys
@@ -459,7 +508,12 @@ async fn generate_keys(server: &str, user: &str, key: Option<&PathBuf>, validato
     execute_remote_command(server, user, key, &script).await
 }
 
-async fn deploy_container(server: &str, user: &str, key: Option<&PathBuf>, validator_id: &str) -> Result<()> {
+async fn deploy_container(
+    server: &str,
+    user: &str,
+    key: Option<&PathBuf>,
+    validator_id: &str,
+) -> Result<()> {
     let script = format!(
         r#"
         docker run -d --name dchat-validator-{} \
@@ -508,7 +562,10 @@ async fn execute_remote_command(
 
     let output = cmd.output()?;
     if !output.status.success() {
-        anyhow::bail!("Remote command failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Remote command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     Ok(())
@@ -616,8 +673,7 @@ data:
 {}
 "#,
         validator_id,
-        toml
-            .lines()
+        toml.lines()
             .map(|line| format!("    {}", line))
             .collect::<Vec<_>>()
             .join("\n")

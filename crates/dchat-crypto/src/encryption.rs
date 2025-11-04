@@ -77,7 +77,7 @@ pub fn encrypt_with_password(password: &str, plaintext: &[u8]) -> Result<Encrypt
     // Generate random nonce for AES-GCM
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    
+
     // Clone nonce from slice (modern API)
     #[allow(deprecated)]
     let nonce = Nonce::clone_from_slice(&nonce_bytes);
@@ -143,7 +143,9 @@ pub fn decrypt_with_password(password: &str, encrypted: &EncryptedData) -> Resul
     let nonce = Nonce::clone_from_slice(&encrypted.nonce);
     let plaintext = cipher
         .decrypt(&nonce, encrypted.ciphertext.as_ref())
-        .map_err(|_| Error::crypto("Decryption failed: data may be corrupted or tampered with".to_string()))?;
+        .map_err(|_| {
+            Error::crypto("Decryption failed: data may be corrupted or tampered with".to_string())
+        })?;
 
     Ok(plaintext)
 }
@@ -152,7 +154,7 @@ pub fn decrypt_with_password(password: &str, encrypted: &EncryptedData) -> Resul
 fn extract_key_from_hash(hash_string: &str) -> Result<Vec<u8>> {
     use base64::engine::general_purpose;
     use base64::Engine;
-    
+
     // Argon2 hash format: $argon2id$v=19$m=19456,t=2,p=1$SALT$HASH
     // The hash portion uses standard base64 (not URL-safe)
     let parts: Vec<&str> = hash_string.split('$').collect();
@@ -162,18 +164,21 @@ fn extract_key_from_hash(hash_string: &str) -> Result<Vec<u8>> {
 
     // Decode the hash portion (base64 - try with padding if needed)
     let mut hash_b64 = parts[5].to_string();
-    
+
     // Add padding if necessary
     while !hash_b64.len().is_multiple_of(4) {
         hash_b64.push('=');
     }
-    
-    let decoded = general_purpose::STANDARD.decode(&hash_b64)
+
+    let decoded = general_purpose::STANDARD
+        .decode(&hash_b64)
         .map_err(|e| Error::crypto(format!("Hash decoding failed: {}", e)))?;
 
     // Argon2 default produces 32 bytes, but we might get more
     if decoded.is_empty() {
-        return Err(Error::crypto("Hash decode produced empty result".to_string()));
+        return Err(Error::crypto(
+            "Hash decode produced empty result".to_string(),
+        ));
     }
 
     Ok(decoded[..32.min(decoded.len())].to_vec())
@@ -233,7 +238,10 @@ mod tests {
         // Decryption should fail due to authentication tag mismatch
         let result = decrypt_with_password(password, &encrypted);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Decryption failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Decryption failed"));
     }
 
     #[test]

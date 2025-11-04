@@ -115,7 +115,7 @@ impl MetricsCollector {
         help: String,
     ) -> Result<()> {
         let mut metrics = self.metrics.write().await;
-        
+
         let key = Self::metric_key(&name, &labels);
         if let Some(existing) = metrics.get_mut(&key) {
             existing.value += value;
@@ -145,7 +145,7 @@ impl MetricsCollector {
         help: String,
     ) -> Result<()> {
         let mut metrics = self.metrics.write().await;
-        
+
         let key = Self::metric_key(&name, &labels);
         metrics.insert(
             key,
@@ -170,7 +170,7 @@ impl MetricsCollector {
         help: String,
     ) -> Result<()> {
         let mut metrics = self.metrics.write().await;
-        
+
         let key = Self::metric_key(&name, &labels);
         metrics.insert(
             key,
@@ -237,7 +237,7 @@ impl HealthChecker {
         details: HashMap<String, String>,
     ) -> Result<()> {
         let mut checks = self.checks.write().await;
-        
+
         checks.push(HealthCheck {
             component,
             status,
@@ -245,7 +245,7 @@ impl HealthChecker {
             checked_at: Utc::now(),
             details,
         });
-        
+
         Ok(())
     }
 
@@ -258,7 +258,7 @@ impl HealthChecker {
     /// Get overall system health
     pub async fn get_overall_health(&self) -> HealthStatus {
         let checks = self.checks.read().await;
-        
+
         if checks.is_empty() {
             return HealthStatus::Healthy;
         }
@@ -311,7 +311,7 @@ impl DistributedTracer {
         tags: HashMap<String, String>,
     ) -> Result<()> {
         let mut spans = self.spans.write().await;
-        
+
         let span = TraceSpan {
             trace_id: trace_id.clone(),
             span_id: span_id.clone(),
@@ -330,7 +330,7 @@ impl DistributedTracer {
     /// End a trace span
     pub async fn end_span(&self, span_id: &str) -> Result<()> {
         let mut spans = self.spans.write().await;
-        
+
         if let Some(span) = spans.get_mut(span_id) {
             span.end_time = Some(Utc::now());
             Ok(())
@@ -348,7 +348,7 @@ impl DistributedTracer {
         fields: HashMap<String, String>,
     ) -> Result<()> {
         let mut spans = self.spans.write().await;
-        
+
         if let Some(span) = spans.get_mut(span_id) {
             span.logs.push(SpanLog {
                 timestamp: Utc::now(),

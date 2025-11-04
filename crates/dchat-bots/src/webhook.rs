@@ -1,25 +1,25 @@
 //! Webhook management for bots
 
 use crate::{Bot, BotMessage, CallbackQuery};
+use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 
 /// Webhook configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     /// Webhook URL
     pub url: String,
-    
+
     /// Secret token for verification
     pub secret_token: Option<String>,
-    
+
     /// Maximum allowed connections
     pub max_connections: u32,
-    
+
     /// Allowed updates (empty = all)
     pub allowed_updates: Vec<UpdateType>,
-    
+
     /// Drop pending updates on set
     pub drop_pending_updates: bool,
 }
@@ -40,19 +40,19 @@ pub enum UpdateType {
 pub struct WebhookUpdate {
     /// Update ID
     pub update_id: i64,
-    
+
     /// Update type
     pub update_type: UpdateType,
-    
+
     /// Message (if update_type = Message)
     pub message: Option<BotMessage>,
-    
+
     /// Edited message (if update_type = EditedMessage)
     pub edited_message: Option<BotMessage>,
-    
+
     /// Callback query (if update_type = CallbackQuery)
     pub callback_query: Option<CallbackQuery>,
-    
+
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -62,16 +62,16 @@ pub struct WebhookUpdate {
 pub struct WebhookDeliveryResult {
     /// Was delivery successful?
     pub success: bool,
-    
+
     /// HTTP status code
     pub status_code: Option<u16>,
-    
+
     /// Response body
     pub response_body: Option<String>,
-    
+
     /// Error message (if failed)
     pub error: Option<String>,
-    
+
     /// Delivery timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -91,35 +91,38 @@ impl WebhookManager {
                 .unwrap(),
         }
     }
-    
+
     /// Set webhook for a bot
     pub async fn set_webhook(&self, bot: &mut Bot, config: WebhookConfig) -> Result<()> {
         // Validate URL
         if !config.url.starts_with("https://") {
             return Err(Error::validation("Webhook URL must use HTTPS"));
         }
-        
+
         // Test webhook URL
         match self.test_webhook(&config.url).await {
             Ok(_) => {
                 bot.webhook_url = Some(config.url);
                 Ok(())
             }
-            Err(e) => Err(Error::network(format!("Failed to reach webhook URL: {}", e))),
+            Err(e) => Err(Error::network(format!(
+                "Failed to reach webhook URL: {}",
+                e
+            ))),
         }
     }
-    
+
     /// Delete webhook
     pub async fn delete_webhook(&self, bot: &mut Bot) -> Result<()> {
         bot.webhook_url = None;
         Ok(())
     }
-    
+
     /// Get webhook info
     pub fn get_webhook_info(&self, bot: &Bot) -> Option<String> {
         bot.webhook_url.clone()
     }
-    
+
     /// Send update to webhook
     pub async fn send_update(
         &self,
@@ -127,23 +130,22 @@ impl WebhookManager {
         update: WebhookUpdate,
         secret_token: Option<&str>,
     ) -> Result<WebhookDeliveryResult> {
-        let mut request = self.http_client.post(webhook_url)
-            .json(&update);
-        
+        let mut request = self.http_client.post(webhook_url).json(&update);
+
         // Add secret token header if provided
         if let Some(token) = secret_token {
             request = request.header("X-Dchat-Bot-Api-Secret-Token", token);
         }
-        
+
         // Add signature header
         let signature = self.compute_signature(&update, secret_token);
         request = request.header("X-Dchat-Signature", signature);
-        
+
         match request.send().await {
             Ok(response) => {
                 let status = response.status();
                 let body = response.text().await.ok();
-                
+
                 Ok(WebhookDeliveryResult {
                     success: status.is_success(),
                     status_code: Some(status.as_u16()),
@@ -152,18 +154,16 @@ impl WebhookManager {
                     timestamp: Utc::now(),
                 })
             }
-            Err(e) => {
-                Ok(WebhookDeliveryResult {
-                    success: false,
-                    status_code: None,
-                    response_body: None,
-                    error: Some(e.to_string()),
-                    timestamp: Utc::now(),
-                })
-            }
+            Err(e) => Ok(WebhookDeliveryResult {
+                success: false,
+                status_code: None,
+                response_body: None,
+                error: Some(e.to_string()),
+                timestamp: Utc::now(),
+            }),
         }
     }
-    
+
     /// Test webhook URL
     async fn test_webhook(&self, url: &str) -> Result<()> {
         let test_update = WebhookUpdate {
@@ -174,52 +174,51 @@ impl WebhookManager {
             callback_query: None,
             timestamp: Utc::now(),
         };
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .post(url)
             .json(&test_update)
             .send()
             .await
             .map_err(|e| Error::network(format!("Webhook test failed: {}", e)))?;
-        
+
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::network(format!("Webhook returned status: {}", response.status())))
+            Err(Error::network(format!(
+                "Webhook returned status: {}",
+                response.status()
+            )))
         }
     }
-    
+
     /// Compute HMAC signature for webhook payload
     fn compute_signature(&self, update: &WebhookUpdate, secret: Option<&str>) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
-        
+
         let secret = secret.unwrap_or("dchat_default_secret");
         let payload = serde_json::to_string(update).unwrap();
-        
+
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(payload.as_bytes());
         let result = mac.finalize();
-        
+
         format!("sha256={}", hex::encode(result.into_bytes()))
     }
-    
+
     /// Verify webhook signature
-    pub fn verify_signature(
-        &self,
-        payload: &[u8],
-        signature: &str,
-        secret: &str,
-    ) -> bool {
+    pub fn verify_signature(&self, payload: &[u8], signature: &str, secret: &str) -> bool {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
-        
+
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(payload);
         let result = mac.finalize();
-        
+
         let expected = format!("sha256={}", hex::encode(result.into_bytes()));
         expected == signature
     }
@@ -250,7 +249,7 @@ mod tests {
     use crate::BotFather;
     #[allow(unused_imports)]
     use dchat_core::types::UserId;
-    
+
     #[tokio::test]
     async fn test_webhook_config() {
         let config = WebhookConfig {
@@ -260,15 +259,15 @@ mod tests {
             allowed_updates: vec![UpdateType::Message, UpdateType::CallbackQuery],
             drop_pending_updates: false,
         };
-        
+
         assert_eq!(config.url, "https://example.com/webhook");
         assert_eq!(config.max_connections, 40);
     }
-    
+
     #[test]
     fn test_compute_signature() {
         let manager = WebhookManager::new();
-        
+
         let update = WebhookUpdate {
             update_id: 1,
             update_type: UpdateType::Message,
@@ -277,25 +276,25 @@ mod tests {
             callback_query: None,
             timestamp: Utc::now(),
         };
-        
+
         let signature = manager.compute_signature(&update, Some("test_secret"));
         assert!(signature.starts_with("sha256="));
     }
-    
+
     #[test]
     fn test_verify_signature() {
         let manager = WebhookManager::new();
         let payload = b"test payload";
-        
+
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
         type HmacSha256 = Hmac<Sha256>;
-        
+
         let mut mac = HmacSha256::new_from_slice(b"test_secret").unwrap();
         mac.update(payload);
         let result = mac.finalize();
         let signature = format!("sha256={}", hex::encode(result.into_bytes()));
-        
+
         assert!(manager.verify_signature(payload, &signature, "test_secret"));
         assert!(!manager.verify_signature(payload, &signature, "wrong_secret"));
     }

@@ -6,10 +6,10 @@
 //! - Message integrity verification
 //! - Slashing for false claims
 
+use blake3::Hasher;
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use blake3::Hasher;
 
 /// Dispute claim identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -191,8 +191,10 @@ impl DisputeResolver {
     ) -> Result<()> {
         // Compute hash before borrowing self mutably
         let counter_evidence_hash = self.hash_evidence(&counter_evidence);
-        
-        let claim = self.claims.get_mut(&claim_id)
+
+        let claim = self
+            .claims
+            .get_mut(&claim_id)
             .ok_or_else(|| Error::network("Claim not found"))?;
 
         if claim.status != DisputeStatus::Pending {
@@ -212,7 +214,8 @@ impl DisputeResolver {
             timestamp: chrono::Utc::now().timestamp(),
         };
 
-        self.challenges.entry(claim_id.clone())
+        self.challenges
+            .entry(claim_id.clone())
             .or_default()
             .push(challenge);
 
@@ -228,7 +231,9 @@ impl DisputeResolver {
         responder: String,
         additional_evidence: Vec<u8>,
     ) -> Result<()> {
-        let claim = self.claims.get_mut(&claim_id)
+        let claim = self
+            .claims
+            .get_mut(&claim_id)
             .ok_or_else(|| Error::network("Claim not found"))?;
 
         if claim.status != DisputeStatus::Challenged {
@@ -247,7 +252,8 @@ impl DisputeResolver {
             timestamp: chrono::Utc::now().timestamp(),
         };
 
-        self.responses.entry(claim_id.clone())
+        self.responses
+            .entry(claim_id.clone())
             .or_default()
             .push(response);
 
@@ -279,7 +285,9 @@ impl DisputeResolver {
 
     /// Submit claim to governance vote
     pub fn submit_to_vote(&mut self, claim_id: ClaimId) -> Result<()> {
-        let claim = self.claims.get_mut(&claim_id)
+        let claim = self
+            .claims
+            .get_mut(&claim_id)
             .ok_or_else(|| Error::network("Claim not found"))?;
 
         if claim.status != DisputeStatus::Responded {
@@ -293,7 +301,9 @@ impl DisputeResolver {
 
     /// Resolve dispute based on vote
     pub fn resolve_dispute(&mut self, claim_id: ClaimId, vote_for_claimant: f64) -> Result<()> {
-        let claim = self.claims.get_mut(&claim_id)
+        let claim = self
+            .claims
+            .get_mut(&claim_id)
             .ok_or_else(|| Error::network("Claim not found"))?;
 
         if claim.status != DisputeStatus::UnderVote {
@@ -321,14 +331,16 @@ impl DisputeResolver {
 
     /// Get challenges for a claim
     pub fn get_challenges(&self, claim_id: &ClaimId) -> Vec<&DisputeChallenge> {
-        self.challenges.get(claim_id)
+        self.challenges
+            .get(claim_id)
             .map(|c| c.iter().collect())
             .unwrap_or_default()
     }
 
     /// Get responses for a claim
     pub fn get_responses(&self, claim_id: &ClaimId) -> Vec<&DisputeResponse> {
-        self.responses.get(claim_id)
+        self.responses
+            .get(claim_id)
             .map(|r| r.iter().collect())
             .unwrap_or_default()
     }
@@ -336,16 +348,31 @@ impl DisputeResolver {
     /// Get statistics
     pub fn get_stats(&self) -> DisputeStats {
         let total = self.claims.len();
-        let pending = self.claims.values().filter(|c| c.status == DisputeStatus::Pending).count();
-        let resolved = self.claims.values().filter(|c| {
-            matches!(c.status, DisputeStatus::ResolvedForClaimant | DisputeStatus::ResolvedForAccused)
-        }).count();
+        let pending = self
+            .claims
+            .values()
+            .filter(|c| c.status == DisputeStatus::Pending)
+            .count();
+        let resolved = self
+            .claims
+            .values()
+            .filter(|c| {
+                matches!(
+                    c.status,
+                    DisputeStatus::ResolvedForClaimant | DisputeStatus::ResolvedForAccused
+                )
+            })
+            .count();
 
         DisputeStats {
             total_claims: total,
             pending_claims: pending,
             resolved_claims: resolved,
-            dismissed_claims: self.claims.values().filter(|c| c.status == DisputeStatus::Dismissed).count(),
+            dismissed_claims: self
+                .claims
+                .values()
+                .filter(|c| c.status == DisputeStatus::Dismissed)
+                .count(),
         }
     }
 }
@@ -381,12 +408,14 @@ mod tests {
             sequence_number: 42,
         };
 
-        let claim_id = resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        let claim_id = resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
         let claim = resolver.get_claim(&claim_id).unwrap();
         assert_eq!(claim.status, DisputeStatus::Pending);
@@ -406,15 +435,19 @@ mod tests {
             sequence_number: 42,
         };
 
-        let claim_id = resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        let claim_id = resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
         let counter_evidence = b"counter evidence".to_vec();
-        resolver.challenge_claim(claim_id.clone(), "bob".to_string(), counter_evidence).unwrap();
+        resolver
+            .challenge_claim(claim_id.clone(), "bob".to_string(), counter_evidence)
+            .unwrap();
 
         let claim = resolver.get_claim(&claim_id).unwrap();
         assert_eq!(claim.status, DisputeStatus::Challenged);
@@ -432,15 +465,21 @@ mod tests {
             sequence_number: 42,
         };
 
-        let claim_id = resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        let claim_id = resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
-        resolver.challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec()).unwrap();
-        resolver.respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec()).unwrap();
+        resolver
+            .challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec())
+            .unwrap();
+        resolver
+            .respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec())
+            .unwrap();
 
         let claim = resolver.get_claim(&claim_id).unwrap();
         assert_eq!(claim.status, DisputeStatus::Responded);
@@ -506,15 +545,21 @@ mod tests {
             sequence_number: 42,
         };
 
-        let claim_id = resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        let claim_id = resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
-        resolver.challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec()).unwrap();
-        resolver.respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec()).unwrap();
+        resolver
+            .challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec())
+            .unwrap();
+        resolver
+            .respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec())
+            .unwrap();
         resolver.submit_to_vote(claim_id.clone()).unwrap();
         resolver.resolve_dispute(claim_id.clone(), 0.8).unwrap(); // 80% vote for claimant
 
@@ -534,15 +579,21 @@ mod tests {
             sequence_number: 42,
         };
 
-        let claim_id = resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        let claim_id = resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
-        resolver.challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec()).unwrap();
-        resolver.respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec()).unwrap();
+        resolver
+            .challenge_claim(claim_id.clone(), "bob".to_string(), b"counter".to_vec())
+            .unwrap();
+        resolver
+            .respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec())
+            .unwrap();
         resolver.submit_to_vote(claim_id.clone()).unwrap();
         resolver.resolve_dispute(claim_id.clone(), 0.2).unwrap(); // 20% vote for claimant
 
@@ -562,12 +613,14 @@ mod tests {
             sequence_number: 42,
         };
 
-        resolver.submit_claim(
-            DisputeType::ForkDetected,
-            "alice".to_string(),
-            "bob".to_string(),
-            serde_json::to_vec(&evidence).unwrap(),
-        ).unwrap();
+        resolver
+            .submit_claim(
+                DisputeType::ForkDetected,
+                "alice".to_string(),
+                "bob".to_string(),
+                serde_json::to_vec(&evidence).unwrap(),
+            )
+            .unwrap();
 
         let stats = resolver.get_stats();
         assert_eq!(stats.total_claims, 1);

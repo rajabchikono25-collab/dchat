@@ -124,9 +124,11 @@ impl ScenarioLibrary {
             "High Latency".to_string(),
             "Introduce 500ms latency to test timeout handling".to_string(),
             vec![FaultType::Latency { duration_ms: 500 }],
-            BlastRadius::Service { name: "relay-network".to_string() },
-            300,  // 5 minutes
-            60,   // 1 minute recovery
+            BlastRadius::Service {
+                name: "relay-network".to_string(),
+            },
+            300, // 5 minutes
+            60,  // 1 minute recovery
         )
     }
 
@@ -136,9 +138,11 @@ impl ScenarioLibrary {
             "Packet Loss".to_string(),
             "Drop 20% of packets to test resilience".to_string(),
             vec![FaultType::PacketLoss { percentage: 20 }],
-            BlastRadius::Service { name: "messaging".to_string() },
-            180,  // 3 minutes
-            30,   // 30 seconds recovery
+            BlastRadius::Service {
+                name: "messaging".to_string(),
+            },
+            180, // 3 minutes
+            30,  // 30 seconds recovery
         )
     }
 
@@ -147,8 +151,13 @@ impl ScenarioLibrary {
         ChaosScenario::new(
             "CPU Spike".to_string(),
             "Spike CPU to 90% for 2 minutes".to_string(),
-            vec![FaultType::CpuSpike { percentage: 90, duration_secs: 120 }],
-            BlastRadius::Pod { id: "relay-1".to_string() },
+            vec![FaultType::CpuSpike {
+                percentage: 90,
+                duration_secs: 120,
+            }],
+            BlastRadius::Pod {
+                id: "relay-1".to_string(),
+            },
             120,
             60,
         )
@@ -159,8 +168,13 @@ impl ScenarioLibrary {
         ChaosScenario::new(
             "Memory Pressure".to_string(),
             "Apply 500MB memory pressure".to_string(),
-            vec![FaultType::MemoryPressure { mb: 500, duration_secs: 180 }],
-            BlastRadius::Service { name: "database".to_string() },
+            vec![FaultType::MemoryPressure {
+                mb: 500,
+                duration_secs: 180,
+            }],
+            BlastRadius::Service {
+                name: "database".to_string(),
+            },
             180,
             90,
         )
@@ -174,7 +188,9 @@ impl ScenarioLibrary {
             vec![FaultType::NetworkPartition {
                 targets: vec!["az-1".to_string(), "az-2".to_string()],
             }],
-            BlastRadius::AvailabilityZone { name: "az-1".to_string() },
+            BlastRadius::AvailabilityZone {
+                name: "az-1".to_string(),
+            },
             300,
             120,
         )
@@ -185,8 +201,12 @@ impl ScenarioLibrary {
         ChaosScenario::new(
             "Service Crash".to_string(),
             "Crash service with 30s restart delay".to_string(),
-            vec![FaultType::ServiceCrash { restart_delay_secs: 30 }],
-            BlastRadius::Pod { id: "api-server-3".to_string() },
+            vec![FaultType::ServiceCrash {
+                restart_delay_secs: 30,
+            }],
+            BlastRadius::Pod {
+                id: "api-server-3".to_string(),
+            },
             60,
             120,
         )
@@ -204,7 +224,9 @@ impl ScenarioLibrary {
                     "api".to_string(),
                 ],
             }],
-            BlastRadius::Region { name: "us-east-1".to_string() },
+            BlastRadius::Region {
+                name: "us-east-1".to_string(),
+            },
             600,
             300,
         )
@@ -216,7 +238,9 @@ impl ScenarioLibrary {
             "Disk Slow".to_string(),
             "Add 200ms delay to disk operations".to_string(),
             vec![FaultType::DiskSlow { delay_ms: 200 }],
-            BlastRadius::Service { name: "storage".to_string() },
+            BlastRadius::Service {
+                name: "storage".to_string(),
+            },
             240,
             60,
         )
@@ -230,9 +254,14 @@ impl ScenarioLibrary {
             vec![
                 FaultType::Latency { duration_ms: 300 },
                 FaultType::PacketLoss { percentage: 10 },
-                FaultType::CpuSpike { percentage: 70, duration_secs: 180 },
+                FaultType::CpuSpike {
+                    percentage: 70,
+                    duration_secs: 180,
+                },
             ],
-            BlastRadius::Service { name: "relay-network".to_string() },
+            BlastRadius::Service {
+                name: "relay-network".to_string(),
+            },
             180,
             120,
         )
@@ -247,9 +276,13 @@ impl ScenarioLibrary {
                 FaultType::NetworkPartition {
                     targets: vec!["az-1".to_string()],
                 },
-                FaultType::ServiceCrash { restart_delay_secs: 0 },
+                FaultType::ServiceCrash {
+                    restart_delay_secs: 0,
+                },
             ],
-            BlastRadius::AvailabilityZone { name: "az-1".to_string() },
+            BlastRadius::AvailabilityZone {
+                name: "az-1".to_string(),
+            },
             600,
             300,
         )
@@ -439,11 +472,13 @@ impl ChaosEngine {
         let mut results = self.results.write().unwrap();
         if let Some(result) = results.get_mut(&result_id) {
             result.recovery_verified = all_passed;
-            
+
             // Add failed checks as errors
             for (check_name, passed) in checks {
                 if !passed {
-                    result.errors.push(format!("Recovery check failed: {}", check_name));
+                    result
+                        .errors
+                        .push(format!("Recovery check failed: {}", check_name));
                 }
             }
         }
@@ -468,7 +503,9 @@ mod tests {
             "Test".to_string(),
             "Test scenario".to_string(),
             vec![FaultType::Latency { duration_ms: 100 }],
-            BlastRadius::Pod { id: "pod-1".to_string() },
+            BlastRadius::Pod {
+                id: "pod-1".to_string(),
+            },
             60,
             30,
         );
@@ -640,10 +677,7 @@ mod tests {
 
         let result_id = engine.execute_scenario(scenario_id).unwrap();
 
-        let checks = vec![
-            ("service_healthy", true),
-            ("data_consistent", false),
-        ];
+        let checks = vec![("service_healthy", true), ("data_consistent", false)];
 
         let verified = engine.verify_recovery(result_id, checks);
         assert!(!verified);
@@ -656,7 +690,7 @@ mod tests {
     #[test]
     fn test_get_all_results() {
         let engine = ChaosEngine::new();
-        
+
         let scenario1 = ScenarioLibrary::cpu_spike();
         let id1 = engine.register_scenario(scenario1);
         engine.execute_scenario(id1).unwrap();

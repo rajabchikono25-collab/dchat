@@ -228,25 +228,38 @@ impl AutoScalingConfig {
         }
     }
 
-    pub fn should_scale_up(&self, current_cpu: f64, current_memory: f64, current_instances: u32) -> bool {
+    pub fn should_scale_up(
+        &self,
+        current_cpu: f64,
+        current_memory: f64,
+        current_instances: u32,
+    ) -> bool {
         if !self.enabled || current_instances >= self.max_instances {
             return false;
         }
         current_cpu > self.target_cpu_percent || current_memory > self.target_memory_percent
     }
 
-    pub fn should_scale_down(&self, current_cpu: f64, current_memory: f64, current_instances: u32) -> bool {
+    pub fn should_scale_down(
+        &self,
+        current_cpu: f64,
+        current_memory: f64,
+        current_instances: u32,
+    ) -> bool {
         if !self.enabled || current_instances <= self.min_instances {
             return false;
         }
-        current_cpu < self.target_cpu_percent * 0.5 && current_memory < self.target_memory_percent * 0.5
+        current_cpu < self.target_cpu_percent * 0.5
+            && current_memory < self.target_memory_percent * 0.5
     }
 
     pub fn calculate_target_instances(&self, current_cpu: f64, current_instances: u32) -> u32 {
         if current_cpu > self.target_cpu_percent {
             (current_instances + self.scale_up_step).min(self.max_instances)
         } else if current_cpu < self.target_cpu_percent * 0.5 {
-            current_instances.saturating_sub(self.scale_down_step).max(self.min_instances)
+            current_instances
+                .saturating_sub(self.scale_down_step)
+                .max(self.min_instances)
         } else {
             current_instances
         }
@@ -283,7 +296,10 @@ impl AlertChannel {
         Self {
             name: "pagerduty".to_string(),
             channel_type: "pagerduty".to_string(),
-            endpoint: format!("https://events.pagerduty.com/v2/enqueue/{}", integration_key),
+            endpoint: format!(
+                "https://events.pagerduty.com/v2/enqueue/{}",
+                integration_key
+            ),
             severity_levels: vec!["critical".to_string()],
             rate_limit: 30,
         }
@@ -294,7 +310,11 @@ impl AlertChannel {
             name: "email".to_string(),
             channel_type: "email".to_string(),
             endpoint: smtp_endpoint,
-            severity_levels: vec!["critical".to_string(), "warning".to_string(), "info".to_string()],
+            severity_levels: vec![
+                "critical".to_string(),
+                "warning".to_string(),
+                "info".to_string(),
+            ],
             rate_limit: 30,
         }
     }
@@ -317,8 +337,8 @@ impl BFTMonitorConfig {
     pub fn new_production() -> Self {
         Self {
             total_validators: 7,
-            min_healthy: 5,        // 5-of-7 BFT threshold
-            alert_threshold: 6,     // Alert if only 6 healthy
+            min_healthy: 5,     // 5-of-7 BFT threshold
+            alert_threshold: 6, // Alert if only 6 healthy
             check_participation: true,
         }
     }
@@ -381,8 +401,9 @@ impl GrafanaConfig {
         Self {
             endpoint: std::env::var("GRAFANA_ENDPOINT")
                 .unwrap_or_else(|_| "https://grafana.dchat.internal".to_string()),
-            api_key: std::env::var("GRAFANA_API_KEY")
-                .expect("GRAFANA_API_KEY environment variable must be set for production deployment"),
+            api_key: std::env::var("GRAFANA_API_KEY").expect(
+                "GRAFANA_API_KEY environment variable must be set for production deployment",
+            ),
             dashboards: vec![
                 "infrastructure-overview".to_string(),
                 "validator-health".to_string(),
@@ -395,15 +416,13 @@ impl GrafanaConfig {
                 .unwrap_or(1),
         }
     }
-    
+
     /// Create configuration for development/testing (API key not required)
     pub fn new_dev() -> Self {
         Self {
             endpoint: "http://localhost:3000".to_string(),
             api_key: std::env::var("GRAFANA_API_KEY").unwrap_or_default(),
-            dashboards: vec![
-                "infrastructure-overview".to_string(),
-            ],
+            dashboards: vec!["infrastructure-overview".to_string()],
             org_id: 1,
         }
     }
@@ -454,22 +473,30 @@ impl HealthMonitorConfig {
     pub fn verify(&self) -> Result<(), HealthError> {
         // Check health check interval
         if self.health_check.interval_seconds == 0 {
-            return Err(HealthError::ConfigError("Health check interval cannot be 0".to_string()));
+            return Err(HealthError::ConfigError(
+                "Health check interval cannot be 0".to_string(),
+            ));
         }
 
         // Check BFT threshold
         if self.bft_monitor.min_healthy > self.bft_monitor.total_validators {
-            return Err(HealthError::ConfigError("BFT min_healthy exceeds total validators".to_string()));
+            return Err(HealthError::ConfigError(
+                "BFT min_healthy exceeds total validators".to_string(),
+            ));
         }
 
         // Check auto-scaling bounds
         if self.auto_scaling.min_instances > self.auto_scaling.max_instances {
-            return Err(HealthError::ConfigError("Auto-scaling min > max".to_string()));
+            return Err(HealthError::ConfigError(
+                "Auto-scaling min > max".to_string(),
+            ));
         }
 
         // Check alert channels
         if self.alert_channels.is_empty() {
-            return Err(HealthError::ConfigError("At least one alert channel required".to_string()));
+            return Err(HealthError::ConfigError(
+                "At least one alert channel required".to_string(),
+            ));
         }
 
         Ok(())
@@ -552,7 +579,9 @@ impl ComponentHealthTracker {
             .unwrap()
             .as_secs();
 
-        let relevant_checks: Vec<_> = self.recent_checks.iter()
+        let relevant_checks: Vec<_> = self
+            .recent_checks
+            .iter()
             .filter(|check| now - check.timestamp <= window_seconds)
             .collect();
 
@@ -560,7 +589,8 @@ impl ComponentHealthTracker {
             return 0.0;
         }
 
-        let healthy_count = relevant_checks.iter()
+        let healthy_count = relevant_checks
+            .iter()
             .filter(|check| check.status == HealthStatus::Healthy)
             .count();
 
@@ -572,7 +602,9 @@ impl ComponentHealthTracker {
             return 0;
         }
 
-        let total: u64 = self.recent_checks.iter()
+        let total: u64 = self
+            .recent_checks
+            .iter()
             .map(|check| check.response_time_ms)
             .sum();
 
@@ -789,19 +821,20 @@ mod tests {
 
     #[test]
     fn test_component_health_tracker() {
-        let mut tracker = ComponentHealthTracker::new("validator-1".to_string(), ComponentType::Validator);
+        let mut tracker =
+            ComponentHealthTracker::new("validator-1".to_string(), ComponentType::Validator);
         let config = HealthCheckConfig::new_production();
 
         // First healthy check
-        let result = HealthCheckResult::new("validator-1".to_string(), ComponentType::Validator)
-            .healthy(50);
+        let result =
+            HealthCheckResult::new("validator-1".to_string(), ComponentType::Validator).healthy(50);
         let changed = tracker.update(result, &config);
         assert_eq!(tracker.consecutive_successes, 1);
         assert!(!changed); // Not enough successes yet
 
         // Second healthy check
-        let result = HealthCheckResult::new("validator-1".to_string(), ComponentType::Validator)
-            .healthy(45);
+        let result =
+            HealthCheckResult::new("validator-1".to_string(), ComponentType::Validator).healthy(45);
         let changed = tracker.update(result, &config);
         assert_eq!(tracker.consecutive_successes, 2);
         assert_eq!(tracker.current_status, HealthStatus::Healthy);
@@ -814,8 +847,8 @@ mod tests {
 
         // Add 10 healthy checks
         for _ in 0..10 {
-            let result = HealthCheckResult::new("relay-1".to_string(), ComponentType::Relay)
-                .healthy(30);
+            let result =
+                HealthCheckResult::new("relay-1".to_string(), ComponentType::Relay).healthy(30);
             tracker.recent_checks.push(result);
         }
 
@@ -878,6 +911,8 @@ mod tests {
         let config = GrafanaConfig::new_production();
         assert_eq!(config.endpoint, "https://grafana.dchat.internal");
         assert_eq!(config.dashboards.len(), 4);
-        assert!(config.dashboards.contains(&"infrastructure-overview".to_string()));
+        assert!(config
+            .dashboards
+            .contains(&"infrastructure-overview".to_string()));
     }
 }

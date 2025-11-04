@@ -36,19 +36,19 @@ pub enum MediaType {
 pub struct Photo {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Photo width
     pub width: u32,
-    
+
     /// Photo height
     pub height: u32,
-    
+
     /// File size in bytes
     pub file_size: Option<u64>,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
 }
@@ -58,13 +58,13 @@ pub struct Photo {
 pub struct PhotoSize {
     /// File ID
     pub file_id: String,
-    
+
     /// Width
     pub width: u32,
-    
+
     /// Height
     pub height: u32,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -74,25 +74,25 @@ pub struct PhotoSize {
 pub struct Video {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Video width
     pub width: u32,
-    
+
     /// Video height
     pub height: u32,
-    
+
     /// Duration in seconds
     pub duration: u32,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
-    
+
     /// MIME type
     pub mime_type: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -102,25 +102,25 @@ pub struct Video {
 pub struct Audio {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Duration in seconds
     pub duration: u32,
-    
+
     /// Performer
     pub performer: Option<String>,
-    
+
     /// Title
     pub title: Option<String>,
-    
+
     /// MIME type
     pub mime_type: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
 }
@@ -130,16 +130,16 @@ pub struct Audio {
 pub struct Voice {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Duration in seconds
     pub duration: u32,
-    
+
     /// MIME type
     pub mime_type: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -149,19 +149,19 @@ pub struct Voice {
 pub struct Document {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Original filename
     pub file_name: Option<String>,
-    
+
     /// MIME type
     pub mime_type: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
 }
@@ -171,34 +171,34 @@ pub struct Document {
 pub struct Sticker {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Sticker type (regular, mask, custom emoji)
     pub sticker_type: StickerType,
-    
+
     /// Width
     pub width: u32,
-    
+
     /// Height
     pub height: u32,
-    
+
     /// Is animated
     pub is_animated: bool,
-    
+
     /// Is video
     pub is_video: bool,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
-    
+
     /// Emoji associated with sticker
     pub emoji: Option<String>,
-    
+
     /// Sticker set name
     pub set_name: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -216,28 +216,28 @@ pub enum StickerType {
 pub struct Animation {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Width
     pub width: u32,
-    
+
     /// Height
     pub height: u32,
-    
+
     /// Duration
     pub duration: u32,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
-    
+
     /// Original filename
     pub file_name: Option<String>,
-    
+
     /// MIME type
     pub mime_type: Option<String>,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -247,19 +247,19 @@ pub struct Animation {
 pub struct VideoNote {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Video length (diameter)
     pub length: u32,
-    
+
     /// Duration in seconds
     pub duration: u32,
-    
+
     /// Thumbnail
     pub thumbnail: Option<PhotoSize>,
-    
+
     /// File size
     pub file_size: Option<u64>,
 }
@@ -269,19 +269,19 @@ pub struct VideoNote {
 pub struct Location {
     /// Longitude
     pub longitude: f64,
-    
+
     /// Latitude
     pub latitude: f64,
-    
+
     /// Horizontal accuracy (meters)
     pub horizontal_accuracy: Option<f64>,
-    
+
     /// Live location period (seconds)
     pub live_period: Option<u32>,
-    
+
     /// Heading (direction)
     pub heading: Option<u16>,
-    
+
     /// Proximity alert radius
     pub proximity_alert_radius: Option<u32>,
 }
@@ -291,16 +291,16 @@ pub struct Location {
 pub struct Contact {
     /// Phone number
     pub phone_number: String,
-    
+
     /// First name
     pub first_name: String,
-    
+
     /// Last name
     pub last_name: Option<String>,
-    
+
     /// User ID
     pub user_id: Option<dchat_core::types::UserId>,
-    
+
     /// vCard
     pub vcard: Option<String>,
 }
@@ -310,31 +310,31 @@ pub struct Contact {
 pub struct Poll {
     /// Poll ID
     pub id: String,
-    
+
     /// Question
     pub question: String,
-    
+
     /// Options
     pub options: Vec<PollOption>,
-    
+
     /// Total voter count
     pub total_voter_count: u32,
-    
+
     /// Is closed
     pub is_closed: bool,
-    
+
     /// Is anonymous
     pub is_anonymous: bool,
-    
+
     /// Poll type
     pub poll_type: PollType,
-    
+
     /// Multiple answers allowed
     pub allows_multiple_answers: bool,
-    
+
     /// Correct option ID (quiz mode)
     pub correct_option_id: Option<u32>,
-    
+
     /// Explanation (quiz mode)
     pub explanation: Option<String>,
 }
@@ -344,7 +344,7 @@ pub struct Poll {
 pub struct PollOption {
     /// Option text
     pub text: String,
-    
+
     /// Voter count
     pub voter_count: u32,
 }
@@ -361,19 +361,19 @@ pub enum PollType {
 pub struct LinkPreview {
     /// URL
     pub url: String,
-    
+
     /// Title
     pub title: Option<String>,
-    
+
     /// Description
     pub description: Option<String>,
-    
+
     /// Image URL
     pub image_url: Option<String>,
-    
+
     /// Site name
     pub site_name: Option<String>,
-    
+
     /// Favicon URL
     pub favicon_url: Option<String>,
 }
@@ -383,13 +383,13 @@ pub struct LinkPreview {
 pub struct MessageEntity {
     /// Entity type
     pub entity_type: EntityType,
-    
+
     /// Offset in UTF-16 code units
     pub offset: u32,
-    
+
     /// Length in UTF-16 code units
     pub length: u32,
-    
+
     /// Optional data (URL, user, etc.)
     pub data: Option<String>,
 }
@@ -436,88 +436,88 @@ pub enum EntityType {
 pub struct EnhancedBotMessage {
     /// Message ID
     pub message_id: Uuid,
-    
+
     /// Sender user ID
     pub from: dchat_core::types::UserId,
-    
+
     /// Chat ID (channel or DM)
     pub chat_id: String,
-    
+
     /// Message text
     pub text: Option<String>,
-    
+
     /// Message caption (for media)
     pub caption: Option<String>,
-    
+
     /// Message entities (formatting, links, mentions)
     pub entities: Vec<MessageEntity>,
-    
+
     /// Caption entities
     pub caption_entities: Vec<MessageEntity>,
-    
+
     /// Photo attachment
     pub photo: Option<Vec<PhotoSize>>,
-    
+
     /// Video attachment
     pub video: Option<Video>,
-    
+
     /// Audio attachment
     pub audio: Option<Audio>,
-    
+
     /// Voice message
     pub voice: Option<Voice>,
-    
+
     /// Document attachment
     pub document: Option<Document>,
-    
+
     /// Sticker
     pub sticker: Option<Sticker>,
-    
+
     /// Animation/GIF
     pub animation: Option<Animation>,
-    
+
     /// Video note
     pub video_note: Option<VideoNote>,
-    
+
     /// Location
     pub location: Option<Location>,
-    
+
     /// Contact
     pub contact: Option<Contact>,
-    
+
     /// Poll
     pub poll: Option<Poll>,
-    
+
     /// Link preview
     pub link_preview: Option<LinkPreview>,
-    
+
     /// Message timestamp
     pub timestamp: DateTime<Utc>,
-    
+
     /// Edit timestamp
     pub edit_timestamp: Option<DateTime<Utc>>,
-    
+
     /// Is forwarded
     pub is_forwarded: bool,
-    
+
     /// Forward from user
     pub forward_from: Option<dchat_core::types::UserId>,
-    
+
     /// Forward from chat
     pub forward_from_chat: Option<String>,
-    
+
     /// Forward date
     pub forward_date: Option<DateTime<Utc>>,
-    
+
     /// Reply to message ID
     pub reply_to_message_id: Option<Uuid>,
-    
+
     /// Is command
     pub is_command: bool,
-    
+
     /// Parsed command
     pub command: Option<String>,
-    
+
     /// Command arguments
     pub command_args: Vec<String>,
 }
@@ -551,16 +551,16 @@ impl EnhancedBotMessage {
             None
         }
     }
-    
+
     /// Has any media attachment
     pub fn has_media(&self) -> bool {
         self.get_media_type().is_some()
     }
-    
+
     /// Extract all URLs from entities
     pub fn extract_urls(&self) -> Vec<String> {
         let mut urls = Vec::new();
-        
+
         for entity in &self.entities {
             if entity.entity_type == EntityType::Url {
                 if let Some(text_slice) = self.text.as_ref().and_then(|t| {
@@ -578,7 +578,7 @@ impl EnhancedBotMessage {
                 }
             }
         }
-        
+
         urls
     }
 }
@@ -586,7 +586,7 @@ impl EnhancedBotMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_media_type_detection() {
         let mut msg = EnhancedBotMessage {
@@ -625,10 +625,10 @@ mod tests {
             command: None,
             command_args: Vec::new(),
         };
-        
+
         assert_eq!(msg.get_media_type(), Some(MediaType::Photo));
         assert!(msg.has_media());
-        
+
         msg.photo = None;
         msg.video = Some(Video {
             file_id: "video123".to_string(),
@@ -640,10 +640,10 @@ mod tests {
             mime_type: Some("video/mp4".to_string()),
             file_size: Some(5000000),
         });
-        
+
         assert_eq!(msg.get_media_type(), Some(MediaType::Video));
     }
-    
+
     #[test]
     fn test_extract_urls() {
         let msg = EnhancedBotMessage {
@@ -690,7 +690,7 @@ mod tests {
             command: None,
             command_args: Vec::new(),
         };
-        
+
         let urls = msg.extract_urls();
         assert_eq!(urls.len(), 2);
         assert!(urls.contains(&"https://hidden.com".to_string()));

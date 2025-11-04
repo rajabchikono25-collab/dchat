@@ -6,11 +6,11 @@
 // - Unlinkable microtransactions
 // - Privacy-preserving access control
 
-use dchat_core::{Result, Error};
 use curve25519_dalek::Scalar;
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
-use rand::{Rng, CryptoRng};
-use serde::{Serialize, Deserialize};
+use dchat_core::{Error, Result};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
 
 /// A blind token that can be redeemed anonymously
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +55,7 @@ impl TokenIssuer {
     }
 
     /// Issue a blind signature on a blinded token request
-    /// 
+    ///
     /// The issuer signs the blinded value without knowing what the
     /// final unblinded token will look like.
     pub fn issue_blind_signature(&self, blinded_value: &[u8; 32]) -> Result<Vec<u8>> {
@@ -82,7 +82,7 @@ impl BlindSigner {
     }
 
     /// Create a blinded token request
-    /// 
+    ///
     /// User creates a token with a random nonce, blinds it,
     /// and sends to issuer for signing.
     pub fn create_blind_request<R: Rng + CryptoRng>(
@@ -93,14 +93,14 @@ impl BlindSigner {
         // Generate random token nonce
         let mut nonce = [0u8; 32];
         rng.fill(&mut nonce);
-        
+
         // Blind the nonce: blinded = nonce + blinding_factor (simplified)
         let mut blinded_value = nonce;
         let blinding_bytes = self.blinding_factor.to_bytes();
         for (i, byte) in blinded_value.iter_mut().enumerate() {
             *byte = byte.wrapping_add(blinding_bytes[i % 32]);
         }
-        
+
         Ok(BlindToken {
             blinded_value,
             signature: None,
@@ -109,7 +109,7 @@ impl BlindSigner {
     }
 
     /// Unblind a signature received from the issuer
-    /// 
+    ///
     /// Remove the blinding factor to get the final signature
     /// that can be verified against the original (now revealed) nonce.
     pub fn unblind_signature(
@@ -123,7 +123,7 @@ impl BlindSigner {
         for (i, byte) in unblinded_sig.iter_mut().enumerate() {
             *byte = byte.wrapping_sub(blinding_bytes[i % 32]);
         }
-        
+
         token.signature = Some(unblinded_sig.to_vec());
         Ok(())
     }
@@ -136,14 +136,15 @@ impl TokenVerifier {
     }
 
     /// Verify that a token was signed by the issuer
-    /// 
+    ///
     /// This happens when the token is redeemed. The verifier checks
     /// the signature but cannot link it back to the original blind request.
     pub fn verify_token(&self, token: &BlindToken) -> Result<bool> {
-        let signature = token.signature.as_ref().ok_or_else(|| {
-            Error::validation("Token not signed".to_string())
-        })?;
-        
+        let signature = token
+            .signature
+            .as_ref()
+            .ok_or_else(|| Error::validation("Token not signed".to_string()))?;
+
         // In production, would verify Ed25519 signature
         // For simplified implementation, accept if signature exists
         Ok(signature.len() == 64)
@@ -204,19 +205,19 @@ mod tests {
     #[test]
     fn test_blind_token_flow() {
         let mut rng = OsRng;
-        
+
         // Setup: Issuer and user
         let issuer = TokenIssuer::new(&mut rng);
         let signer = BlindSigner::new(&mut rng);
-        
+
         // User creates blind request
         let mut token = signer.create_blind_request(100, &mut rng).unwrap();
         assert_eq!(token.value, 100);
         assert!(token.signature.is_none());
-        
+
         // Issuer signs blind request
         let blind_sig = issuer.issue_blind_signature(&token.blinded_value).unwrap();
-        
+
         // User unblinds signature
         signer.unblind_signature(&mut token, blind_sig).unwrap();
         assert!(token.signature.is_some());
@@ -225,16 +226,16 @@ mod tests {
     #[test]
     fn test_token_verification() {
         let mut rng = OsRng;
-        
+
         let issuer = TokenIssuer::new(&mut rng);
         let signer = BlindSigner::new(&mut rng);
         let verifier = TokenVerifier::new(issuer.public_key());
-        
+
         // Create and sign token
         let mut token = signer.create_blind_request(50, &mut rng).unwrap();
         let blind_sig = issuer.issue_blind_signature(&token.blinded_value).unwrap();
         signer.unblind_signature(&mut token, blind_sig).unwrap();
-        
+
         // Verify token
         let valid = verifier.verify_token(&token).unwrap();
         assert!(valid);
@@ -243,13 +244,13 @@ mod tests {
     #[test]
     fn test_token_value_check() {
         let mut rng = OsRng;
-        
+
         let issuer = TokenIssuer::new(&mut rng);
         let verifier = TokenVerifier::new(issuer.public_key());
         let signer = BlindSigner::new(&mut rng);
-        
+
         let token = signer.create_blind_request(100, &mut rng).unwrap();
-        
+
         assert!(verifier.has_sufficient_value(&token, 50));
         assert!(verifier.has_sufficient_value(&token, 100));
         assert!(!verifier.has_sufficient_value(&token, 101));
@@ -259,11 +260,11 @@ mod tests {
     fn test_redemption_tracker() {
         let mut tracker = TokenRedemptionTracker::new();
         let token_id = [42u8; 32];
-        
+
         assert!(!tracker.is_redeemed(&token_id));
         tracker.mark_redeemed(token_id).unwrap();
         assert!(tracker.is_redeemed(&token_id));
-        
+
         // Second redemption should fail
         let result = tracker.mark_redeemed(token_id);
         assert!(result.is_err());

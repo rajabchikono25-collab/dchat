@@ -47,16 +47,16 @@ struct CacheEntry {
 pub struct MessageCache {
     /// Bloom filter for fast probabilistic membership test
     bloom: BloomFilter,
-    
+
     /// LRU cache for exact membership (backup for bloom false positives)
     recent_ids: VecDeque<CacheEntry>,
-    
+
     /// Map for O(1) lookup
     id_map: HashMap<MessageId, Instant>,
-    
+
     /// Maximum cache size
     max_size: usize,
-    
+
     /// Time-to-live for cached entries
     ttl: Duration,
 }
@@ -65,7 +65,7 @@ impl MessageCache {
     /// Create a new message cache
     pub fn new(max_size: usize, ttl: Duration) -> Result<Self> {
         let bloom = BloomFilter::new(max_size, 0.01)?; // 1% false positive rate
-        
+
         Ok(Self {
             bloom,
             recent_ids: VecDeque::new(),
@@ -81,7 +81,7 @@ impl MessageCache {
         if !self.bloom.contains(id) {
             return false;
         }
-        
+
         // Confirm with exact lookup
         self.id_map.contains_key(id)
     }
@@ -92,19 +92,19 @@ impl MessageCache {
         if self.id_map.contains_key(&id) {
             return;
         }
-        
+
         // Add to bloom filter
         self.bloom.insert(&id);
-        
+
         // Add to cache
         let entry = CacheEntry {
             id,
             seen_at: Instant::now(),
         };
-        
+
         self.recent_ids.push_back(entry);
         self.id_map.insert(id, Instant::now());
-        
+
         // Evict oldest if cache is full
         while self.recent_ids.len() > self.max_size {
             if let Some(old_entry) = self.recent_ids.pop_front() {
@@ -116,7 +116,7 @@ impl MessageCache {
     /// Remove expired entries from cache
     pub fn cleanup_expired(&mut self) {
         let now = Instant::now();
-        
+
         // Remove expired entries from front of queue
         while let Some(entry) = self.recent_ids.front() {
             if now.duration_since(entry.seen_at) > self.ttl {
@@ -154,7 +154,7 @@ impl BloomFilter {
         // Calculate optimal size and number of hash functions
         let size = Self::optimal_size(expected_items, false_positive_rate);
         let num_hashes = Self::optimal_hash_count(size, expected_items);
-        
+
         Ok(Self {
             bits: vec![false; size],
             num_hashes,
@@ -197,11 +197,11 @@ impl BloomFilter {
     fn hash(&self, id: &MessageId, seed: usize) -> usize {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         id.0.hash(&mut hasher);
         seed.hash(&mut hasher);
-        
+
         (hasher.finish() as usize) % self.size
     }
 
@@ -221,7 +221,7 @@ mod tests {
         let payload = b"test message";
         let id1 = MessageId::from_payload(payload);
         let id2 = MessageId::from_payload(payload);
-        
+
         assert_eq!(id1, id2); // Same payload = same ID
     }
 
@@ -229,7 +229,7 @@ mod tests {
     fn test_message_id_different_payloads() {
         let id1 = MessageId::from_payload(b"message 1");
         let id2 = MessageId::from_payload(b"message 2");
-        
+
         assert_ne!(id1, id2);
     }
 
@@ -243,7 +243,7 @@ mod tests {
     fn test_mark_seen() {
         let mut cache = MessageCache::new(100, Duration::from_secs(60)).unwrap();
         let id = MessageId::from_payload(b"test");
-        
+
         assert!(!cache.has_seen(&id));
         cache.mark_seen(id);
         assert!(cache.has_seen(&id));
@@ -253,15 +253,15 @@ mod tests {
     fn test_duplicate_detection() {
         let mut cache = MessageCache::new(100, Duration::from_secs(60)).unwrap();
         let id = MessageId::from_payload(b"duplicate test");
-        
+
         // First time
         assert!(!cache.has_seen(&id));
         cache.mark_seen(id);
-        
+
         // Second time
         assert!(cache.has_seen(&id));
         cache.mark_seen(id); // Should not add duplicate
-        
+
         let (size, _) = cache.stats();
         assert_eq!(size, 1);
     }
@@ -269,25 +269,25 @@ mod tests {
     #[test]
     fn test_cache_eviction() {
         let mut cache = MessageCache::new(3, Duration::from_secs(60)).unwrap();
-        
+
         let id1 = MessageId::from_payload(b"msg1");
         let id2 = MessageId::from_payload(b"msg2");
         let id3 = MessageId::from_payload(b"msg3");
         let id4 = MessageId::from_payload(b"msg4");
-        
+
         cache.mark_seen(id1);
         cache.mark_seen(id2);
         cache.mark_seen(id3);
-        
+
         let (size, _) = cache.stats();
         assert_eq!(size, 3);
-        
+
         // Adding 4th should evict oldest (id1)
         cache.mark_seen(id4);
-        
+
         let (size, _) = cache.stats();
         assert_eq!(size, 3);
-        
+
         // id1 should no longer be in exact cache (may still be in bloom)
         assert!(cache.has_seen(&id2));
         assert!(cache.has_seen(&id3));
@@ -298,16 +298,16 @@ mod tests {
     fn test_cache_expiration() {
         let mut cache = MessageCache::new(100, Duration::from_millis(100)).unwrap();
         let id = MessageId::from_payload(b"expiring message");
-        
+
         cache.mark_seen(id);
         assert!(cache.has_seen(&id));
-        
+
         // Wait for expiration
         thread::sleep(Duration::from_millis(150));
-        
+
         // Cleanup expired
         cache.cleanup_expired();
-        
+
         // Should be removed from exact cache
         let (size, _) = cache.stats();
         assert_eq!(size, 0);
@@ -318,7 +318,7 @@ mod tests {
         let mut bloom = BloomFilter::new(1000, 0.01).unwrap();
         let id1 = MessageId::from_payload(b"test1");
         let id2 = MessageId::from_payload(b"test2");
-        
+
         assert!(!bloom.contains(&id1));
         bloom.insert(&id1);
         assert!(bloom.contains(&id1));
@@ -328,15 +328,15 @@ mod tests {
     #[test]
     fn test_cache_clear() {
         let mut cache = MessageCache::new(100, Duration::from_secs(60)).unwrap();
-        
+
         cache.mark_seen(MessageId::from_payload(b"msg1"));
         cache.mark_seen(MessageId::from_payload(b"msg2"));
-        
+
         let (size, _) = cache.stats();
         assert_eq!(size, 2);
-        
+
         cache.clear();
-        
+
         let (size, _) = cache.stats();
         assert_eq!(size, 0);
     }

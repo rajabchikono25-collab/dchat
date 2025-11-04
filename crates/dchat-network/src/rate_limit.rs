@@ -1,5 +1,5 @@
 //! Rate limiting module for dchat network
-//! 
+//!
 //! Implements per-peer rate limiting with reputation-based throttling
 //! to prevent spam and DDoS attacks.
 
@@ -131,7 +131,9 @@ impl RateLimiter {
     /// Check if a peer is allowed to send a message
     pub async fn allow(&self, peer: SocketAddr) -> bool {
         let mut peers = self.peers.write().await;
-        let limit = peers.entry(peer).or_insert_with(|| PeerLimit::new(&self.config));
+        let limit = peers
+            .entry(peer)
+            .or_insert_with(|| PeerLimit::new(&self.config));
 
         // Update reputation
         limit.update_reputation(&self.config);
@@ -180,9 +182,7 @@ impl RateLimiter {
     pub async fn cleanup_stale_peers(&self) {
         let mut peers = self.peers.write().await;
         let cutoff = Instant::now() - Duration::from_secs(3600);
-        peers.retain(|_, limit| {
-            limit.last_violation.is_none_or(|last| last > cutoff)
-        });
+        peers.retain(|_, limit| limit.last_violation.is_none_or(|last| last > cutoff));
     }
 }
 

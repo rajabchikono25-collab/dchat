@@ -6,11 +6,11 @@
 //! - ZK proofs to prevent guardian identity correlation
 //! - Social recovery fallback mechanism
 
+use chrono::{DateTime, Duration, Utc};
 use dchat_core::error::{Error, Result};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 /// Guardian identifier (anonymous to prevent correlation)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,23 +27,24 @@ pub struct GuardianKey {
 impl GuardianKey {
     /// Serialize for storage
     pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(&(
-            &self.id,
-            self.public_key.as_bytes(),
-            &self.added_at,
-        )).expect("serialization failed")
+        bincode::serialize(&(&self.id, self.public_key.as_bytes(), &self.added_at))
+            .expect("serialization failed")
     }
-    
+
     /// Deserialize from storage
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let (id, pk_bytes, added_at): (GuardianId, [u8; 32], DateTime<Utc>) = 
+        let (id, pk_bytes, added_at): (GuardianId, [u8; 32], DateTime<Utc>) =
             bincode::deserialize(bytes)
                 .map_err(|e| Error::identity(format!("Deserialization failed: {}", e)))?;
-        
+
         let public_key = VerifyingKey::from_bytes(&pk_bytes)
             .map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
-            
-        Ok(Self { id, public_key, added_at })
+
+        Ok(Self {
+            id,
+            public_key,
+            added_at,
+        })
     }
 }
 
@@ -131,7 +132,7 @@ impl GuardianRecoveryManager {
         // Ensure threshold is still achievable
         if self.threshold.total < self.threshold.required {
             return Err(Error::validation(
-                "Removing guardian would make threshold unachievable"
+                "Removing guardian would make threshold unachievable",
             ));
         }
 
@@ -147,13 +148,11 @@ impl GuardianRecoveryManager {
     ) -> Result<String> {
         // Validate threshold is achievable
         if self.guardians.len() < self.threshold.required {
-            return Err(Error::validation(
-                format!(
-                    "Not enough guardians: have {}, need {}",
-                    self.guardians.len(),
-                    self.threshold.required
-                )
-            ));
+            return Err(Error::validation(format!(
+                "Not enough guardians: have {}, need {}",
+                self.guardians.len(),
+                self.threshold.required
+            )));
         }
 
         let request_id = format!("recovery-{}-{}", identity_id, Utc::now().timestamp());
@@ -184,14 +183,18 @@ impl GuardianRecoveryManager {
         signature: Vec<u8>,
     ) -> Result<()> {
         // Verify guardian exists first
-        let guardian = self.guardians.get(guardian_id)
+        let guardian = self
+            .guardians
+            .get(guardian_id)
             .ok_or_else(|| Error::validation("Guardian not registered"))?;
-        
+
         // Clone public key for verification
         let guardian_public_key = guardian.public_key;
-        
+
         // Get recovery request (immutably first to create message)
-        let request = self.recovery_requests.get(request_id)
+        let request = self
+            .recovery_requests
+            .get(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         // Check if timelock has expired
@@ -201,15 +204,20 @@ impl GuardianRecoveryManager {
 
         // Verify signature (clone signature for verification since we need it later)
         let message = self.create_recovery_message(request)?;
-        let signature_array: [u8; 64] = signature.clone().try_into()
+        let signature_array: [u8; 64] = signature
+            .clone()
+            .try_into()
             .map_err(|_| Error::crypto("Invalid signature length"))?;
         let sig = Signature::from_bytes(&signature_array);
-        
-        guardian_public_key.verify(&message, &sig)
+
+        guardian_public_key
+            .verify(&message, &sig)
             .map_err(|_| Error::crypto("Invalid guardian signature"))?;
 
         // Now get mutable borrow to update the request
-        let request = self.recovery_requests.get_mut(request_id)
+        let request = self
+            .recovery_requests
+            .get_mut(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         // Update status if timelock just expired
@@ -230,7 +238,9 @@ impl GuardianRecoveryManager {
 
     /// Check if recovery is complete
     pub fn is_recovery_complete(&self, request_id: &str) -> Result<bool> {
-        let request = self.recovery_requests.get(request_id)
+        let request = self
+            .recovery_requests
+            .get(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         Ok(request.status == RecoveryStatus::Completed)
@@ -238,7 +248,9 @@ impl GuardianRecoveryManager {
 
     /// Finalize recovery and return new device key
     pub fn finalize_recovery(&mut self, request_id: &str) -> Result<Vec<u8>> {
-        let request = self.recovery_requests.get(request_id)
+        let request = self
+            .recovery_requests
+            .get(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         if request.status != RecoveryStatus::Completed {
@@ -251,7 +263,9 @@ impl GuardianRecoveryManager {
 
     /// Cancel a recovery request
     pub fn cancel_recovery(&mut self, request_id: &str) -> Result<()> {
-        let request = self.recovery_requests.get_mut(request_id)
+        let request = self
+            .recovery_requests
+            .get_mut(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         request.status = RecoveryStatus::Cancelled;
@@ -265,7 +279,9 @@ impl GuardianRecoveryManager {
 
     /// Get recovery request status
     pub fn get_recovery_status(&self, request_id: &str) -> Result<RecoveryStatus> {
-        let request = self.recovery_requests.get(request_id)
+        let request = self
+            .recovery_requests
+            .get(request_id)
             .ok_or_else(|| Error::validation("Recovery request not found"))?;
 
         Ok(request.status.clone())
@@ -286,11 +302,11 @@ impl GuardianRecoveryManager {
     /// Cleanup expired recovery requests
     pub fn cleanup_expired_requests(&mut self, max_age_days: i64) {
         let cutoff = Utc::now() - Duration::days(max_age_days);
-        
+
         self.recovery_requests.retain(|_, request| {
-            request.initiated_at > cutoff && 
-            request.status != RecoveryStatus::Cancelled &&
-            request.status != RecoveryStatus::Completed
+            request.initiated_at > cutoff
+                && request.status != RecoveryStatus::Cancelled
+                && request.status != RecoveryStatus::Completed
         });
     }
 }
@@ -336,11 +352,9 @@ mod tests {
         }
 
         // Initiate recovery with 168 hour (7 day) timelock
-        let request_id = manager.initiate_recovery(
-            "user123".to_string(),
-            vec![1, 2, 3, 4],
-            168,
-        ).unwrap();
+        let request_id = manager
+            .initiate_recovery("user123".to_string(), vec![1, 2, 3, 4], 168)
+            .unwrap();
 
         // Verify status is pending
         let status = manager.get_recovery_status(&request_id).unwrap();
@@ -363,11 +377,7 @@ mod tests {
         }
 
         // Try to initiate recovery - should fail (not enough guardians)
-        let result = manager.initiate_recovery(
-            "user123".to_string(),
-            vec![1, 2, 3, 4],
-            168,
-        );
+        let result = manager.initiate_recovery("user123".to_string(), vec![1, 2, 3, 4], 168);
 
         assert!(result.is_err());
     }

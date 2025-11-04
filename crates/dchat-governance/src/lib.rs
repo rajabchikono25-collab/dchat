@@ -3,15 +3,15 @@
 // This crate implements voting, proposals, and decentralized moderation
 // for the dchat protocol.
 
-pub mod voting;
 pub mod abuse_reporting;
 pub mod moderation;
 pub mod upgrade;
+pub mod voting;
 
-pub use voting::{Proposal, Vote, VoteManager, ProposalType};
-pub use abuse_reporting::{AbuseReport, ReportManager, JurySelection};
+pub use abuse_reporting::{AbuseReport, JurySelection, ReportManager};
 pub use moderation::{ModerationAction, ModerationManager, SlashingVote};
 pub use upgrade::{
-    UpgradeProposal, UpgradeManager, UpgradeType, UpgradeStatus,
-    Version, ValidatorSignature, ForkState,
+    ForkState, UpgradeManager, UpgradeProposal, UpgradeStatus, UpgradeType, ValidatorSignature,
+    Version,
 };
+pub use voting::{Proposal, ProposalType, Vote, VoteManager};

@@ -1,33 +1,33 @@
 // Biometric Authentication Module for dchat
 // Implements platform-agnostic biometric authentication (TouchID, FaceID, Fingerprint)
 
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use thiserror::Error;
 
-#[cfg(target_os = "ios")]
-use security_framework::item::*;
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
+#[cfg(target_os = "ios")]
+use security_framework::item::*;
 
 /// Biometric authentication errors
 #[derive(Error, Debug)]
 pub enum BiometricError {
     #[error("Biometric authentication not available on this device")]
     NotAvailable,
-    
+
     #[error("User cancelled authentication")]
     UserCancelled,
-    
+
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
-    
+
     #[error("No biometrics enrolled")]
     NoEnrollment,
-    
+
     #[error("Platform error: {0}")]
     PlatformError(String),
-    
+
     #[error("Timeout waiting for authentication")]
     Timeout,
 }
@@ -124,12 +124,12 @@ impl BiometricAuthenticator {
         {
             self.check_capabilities_ios().await
         }
-        
+
         #[cfg(target_os = "android")]
         {
             self.check_capabilities_android().await
         }
-        
+
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             // Desktop platforms - limited support
@@ -148,12 +148,12 @@ impl BiometricAuthenticator {
         {
             self.authenticate_ios().await
         }
-        
+
         #[cfg(target_os = "android")]
         {
             self.authenticate_android().await
         }
-        
+
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             Err(BiometricError::NotAvailable)
@@ -161,21 +161,17 @@ impl BiometricAuthenticator {
     }
 
     /// Store a key in the secure enclave/keystore with biometric protection
-    pub async fn store_key(
-        &self,
-        _key_id: &str,
-        _key_data: &[u8],
-    ) -> Result<(), BiometricError> {
+    pub async fn store_key(&self, _key_id: &str, _key_data: &[u8]) -> Result<(), BiometricError> {
         #[cfg(target_os = "ios")]
         {
             self.store_key_ios(key_id, key_data).await
         }
-        
+
         #[cfg(target_os = "android")]
         {
             self.store_key_android(key_id, key_data).await
         }
-        
+
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             Err(BiometricError::NotAvailable)
@@ -188,12 +184,12 @@ impl BiometricAuthenticator {
         {
             self.retrieve_key_ios(key_id).await
         }
-        
+
         #[cfg(target_os = "android")]
         {
             self.retrieve_key_android(key_id).await
         }
-        
+
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             Err(BiometricError::NotAvailable)
@@ -206,12 +202,12 @@ impl BiometricAuthenticator {
         {
             self.delete_key_ios(key_id).await
         }
-        
+
         #[cfg(target_os = "android")]
         {
             self.delete_key_android(key_id).await
         }
-        
+
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             Err(BiometricError::NotAvailable)
@@ -222,13 +218,13 @@ impl BiometricAuthenticator {
     #[cfg(target_os = "ios")]
     async fn check_capabilities_ios(&self) -> Result<BiometricCapability, BiometricError> {
         use security_framework::item::ItemSearchOptions;
-        
+
         // Check for biometric hardware using LAContext
         let context = security_framework::item::LAContext::new();
         let can_evaluate = context.can_evaluate_policy(
-            security_framework::item::LAPolicy::DeviceOwnerAuthenticationWithBiometrics
+            security_framework::item::LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
         );
-        
+
         let mut available_types = Vec::new();
         if can_evaluate {
             // Check biometric type
@@ -242,29 +238,35 @@ impl BiometricAuthenticator {
                 _ => {}
             }
         }
-        
+
         Ok(BiometricCapability {
             available_types,
             hardware_present: can_evaluate,
             enrolled: can_evaluate && !available_types.is_empty(),
-            device_info: format!("iOS device with {}", if !available_types.is_empty() {
-                available_types[0].to_string()
-            } else {
-                "no biometrics".to_string()
-            }),
+            device_info: format!(
+                "iOS device with {}",
+                if !available_types.is_empty() {
+                    available_types[0].to_string()
+                } else {
+                    "no biometrics".to_string()
+                }
+            ),
         })
     }
 
     #[cfg(target_os = "ios")]
     async fn authenticate_ios(&self) -> Result<BiometricAuthResult, BiometricError> {
         use security_framework::item::{LAContext, LAPolicy};
-        
+
         let context = LAContext::new();
-        
-        match context.evaluate_policy(
-            LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
-            &self.config.prompt_message,
-        ).await {
+
+        match context
+            .evaluate_policy(
+                LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
+                &self.config.prompt_message,
+            )
+            .await
+        {
             Ok(success) => {
                 if success {
                     Ok(BiometricAuthResult {
@@ -274,7 +276,9 @@ impl BiometricAuthenticator {
                         auth_token: vec![0u8; 32], // Generate secure token
                     })
                 } else {
-                    Err(BiometricError::AuthenticationFailed("User denied".to_string()))
+                    Err(BiometricError::AuthenticationFailed(
+                        "User denied".to_string(),
+                    ))
                 }
             }
             Err(e) => Err(BiometricError::PlatformError(format!("{:?}", e))),
@@ -284,50 +288,57 @@ impl BiometricAuthenticator {
     #[cfg(target_os = "ios")]
     async fn store_key_ios(&self, key_id: &str, key_data: &[u8]) -> Result<(), BiometricError> {
         use security_framework::item::*;
-        
+
         let access_control = SecAccessControl::create_with_flags(
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAccessControlBiometryCurrentSet | kSecAccessControlPrivateKeyUsage,
-        ).map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
+        )
+        .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
         let mut query = ItemSearchOptions::new();
         query.set_service(key_id);
         query.set_account("dchat");
         query.set_access_control(access_control);
         query.set_data(key_data);
-        
-        query.add().map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
+
+        query
+            .add()
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
         Ok(())
     }
 
     #[cfg(target_os = "ios")]
     async fn retrieve_key_ios(&self, key_id: &str) -> Result<Vec<u8>, BiometricError> {
         use security_framework::item::*;
-        
+
         let context = LAContext::new();
         context.set_localized_reason(&self.config.prompt_message);
-        
+
         let mut query = ItemSearchOptions::new();
         query.set_service(key_id);
         query.set_account("dchat");
         query.set_authentication_context(context);
-        
-        let data = query.search_one().map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
+
+        let data = query
+            .search_one()
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
         Ok(data)
     }
 
     #[cfg(target_os = "ios")]
     async fn delete_key_ios(&self, key_id: &str) -> Result<(), BiometricError> {
         use security_framework::item::*;
-        
+
         let mut query = ItemSearchOptions::new();
         query.set_service(key_id);
         query.set_account("dchat");
-        
-        query.delete().map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
+
+        query
+            .delete()
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
         Ok(())
     }
 
@@ -336,25 +347,32 @@ impl BiometricAuthenticator {
     async fn check_capabilities_android(&self) -> Result<BiometricCapability, BiometricError> {
         // Use Android BiometricManager via JNI
         let jni_env = self.get_jni_env()?;
-        
-        let biometric_manager = jni_env.call_static_method(
-            "android/hardware/biometrics/BiometricManager",
-            "from",
-            "(Landroid/content/Context;)Landroid/hardware/biometrics/BiometricManager;",
-            &[],
-        ).map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
-        let can_authenticate = jni_env.call_method(
-            biometric_manager,
-            "canAuthenticate",
-            "(I)I",
-            &[android::hardware::biometrics::BiometricManager::BIOMETRIC_STRONG.into()],
-        ).map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
-        let status = can_authenticate.i().map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
-        
+
+        let biometric_manager = jni_env
+            .call_static_method(
+                "android/hardware/biometrics/BiometricManager",
+                "from",
+                "(Landroid/content/Context;)Landroid/hardware/biometrics/BiometricManager;",
+                &[],
+            )
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
+        let can_authenticate = jni_env
+            .call_method(
+                biometric_manager,
+                "canAuthenticate",
+                "(I)I",
+                &[android::hardware::biometrics::BiometricManager::BIOMETRIC_STRONG.into()],
+            )
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
+        let status = can_authenticate
+            .i()
+            .map_err(|e| BiometricError::PlatformError(format!("{:?}", e)))?;
+
         match status {
-            0 => { // BIOMETRIC_SUCCESS
+            0 => {
+                // BIOMETRIC_SUCCESS
                 Ok(BiometricCapability {
                     available_types: vec![BiometricType::Fingerprint],
                     hardware_present: true,
@@ -362,7 +380,8 @@ impl BiometricAuthenticator {
                     device_info: "Android device with fingerprint".to_string(),
                 })
             }
-            11 => { // BIOMETRIC_ERROR_NO_HARDWARE
+            11 => {
+                // BIOMETRIC_ERROR_NO_HARDWARE
                 Ok(BiometricCapability {
                     available_types: vec![],
                     hardware_present: false,
@@ -370,7 +389,8 @@ impl BiometricAuthenticator {
                     device_info: "No biometric hardware".to_string(),
                 })
             }
-            12 => { // BIOMETRIC_ERROR_NONE_ENROLLED
+            12 => {
+                // BIOMETRIC_ERROR_NONE_ENROLLED
                 Ok(BiometricCapability {
                     available_types: vec![BiometricType::Fingerprint],
                     hardware_present: true,
@@ -378,7 +398,10 @@ impl BiometricAuthenticator {
                     device_info: "Biometric hardware present but not enrolled".to_string(),
                 })
             }
-            _ => Err(BiometricError::PlatformError(format!("Unknown status: {}", status))),
+            _ => Err(BiometricError::PlatformError(format!(
+                "Unknown status: {}",
+                status
+            ))),
         }
     }
 
@@ -399,32 +422,41 @@ impl BiometricAuthenticator {
         // Alternative: Use Flutter/React Native biometric plugins if using a hybrid architecture.
         Err(BiometricError::PlatformError(
             "Android biometric authentication requires JNI bindings. \
-             See biometric.rs documentation for implementation guide.".to_string()
+             See biometric.rs documentation for implementation guide."
+                .to_string(),
         ))
     }
 
     #[cfg(target_os = "android")]
     async fn store_key_android(&self, key_id: &str, key_data: &[u8]) -> Result<(), BiometricError> {
         // Use Android Keystore with biometric protection
-        Err(BiometricError::PlatformError("Android implementation pending".to_string()))
+        Err(BiometricError::PlatformError(
+            "Android implementation pending".to_string(),
+        ))
     }
 
     #[cfg(target_os = "android")]
     async fn retrieve_key_android(&self, key_id: &str) -> Result<Vec<u8>, BiometricError> {
         // Retrieve from Android Keystore with biometric authentication
-        Err(BiometricError::PlatformError("Android implementation pending".to_string()))
+        Err(BiometricError::PlatformError(
+            "Android implementation pending".to_string(),
+        ))
     }
 
     #[cfg(target_os = "android")]
     async fn delete_key_android(&self, key_id: &str) -> Result<(), BiometricError> {
         // Delete from Android Keystore
-        Err(BiometricError::PlatformError("Android implementation pending".to_string()))
+        Err(BiometricError::PlatformError(
+            "Android implementation pending".to_string(),
+        ))
     }
 
     #[cfg(target_os = "android")]
     fn get_jni_env(&self) -> Result<JNIEnv, BiometricError> {
         // Get JNI environment - implementation depends on Android bridge setup
-        Err(BiometricError::PlatformError("JNI environment not available".to_string()))
+        Err(BiometricError::PlatformError(
+            "JNI environment not available".to_string(),
+        ))
     }
 }
 

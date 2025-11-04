@@ -94,9 +94,18 @@ pub struct TierMigrationManager {
 impl TierMigrationManager {
     pub fn new(db_pool: SqlitePool) -> Self {
         let mut policies = HashMap::new();
-        policies.insert("direct_message".to_string(), RetentionPolicyAdvanced::direct_message());
-        policies.insert("public_channel".to_string(), RetentionPolicyAdvanced::public_channel());
-        policies.insert("blockchain_event".to_string(), RetentionPolicyAdvanced::blockchain_event());
+        policies.insert(
+            "direct_message".to_string(),
+            RetentionPolicyAdvanced::direct_message(),
+        );
+        policies.insert(
+            "public_channel".to_string(),
+            RetentionPolicyAdvanced::public_channel(),
+        );
+        policies.insert(
+            "blockchain_event".to_string(),
+            RetentionPolicyAdvanced::blockchain_event(),
+        );
 
         Self { db_pool, policies }
     }
@@ -128,7 +137,7 @@ impl TierMigrationManager {
         sqlx::query(
             "UPDATE messages 
              SET tier = ?1, last_tier_migration = CURRENT_TIMESTAMP 
-             WHERE id = ?2"
+             WHERE id = ?2",
         )
         .bind(tier_to_string(&target_tier))
         .bind(message_id)
@@ -144,7 +153,7 @@ impl TierMigrationManager {
             "SELECT tier, COUNT(*) as count, COALESCE(SUM(compressed_size), 0) as total_size
              FROM messages
              WHERE tier IS NOT NULL
-             GROUP BY tier"
+             GROUP BY tier",
         )
         .fetch_all(&self.db_pool)
         .await?;
@@ -178,11 +187,15 @@ impl TierMigrationManager {
     /// Calculate current storage cost across all tiers
     pub async fn calculate_storage_cost(&self) -> Result<f64, TierMigrationError> {
         let stats = self.get_tier_distribution().await?;
-        
-        let hot_cost = (stats.hot_bytes as f64 / 1_073_741_824.0) * StorageTierAdvanced::Hot.cost_per_gb_month_usd();
-        let warm_cost = (stats.warm_bytes as f64 / 1_073_741_824.0) * StorageTierAdvanced::Warm.cost_per_gb_month_usd();
-        let cold_cost = (stats.cold_bytes as f64 / 1_073_741_824.0) * StorageTierAdvanced::Cold.cost_per_gb_month_usd();
-        let archive_cost = (stats.archive_bytes as f64 / 1_073_741_824.0) * StorageTierAdvanced::Archive.cost_per_gb_month_usd();
+
+        let hot_cost = (stats.hot_bytes as f64 / 1_073_741_824.0)
+            * StorageTierAdvanced::Hot.cost_per_gb_month_usd();
+        let warm_cost = (stats.warm_bytes as f64 / 1_073_741_824.0)
+            * StorageTierAdvanced::Warm.cost_per_gb_month_usd();
+        let cold_cost = (stats.cold_bytes as f64 / 1_073_741_824.0)
+            * StorageTierAdvanced::Cold.cost_per_gb_month_usd();
+        let archive_cost = (stats.archive_bytes as f64 / 1_073_741_824.0)
+            * StorageTierAdvanced::Archive.cost_per_gb_month_usd();
 
         Ok(hot_cost + warm_cost + cold_cost + archive_cost)
     }
@@ -194,7 +207,7 @@ impl TierMigrationManager {
              SET tier = 'warm', last_tier_migration = CURRENT_TIMESTAMP
              WHERE tier = 'hot' 
              AND created_at < datetime('now', '-7 days')
-             AND tier IS NOT NULL"
+             AND tier IS NOT NULL",
         )
         .execute(&self.db_pool)
         .await?;
@@ -209,7 +222,7 @@ impl TierMigrationManager {
              SET tier = 'cold', last_tier_migration = CURRENT_TIMESTAMP
              WHERE tier = 'warm' 
              AND created_at < datetime('now', '-30 days')
-             AND tier IS NOT NULL"
+             AND tier IS NOT NULL",
         )
         .execute(&self.db_pool)
         .await?;
@@ -224,7 +237,7 @@ impl TierMigrationManager {
              SET tier = 'archive', last_tier_migration = CURRENT_TIMESTAMP
              WHERE tier = 'cold' 
              AND created_at < datetime('now', '-365 days')
-             AND tier IS NOT NULL"
+             AND tier IS NOT NULL",
         )
         .execute(&self.db_pool)
         .await?;
@@ -238,7 +251,7 @@ impl TierMigrationManager {
             "DELETE FROM messages 
              WHERE tier = 'archive' 
              AND created_at < datetime('now', '-730 days')
-             AND tier IS NOT NULL"
+             AND tier IS NOT NULL",
         )
         .execute(&self.db_pool)
         .await?;
@@ -377,7 +390,7 @@ mod tests {
     async fn test_tier_manager_creation() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         let manager = TierMigrationManager::new(pool);
-        
+
         // Should have 3 default policies
         assert_eq!(manager.policies.len(), 3);
         assert!(manager.policies.contains_key("direct_message"));
@@ -389,7 +402,7 @@ mod tests {
     async fn test_add_custom_policy() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         let mut manager = TierMigrationManager::new(pool);
-        
+
         let custom_policy = RetentionPolicyAdvanced {
             hot_days: 1,
             warm_days: 7,
@@ -410,7 +423,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_tier_distribution_stats() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         // Create messages table with tier columns
         sqlx::query(
             "CREATE TABLE messages (
@@ -419,7 +432,7 @@ mod integration_tests {
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
                 last_tier_migration TEXT
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -432,7 +445,7 @@ mod integration_tests {
              ('msg2', 'hot', 2000, datetime('now')),
              ('msg3', 'warm', 3000, datetime('now', '-10 days')),
              ('msg4', 'cold', 5000, datetime('now', '-100 days')),
-             ('msg5', 'archive', 10000, datetime('now', '-400 days'))"
+             ('msg5', 'archive', 10000, datetime('now', '-400 days'))",
         )
         .execute(&pool)
         .await
@@ -454,7 +467,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_calculate_storage_cost() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         sqlx::query(
             "CREATE TABLE messages (
                 id TEXT PRIMARY KEY,
@@ -462,7 +475,7 @@ mod integration_tests {
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
                 last_tier_migration TEXT
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -475,7 +488,7 @@ mod integration_tests {
              ('msg1', 'hot', ?1, datetime('now')),
              ('msg2', 'warm', ?1, datetime('now')),
              ('msg3', 'cold', ?1, datetime('now')),
-             ('msg4', 'archive', ?1, datetime('now'))"
+             ('msg4', 'archive', ?1, datetime('now'))",
         )
         .bind(gb)
         .execute(&pool)
@@ -492,7 +505,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_migrate_message_to_tier() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         sqlx::query(
             "CREATE TABLE messages (
                 id TEXT PRIMARY KEY,
@@ -500,7 +513,7 @@ mod integration_tests {
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
                 last_tier_migration TEXT
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -508,28 +521,31 @@ mod integration_tests {
 
         sqlx::query(
             "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
-             ('msg123', 'hot', 5000, datetime('now', '-10 days'))"
+             ('msg123', 'hot', 5000, datetime('now', '-10 days'))",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         let manager = TierMigrationManager::new(pool.clone());
-        manager.migrate_message_to_tier("msg123", StorageTierAdvanced::Warm).await.unwrap();
+        manager
+            .migrate_message_to_tier("msg123", StorageTierAdvanced::Warm)
+            .await
+            .unwrap();
 
         // Verify tier changed
         let (tier,): (String,) = sqlx::query_as("SELECT tier FROM messages WHERE id = 'msg123'")
             .fetch_one(&pool)
             .await
             .unwrap();
-        
+
         assert_eq!(tier, "warm");
     }
 
     #[tokio::test]
     async fn test_migrate_hot_to_warm() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         sqlx::query(
             "CREATE TABLE messages (
                 id TEXT PRIMARY KEY,
@@ -537,7 +553,7 @@ mod integration_tests {
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
                 last_tier_migration TEXT
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -548,7 +564,7 @@ mod integration_tests {
             "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
              ('old1', 'hot', 1000, datetime('now', '-10 days')),
              ('old2', 'hot', 2000, datetime('now', '-8 days')),
-             ('new1', 'hot', 3000, datetime('now', '-2 days'))"
+             ('new1', 'hot', 3000, datetime('now', '-2 days'))",
         )
         .execute(&pool)
         .await
@@ -561,10 +577,11 @@ mod integration_tests {
         assert_eq!(stats.hot_to_warm, 2);
 
         // Verify tiers
-        let warm_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM messages WHERE tier = 'warm'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let warm_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM messages WHERE tier = 'warm'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(warm_count.0, 2);
     }
 }

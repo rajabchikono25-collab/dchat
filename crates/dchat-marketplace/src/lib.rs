@@ -318,9 +318,9 @@ impl MarketplaceManager {
     ) -> Result<Uuid> {
         // Generate on-chain address based on storage type
         let on_chain_address = match storage_type {
-            OnChainStorageType::ChatChain | OnChainStorageType::CurrencyChain | OnChainStorageType::Hybrid => {
-                Some(format!("0x{:x}", Uuid::new_v4()))
-            }
+            OnChainStorageType::ChatChain
+            | OnChainStorageType::CurrencyChain
+            | OnChainStorageType::Hybrid => Some(format!("0x{:x}", Uuid::new_v4())),
             OnChainStorageType::Ipfs => None,
         };
 
@@ -368,7 +368,9 @@ impl MarketplaceManager {
 
         // Check if already in escrow
         if listing.in_escrow {
-            return Err(Error::validation("Item currently in escrow for another transaction"));
+            return Err(Error::validation(
+                "Item currently in escrow for another transaction",
+            ));
         }
 
         // Verify payment amount matches pricing
@@ -392,15 +394,18 @@ impl MarketplaceManager {
         }
 
         let seller = listing.creator.clone();
-        
+
         // Create escrow for the transaction (30 days lock)
-        let escrow_id = self.escrow.create_two_party_escrow(
-            listing_id,
-            &buyer,
-            &seller,
-            amount_paid,
-            30 * 24 * 60 * 60, // 30 days in seconds
-        ).map_err(|e| Error::validation(&format!("Escrow creation failed: {:?}", e)))?;
+        let escrow_id = self
+            .escrow
+            .create_two_party_escrow(
+                listing_id,
+                &buyer,
+                &seller,
+                amount_paid,
+                30 * 24 * 60 * 60, // 30 days in seconds
+            )
+            .map_err(|e| Error::validation(&format!("Escrow creation failed: {:?}", e)))?;
 
         // Mark listing as in escrow
         listing.in_escrow = true;
@@ -446,7 +451,7 @@ impl MarketplaceManager {
                 .iter()
                 .find(|l| l.id == listing_id)
                 .ok_or_else(|| Error::validation("Listing not found"))?;
-            
+
             (
                 listing.good_type,
                 listing.bot_id,
@@ -489,7 +494,7 @@ impl MarketplaceManager {
             .iter_mut()
             .find(|l| l.id == listing_id)
             .ok_or_else(|| Error::validation("Listing not found"))?;
-        
+
         listing.in_escrow = false;
         listing.escrow_id = None;
 
@@ -674,7 +679,11 @@ impl MarketplaceManager {
         member_count: u64,
     ) -> Result<String> {
         // Check if channel already registered
-        if self.channel_ownership.iter().any(|c| c.channel_id == channel_id) {
+        if self
+            .channel_ownership
+            .iter()
+            .any(|c| c.channel_id == channel_id)
+        {
             return Err(Error::validation("Channel already registered"));
         }
 
@@ -695,7 +704,11 @@ impl MarketplaceManager {
     }
 
     /// Transfer channel ownership
-    pub fn transfer_channel_ownership(&mut self, channel_id: Uuid, new_owner: UserId) -> Result<()> {
+    pub fn transfer_channel_ownership(
+        &mut self,
+        channel_id: Uuid,
+        new_owner: UserId,
+    ) -> Result<()> {
         let channel = self
             .channel_ownership
             .iter_mut()
@@ -712,7 +725,9 @@ impl MarketplaceManager {
 
     /// Get channel ownership info
     pub fn get_channel_ownership(&self, channel_id: Uuid) -> Option<&ChannelOwnership> {
-        self.channel_ownership.iter().find(|c| c.channel_id == channel_id)
+        self.channel_ownership
+            .iter()
+            .find(|c| c.channel_id == channel_id)
     }
 
     /// Get all channels owned by user
@@ -858,7 +873,9 @@ impl MarketplaceManager {
 
     /// Get membership by ID
     pub fn get_membership(&self, membership_id: Uuid) -> Option<&ChannelMembership> {
-        self.memberships.iter().find(|m| m.membership_id == membership_id)
+        self.memberships
+            .iter()
+            .find(|m| m.membership_id == membership_id)
     }
 
     /// Get all memberships for a user

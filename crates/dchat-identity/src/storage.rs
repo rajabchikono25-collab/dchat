@@ -1,14 +1,14 @@
 //! Database storage for user profiles and statuses
 
 use crate::profile::{
-    UserProfile, ProfilePicture, UserStatus, StatusType, OnlineStatus,
-    PrivacySettings, VisibilityLevel,
+    OnlineStatus, PrivacySettings, ProfilePicture, StatusType, UserProfile, UserStatus,
+    VisibilityLevel,
 };
+use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};
 use sqlx::{Row, SqlitePool};
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Profile storage
 pub struct ProfileStorage {
@@ -122,7 +122,7 @@ impl ProfileStorage {
         let metadata_json = serde_json::to_string(&profile.metadata)
             .map_err(|e| Error::storage(format!("Failed to serialize metadata: {}", e)))?;
 
-        let (pic_file_id, pic_unique_id, pic_small, pic_large, pic_uploaded) = 
+        let (pic_file_id, pic_unique_id, pic_small, pic_large, pic_uploaded) =
             if let Some(ref pic) = profile.profile_picture {
                 (
                     Some(pic.file_id.clone()),
@@ -178,7 +178,8 @@ impl ProfileStorage {
         .map_err(|e| Error::storage(format!("Failed to save profile: {}", e)))?;
 
         // Save privacy settings
-        self.save_privacy_settings(&profile.user_id, &profile.privacy).await?;
+        self.save_privacy_settings(&profile.user_id, &profile.privacy)
+            .await?;
 
         Ok(())
     }
@@ -189,9 +190,12 @@ impl ProfileStorage {
         user_id: &dchat_core::types::UserId,
         privacy: &PrivacySettings,
     ) -> Result<()> {
-        let (pic_vis, pic_allowed, pic_blocked) = serialize_visibility(&privacy.profile_picture_visibility);
-        let (status_vis, status_allowed, status_blocked) = serialize_visibility(&privacy.status_visibility);
-        let (last_seen_vis, last_seen_allowed, last_seen_blocked) = serialize_visibility(&privacy.last_seen_visibility);
+        let (pic_vis, pic_allowed, pic_blocked) =
+            serialize_visibility(&privacy.profile_picture_visibility);
+        let (status_vis, status_allowed, status_blocked) =
+            serialize_visibility(&privacy.status_visibility);
+        let (last_seen_vis, last_seen_allowed, last_seen_blocked) =
+            serialize_visibility(&privacy.last_seen_visibility);
         let (bio_vis, bio_allowed, bio_blocked) = serialize_visibility(&privacy.bio_visibility);
         let (msg_vis, msg_allowed, msg_blocked) = serialize_visibility(&privacy.message_visibility);
 
@@ -246,7 +250,10 @@ impl ProfileStorage {
     }
 
     /// Get user profile by user ID
-    pub async fn get_profile(&self, user_id: &dchat_core::types::UserId) -> Result<Option<UserProfile>> {
+    pub async fn get_profile(
+        &self,
+        user_id: &dchat_core::types::UserId,
+    ) -> Result<Option<UserProfile>> {
         let row = sqlx::query(
             r#"
             SELECT * FROM user_profiles WHERE user_id = ?
@@ -279,8 +286,10 @@ impl ProfileStorage {
 
         if let Some(row) = row {
             let user_id_str: String = row.get("user_id");
-            let user_id = dchat_core::types::UserId(uuid::Uuid::parse_str(&user_id_str)
-                .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?);
+            let user_id = dchat_core::types::UserId(
+                uuid::Uuid::parse_str(&user_id_str)
+                    .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?,
+            );
             let privacy = self.get_privacy_settings(&user_id).await?;
             Ok(Some(parse_profile_row(row, privacy)?))
         } else {
@@ -289,7 +298,10 @@ impl ProfileStorage {
     }
 
     /// Get privacy settings
-    async fn get_privacy_settings(&self, user_id: &dchat_core::types::UserId) -> Result<PrivacySettings> {
+    async fn get_privacy_settings(
+        &self,
+        user_id: &dchat_core::types::UserId,
+    ) -> Result<PrivacySettings> {
         let row = sqlx::query(
             r#"
             SELECT * FROM profile_privacy WHERE user_id = ?
@@ -334,7 +346,11 @@ impl ProfileStorage {
     }
 
     /// Save user status
-    pub async fn save_status(&self, user_id: &dchat_core::types::UserId, status: &UserStatus) -> Result<()> {
+    pub async fn save_status(
+        &self,
+        user_id: &dchat_core::types::UserId,
+        status: &UserStatus,
+    ) -> Result<()> {
         let (status_type, status_data) = serialize_status_type(&status.status_type)?;
         let viewers_json = serde_json::to_string(&status.viewers)
             .map_err(|e| Error::storage(format!("Failed to serialize viewers: {}", e)))?;
@@ -368,9 +384,12 @@ impl ProfileStorage {
     }
 
     /// Get active statuses for a user
-    pub async fn get_active_statuses(&self, user_id: &dchat_core::types::UserId) -> Result<Vec<UserStatus>> {
+    pub async fn get_active_statuses(
+        &self,
+        user_id: &dchat_core::types::UserId,
+    ) -> Result<Vec<UserStatus>> {
         let now = Utc::now().to_rfc3339();
-        
+
         let rows = sqlx::query(
             r#"
             SELECT * FROM user_statuses
@@ -384,15 +403,13 @@ impl ProfileStorage {
         .await
         .map_err(|e| Error::storage(format!("Failed to fetch statuses: {}", e)))?;
 
-        rows.into_iter()
-            .map(parse_status_row)
-            .collect()
+        rows.into_iter().map(parse_status_row).collect()
     }
 
     /// Delete expired statuses
     pub async fn cleanup_expired_statuses(&self) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
-        
+
         let result = sqlx::query(
             r#"
             DELETE FROM user_statuses WHERE expires_at <= ?
@@ -409,7 +426,7 @@ impl ProfileStorage {
     /// Search profiles by query
     pub async fn search_profiles(&self, query: &str, limit: usize) -> Result<Vec<UserProfile>> {
         let query_pattern = format!("%{}%", query);
-        
+
         let rows = sqlx::query(
             r#"
             SELECT * FROM user_profiles
@@ -429,8 +446,10 @@ impl ProfileStorage {
         let mut profiles = Vec::new();
         for row in rows {
             let user_id_str: String = row.get("user_id");
-            let user_id = dchat_core::types::UserId(uuid::Uuid::parse_str(&user_id_str)
-                .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?);
+            let user_id = dchat_core::types::UserId(
+                uuid::Uuid::parse_str(&user_id_str)
+                    .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?,
+            );
             let privacy = self.get_privacy_settings(&user_id).await?;
             profiles.push(parse_profile_row(row, privacy)?);
         }
@@ -454,7 +473,11 @@ fn serialize_visibility(vis: &VisibilityLevel) -> (String, Option<String>, Optio
     }
 }
 
-fn parse_visibility(vis: String, allowed: Option<String>, blocked: Option<String>) -> Result<VisibilityLevel> {
+fn parse_visibility(
+    vis: String,
+    allowed: Option<String>,
+    blocked: Option<String>,
+) -> Result<VisibilityLevel> {
     match vis.as_str() {
         "Everyone" => Ok(VisibilityLevel::Everyone),
         "Contacts" => Ok(VisibilityLevel::Contacts),
@@ -488,7 +511,11 @@ fn serialize_status_type(status_type: &StatusType) -> Result<(String, String)> {
             });
             ("Text", data)
         }
-        StatusType::Image { file_id, width, height } => {
+        StatusType::Image {
+            file_id,
+            width,
+            height,
+        } => {
             let data = serde_json::json!({
                 "file_id": file_id,
                 "width": width,
@@ -496,7 +523,12 @@ fn serialize_status_type(status_type: &StatusType) -> Result<(String, String)> {
             });
             ("Image", data)
         }
-        StatusType::Video { file_id, width, height, duration } => {
+        StatusType::Video {
+            file_id,
+            width,
+            height,
+            duration,
+        } => {
             let data = serde_json::json!({
                 "file_id": file_id,
                 "width": width,
@@ -558,7 +590,10 @@ fn parse_status_row(row: sqlx::sqlite::SqliteRow) -> Result<UserStatus> {
             duration: data["duration"].as_u64().unwrap_or(0) as u32,
         },
         "Audio" => StatusType::Audio {
-            audio_file_id: data["audio_file_id"].as_str().unwrap_or_default().to_string(),
+            audio_file_id: data["audio_file_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             background_image_id: data["background_image_id"].as_str().map(String::from),
             duration: data["duration"].as_u64().unwrap_or(0) as u32,
             title: data["title"].as_str().map(String::from),
@@ -569,7 +604,12 @@ fn parse_status_row(row: sqlx::sqlite::SqliteRow) -> Result<UserStatus> {
                 None
             },
         },
-        _ => return Err(Error::storage(format!("Unknown status type: {}", status_type))),
+        _ => {
+            return Err(Error::storage(format!(
+                "Unknown status type: {}",
+                status_type
+            )))
+        }
     };
 
     let viewers: Vec<dchat_core::types::UserId> = serde_json::from_str(&viewers_json)
@@ -592,28 +632,36 @@ fn parse_status_row(row: sqlx::sqlite::SqliteRow) -> Result<UserStatus> {
     })
 }
 
-fn parse_profile_row(row: sqlx::sqlite::SqliteRow, privacy: PrivacySettings) -> Result<UserProfile> {
+fn parse_profile_row(
+    row: sqlx::sqlite::SqliteRow,
+    privacy: PrivacySettings,
+) -> Result<UserProfile> {
     let user_id_str: String = row.get("user_id");
     let metadata_json: String = row.get("metadata");
     let online_status_str: String = row.get("online_status");
 
-    let profile_picture = if let Some(file_id) = row.get::<Option<String>, _>("profile_picture_file_id") {
-        Some(ProfilePicture {
-            file_id,
-            file_unique_id: row.get::<Option<String>, _>("profile_picture_unique_id").unwrap_or_default(),
-            small_file_id: row.get("profile_picture_small"),
-            large_file_id: row.get("profile_picture_large"),
-            uploaded_at: if let Some(dt_str) = row.get::<Option<String>, _>("profile_picture_uploaded_at") {
-                DateTime::parse_from_rfc3339(&dt_str)
-                    .map_err(|e| Error::storage(format!("Failed to parse uploaded_at: {}", e)))?
-                    .with_timezone(&Utc)
-            } else {
-                Utc::now()
-            },
-        })
-    } else {
-        None
-    };
+    let profile_picture =
+        if let Some(file_id) = row.get::<Option<String>, _>("profile_picture_file_id") {
+            Some(ProfilePicture {
+                file_id,
+                file_unique_id: row
+                    .get::<Option<String>, _>("profile_picture_unique_id")
+                    .unwrap_or_default(),
+                small_file_id: row.get("profile_picture_small"),
+                large_file_id: row.get("profile_picture_large"),
+                uploaded_at: if let Some(dt_str) =
+                    row.get::<Option<String>, _>("profile_picture_uploaded_at")
+                {
+                    DateTime::parse_from_rfc3339(&dt_str)
+                        .map_err(|e| Error::storage(format!("Failed to parse uploaded_at: {}", e)))?
+                        .with_timezone(&Utc)
+                } else {
+                    Utc::now()
+                },
+            })
+        } else {
+            None
+        };
 
     let online_status = match online_status_str.as_str() {
         "Online" => OnlineStatus::Online,
@@ -624,9 +672,11 @@ fn parse_profile_row(row: sqlx::sqlite::SqliteRow, privacy: PrivacySettings) -> 
     };
 
     let last_seen = if let Some(dt_str) = row.get::<Option<String>, _>("last_seen") {
-        Some(DateTime::parse_from_rfc3339(&dt_str)
-            .map_err(|e| Error::storage(format!("Failed to parse last_seen: {}", e)))?
-            .with_timezone(&Utc))
+        Some(
+            DateTime::parse_from_rfc3339(&dt_str)
+                .map_err(|e| Error::storage(format!("Failed to parse last_seen: {}", e)))?
+                .with_timezone(&Utc),
+        )
     } else {
         None
     };
@@ -635,8 +685,10 @@ fn parse_profile_row(row: sqlx::sqlite::SqliteRow, privacy: PrivacySettings) -> 
         .map_err(|e| Error::storage(format!("Failed to parse metadata: {}", e)))?;
 
     Ok(UserProfile {
-        user_id: dchat_core::types::UserId(uuid::Uuid::parse_str(&user_id_str)
-            .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?),
+        user_id: dchat_core::types::UserId(
+            uuid::Uuid::parse_str(&user_id_str)
+                .map_err(|e| Error::storage(format!("Failed to parse user_id: {}", e)))?,
+        ),
         username: row.get("username"),
         display_name: row.get("display_name"),
         bio: row.get("bio"),

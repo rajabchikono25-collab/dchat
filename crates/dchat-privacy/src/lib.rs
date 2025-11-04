@@ -3,10 +3,10 @@
 // This crate implements zero-knowledge proofs, blind tokens, and stealth payloads
 // for metadata resistance and anonymous operations in dchat.
 
-pub mod zk_proofs;
 pub mod blind_tokens;
 pub mod stealth;
+pub mod zk_proofs;
 
-pub use zk_proofs::{ZkProof, ContactProof, ReputationProof};
-pub use blind_tokens::{BlindToken, BlindSigner, TokenIssuer};
-pub use stealth::{StealthPayload, StealthAddress};
+pub use blind_tokens::{BlindSigner, BlindToken, TokenIssuer};
+pub use stealth::{StealthAddress, StealthPayload};
+pub use zk_proofs::{ContactProof, ReputationProof, ZkProof};

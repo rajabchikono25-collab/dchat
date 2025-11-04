@@ -26,13 +26,13 @@ use crate::block_hierarchy::Hash;
 pub enum VotePersistenceError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] sqlx::Error),
-    
+
     #[error("Vote already exists for block {0} from validator {1}")]
     DuplicateVote(String, String),
-    
+
     #[error("Invalid vote data: {0}")]
     InvalidData(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
 }
@@ -102,12 +102,12 @@ impl VotePersistence {
             .max_connections(20)
             .connect(database_url)
             .await?;
-        
+
         Ok(Self {
             pool: Arc::new(pool),
         })
     }
-    
+
     /// Initialize database schema
     pub async fn initialize_schema(&self) -> Result<()> {
         // PoRW votes table
@@ -133,11 +133,11 @@ impl VotePersistence {
             CREATE INDEX IF NOT EXISTS idx_porw_votes_block_hash ON porw_votes(block_hash);
             CREATE INDEX IF NOT EXISTS idx_porw_votes_timestamp ON porw_votes(timestamp);
             CREATE INDEX IF NOT EXISTS idx_porw_votes_finalized ON porw_votes(is_finalized);
-            "#
+            "#,
         )
         .execute(&*self.pool)
         .await?;
-        
+
         // PoT proofs table
         sqlx::query(
             r#"
@@ -158,11 +158,11 @@ impl VotePersistence {
             CREATE INDEX IF NOT EXISTS idx_pot_proofs_message_hash ON pot_proofs(message_hash);
             CREATE INDEX IF NOT EXISTS idx_pot_proofs_timestamp ON pot_proofs(timestamp);
             CREATE INDEX IF NOT EXISTS idx_pot_proofs_verified ON pot_proofs(is_verified);
-            "#
+            "#,
         )
         .execute(&*self.pool)
         .await?;
-        
+
         // TSC votes table
         sqlx::query(
             r#"
@@ -185,14 +185,14 @@ impl VotePersistence {
             CREATE INDEX IF NOT EXISTS idx_tsc_votes_block_hash ON tsc_votes(block_hash);
             CREATE INDEX IF NOT EXISTS idx_tsc_votes_timestamp ON tsc_votes(timestamp);
             CREATE INDEX IF NOT EXISTS idx_tsc_votes_finalized ON tsc_votes(is_finalized);
-            "#
+            "#,
         )
         .execute(&*self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Store PoRW vote
     pub async fn store_porw_vote(&self, vote: &PoRWVoteRecord) -> Result<()> {
         sqlx::query(
@@ -203,7 +203,7 @@ impl VotePersistence {
                 region, signature, timestamp, is_finalized
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (block_hash, validator_pubkey) DO NOTHING
-            "#
+            "#,
         )
         .bind(vote.id)
         .bind(&vote.block_hash)
@@ -220,35 +220,39 @@ impl VotePersistence {
         .bind(vote.is_finalized)
         .execute(&*self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Get all PoRW votes for a block
     pub async fn get_porw_votes(&self, block_hash: &str) -> Result<Vec<PoRWVoteRecord>> {
         let votes = sqlx::query_as::<_, PoRWVoteRecord>(
-            "SELECT * FROM porw_votes WHERE block_hash = $1 ORDER BY timestamp"
+            "SELECT * FROM porw_votes WHERE block_hash = $1 ORDER BY timestamp",
         )
         .bind(block_hash)
         .fetch_all(&*self.pool)
         .await?;
-        
+
         Ok(votes)
     }
-    
+
     /// Check for double-vote in PoRW
-    pub async fn check_porw_double_vote(&self, block_hash: &str, validator_pubkey: &[u8]) -> Result<bool> {
+    pub async fn check_porw_double_vote(
+        &self,
+        block_hash: &str,
+        validator_pubkey: &[u8],
+    ) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM porw_votes WHERE block_hash = $1 AND validator_pubkey = $2"
+            "SELECT COUNT(*) FROM porw_votes WHERE block_hash = $1 AND validator_pubkey = $2",
         )
         .bind(block_hash)
         .bind(validator_pubkey)
         .fetch_one(&*self.pool)
         .await?;
-        
+
         Ok(count > 0)
     }
-    
+
     /// Store PoT proof
     pub async fn store_pot_proof(&self, proof: &PoTProofRecord) -> Result<()> {
         sqlx::query(
@@ -259,7 +263,7 @@ impl VotePersistence {
                 timestamp, is_verified
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (message_hash, path_id) DO NOTHING
-            "#
+            "#,
         )
         .bind(proof.id)
         .bind(&proof.message_hash)
@@ -273,22 +277,22 @@ impl VotePersistence {
         .bind(proof.is_verified)
         .execute(&*self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Get all PoT proofs for a message
     pub async fn get_pot_proofs(&self, message_hash: &str) -> Result<Vec<PoTProofRecord>> {
         let proofs = sqlx::query_as::<_, PoTProofRecord>(
-            "SELECT * FROM pot_proofs WHERE message_hash = $1 ORDER BY timestamp"
+            "SELECT * FROM pot_proofs WHERE message_hash = $1 ORDER BY timestamp",
         )
         .bind(message_hash)
         .fetch_all(&*self.pool)
         .await?;
-        
+
         Ok(proofs)
     }
-    
+
     /// Store TSC vote
     pub async fn store_tsc_vote(&self, vote: &TSCVoteRecord) -> Result<()> {
         sqlx::query(
@@ -299,7 +303,7 @@ impl VotePersistence {
                 signature, timestamp, is_finalized
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (block_hash, validator_pubkey) DO NOTHING
-            "#
+            "#,
         )
         .bind(vote.id)
         .bind(&vote.block_hash)
@@ -315,35 +319,39 @@ impl VotePersistence {
         .bind(vote.is_finalized)
         .execute(&*self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Get all TSC votes for a block
     pub async fn get_tsc_votes(&self, block_hash: &str) -> Result<Vec<TSCVoteRecord>> {
         let votes = sqlx::query_as::<_, TSCVoteRecord>(
-            "SELECT * FROM tsc_votes WHERE block_hash = $1 ORDER BY timestamp"
+            "SELECT * FROM tsc_votes WHERE block_hash = $1 ORDER BY timestamp",
         )
         .bind(block_hash)
         .fetch_all(&*self.pool)
         .await?;
-        
+
         Ok(votes)
     }
-    
+
     /// Check for double-vote in TSC
-    pub async fn check_tsc_double_vote(&self, block_hash: &str, validator_pubkey: &[u8]) -> Result<bool> {
+    pub async fn check_tsc_double_vote(
+        &self,
+        block_hash: &str,
+        validator_pubkey: &[u8],
+    ) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tsc_votes WHERE block_hash = $1 AND validator_pubkey = $2"
+            "SELECT COUNT(*) FROM tsc_votes WHERE block_hash = $1 AND validator_pubkey = $2",
         )
         .bind(block_hash)
         .bind(validator_pubkey)
         .fetch_one(&*self.pool)
         .await?;
-        
+
         Ok(count > 0)
     }
-    
+
     /// Mark votes as finalized for a block
     pub async fn mark_finalized(&self, block_hash: &str) -> Result<()> {
         // Mark PoRW votes
@@ -351,50 +359,48 @@ impl VotePersistence {
             .bind(block_hash)
             .execute(&*self.pool)
             .await?;
-        
+
         // Mark TSC votes
         sqlx::query("UPDATE tsc_votes SET is_finalized = TRUE WHERE block_hash = $1")
             .bind(block_hash)
             .execute(&*self.pool)
             .await?;
-        
+
         Ok(())
     }
-    
+
     /// Get vote statistics for a validator
     pub async fn get_validator_stats(&self, validator_pubkey: &[u8]) -> Result<ValidatorStats> {
-        let porw_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM porw_votes WHERE validator_pubkey = $1"
-        )
-        .bind(validator_pubkey)
-        .fetch_one(&*self.pool)
-        .await?;
-        
-        let tsc_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tsc_votes WHERE validator_pubkey = $1"
-        )
-        .bind(validator_pubkey)
-        .fetch_one(&*self.pool)
-        .await?;
-        
+        let porw_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM porw_votes WHERE validator_pubkey = $1")
+                .bind(validator_pubkey)
+                .fetch_one(&*self.pool)
+                .await?;
+
+        let tsc_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM tsc_votes WHERE validator_pubkey = $1")
+                .bind(validator_pubkey)
+                .fetch_one(&*self.pool)
+                .await?;
+
         let finalized_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM porw_votes WHERE validator_pubkey = $1 AND is_finalized = TRUE"
+            "SELECT COUNT(*) FROM porw_votes WHERE validator_pubkey = $1 AND is_finalized = TRUE",
         )
         .bind(validator_pubkey)
         .fetch_one(&*self.pool)
         .await?;
-        
+
         Ok(ValidatorStats {
             porw_votes: porw_count,
             tsc_votes: tsc_count,
             finalized_votes: finalized_count,
         })
     }
-    
+
     /// Clean up old votes (retain last 30 days)
     pub async fn cleanup_old_votes(&self, days: i64) -> Result<u64> {
         let mut total_deleted = 0u64;
-        
+
         let result = sqlx::query(
             "DELETE FROM porw_votes WHERE timestamp < NOW() - $1 * INTERVAL '1 day' AND is_finalized = TRUE"
         )
@@ -402,7 +408,7 @@ impl VotePersistence {
         .execute(&*self.pool)
         .await?;
         total_deleted += result.rows_affected();
-        
+
         let result = sqlx::query(
             "DELETE FROM pot_proofs WHERE timestamp < NOW() - $1 * INTERVAL '1 day' AND is_verified = TRUE"
         )
@@ -410,7 +416,7 @@ impl VotePersistence {
         .execute(&*self.pool)
         .await?;
         total_deleted += result.rows_affected();
-        
+
         let result = sqlx::query(
             "DELETE FROM tsc_votes WHERE timestamp < NOW() - $1 * INTERVAL '1 day' AND is_finalized = TRUE"
         )
@@ -418,7 +424,7 @@ impl VotePersistence {
         .execute(&*self.pool)
         .await?;
         total_deleted += result.rows_affected();
-        
+
         Ok(total_deleted)
     }
 }
@@ -434,7 +440,7 @@ pub struct ValidatorStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_vote_persistence() {
         // Integration test requires database connection

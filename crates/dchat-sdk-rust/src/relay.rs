@@ -45,7 +45,7 @@ impl RelayState {
             start_time: std::time::SystemTime::now(),
         }
     }
-    
+
     fn peer_count(&self) -> usize {
         self.connected_peers
     }
@@ -123,21 +123,22 @@ impl RelayNode {
     /// Get relay statistics
     pub async fn get_stats(&self) -> RelayStats {
         let state = self.state.read().await;
-        
+
         let uptime = std::time::SystemTime::now()
             .duration_since(state.start_time)
             .unwrap_or(std::time::Duration::from_secs(0));
-        
+
         // Calculate uptime percentage
         // In production, this would track downtime events and calculate:
         // uptime_percent = (total_time - downtime) / total_time * 100
-        let uptime_percent = if uptime.as_secs() > 86400 { // After 24 hours
+        let uptime_percent = if uptime.as_secs() > 86400 {
+            // After 24 hours
             // Simulate realistic uptime (99.5% or better)
             99.5 + (uptime.as_secs() % 5) as f64 * 0.1
         } else {
             100.0
         };
-        
+
         RelayStats {
             connected_peers: state.peer_count(),
             messages_relayed: state.messages_relayed,

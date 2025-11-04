@@ -1,11 +1,9 @@
-pub mod package;
 pub mod gossip;
+pub mod package;
 
 pub use package::{
-    PackageMetadata, PackageType, DownloadSource, SourceType,
-    PackageManager, AutoUpdateConfig, DistributionError, Result,
+    AutoUpdateConfig, DistributionError, DownloadSource, PackageManager, PackageMetadata,
+    PackageType, Result, SourceType,
 };
 
-pub use gossip::{
-    VersionAnnouncement, GossipDiscovery, UpdateScheduler,
-};
+pub use gossip::{GossipDiscovery, UpdateScheduler, VersionAnnouncement};

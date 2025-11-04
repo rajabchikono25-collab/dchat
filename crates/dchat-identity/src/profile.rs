@@ -12,37 +12,37 @@ use uuid::Uuid;
 pub struct UserProfile {
     /// User ID
     pub user_id: dchat_core::types::UserId,
-    
+
     /// Username
     pub username: String,
-    
+
     /// Display name
     pub display_name: String,
-    
+
     /// Bio/description
     pub bio: Option<String>,
-    
+
     /// Profile picture
     pub profile_picture: Option<ProfilePicture>,
-    
+
     /// Current status
     pub status: Option<UserStatus>,
-    
+
     /// Online status
     pub online_status: OnlineStatus,
-    
+
     /// Last seen timestamp
     pub last_seen: Option<DateTime<Utc>>,
-    
+
     /// Account creation date
     pub created_at: DateTime<Utc>,
-    
+
     /// Privacy settings
     pub privacy: PrivacySettings,
-    
+
     /// Verified badge
     pub is_verified: bool,
-    
+
     /// Additional metadata
     pub metadata: HashMap<String, String>,
 }
@@ -52,16 +52,16 @@ pub struct UserProfile {
 pub struct ProfilePicture {
     /// File ID
     pub file_id: String,
-    
+
     /// File unique ID
     pub file_unique_id: String,
-    
+
     /// Small thumbnail (160x160)
     pub small_file_id: Option<String>,
-    
+
     /// Large thumbnail (640x640)
     pub large_file_id: Option<String>,
-    
+
     /// Upload timestamp
     pub uploaded_at: DateTime<Utc>,
 }
@@ -71,25 +71,25 @@ pub struct ProfilePicture {
 pub struct UserStatus {
     /// Status ID
     pub id: Uuid,
-    
+
     /// Status type
     pub status_type: StatusType,
-    
+
     /// Caption/text
     pub caption: Option<String>,
-    
+
     /// Background color (hex)
     pub background_color: Option<String>,
-    
+
     /// Created timestamp
     pub created_at: DateTime<Utc>,
-    
+
     /// Expiration timestamp (24 hours by default)
     pub expires_at: DateTime<Utc>,
-    
+
     /// View count
     pub view_count: u64,
-    
+
     /// Who viewed (if privacy allows)
     pub viewers: Vec<dchat_core::types::UserId>,
 }
@@ -98,18 +98,15 @@ pub struct UserStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StatusType {
     /// Text only status
-    Text {
-        text: String,
-        font: Option<String>,
-    },
-    
+    Text { text: String, font: Option<String> },
+
     /// Image status
     Image {
         file_id: String,
         width: u32,
         height: u32,
     },
-    
+
     /// Video status
     Video {
         file_id: String,
@@ -117,7 +114,7 @@ pub enum StatusType {
         height: u32,
         duration: u32,
     },
-    
+
     /// Audio status (audio with image background)
     Audio {
         audio_file_id: String,
@@ -135,22 +132,22 @@ pub enum StatusType {
 pub struct MusicApiTrack {
     /// API provider
     pub provider: MusicProvider,
-    
+
     /// Track ID
     pub track_id: String,
-    
+
     /// Track name
     pub track_name: String,
-    
+
     /// Artist name
     pub artist_name: String,
-    
+
     /// Album name
     pub album_name: Option<String>,
-    
+
     /// Album art URL
     pub album_art_url: Option<String>,
-    
+
     /// Preview URL (30-second snippet)
     pub preview_url: Option<String>,
 }
@@ -179,16 +176,16 @@ pub enum OnlineStatus {
 pub struct PrivacySettings {
     /// Who can see profile picture
     pub profile_picture_visibility: VisibilityLevel,
-    
+
     /// Who can see status
     pub status_visibility: VisibilityLevel,
-    
+
     /// Who can see last seen
     pub last_seen_visibility: VisibilityLevel,
-    
+
     /// Who can see bio
     pub bio_visibility: VisibilityLevel,
-    
+
     /// Who can message
     pub message_visibility: VisibilityLevel,
 }
@@ -231,134 +228,151 @@ impl ProfileManager {
             username_index: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Create or update user profile
     pub fn update_profile(&self, profile: UserProfile) -> Result<()> {
         let user_id = profile.user_id.clone();
         let username = profile.username.clone();
-        
+
         // Check if username is taken by another user
         {
-            let index = self.username_index.read()
+            let index = self
+                .username_index
+                .read()
                 .map_err(|_| Error::internal("Failed to acquire read lock"))?;
-            
+
             if let Some(existing_id) = index.get(&username) {
                 if existing_id != &user_id {
                     return Err(Error::validation("Username already taken"));
                 }
             }
         }
-        
+
         // Update profile
         {
-            let mut profiles = self.profiles.write()
+            let mut profiles = self
+                .profiles
+                .write()
                 .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-            
+
             profiles.insert(user_id.clone(), profile);
         }
-        
+
         // Update username index
         {
-            let mut index = self.username_index.write()
+            let mut index = self
+                .username_index
+                .write()
                 .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-            
+
             index.insert(username, user_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Get profile by user ID
     pub fn get_profile(&self, user_id: &dchat_core::types::UserId) -> Option<UserProfile> {
         self.profiles.read().ok()?.get(user_id).cloned()
     }
-    
+
     /// Get profile by username
     pub fn get_profile_by_username(&self, username: &str) -> Option<UserProfile> {
         let index = self.username_index.read().ok()?;
         let user_id = index.get(username)?;
         self.get_profile(user_id)
     }
-    
+
     /// Search profiles by username prefix
     pub fn search_profiles(&self, query: &str) -> Vec<UserProfile> {
         let profiles = match self.profiles.read() {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
-        
+
         let query_lower = query.to_lowercase();
-        
-        profiles.values()
+
+        profiles
+            .values()
             .filter(|p| {
-                p.username.to_lowercase().contains(&query_lower) ||
-                p.display_name.to_lowercase().contains(&query_lower)
+                p.username.to_lowercase().contains(&query_lower)
+                    || p.display_name.to_lowercase().contains(&query_lower)
             })
             .cloned()
             .collect()
     }
-    
+
     /// Set profile picture
     pub fn set_profile_picture(
         &self,
         user_id: &dchat_core::types::UserId,
         picture: ProfilePicture,
     ) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-        
-        let profile = profiles.get_mut(user_id)
+
+        let profile = profiles
+            .get_mut(user_id)
             .ok_or_else(|| Error::validation("Profile not found"))?;
-        
+
         profile.profile_picture = Some(picture);
-        
+
         Ok(())
     }
-    
+
     /// Update bio
     pub fn update_bio(
         &self,
         user_id: &dchat_core::types::UserId,
         bio: Option<String>,
     ) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-        
-        let profile = profiles.get_mut(user_id)
+
+        let profile = profiles
+            .get_mut(user_id)
             .ok_or_else(|| Error::validation("Profile not found"))?;
-        
+
         profile.bio = bio;
-        
+
         Ok(())
     }
-    
+
     /// Set user status
     pub fn set_status(
         &self,
         user_id: &dchat_core::types::UserId,
         status: UserStatus,
     ) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-        
-        let profile = profiles.get_mut(user_id)
+
+        let profile = profiles
+            .get_mut(user_id)
             .ok_or_else(|| Error::validation("Profile not found"))?;
-        
+
         profile.status = Some(status);
-        
+
         Ok(())
     }
-    
+
     /// Get active statuses (not expired)
     pub fn get_active_statuses(&self) -> Vec<(dchat_core::types::UserId, UserStatus)> {
         let profiles = match self.profiles.read() {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
-        
+
         let now = Utc::now();
-        
-        profiles.iter()
+
+        profiles
+            .iter()
             .filter_map(|(user_id, profile)| {
                 profile.status.as_ref().and_then(|status| {
                     if status.expires_at > now {
@@ -370,47 +384,53 @@ impl ProfileManager {
             })
             .collect()
     }
-    
+
     /// Increment status view count
     pub fn view_status(
         &self,
         status_owner: &dchat_core::types::UserId,
         viewer: &dchat_core::types::UserId,
     ) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-        
-        let profile = profiles.get_mut(status_owner)
+
+        let profile = profiles
+            .get_mut(status_owner)
             .ok_or_else(|| Error::validation("Profile not found"))?;
-        
+
         if let Some(status) = &mut profile.status {
             status.view_count += 1;
             if !status.viewers.contains(viewer) {
                 status.viewers.push(viewer.clone());
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Update online status
     pub fn update_online_status(
         &self,
         user_id: &dchat_core::types::UserId,
         online_status: OnlineStatus,
     ) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| Error::internal("Failed to acquire write lock"))?;
-        
-        let profile = profiles.get_mut(user_id)
+
+        let profile = profiles
+            .get_mut(user_id)
             .ok_or_else(|| Error::validation("Profile not found"))?;
-        
+
         profile.online_status = online_status;
-        
+
         if matches!(profile.online_status, OnlineStatus::Offline) {
             profile.last_seen = Some(Utc::now());
         }
-        
+
         Ok(())
     }
 }
@@ -424,12 +444,12 @@ impl Default for ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_create_and_get_profile() {
         let manager = ProfileManager::new();
         let user_id = dchat_core::types::UserId::new();
-        
+
         let profile = UserProfile {
             user_id: user_id.clone(),
             username: "testuser".to_string(),
@@ -444,18 +464,18 @@ mod tests {
             is_verified: false,
             metadata: HashMap::new(),
         };
-        
+
         manager.update_profile(profile.clone()).unwrap();
-        
+
         let retrieved = manager.get_profile(&user_id).unwrap();
         assert_eq!(retrieved.username, "testuser");
         assert_eq!(retrieved.display_name, "Test User");
     }
-    
+
     #[test]
     fn test_search_profiles() {
         let manager = ProfileManager::new();
-        
+
         for i in 1..=5 {
             let user_id = dchat_core::types::UserId::new();
             let profile = UserProfile {
@@ -474,20 +494,20 @@ mod tests {
             };
             manager.update_profile(profile).unwrap();
         }
-        
+
         let results = manager.search_profiles("user");
         assert_eq!(results.len(), 5);
-        
+
         let results = manager.search_profiles("user3");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].username, "user3");
     }
-    
+
     #[test]
     fn test_set_status() {
         let manager = ProfileManager::new();
         let user_id = dchat_core::types::UserId::new();
-        
+
         let profile = UserProfile {
             user_id: user_id.clone(),
             username: "testuser".to_string(),
@@ -502,9 +522,9 @@ mod tests {
             is_verified: false,
             metadata: HashMap::new(),
         };
-        
+
         manager.update_profile(profile).unwrap();
-        
+
         let status = UserStatus {
             id: Uuid::new_v4(),
             status_type: StatusType::Text {
@@ -518,14 +538,14 @@ mod tests {
             view_count: 0,
             viewers: Vec::new(),
         };
-        
+
         manager.set_status(&user_id, status.clone()).unwrap();
-        
+
         let profile = manager.get_profile(&user_id).unwrap();
         assert!(profile.status.is_some());
         assert_eq!(profile.status.unwrap().id, status.id);
     }
-    
+
     #[test]
     fn test_music_status() {
         let status = UserStatus {
@@ -553,14 +573,17 @@ mod tests {
             view_count: 0,
             viewers: Vec::new(),
         };
-        
+
         match status.status_type {
-            StatusType::Audio { ref music_api_track_id, .. } => {
+            StatusType::Audio {
+                ref music_api_track_id,
+                ..
+            } => {
                 assert!(music_api_track_id.is_some());
                 let track = music_api_track_id.as_ref().unwrap();
                 assert_eq!(track.provider, MusicProvider::Spotify);
                 assert_eq!(track.track_name, "My Favorite Song");
-            },
+            }
             _ => panic!("Test failed: Expected Audio status but got different status type"),
         }
     }

@@ -1,12 +1,12 @@
 //! Event system for dchat
 
+use crate::error::{Error, Result};
+use crate::types::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use crate::error::{Error, Result};
-use crate::types::*;
 
 /// Event types in the dchat system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub enum Event {
         user_id: UserId,
         profile: UserProfile,
     },
-    
+
     // Channel events
     ChannelCreated {
         channel: Channel,
@@ -39,7 +39,7 @@ pub enum Event {
         channel_id: ChannelId,
         user_id: UserId,
     },
-    
+
     // Message events
     MessageReceived {
         message: Message,
@@ -53,7 +53,7 @@ pub enum Event {
         new_content: MessageContent,
         edited_at: chrono::DateTime<chrono::Utc>,
     },
-    
+
     // Network events
     PeerConnected {
         peer_id: String,
@@ -65,7 +65,7 @@ pub enum Event {
     RelayNodeDiscovered {
         node_info: NodeInfo,
     },
-    
+
     // Governance events
     ProposalCreated {
         proposal_id: String,
@@ -83,14 +83,14 @@ pub enum Event {
         proposal_id: String,
         result: bool,
     },
-    
+
     // System events
     SystemStarted,
     SystemShutdown,
     ConfigUpdated,
     ApplicationStarted,
     ApplicationStopped,
-    
+
     // Error events
     Error {
         error: String,
@@ -114,41 +114,43 @@ impl EventBus {
     /// Create a new event bus
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        
+
         Self {
             sender,
             handlers: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Subscribe to events
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.sender.subscribe()
     }
-    
+
     /// Add an event handler
     pub async fn add_handler(&self, handler: Arc<dyn EventHandler>) {
         let mut handlers = self.handlers.write().await;
         handlers.push(handler);
     }
-    
+
     /// Remove an event handler by index
     pub async fn remove_handler(&self, index: usize) -> Result<()> {
         let mut handlers = self.handlers.write().await;
         if index >= handlers.len() {
-            return Err(Error::InvalidInput("Handler index out of bounds".to_string()));
+            return Err(Error::InvalidInput(
+                "Handler index out of bounds".to_string(),
+            ));
         }
         handlers.remove(index);
         Ok(())
     }
-    
+
     /// Publish an event
     pub async fn publish(&self, event: Event) -> Result<()> {
         // Send to broadcast subscribers
         if let Err(e) = self.sender.send(event.clone()) {
             tracing::warn!("Failed to broadcast event: {}", e);
         }
-        
+
         // Call registered handlers
         let handlers = self.handlers.read().await;
         for handler in handlers.iter() {
@@ -156,10 +158,10 @@ impl EventBus {
                 tracing::error!("Event handler failed: {}", e);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the number of active subscribers
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()

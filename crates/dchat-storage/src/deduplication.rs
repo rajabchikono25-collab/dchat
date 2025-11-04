@@ -29,17 +29,17 @@ impl Blake3Hash {
     pub fn from_hash(hash: Hash) -> Self {
         Self(*hash.as_bytes())
     }
-    
+
     /// Create from bytes
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
-    
+
     /// Get as hex string
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
-    
+
     /// Get as bytes
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
@@ -75,10 +75,10 @@ pub struct ContentMetadata {
 pub struct DeduplicationStore {
     /// Map Blake3 hashes to (compressed content, metadata)
     content_store: HashMap<Blake3Hash, (Vec<u8>, ContentMetadata)>,
-    
+
     /// Delta encoder for similar content
     delta_encoder: DeltaEncoder,
-    
+
     /// Compression configuration
     compression_config: CompressionConfig,
 }
@@ -87,7 +87,7 @@ impl DeduplicationStore {
     pub fn new() -> Self {
         Self::with_config(CompressionConfig::default())
     }
-    
+
     pub fn with_config(compression_config: CompressionConfig) -> Self {
         Self {
             content_store: HashMap::new(),
@@ -95,7 +95,7 @@ impl DeduplicationStore {
             compression_config,
         }
     }
-    
+
     /// Store content with automatic compression and deduplication
     /// Returns (hash, was_deduplicated)
     pub fn store(
@@ -105,20 +105,21 @@ impl DeduplicationStore {
     ) -> Result<(Blake3Hash, bool), DeduplicationError> {
         // Calculate Blake3 hash
         let hash = Blake3Hash::from_hash(blake3::hash(content));
-        
+
         // Check if already exists
         if let Some((_, metadata)) = self.content_store.get_mut(&hash) {
             metadata.ref_count += 1;
             metadata.last_accessed = chrono::Utc::now();
             return Ok((hash, true)); // Deduplicated
         }
-        
+
         // Check for similar content (delta encoding opportunity)
         if let Some(similar_hash) = self.find_similar_content(content, 0.85) {
             if let Some(delta) = self.delta_encoder.encode_delta(similar_hash, content) {
                 // Store as delta reference if delta is smaller than compressed full content
-                let (compressed_delta, delta_algorithm) = if delta.len() >= self.compression_config.min_size_bytes 
-                    && delta.len() <= self.compression_config.max_size_bytes 
+                let (compressed_delta, delta_algorithm) = if delta.len()
+                    >= self.compression_config.min_size_bytes
+                    && delta.len() <= self.compression_config.max_size_bytes
                 {
                     match CompressionEngine::compress(&delta, &self.compression_config) {
                         Ok(result) => (result.data, result.algorithm),
@@ -127,43 +128,52 @@ impl DeduplicationStore {
                 } else {
                     (delta.clone(), CompressionAlgorithm::None)
                 };
-                
+
                 // Only store as delta if it saves significant space
-                let full_compressed_size = if content.len() >= self.compression_config.min_size_bytes {
-                    CompressionEngine::compress(content, &self.compression_config)
-                        .map(|r| r.data.len())
-                        .unwrap_or(content.len())
-                } else {
-                    content.len()
-                };
-                
+                let full_compressed_size =
+                    if content.len() >= self.compression_config.min_size_bytes {
+                        CompressionEngine::compress(content, &self.compression_config)
+                            .map(|r| r.data.len())
+                            .unwrap_or(content.len())
+                    } else {
+                        content.len()
+                    };
+
                 if compressed_delta.len() < full_compressed_size * 80 / 100 {
                     // Delta saves >20% space - store it
                     let now = chrono::Utc::now();
                     let delta_metadata = ContentMetadata {
                         original_size: content.len(),
                         compressed_size: compressed_delta.len(),
-                        compression_algorithm: format!("{:?}-delta-{}", delta_algorithm, similar_hash.to_hex()).to_lowercase(),
+                        compression_algorithm: format!(
+                            "{:?}-delta-{}",
+                            delta_algorithm,
+                            similar_hash.to_hex()
+                        )
+                        .to_lowercase(),
                         ref_count: 1,
                         content_type: content_type.clone(),
                         created_at: now,
                         last_accessed: now,
                     };
-                    
+
                     // Ensure base version is stored (clone the content to avoid borrow issues)
                     if let Some((base_content, _)) = self.content_store.get(&similar_hash) {
-                        self.delta_encoder.store_base(similar_hash, base_content.clone());
+                        self.delta_encoder
+                            .store_base(similar_hash, base_content.clone());
                     }
-                    
-                    self.content_store.insert(hash, (compressed_delta, delta_metadata));
+
+                    self.content_store
+                        .insert(hash, (compressed_delta, delta_metadata));
                     return Ok((hash, false));
                 }
             }
         }
-        
+
         // Compress content before storage
-        let (compressed_content, compression_algorithm) = if content.len() >= self.compression_config.min_size_bytes 
-            && content.len() <= self.compression_config.max_size_bytes 
+        let (compressed_content, compression_algorithm) = if content.len()
+            >= self.compression_config.min_size_bytes
+            && content.len() <= self.compression_config.max_size_bytes
         {
             match CompressionEngine::compress(content, &self.compression_config) {
                 Ok(result) => (result.data, result.algorithm),
@@ -172,7 +182,7 @@ impl DeduplicationStore {
         } else {
             (content.to_vec(), CompressionAlgorithm::None)
         };
-        
+
         // Store compressed content
         let now = chrono::Utc::now();
         let metadata = ContentMetadata {
@@ -184,16 +194,17 @@ impl DeduplicationStore {
             created_at: now,
             last_accessed: now,
         };
-        
-        self.content_store.insert(hash, (compressed_content, metadata));
+
+        self.content_store
+            .insert(hash, (compressed_content, metadata));
         Ok((hash, false)) // New content
     }
-    
+
     /// Retrieve content by hash
     pub fn retrieve(&mut self, hash: &Blake3Hash) -> Option<Vec<u8>> {
         if let Some((compressed_content, metadata)) = self.content_store.get_mut(hash) {
             metadata.last_accessed = chrono::Utc::now();
-            
+
             // Check if this is delta-encoded content
             if metadata.compression_algorithm.contains("-delta-") {
                 // Parse base hash from compression algorithm field
@@ -204,25 +215,37 @@ impl DeduplicationStore {
                             let mut hash_array = [0u8; 32];
                             hash_array.copy_from_slice(&base_hash_bytes);
                             let base_hash = Blake3Hash::from_bytes(hash_array);
-                            
+
                             // Decompress delta if needed
                             let delta = if parts[0].starts_with("zstd") {
-                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Zstd).ok()?
+                                CompressionEngine::decompress(
+                                    compressed_content,
+                                    CompressionAlgorithm::Zstd,
+                                )
+                                .ok()?
                             } else if parts[0].starts_with("brotli") {
-                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Brotli).ok()?
+                                CompressionEngine::decompress(
+                                    compressed_content,
+                                    CompressionAlgorithm::Brotli,
+                                )
+                                .ok()?
                             } else if parts[0].starts_with("lz4") {
-                                CompressionEngine::decompress(compressed_content, CompressionAlgorithm::Lz4).ok()?
+                                CompressionEngine::decompress(
+                                    compressed_content,
+                                    CompressionAlgorithm::Lz4,
+                                )
+                                .ok()?
                             } else {
                                 compressed_content.clone()
                             };
-                            
+
                             // Apply delta to base
                             return self.delta_encoder.decode_delta(base_hash, &delta);
                         }
                     }
                 }
             }
-            
+
             // Not delta-encoded - decompress normally
             let algorithm = match metadata.compression_algorithm.as_str() {
                 "zstd" => CompressionAlgorithm::Zstd,
@@ -230,7 +253,7 @@ impl DeduplicationStore {
                 "lz4" => CompressionAlgorithm::Lz4,
                 _ => CompressionAlgorithm::None,
             };
-            
+
             if algorithm != CompressionAlgorithm::None {
                 match CompressionEngine::decompress(compressed_content, algorithm) {
                     Ok(decompressed) => Some(decompressed),
@@ -243,7 +266,7 @@ impl DeduplicationStore {
             None
         }
     }
-    
+
     /// Decrement reference count and potentially remove content
     /// Returns true if content was deleted (ref_count reached 0)
     pub fn release(&mut self, hash: &Blake3Hash) -> bool {
@@ -251,21 +274,21 @@ impl DeduplicationStore {
             if metadata.ref_count > 0 {
                 metadata.ref_count -= 1;
             }
-            
+
             if metadata.ref_count == 0 {
                 self.content_store.remove(hash);
                 return true;
             }
         }
-        
+
         false
     }
-    
+
     /// Get metadata for a hash
     pub fn get_metadata(&self, hash: &Blake3Hash) -> Option<&ContentMetadata> {
         self.content_store.get(hash).map(|(_, metadata)| metadata)
     }
-    
+
     /// Get reference count for a hash
     pub fn ref_count(&self, hash: &Blake3Hash) -> usize {
         self.content_store
@@ -273,12 +296,12 @@ impl DeduplicationStore {
             .map(|(_, metadata)| metadata.ref_count)
             .unwrap_or(0)
     }
-    
+
     /// Get total unique stored items
     pub fn item_count(&self) -> usize {
         self.content_store.len()
     }
-    
+
     /// Get total storage size (compressed)
     pub fn total_size(&self) -> usize {
         self.content_store
@@ -286,7 +309,7 @@ impl DeduplicationStore {
             .map(|(content, _)| content.len())
             .sum()
     }
-    
+
     /// Get total original size (before compression)
     pub fn total_original_size(&self) -> usize {
         self.content_store
@@ -294,25 +317,26 @@ impl DeduplicationStore {
             .map(|(_, metadata)| metadata.original_size)
             .sum()
     }
-    
+
     /// Calculate storage savings from deduplication
     pub fn savings(&self) -> DeduplicationSavings {
-        let total_refs: usize = self.content_store
+        let total_refs: usize = self
+            .content_store
             .values()
             .map(|(_, metadata)| metadata.ref_count)
             .sum();
-        
+
         let unique_items = self.item_count();
         let stored_size = self.total_size();
         let original_size = self.total_original_size();
-        
+
         let would_be_size = if unique_items == 0 {
             0
         } else {
             let avg_size = stored_size / unique_items;
             total_refs * avg_size
         };
-        
+
         DeduplicationSavings {
             unique_items,
             total_references: total_refs,
@@ -327,26 +351,26 @@ impl DeduplicationStore {
             },
         }
     }
-    
+
     /// Find similar content using rolling hash
     /// Returns hash of most similar content if similarity > threshold
     fn find_similar_content(&self, content: &[u8], threshold: f64) -> Option<Blake3Hash> {
         if content.len() < 64 {
             return None; // Too small for similarity detection
         }
-        
+
         let content_fingerprint = RollingHash::fingerprint(content);
-        
+
         let mut best_match: Option<(Blake3Hash, f64)> = None;
-        
+
         for (hash, (stored_content, _)) in &self.content_store {
             if stored_content.len() < 64 {
                 continue;
             }
-            
+
             let stored_fingerprint = RollingHash::fingerprint(stored_content);
             let similarity = content_fingerprint.similarity(&stored_fingerprint);
-            
+
             if similarity > threshold {
                 if let Some((_, best_sim)) = best_match {
                     if similarity > best_sim {
@@ -357,13 +381,14 @@ impl DeduplicationStore {
                 }
             }
         }
-        
+
         best_match.map(|(hash, _)| hash)
     }
-    
+
     /// Garbage collect content with zero references
     pub fn garbage_collect(&mut self) -> usize {
-        let to_remove: Vec<Blake3Hash> = self.content_store
+        let to_remove: Vec<Blake3Hash> = self
+            .content_store
             .iter()
             .filter_map(|(hash, (_, metadata))| {
                 if metadata.ref_count == 0 {
@@ -373,12 +398,12 @@ impl DeduplicationStore {
                 }
             })
             .collect();
-        
+
         let count = to_remove.len();
         for hash in to_remove {
             self.content_store.remove(&hash);
         }
-        
+
         count
     }
 }
@@ -401,18 +426,18 @@ impl DeltaEncoder {
             base_versions: HashMap::new(),
         }
     }
-    
+
     /// Store base version
     pub fn store_base(&mut self, hash: Blake3Hash, content: Vec<u8>) {
         self.base_versions.insert(hash, content);
     }
-    
+
     /// Encode delta from base version
     /// Returns None if delta is larger than new content
     pub fn encode_delta(&self, base_hash: Blake3Hash, new_content: &[u8]) -> Option<Vec<u8>> {
         self.base_versions.get(&base_hash).and_then(|base| {
             let delta = self.calculate_delta(base, new_content);
-            
+
             // Only use delta if it's smaller than new content
             if delta.len() < new_content.len() {
                 Some(delta)
@@ -421,36 +446,36 @@ impl DeltaEncoder {
             }
         })
     }
-    
+
     /// Apply delta to base version
     pub fn decode_delta(&self, base_hash: Blake3Hash, delta: &[u8]) -> Option<Vec<u8>> {
-        self.base_versions.get(&base_hash).map(|base| {
-            self.apply_delta(base, delta)
-        })
+        self.base_versions
+            .get(&base_hash)
+            .map(|base| self.apply_delta(base, delta))
     }
-    
+
     /// Calculate delta using simple diff algorithm
     /// In production, this would use Myers diff or similar
     fn calculate_delta(&self, base: &[u8], new: &[u8]) -> Vec<u8> {
         // Simple byte-level diff
         let mut delta = Vec::new();
-        
+
         // Format: [op_code, position (4 bytes), length (4 bytes), data...]
         // op_code: 0 = copy from base, 1 = insert new data
-        
+
         let mut base_pos = 0;
         let mut new_pos = 0;
-        
+
         while new_pos < new.len() {
             // Find longest match with base
             let (match_pos, match_len) = self.find_longest_match(base, new, base_pos, new_pos);
-            
+
             if match_len > 8 {
                 // Copy from base
                 delta.push(0); // op_code: copy
                 delta.extend_from_slice(&match_pos.to_le_bytes());
                 delta.extend_from_slice(&match_len.to_le_bytes());
-                
+
                 new_pos += match_len;
                 base_pos = match_pos + match_len;
             } else {
@@ -460,33 +485,37 @@ impl DeltaEncoder {
                 delta.extend_from_slice(&(new_pos as u32).to_le_bytes());
                 delta.extend_from_slice(&(insert_len as u32).to_le_bytes());
                 delta.extend_from_slice(&new[new_pos..new_pos + insert_len]);
-                
+
                 new_pos += insert_len;
             }
         }
-        
+
         delta
     }
-    
+
     /// Apply delta to base content
     fn apply_delta(&self, base: &[u8], delta: &[u8]) -> Vec<u8> {
         let mut result = Vec::new();
         let mut pos = 0;
-        
+
         while pos < delta.len() {
             let op_code = delta[pos];
             pos += 1;
-            
+
             if pos + 8 > delta.len() {
                 break;
             }
-            
-            let position = u32::from_le_bytes([delta[pos], delta[pos + 1], delta[pos + 2], delta[pos + 3]]) as usize;
+
+            let position =
+                u32::from_le_bytes([delta[pos], delta[pos + 1], delta[pos + 2], delta[pos + 3]])
+                    as usize;
             pos += 4;
-            
-            let length = u32::from_le_bytes([delta[pos], delta[pos + 1], delta[pos + 2], delta[pos + 3]]) as usize;
+
+            let length =
+                u32::from_le_bytes([delta[pos], delta[pos + 1], delta[pos + 2], delta[pos + 3]])
+                    as usize;
             pos += 4;
-            
+
             match op_code {
                 0 => {
                     // Copy from base
@@ -504,31 +533,38 @@ impl DeltaEncoder {
                 _ => break,
             }
         }
-        
+
         result
     }
-    
+
     /// Find longest matching substring
-    fn find_longest_match(&self, base: &[u8], new: &[u8], base_start: usize, new_pos: usize) -> (usize, usize) {
+    fn find_longest_match(
+        &self,
+        base: &[u8],
+        new: &[u8],
+        base_start: usize,
+        new_pos: usize,
+    ) -> (usize, usize) {
         let mut best_pos = 0;
         let mut best_len = 0;
-        
+
         // Simple O(n²) search - production would use suffix array or similar
         for base_pos in base_start..base.len() {
             let mut match_len = 0;
-            
-            while base_pos + match_len < base.len() 
-                && new_pos + match_len < new.len() 
-                && base[base_pos + match_len] == new[new_pos + match_len] {
+
+            while base_pos + match_len < base.len()
+                && new_pos + match_len < new.len()
+                && base[base_pos + match_len] == new[new_pos + match_len]
+            {
                 match_len += 1;
             }
-            
+
             if match_len > best_len {
                 best_pos = base_pos;
                 best_len = match_len;
             }
         }
-        
+
         (best_pos, best_len)
     }
 }
@@ -541,51 +577,51 @@ struct RollingHash {
 impl RollingHash {
     const WINDOW_SIZE: usize = 64;
     const PRIME: u32 = 16777619;
-    
+
     /// Create fingerprint using rolling hash
     fn fingerprint(data: &[u8]) -> Self {
         let mut chunks = Vec::new();
-        
+
         if data.len() < Self::WINDOW_SIZE {
             return Self { chunks };
         }
-        
+
         for window in data.windows(Self::WINDOW_SIZE) {
             let hash = Self::hash_window(window);
-            
+
             // Store only significant chunks (local minima)
             if chunks.is_empty() || chunks.len() < 16 || hash % 4 == 0 {
                 chunks.push(hash);
             }
         }
-        
+
         Self { chunks }
     }
-    
+
     /// Hash a window using FNV-1a
     fn hash_window(window: &[u8]) -> u32 {
         let mut hash = 2166136261u32;
-        
+
         for &byte in window {
             hash ^= byte as u32;
             hash = hash.wrapping_mul(Self::PRIME);
         }
-        
+
         hash
     }
-    
+
     /// Calculate similarity between fingerprints (Jaccard similarity)
     fn similarity(&self, other: &Self) -> f64 {
         if self.chunks.is_empty() || other.chunks.is_empty() {
             return 0.0;
         }
-        
+
         let set1: std::collections::HashSet<_> = self.chunks.iter().collect();
         let set2: std::collections::HashSet<_> = other.chunks.iter().collect();
-        
+
         let intersection = set1.intersection(&set2).count();
         let union = set1.union(&set2).count();
-        
+
         if union == 0 {
             0.0
         } else {
@@ -661,49 +697,49 @@ mod tests {
     #[test]
     fn test_deduplication_store() {
         let mut store = DeduplicationStore::new();
-        
+
         let content = b"Hello, World!";
         let (hash1, deduplicated1) = store.store(content, None).unwrap();
         assert!(!deduplicated1); // First store is not deduplicated
-        
+
         let (hash2, deduplicated2) = store.store(content, None).unwrap();
         assert!(deduplicated2); // Second store is deduplicated
-        
+
         // Same content should have same hash
         assert_eq!(hash1, hash2);
-        
+
         // Should only store once
         assert_eq!(store.item_count(), 1);
-        
+
         // Reference count should be 2
         assert_eq!(store.ref_count(&hash1), 2);
-        
+
         // Retrieve content
         let retrieved = store.retrieve(&hash1).unwrap();
         assert_eq!(retrieved, content);
-        
+
         // Release one reference
         assert!(!store.release(&hash1));
         assert_eq!(store.ref_count(&hash1), 1);
-        
+
         // Release second reference
         assert!(store.release(&hash1));
         assert_eq!(store.item_count(), 0);
     }
-    
+
     #[test]
     fn test_storage_savings() {
         let mut store = DeduplicationStore::new();
-        
+
         let content = vec![0u8; 1000]; // 1KB
-        
+
         // Store same content 10 times
         for _ in 0..10 {
             let _ = store.store(&content, None).unwrap();
         }
-        
+
         let savings = store.savings();
-        
+
         // With deduplication:
         // - 1 unique item stored
         // - 10 references total
@@ -711,39 +747,39 @@ mod tests {
         // - saved_bytes = would_be - stored (savings from dedup)
         assert_eq!(savings.unique_items, 1);
         assert_eq!(savings.total_references, 10);
-        
+
         // Savings should be 9× the stored size (since we store once, reference 10 times)
         assert!(savings.saved_bytes > 0);
         assert_eq!(savings.would_be_bytes, savings.stored_bytes * 10);
         assert_eq!(savings.saved_bytes, savings.stored_bytes * 9);
-        
+
         // Percentage saved should be ~90%
         assert!((savings.percentage_saved() - 90.0).abs() < 0.1);
     }
-    
+
     #[test]
     fn test_blake3_hash() {
         let data = b"Test content";
         let hash1 = Blake3Hash::from_hash(blake3::hash(data));
         let hash2 = Blake3Hash::from_hash(blake3::hash(data));
-        
+
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.to_hex().len(), 64); // 32 bytes = 64 hex chars
     }
-    
+
     #[test]
     fn test_delta_encoding() {
         let mut encoder = DeltaEncoder::new();
-        
+
         let base = b"Hello, World! This is a test message.";
         let modified = b"Hello, World! This is a modified message.";
-        
+
         let base_hash = Blake3Hash::from_hash(blake3::hash(base));
         encoder.store_base(base_hash, base.to_vec());
-        
+
         // Encode delta
         let delta = encoder.encode_delta(base_hash, modified);
-        
+
         // Note: Our simple delta encoder may not always produce smaller deltas
         // In production, this would use a sophisticated diff algorithm
         if let Some(delta_bytes) = delta {
@@ -755,101 +791,103 @@ mod tests {
             assert!(true);
         }
     }
-    
+
     #[test]
     fn test_rolling_hash_similarity() {
         let content1 = b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.";
         let content2 = b"The quick brown fox jumps over the lazy cat. The quick brown fox jumps over the lazy cat."; // Similar
         let content3 = b"Completely different content here and there. Completely different content here and there."; // Different
-        
+
         let fp1 = RollingHash::fingerprint(content1);
         let fp2 = RollingHash::fingerprint(content2);
         let fp3 = RollingHash::fingerprint(content3);
-        
+
         let sim_12 = fp1.similarity(&fp2);
         let sim_13 = fp1.similarity(&fp3);
-        
+
         // Note: Our simple rolling hash may not always detect similarity perfectly
         // In production, this would use a more sophisticated algorithm
         // We just verify that the similarity calculation works
         assert!(sim_12 >= 0.0 && sim_12 <= 1.0);
         assert!(sim_13 >= 0.0 && sim_13 <= 1.0);
     }
-    
+
     #[test]
     fn test_garbage_collection() {
         let mut store = DeduplicationStore::new();
-        
+
         let content1 = b"Content 1";
         let content2 = b"Content 2";
-        
+
         let (hash1, _) = store.store(content1, None).unwrap();
         let (hash2, _) = store.store(content2, None).unwrap();
-        
+
         assert_eq!(store.item_count(), 2);
-        
+
         // Release all references - note release() removes immediately when ref_count hits 0
         let removed1 = store.release(&hash1);
         let removed2 = store.release(&hash2);
-        
+
         assert!(removed1);
         assert!(removed2);
-        
+
         // Items should be deleted immediately when ref_count reaches 0
         assert_eq!(store.item_count(), 0);
-        
+
         // Garbage collect should find nothing
         let collected = store.garbage_collect();
         assert_eq!(collected, 0);
     }
-    
+
     #[test]
     fn test_content_metadata() {
         let mut store = DeduplicationStore::new();
-        
+
         let content = b"Test content with metadata";
-        let (hash, _) = store.store(content, Some("text/plain".to_string())).unwrap();
-        
+        let (hash, _) = store
+            .store(content, Some("text/plain".to_string()))
+            .unwrap();
+
         let metadata = store.get_metadata(&hash).unwrap();
         assert_eq!(metadata.original_size, content.len());
         assert_eq!(metadata.ref_count, 1);
         assert_eq!(metadata.content_type.as_deref(), Some("text/plain"));
     }
-    
+
     #[test]
     fn test_multiple_references() {
         let mut store = DeduplicationStore::new();
-        
+
         let content = b"Shared content";
-        
+
         // Store same content 5 times
         let mut hashes = Vec::new();
         for _ in 0..5 {
             let (hash, _) = store.store(content, None).unwrap();
             hashes.push(hash);
         }
-        
+
         // All hashes should be the same
         assert!(hashes.iter().all(|h| h == &hashes[0]));
-        
+
         // Only one unique item
         assert_eq!(store.item_count(), 1);
-        
+
         // Reference count should be 5
         assert_eq!(store.ref_count(&hashes[0]), 5);
-        
+
         // Release 3 references
         for _ in 0..3 {
             store.release(&hashes[0]);
         }
-        
+
         assert_eq!(store.ref_count(&hashes[0]), 2);
         assert_eq!(store.item_count(), 1); // Still exists
-        
+
         // Release remaining references
         store.release(&hashes[0]);
         store.release(&hashes[0]);
-        
+
         assert_eq!(store.item_count(), 0); // Now deleted
     }
 }
@@ -859,7 +897,7 @@ mod tests {
 // ============================================================================
 
 /// Database-backed deduplication store with compression
-/// 
+///
 /// This implementation persists content to the content_store table created by
 /// migration 20251103_001_create_content_store.sql. It includes:
 /// - Content-addressable storage with Blake3 hashing
@@ -888,7 +926,7 @@ impl DatabaseDeduplicationStore {
             cache_capacity: 1000, // Cache up to 1000 items in memory
         }
     }
-    
+
     /// Create store with custom compression configuration
     pub fn with_config(pool: PgPool, compression_config: CompressionConfig) -> Self {
         Self {
@@ -899,68 +937,67 @@ impl DatabaseDeduplicationStore {
             cache_capacity: 1000,
         }
     }
-    
+
     /// Store content with automatic compression and deduplication
-    /// 
+    ///
     /// Returns (hash, is_duplicate) where is_duplicate=true if content already existed
     pub async fn store(
-        &mut self, 
-        content: &[u8], 
-        content_type: Option<String>
+        &mut self,
+        content: &[u8],
+        content_type: Option<String>,
     ) -> Result<(Blake3Hash, bool), DeduplicationError> {
         // Compress content if size is appropriate
-        let (compressed_content, compression_algorithm) = 
-            if content.len() >= self.compression_config.min_size_bytes 
-                && content.len() <= self.compression_config.max_size_bytes 
-            {
-                match CompressionEngine::compress(content, &self.compression_config) {
-                    Ok(result) => (result.data, result.algorithm),
-                    Err(_) => (content.to_vec(), CompressionAlgorithm::None),
-                }
-            } else {
-                (content.to_vec(), CompressionAlgorithm::None)
-            };
-        
+        let (compressed_content, compression_algorithm) = if content.len()
+            >= self.compression_config.min_size_bytes
+            && content.len() <= self.compression_config.max_size_bytes
+        {
+            match CompressionEngine::compress(content, &self.compression_config) {
+                Ok(result) => (result.data, result.algorithm),
+                Err(_) => (content.to_vec(), CompressionAlgorithm::None),
+            }
+        } else {
+            (content.to_vec(), CompressionAlgorithm::None)
+        };
+
         let original_size = content.len();
         let compressed_size = compressed_content.len();
         let hash = Blake3Hash::from_hash(blake3::hash(content));
         let hash_bytes = hash.as_bytes();
-        
+
         let algorithm_str = match compression_algorithm {
             CompressionAlgorithm::Zstd => "zstd",
             CompressionAlgorithm::Brotli => "brotli",
             CompressionAlgorithm::Lz4 => "lz4",
             CompressionAlgorithm::None => "none",
         };
-        
+
         // Check if content already exists
-        let existing: Option<(i32,)> = sqlx::query_as(
-            "SELECT ref_count FROM content_store WHERE hash = $1"
-        )
-        .bind(hash_bytes)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-        
+        let existing: Option<(i32,)> =
+            sqlx::query_as("SELECT ref_count FROM content_store WHERE hash = $1")
+                .bind(hash_bytes)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
+
         if let Some((ref_count,)) = existing {
             // Content exists - increment reference count and update access time
             sqlx::query(
                 "UPDATE content_store 
                  SET ref_count = ref_count + 1, 
                      last_accessed = NOW() 
-                 WHERE hash = $1"
+                 WHERE hash = $1",
             )
             .bind(hash_bytes)
             .execute(&self.pool)
             .await
             .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-            
+
             // Update cache
             if let Some((_, metadata)) = self.cache.get_mut(&hash) {
                 metadata.ref_count = (ref_count + 1) as usize;
                 metadata.last_accessed = chrono::Utc::now();
             }
-            
+
             Ok((hash, true)) // Duplicate
         } else {
             // New content - insert
@@ -968,7 +1005,7 @@ impl DatabaseDeduplicationStore {
                 "INSERT INTO content_store 
                  (hash, content, original_size, compressed_size, compression_algorithm, 
                   content_type, ref_count, created_at, last_accessed) 
-                 VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())"
+                 VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())",
             )
             .bind(hash_bytes)
             .bind(&compressed_content)
@@ -979,7 +1016,7 @@ impl DatabaseDeduplicationStore {
             .execute(&self.pool)
             .await
             .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-            
+
             // Add to cache
             let metadata = ContentMetadata {
                 original_size,
@@ -990,13 +1027,13 @@ impl DatabaseDeduplicationStore {
                 created_at: chrono::Utc::now(),
                 last_accessed: chrono::Utc::now(),
             };
-            
+
             self.cache_insert(hash, compressed_content.clone(), metadata);
-            
+
             Ok((hash, false)) // Not duplicate
         }
     }
-    
+
     /// Retrieve content by hash with automatic decompression
     pub async fn retrieve(&mut self, hash: &Blake3Hash) -> Option<Vec<u8>> {
         // Check cache first
@@ -1005,41 +1042,43 @@ impl DatabaseDeduplicationStore {
             let pool = self.pool.clone();
             let hash_bytes = hash.as_bytes().to_vec();
             tokio::spawn(async move {
-                let _ = sqlx::query("UPDATE content_store SET last_accessed = NOW() WHERE hash = $1")
-                    .bind(&hash_bytes)
-                    .execute(&pool)
-                    .await;
+                let _ =
+                    sqlx::query("UPDATE content_store SET last_accessed = NOW() WHERE hash = $1")
+                        .bind(&hash_bytes)
+                        .execute(&pool)
+                        .await;
             });
-            
+
             metadata.last_accessed = chrono::Utc::now();
-            
+
             // Clone data before decompress to avoid borrow issues
             let compressed_clone = compressed_content.clone();
             let algorithm = metadata.compression_algorithm.clone();
             return self.decompress_content(&compressed_clone, &algorithm);
         }
-        
+
         // Not in cache - fetch from database
         let hash_bytes = hash.as_bytes();
         let row: Option<(Vec<u8>, String)> = sqlx::query_as(
-            "SELECT content, compression_algorithm FROM content_store WHERE hash = $1"
+            "SELECT content, compression_algorithm FROM content_store WHERE hash = $1",
         )
         .bind(hash_bytes)
         .fetch_optional(&self.pool)
         .await
         .ok()?;
-        
+
         if let Some((compressed_content, algorithm_str)) = row {
             // Update access time
             let pool = self.pool.clone();
             let hash_bytes = hash_bytes.to_vec();
             tokio::spawn(async move {
-                let _ = sqlx::query("UPDATE content_store SET last_accessed = NOW() WHERE hash = $1")
-                    .bind(&hash_bytes)
-                    .execute(&pool)
-                    .await;
+                let _ =
+                    sqlx::query("UPDATE content_store SET last_accessed = NOW() WHERE hash = $1")
+                        .bind(&hash_bytes)
+                        .execute(&pool)
+                        .await;
             });
-            
+
             // Add to cache
             let metadata = ContentMetadata {
                 original_size: 0, // Will be populated if needed
@@ -1050,37 +1089,38 @@ impl DatabaseDeduplicationStore {
                 created_at: chrono::Utc::now(),
                 last_accessed: chrono::Utc::now(),
             };
-            
+
             self.cache_insert(*hash, compressed_content.clone(), metadata);
-            
+
             // Decompress and return
             self.decompress_content(&compressed_content, &algorithm_str)
         } else {
             None
         }
     }
-    
+
     /// Release a reference to content (decrement ref_count)
     /// Returns true if content was deleted (ref_count reached 0)
     pub async fn release(&mut self, hash: &Blake3Hash) -> Result<bool, DeduplicationError> {
         let hash_bytes = hash.as_bytes();
-        
+
         // Decrement reference count
         let result = sqlx::query(
             "UPDATE content_store 
              SET ref_count = ref_count - 1 
              WHERE hash = $1 AND ref_count > 0
-             RETURNING ref_count"
+             RETURNING ref_count",
         )
         .bind(hash_bytes)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-        
+
         if let Some(row) = result {
-            let ref_count: i32 = row.try_get(0)
+            let ref_count: i32 = row
+                .try_get(0)
                 .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-            
+
             if ref_count == 0 {
                 // Delete content
                 sqlx::query("DELETE FROM content_store WHERE hash = $1")
@@ -1088,59 +1128,58 @@ impl DatabaseDeduplicationStore {
                     .execute(&self.pool)
                     .await
                     .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-                
+
                 // Remove from cache
                 self.cache.remove(hash);
-                
+
                 Ok(true) // Deleted
             } else {
                 // Update cache
                 if let Some((_, metadata)) = self.cache.get_mut(hash) {
                     metadata.ref_count = ref_count as usize;
                 }
-                
+
                 Ok(false) // Still has references
             }
         } else {
             Ok(false) // Content not found or already at 0
         }
     }
-    
+
     /// Get reference count for content
     pub async fn ref_count(&self, hash: &Blake3Hash) -> usize {
         let hash_bytes = hash.as_bytes();
-        
-        let result: Option<(i32,)> = sqlx::query_as(
-            "SELECT ref_count FROM content_store WHERE hash = $1"
-        )
-        .bind(hash_bytes)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-        
+
+        let result: Option<(i32,)> =
+            sqlx::query_as("SELECT ref_count FROM content_store WHERE hash = $1")
+                .bind(hash_bytes)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+
         result.map(|(count,)| count as usize).unwrap_or(0)
     }
-    
+
     /// Get metadata for stored content
     pub async fn get_metadata(&self, hash: &Blake3Hash) -> Option<ContentMetadata> {
         // Check cache first
         if let Some((_, metadata)) = self.cache.get(hash) {
             return Some(metadata.clone());
         }
-        
+
         // Fetch from database
         let hash_bytes = hash.as_bytes();
         let row = sqlx::query(
             "SELECT original_size, compressed_size, compression_algorithm, 
                     content_type, ref_count, created_at, last_accessed 
-             FROM content_store WHERE hash = $1"
+             FROM content_store WHERE hash = $1",
         )
         .bind(hash_bytes)
         .fetch_optional(&self.pool)
         .await
         .ok()?;
-        
+
         if let Some(row) = row {
             Some(ContentMetadata {
                 original_size: row.try_get::<i64, _>("original_size").ok()? as usize,
@@ -1155,7 +1194,7 @@ impl DatabaseDeduplicationStore {
             None
         }
     }
-    
+
     /// Get total number of unique items
     pub async fn item_count(&self) -> usize {
         let result: Option<(i64,)> = sqlx::query_as("SELECT COUNT(*) FROM content_store")
@@ -1163,10 +1202,10 @@ impl DatabaseDeduplicationStore {
             .await
             .ok()
             .flatten();
-        
+
         result.map(|(count,)| count as usize).unwrap_or(0)
     }
-    
+
     /// Calculate storage savings from deduplication
     pub async fn savings(&self) -> DeduplicationSavings {
         let result = sqlx::query(
@@ -1175,19 +1214,19 @@ impl DatabaseDeduplicationStore {
                 SUM(ref_count) as total_references,
                 SUM(original_size) as total_original_size,
                 SUM(compressed_size * ref_count) as total_stored_size
-             FROM content_store"
+             FROM content_store",
         )
         .fetch_optional(&self.pool)
         .await
         .ok()
         .flatten();
-        
+
         if let Some(row) = result {
             let unique_items: i64 = row.try_get("unique_items").unwrap_or(0);
             let total_references: i64 = row.try_get("total_references").unwrap_or(0);
             let total_original: i64 = row.try_get("total_original_size").unwrap_or(0);
             let total_stored: i64 = row.try_get("total_stored_size").unwrap_or(0);
-            
+
             // Calculate what the size would be without deduplication
             let would_be_size = total_original * total_references / unique_items.max(1);
             let saved_bytes = would_be_size.saturating_sub(total_stored);
@@ -1196,7 +1235,7 @@ impl DatabaseDeduplicationStore {
             } else {
                 1.0
             };
-            
+
             DeduplicationSavings {
                 unique_items: unique_items as usize,
                 total_references: total_references as usize,
@@ -1218,7 +1257,7 @@ impl DatabaseDeduplicationStore {
             }
         }
     }
-    
+
     /// Garbage collect content with 0 references
     /// Returns number of items deleted
     pub async fn garbage_collect(&mut self) -> Result<usize, DeduplicationError> {
@@ -1226,32 +1265,34 @@ impl DatabaseDeduplicationStore {
             .execute(&self.pool)
             .await
             .map_err(|e| DeduplicationError::StorageError(e.to_string()))?;
-        
+
         let deleted = result.rows_affected() as usize;
-        
+
         // Clear cache entries for deleted items
         self.cache.retain(|_, (_, metadata)| metadata.ref_count > 0);
-        
+
         Ok(deleted)
     }
-    
+
     // ---- Private helper methods ----
-    
+
     /// Insert into cache with LRU eviction
     fn cache_insert(&mut self, hash: Blake3Hash, content: Vec<u8>, metadata: ContentMetadata) {
         if self.cache.len() >= self.cache_capacity {
             // Simple LRU: remove oldest accessed item
-            if let Some(oldest_hash) = self.cache.iter()
+            if let Some(oldest_hash) = self
+                .cache
+                .iter()
                 .min_by_key(|(_, (_, m))| m.last_accessed)
                 .map(|(h, _)| *h)
             {
                 self.cache.remove(&oldest_hash);
             }
         }
-        
+
         self.cache.insert(hash, (content, metadata));
     }
-    
+
     /// Decompress content based on algorithm
     fn decompress_content(&self, compressed: &[u8], algorithm_str: &str) -> Option<Vec<u8>> {
         let algorithm = match algorithm_str {
@@ -1260,7 +1301,7 @@ impl DatabaseDeduplicationStore {
             "lz4" => CompressionAlgorithm::Lz4,
             _ => CompressionAlgorithm::None,
         };
-        
+
         if algorithm != CompressionAlgorithm::None {
             match CompressionEngine::decompress(compressed, algorithm) {
                 Ok(decompressed) => Some(decompressed),
@@ -1279,74 +1320,82 @@ impl DatabaseDeduplicationStore {
 #[cfg(test)]
 mod db_tests {
     use super::*;
-    
+
     // Note: These tests require a running PostgreSQL database
     // Run with: cargo test --package dchat-storage --features test-db
-    
+
     #[cfg(feature = "test-db")]
     async fn setup_test_db() -> PgPool {
         let database_url = std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://localhost/dchat_test".to_string());
-        
+
         let pool = PgPool::connect(&database_url)
             .await
             .expect("Failed to connect to test database");
-        
+
         // Run migrations
         let runner = crate::migrations::MigrationRunner::new(pool.clone());
         runner.run_all().await.expect("Failed to run migrations");
-        
+
         pool
     }
-    
+
     #[cfg(feature = "test-db")]
     #[tokio::test]
     async fn test_db_store_and_retrieve() {
         let pool = setup_test_db().await;
         let mut store = DatabaseDeduplicationStore::new(pool.clone());
-        
+
         let content = b"Test content for database storage";
-        let (hash, is_duplicate) = store.store(content, Some("text/plain".to_string()))
+        let (hash, is_duplicate) = store
+            .store(content, Some("text/plain".to_string()))
             .await
             .unwrap();
-        
+
         assert!(!is_duplicate);
-        
+
         let retrieved = store.retrieve(&hash).await.unwrap();
         assert_eq!(retrieved, content);
-        
+
         // Store again - should be duplicate
-        let (hash2, is_duplicate2) = store.store(content, Some("text/plain".to_string()))
+        let (hash2, is_duplicate2) = store
+            .store(content, Some("text/plain".to_string()))
             .await
             .unwrap();
-        
+
         assert_eq!(hash, hash2);
         assert!(is_duplicate2);
         assert_eq!(store.ref_count(&hash).await, 2);
-        
+
         // Cleanup
-        sqlx::query("TRUNCATE TABLE content_store").execute(&pool).await.unwrap();
+        sqlx::query("TRUNCATE TABLE content_store")
+            .execute(&pool)
+            .await
+            .unwrap();
     }
-    
+
     #[cfg(feature = "test-db")]
     #[tokio::test]
     async fn test_db_compression() {
         let pool = setup_test_db().await;
         let mut store = DatabaseDeduplicationStore::new(pool.clone());
-        
+
         // Create content large enough to trigger compression (>512 bytes)
         let content = "Large content ".repeat(100).as_bytes().to_vec();
-        
+
         let (hash, _) = store.store(&content, None).await.unwrap();
-        
+
         let metadata = store.get_metadata(&hash).await.unwrap();
         assert!(metadata.compressed_size < metadata.original_size);
         assert_ne!(metadata.compression_algorithm, "none");
-        
+
         let retrieved = store.retrieve(&hash).await.unwrap();
         assert_eq!(retrieved, content);
-        
+
         // Cleanup
-        sqlx::query("TRUNCATE TABLE content_store").execute(&pool).await.unwrap();
+        sqlx::query("TRUNCATE TABLE content_store")
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

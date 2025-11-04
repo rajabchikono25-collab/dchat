@@ -173,10 +173,7 @@ impl IPFSBackupConfig {
                 "http://ipfs-node-2:5001".to_string(),
                 "http://ipfs-node-3:5001".to_string(),
             ],
-            pinning_services: vec![
-                "pinata".to_string(),
-                "infura".to_string(),
-            ],
+            pinning_services: vec!["pinata".to_string(), "infura".to_string()],
             replication_factor: 3,
             use_cidv1: true,
         }
@@ -249,7 +246,7 @@ pub struct SnapshotSchedule {
 impl SnapshotSchedule {
     pub fn new_production() -> Self {
         Self {
-            full_interval_hours: 6,  // 4 full snapshots per day
+            full_interval_hours: 6, // 4 full snapshots per day
             incremental_interval_hours: 1,
             retention: RetentionPolicy::new_production(),
             compression: CompressionAlgorithm::ZSTD,
@@ -343,7 +340,7 @@ pub struct RedisBackupConfig {
     /// RDB snapshot enabled
     pub rdb_enabled: bool,
     /// RDB schedule (seconds)
-    pub rdb_schedule_seconds: Vec<(u32, u32)>,  // (seconds, changes)
+    pub rdb_schedule_seconds: Vec<(u32, u32)>, // (seconds, changes)
     /// AOF enabled
     pub aof_enabled: bool,
     /// AOF fsync policy
@@ -480,7 +477,7 @@ pub struct VerificationConfig {
 impl VerificationConfig {
     pub fn new_production() -> Self {
         Self {
-            schedule: "0 2 * * 0".to_string(),  // Weekly on Sunday 2am
+            schedule: "0 2 * * 0".to_string(), // Weekly on Sunday 2am
             test_databases: vec![
                 "cockroachdb".to_string(),
                 "redis".to_string(),
@@ -591,9 +588,11 @@ impl DisasterRecoveryConfig {
         mapping.insert(BackupTier::Cold, self.ipfs.nodes.clone());
         mapping.insert(
             BackupTier::Local,
-            self.local_replicas.nodes.iter()
+            self.local_replicas
+                .nodes
+                .iter()
                 .map(|n| format!("{}:{}", n.host, n.port))
-                .collect()
+                .collect(),
         );
         mapping
     }
@@ -603,13 +602,13 @@ impl DisasterRecoveryConfig {
         // Assume 100GB data per full snapshot
         let full_snapshot_gb = 100.0;
         let incremental_gb = 10.0;
-        
+
         let full_per_day = self.snapshot_schedule.snapshots_per_day();
         let incremental_per_day = 24 / self.snapshot_schedule.incremental_interval_hours;
-        
-        let daily_gb = (full_per_day as f64 * full_snapshot_gb) + 
-                       (incremental_per_day as f64 * incremental_gb);
-        
+
+        let daily_gb = (full_per_day as f64 * full_snapshot_gb)
+            + (incremental_per_day as f64 * incremental_gb);
+
         // Apply compression ratio
         let compression_ratio = match self.snapshot_schedule.compression {
             CompressionAlgorithm::ZSTD => 3.0,
@@ -617,27 +616,27 @@ impl DisasterRecoveryConfig {
             CompressionAlgorithm::Snappy => 2.5,
             CompressionAlgorithm::None => 1.0,
         };
-        
-        (daily_gb / compression_ratio) / 1024.0  // Convert to TB
+
+        (daily_gb / compression_ratio) / 1024.0 // Convert to TB
     }
 
     /// Estimate monthly cost (USD)
     pub fn estimate_monthly_cost(&self) -> f64 {
         let daily_storage_tb = self.calculate_daily_storage();
         let monthly_storage_tb = daily_storage_tb * 30.0;
-        
+
         // S3 Intelligent Tiering: $0.0125/GB/month = $12.50/TB/month
         let s3_cost = monthly_storage_tb * 1024.0 * 0.0125;
-        
+
         // GCS Nearline: $0.010/GB/month = $10/TB/month
         let gcs_cost = (monthly_storage_tb * 0.5) * 1024.0 * 0.010;
-        
+
         // IPFS pinning: ~$0.08/GB/month = $80/TB/month
         let ipfs_cost = (monthly_storage_tb * 0.2) * 1024.0 * 0.08;
-        
+
         // Local replicas: $0.08/GB/month = $80/TB/month (EBS volumes)
         let local_cost = (monthly_storage_tb * 0.3) * 1024.0 * 0.08;
-        
+
         s3_cost + gcs_cost + ipfs_cost + local_cost
     }
 
@@ -651,32 +650,36 @@ impl DisasterRecoveryConfig {
     pub fn verify_configuration(&self) -> Result<(), BackupError> {
         // Check snapshot schedule
         if self.snapshot_schedule.full_interval_hours == 0 {
-            return Err(BackupError::ConfigError("Snapshot interval cannot be 0".to_string()));
+            return Err(BackupError::ConfigError(
+                "Snapshot interval cannot be 0".to_string(),
+            ));
         }
 
         // Check retention policy
         if self.snapshot_schedule.retention.full_days == 0 {
-            return Err(BackupError::ConfigError("Retention days cannot be 0".to_string()));
+            return Err(BackupError::ConfigError(
+                "Retention days cannot be 0".to_string(),
+            ));
         }
 
         // Check PITR window
         if self.wal_archive.pitr_window_days > self.snapshot_schedule.retention.wal_days {
             return Err(BackupError::ConfigError(
-                "PITR window cannot exceed WAL retention".to_string()
+                "PITR window cannot exceed WAL retention".to_string(),
             ));
         }
 
         // Check replica count
         if self.local_replicas.nodes.len() < 2 {
             return Err(BackupError::ConfigError(
-                "At least 2 local replicas required".to_string()
+                "At least 2 local replicas required".to_string(),
             ));
         }
 
         // Check IPFS replication
         if self.ipfs.replication_factor < 3 {
             return Err(BackupError::ConfigError(
-                "IPFS replication factor should be >= 3".to_string()
+                "IPFS replication factor should be >= 3".to_string(),
             ));
         }
 
@@ -686,10 +689,10 @@ impl DisasterRecoveryConfig {
     /// Get recovery time objective (RTO) in minutes
     pub fn get_rto_minutes(&self, tier: BackupTier) -> u32 {
         match tier {
-            BackupTier::Local => 15,   // 15 minutes from local replica
-            BackupTier::Hot => 60,     // 1 hour from S3
-            BackupTier::Warm => 240,   // 4 hours from GCS
-            BackupTier::Cold => 1440,  // 24 hours from IPFS
+            BackupTier::Local => 15,  // 15 minutes from local replica
+            BackupTier::Hot => 60,    // 1 hour from S3
+            BackupTier::Warm => 240,  // 4 hours from GCS
+            BackupTier::Cold => 1440, // 24 hours from IPFS
         }
     }
 
@@ -697,7 +700,7 @@ impl DisasterRecoveryConfig {
     pub fn get_rpo_minutes(&self) -> u32 {
         // Based on WAL archiving frequency (continuous) and incremental backups
         if self.wal_archive.compression {
-            5  // 5 minutes with WAL
+            5 // 5 minutes with WAL
         } else {
             self.snapshot_schedule.incremental_interval_hours * 60
         }
@@ -768,7 +771,7 @@ mod tests {
     #[test]
     fn test_disaster_recovery_complete() {
         let config = DisasterRecoveryConfig::new_production();
-        
+
         // Verify all components initialized
         assert_eq!(config.s3.bucket, "dchat-backups-hot");
         assert_eq!(config.gcs.bucket, "dchat-backups-warm");
@@ -776,11 +779,11 @@ mod tests {
         assert_eq!(config.local_replicas.nodes.len(), 3);
         assert_eq!(config.snapshot_schedule.full_interval_hours, 6);
         assert_eq!(config.wal_archive.pitr_window_days, 14);
-        
+
         // Verify monitoring
         assert!(config.monitoring.metrics_enabled);
         assert_eq!(config.monitoring.alert_rules.len(), 3);
-        
+
         // Verify verification config
         assert_eq!(config.verification.test_databases.len(), 3);
         assert!(config.verification.alert_on_failure);
@@ -790,13 +793,13 @@ mod tests {
     fn test_tier_mapping() {
         let config = DisasterRecoveryConfig::new_production();
         let mapping = config.get_tier_mapping();
-        
+
         assert_eq!(mapping.len(), 4);
         assert!(mapping.contains_key(&BackupTier::Hot));
         assert!(mapping.contains_key(&BackupTier::Warm));
         assert!(mapping.contains_key(&BackupTier::Cold));
         assert!(mapping.contains_key(&BackupTier::Local));
-        
+
         assert_eq!(mapping.get(&BackupTier::Hot).unwrap().len(), 1);
         assert_eq!(mapping.get(&BackupTier::Cold).unwrap().len(), 3);
         assert_eq!(mapping.get(&BackupTier::Local).unwrap().len(), 3);
@@ -806,7 +809,7 @@ mod tests {
     fn test_storage_calculation() {
         let config = DisasterRecoveryConfig::new_production();
         let daily_tb = config.calculate_daily_storage();
-        
+
         // Should be reasonable (less than 1 TB per day with compression)
         assert!(daily_tb > 0.0);
         assert!(daily_tb < 1.0);
@@ -816,7 +819,7 @@ mod tests {
     fn test_cost_estimation() {
         let config = DisasterRecoveryConfig::new_production();
         let monthly_cost = config.estimate_monthly_cost();
-        
+
         // Should be reasonable (less than $1000/month)
         assert!(monthly_cost > 0.0);
         assert!(monthly_cost < 1000.0);
@@ -832,13 +835,13 @@ mod tests {
     #[test]
     fn test_rto_rpo() {
         let config = DisasterRecoveryConfig::new_production();
-        
+
         // RTO checks
         assert_eq!(config.get_rto_minutes(BackupTier::Local), 15);
         assert_eq!(config.get_rto_minutes(BackupTier::Hot), 60);
         assert_eq!(config.get_rto_minutes(BackupTier::Warm), 240);
         assert_eq!(config.get_rto_minutes(BackupTier::Cold), 1440);
-        
+
         // RPO check (with WAL should be 5 minutes)
         assert_eq!(config.get_rpo_minutes(), 5);
     }
@@ -848,7 +851,7 @@ mod tests {
         let full_restore = RestoreConfig::new_full_restore();
         assert_eq!(full_restore.restore_type, RestoreType::Full);
         assert!(full_restore.verify_after_restore);
-        
+
         let pitr_restore = RestoreConfig::new_pitr_restore("2025-01-01T00:00:00Z".to_string());
         assert_eq!(pitr_restore.restore_type, RestoreType::PointInTime);
         assert!(pitr_restore.target_time.is_some());
@@ -857,20 +860,20 @@ mod tests {
     #[test]
     fn test_backend_configs() {
         let config = BackendBackupConfig::new_production();
-        
+
         // CockroachDB
         assert!(config.cockroachdb.destination.starts_with("s3://"));
         assert_eq!(config.cockroachdb.full_schedule, "0 */6 * * *");
-        
+
         // Redis
         assert!(config.redis.rdb_enabled);
         assert!(config.redis.aof_enabled);
         assert_eq!(config.redis.rdb_schedule_seconds.len(), 3);
-        
+
         // MinIO
         assert!(config.minio.versioning);
         assert!(config.minio.replication_target.is_some());
-        
+
         // TiKV
         assert_eq!(config.tikv.rate_limit_mb, 100);
         assert!(config.tikv.checksum_verify);

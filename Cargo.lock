@@ -1145,6 +1145,7 @@ dependencies = [
  "dchat-chain",
  "dchat-core",
  "dchat-crypto",
+ "dchat-deployment",
  "dchat-distribution",
  "dchat-governance",
  "dchat-identity",

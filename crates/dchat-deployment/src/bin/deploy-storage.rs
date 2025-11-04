@@ -210,43 +210,42 @@ async fn main() -> Result<()> {
 }
 
 async fn generate_config(output: &Path, network: &str) -> Result<()> {
-    println!("🔧 Generating distributed storage configuration for '{}'...", network);
+    println!(
+        "🔧 Generating distributed storage configuration for '{}'...",
+        network
+    );
 
-    fs::create_dir_all(output)
-        .context("Failed to create output directory")?;
+    fs::create_dir_all(output).context("Failed to create output directory")?;
 
     let config = DistributedStorageConfig::new_recommended(network.to_string());
-    
+
     // Verify configuration
-    config.verify_all()
+    config
+        .verify_all()
         .context("Configuration validation failed")?;
 
     // Save CockroachDB config
     let cockroach_file = output.join("cockroachdb-config.json");
     let cockroach_json = serde_json::to_string_pretty(&config.cockroachdb)?;
-    fs::write(&cockroach_file, cockroach_json)
-        .context("Failed to write CockroachDB config")?;
+    fs::write(&cockroach_file, cockroach_json).context("Failed to write CockroachDB config")?;
     println!("✅ CockroachDB config: {}", cockroach_file.display());
 
     // Save Redis config
     let redis_file = output.join("redis-config.json");
     let redis_json = serde_json::to_string_pretty(&config.redis)?;
-    fs::write(&redis_file, redis_json)
-        .context("Failed to write Redis config")?;
+    fs::write(&redis_file, redis_json).context("Failed to write Redis config")?;
     println!("✅ Redis config: {}", redis_file.display());
 
     // Save MinIO config
     let minio_file = output.join("minio-config.json");
     let minio_json = serde_json::to_string_pretty(&config.minio)?;
-    fs::write(&minio_file, minio_json)
-        .context("Failed to write MinIO config")?;
+    fs::write(&minio_file, minio_json).context("Failed to write MinIO config")?;
     println!("✅ MinIO config: {}", minio_file.display());
 
     // Save TiKV config
     let tikv_file = output.join("tikv-config.json");
     let tikv_json = serde_json::to_string_pretty(&config.tikv)?;
-    fs::write(&tikv_file, tikv_json)
-        .context("Failed to write TiKV config")?;
+    fs::write(&tikv_file, tikv_json).context("Failed to write TiKV config")?;
     println!("✅ TiKV config: {}", tikv_file.display());
 
     // Create deployment summary
@@ -262,8 +261,7 @@ async fn generate_config(output: &Path, network: &str) -> Result<()> {
 
     let summary_file = output.join("deployment-summary.json");
     let summary_json = serde_json::to_string_pretty(&summary)?;
-    fs::write(&summary_file, summary_json)
-        .context("Failed to write summary")?;
+    fs::write(&summary_file, summary_json).context("Failed to write summary")?;
 
     println!("\n📊 Deployment Summary:");
     println!("  Total nodes: {}", summary.total_nodes);
@@ -271,31 +269,37 @@ async fn generate_config(output: &Path, network: &str) -> Result<()> {
     println!("  - Redis: {} nodes", summary.redis_nodes);
     println!("  - MinIO: {} nodes", summary.minio_nodes);
     println!("  - TiKV: {} nodes (PD + storage)", summary.tikv_nodes);
-    println!("  Estimated cost: ${:.2}/month", summary.estimated_monthly_cost_usd);
+    println!(
+        "  Estimated cost: ${:.2}/month",
+        summary.estimated_monthly_cost_usd
+    );
 
     Ok(())
 }
 
 async fn deploy_cockroachdb(config_path: &Path, node: &str, key: Option<&Path>) -> Result<()> {
     println!("🚀 Deploying CockroachDB cluster...");
-    
+
     let config_json = fs::read_to_string(config_path)?;
     let config: CockroachDBConfig = serde_json::from_str(&config_json)?;
 
     let nodes_to_deploy: Vec<&CockroachDBNode> = if node == "all" {
         config.nodes.iter().collect()
     } else {
-        let index: usize = node.parse()
-            .context("Node must be a number or 'all'")?;
+        let index: usize = node.parse().context("Node must be a number or 'all'")?;
         vec![&config.nodes[index]]
     };
 
     for (i, node) in nodes_to_deploy.iter().enumerate() {
-        println!("\n[{}/{}] Deploying CockroachDB node: {}", 
-                 i + 1, nodes_to_deploy.len(), node.node_id);
-        
+        println!(
+            "\n[{}/{}] Deploying CockroachDB node: {}",
+            i + 1,
+            nodes_to_deploy.len(),
+            node.node_id
+        );
+
         deploy_cockroachdb_node(&config, node, key).await?;
-        
+
         if i < nodes_to_deploy.len() - 1 {
             println!("⏱️  Waiting 10s before next node...");
             sleep(Duration::from_secs(10)).await;
@@ -303,10 +307,14 @@ async fn deploy_cockroachdb(config_path: &Path, node: &str, key: Option<&Path>) 
     }
 
     println!("\n✅ CockroachDB cluster deployment complete!");
-    println!("🔗 Admin UI: http://{}:{}", 
-             config.nodes[0].host, config.http_port);
-    println!("🔗 Connection: {}", 
-             config.connection_string("dchat_user", "<password>"));
+    println!(
+        "🔗 Admin UI: http://{}:{}",
+        config.nodes[0].host, config.http_port
+    );
+    println!(
+        "🔗 Connection: {}",
+        config.connection_string("dchat_user", "<password>")
+    );
 
     Ok(())
 }
@@ -363,39 +371,53 @@ async fn deploy_cockroachdb_node(
 
 async fn deploy_redis(config_path: &Path, node_type: &str, key: Option<&Path>) -> Result<()> {
     println!("🚀 Deploying Redis cluster ({})...", node_type);
-    
+
     let config_json = fs::read_to_string(config_path)?;
     let config: RedisConfig = serde_json::from_str(&config_json)?;
 
     let nodes_to_deploy: Vec<&RedisNode> = match node_type {
         "masters" => config.masters.iter().collect(),
         "replicas" => config.replicas.iter().collect(),
-        "all" => config.masters.iter().chain(config.replicas.iter()).collect(),
+        "all" => config
+            .masters
+            .iter()
+            .chain(config.replicas.iter())
+            .collect(),
         _ => anyhow::bail!("Invalid node_type: must be 'masters', 'replicas', or 'all'"),
     };
 
     // Deploy all masters first
-    let masters_to_deploy: Vec<&RedisNode> = nodes_to_deploy.iter()
+    let masters_to_deploy: Vec<&RedisNode> = nodes_to_deploy
+        .iter()
         .filter(|n| n.role == RedisNodeRole::Master)
         .copied()
         .collect();
 
     for (i, node) in masters_to_deploy.iter().enumerate() {
-        println!("\n[{}/{}] Deploying Redis master: {}", 
-                 i + 1, masters_to_deploy.len(), node.node_id);
+        println!(
+            "\n[{}/{}] Deploying Redis master: {}",
+            i + 1,
+            masters_to_deploy.len(),
+            node.node_id
+        );
         deploy_redis_node(&config, node, key).await?;
         sleep(Duration::from_secs(5)).await;
     }
 
     // Deploy replicas
-    let replicas_to_deploy: Vec<&RedisNode> = nodes_to_deploy.iter()
+    let replicas_to_deploy: Vec<&RedisNode> = nodes_to_deploy
+        .iter()
         .filter(|n| n.role == RedisNodeRole::Replica)
         .copied()
         .collect();
 
     for (i, node) in replicas_to_deploy.iter().enumerate() {
-        println!("\n[{}/{}] Deploying Redis replica: {}", 
-                 i + 1, replicas_to_deploy.len(), node.node_id);
+        println!(
+            "\n[{}/{}] Deploying Redis replica: {}",
+            i + 1,
+            replicas_to_deploy.len(),
+            node.node_id
+        );
         deploy_redis_node(&config, node, key).await?;
         sleep(Duration::from_secs(5)).await;
     }
@@ -441,7 +463,7 @@ async fn deploy_redis_node(
 
 async fn deploy_minio(config_path: &Path, node: &str, key: Option<&Path>) -> Result<()> {
     println!("🚀 Deploying MinIO cluster...");
-    
+
     let config_json = fs::read_to_string(config_path)?;
     let config: MinIOConfig = serde_json::from_str(&config_json)?;
 
@@ -453,15 +475,25 @@ async fn deploy_minio(config_path: &Path, node: &str, key: Option<&Path>) -> Res
     };
 
     for (i, node) in nodes_to_deploy.iter().enumerate() {
-        println!("\n[{}/{}] Deploying MinIO node: {}", 
-                 i + 1, nodes_to_deploy.len(), node.node_id);
+        println!(
+            "\n[{}/{}] Deploying MinIO node: {}",
+            i + 1,
+            nodes_to_deploy.len(),
+            node.node_id
+        );
         deploy_minio_node(&config, node, key).await?;
         sleep(Duration::from_secs(5)).await;
     }
 
     println!("\n✅ MinIO cluster deployment complete!");
-    println!("🔗 API: http://{}:{}", config.nodes[0].host, config.api_port);
-    println!("🔗 Console: http://{}:{}", config.nodes[0].host, config.console_port);
+    println!(
+        "🔗 API: http://{}:{}",
+        config.nodes[0].host, config.api_port
+    );
+    println!(
+        "🔗 Console: http://{}:{}",
+        config.nodes[0].host, config.console_port
+    );
     println!("📝 Server command: {}", config.server_command());
 
     Ok(())
@@ -479,7 +511,16 @@ async fn deploy_minio_node(
     install_minio(&node.host, key).await?;
 
     println!("  [3/6] Creating data volumes...");
-    create_directories(&node.host, &node.data_volumes.iter().map(|s| s.as_str()).collect::<Vec<_>>(), key).await?;
+    create_directories(
+        &node.host,
+        &node
+            .data_volumes
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>(),
+        key,
+    )
+    .await?;
 
     println!("  [4/6] Starting MinIO container...");
     start_minio_node(cluster, node, key).await?;
@@ -496,15 +537,19 @@ async fn deploy_minio_node(
 
 async fn deploy_tikv(config_path: &Path, component: &str, key: Option<&Path>) -> Result<()> {
     println!("🚀 Deploying TiKV cluster ({})...", component);
-    
+
     let config_json = fs::read_to_string(config_path)?;
     let config: TiKVConfig = serde_json::from_str(&config_json)?;
 
     match component {
         "pd" | "all" => {
             for (i, pd) in config.pd_nodes.iter().enumerate() {
-                println!("\n[{}/{}] Deploying TiKV PD: {}", 
-                         i + 1, config.pd_nodes.len(), pd.node_id);
+                println!(
+                    "\n[{}/{}] Deploying TiKV PD: {}",
+                    i + 1,
+                    config.pd_nodes.len(),
+                    pd.node_id
+                );
                 deploy_tikv_pd(&config, pd, key).await?;
                 sleep(Duration::from_secs(5)).await;
             }
@@ -514,8 +559,12 @@ async fn deploy_tikv(config_path: &Path, component: &str, key: Option<&Path>) ->
 
     if component == "tikv" || component == "all" {
         for (i, tikv) in config.tikv_nodes.iter().enumerate() {
-            println!("\n[{}/{}] Deploying TiKV storage: {}", 
-                     i + 1, config.tikv_nodes.len(), tikv.node_id);
+            println!(
+                "\n[{}/{}] Deploying TiKV storage: {}",
+                i + 1,
+                config.tikv_nodes.len(),
+                tikv.node_id
+            );
             deploy_tikv_storage(&config, tikv, key).await?;
             sleep(Duration::from_secs(5)).await;
         }
@@ -527,11 +576,7 @@ async fn deploy_tikv(config_path: &Path, component: &str, key: Option<&Path>) ->
     Ok(())
 }
 
-async fn deploy_tikv_pd(
-    cluster: &TiKVConfig,
-    pd: &TiKVPDNode,
-    key: Option<&Path>,
-) -> Result<()> {
+async fn deploy_tikv_pd(cluster: &TiKVConfig, pd: &TiKVPDNode, key: Option<&Path>) -> Result<()> {
     println!("  [1/6] Checking SSH connectivity to {}...", pd.host);
     check_ssh(&pd.host, key).await?;
 
@@ -611,7 +656,10 @@ async fn deploy_all(config_dir: &Path, key: Option<&Path>, parallel: bool) -> Re
 
     println!("\n✅ Complete distributed storage deployment finished!");
     println!("\n📊 Next steps:");
-    println!("  1. Run health checks: deploy-storage health-check --config-dir {}", config_dir.display());
+    println!(
+        "  1. Run health checks: deploy-storage health-check --config-dir {}",
+        config_dir.display()
+    );
     println!("  2. Migrate data: deploy-storage migrate --source postgresql --source-connection <conn> --target-config {}", config_dir.display());
     println!("  3. Configure application to use new storage backends");
 
@@ -620,7 +668,7 @@ async fn deploy_all(config_dir: &Path, key: Option<&Path>, parallel: bool) -> Re
 
 async fn health_check(config_dir: &Path, _timeout: u64) -> Result<()> {
     println!("🔍 Checking health of all storage systems...");
-    
+
     let mut all_healthy = true;
 
     // Check CockroachDB
@@ -714,8 +762,11 @@ async fn migrate(
     target_config: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    println!("🔄 Migrating data from {} to distributed storage...", source);
-    
+    println!(
+        "🔄 Migrating data from {} to distributed storage...",
+        source
+    );
+
     if dry_run {
         println!("🔍 DRY RUN MODE - no data will be modified");
     }
@@ -732,7 +783,7 @@ async fn migrate(
             println!("  3. Import schema to CockroachDB");
             println!("  4. Bulk copy data: COPY TO CSV → IMPORT INTO");
             println!("  5. Verify row counts and indexes");
-            
+
             if !dry_run {
                 println!("\n⚠️  Actual migration not implemented yet");
                 println!("    Use cockroach import or pg_dump → cockroach sql");
@@ -743,7 +794,7 @@ async fn migrate(
             println!("  1. Read all key-value pairs from SQLite");
             println!("  2. Batch insert into TiKV using RawClient");
             println!("  3. Verify key counts");
-            
+
             if !dry_run {
                 println!("\n⚠️  Actual migration not implemented yet");
                 println!("    Use TiKV RawClient API for bulk inserts");
@@ -758,11 +809,13 @@ async fn migrate(
 // Helper functions for SSH and deployment
 
 async fn check_ssh(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     let output = StdCommand::new("ssh")
         .args(&[&key_arg, &format!("root@{}", host), "echo", "OK"])
         .output()?;
-    
+
     if !output.status.success() {
         anyhow::bail!("SSH check failed for {}", host);
     }
@@ -770,7 +823,9 @@ async fn check_ssh(host: &str, key: Option<&Path>) -> Result<()> {
 }
 
 async fn install_cockroachdb(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     let script = r#"
         curl https://binaries.cockroachdb.com/cockroach-latest.linux-amd64.tgz | tar -xz
         cp -i cockroach-*/cockroach /usr/local/bin/
@@ -778,31 +833,38 @@ async fn install_cockroachdb(host: &str, key: Option<&Path>) -> Result<()> {
         cp -i cockroach-*/lib/libgeos.so /usr/local/lib/cockroach/
         cp -i cockroach-*/lib/libgeos_c.so /usr/local/lib/cockroach/
     "#;
-    
+
     StdCommand::new("ssh")
         .args(&[&key_arg, &format!("root@{}", host), script])
         .status()?;
-    
+
     Ok(())
 }
 
 async fn install_redis(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), 
-               "apt-get update && apt-get install -y redis-server redis-tools"])
+        .args(&[
+            &key_arg,
+            &format!("root@{}", host),
+            "apt-get update && apt-get install -y redis-server redis-tools",
+        ])
         .status()?;
     Ok(())
 }
 
 async fn install_minio(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     let script = r#"
         wget https://dl.min.io/server/minio/release/linux-amd64/minio
         chmod +x minio
         mv minio /usr/local/bin/
     "#;
-    
+
     StdCommand::new("ssh")
         .args(&[&key_arg, &format!("root@{}", host), script])
         .status()?;
@@ -810,13 +872,15 @@ async fn install_minio(host: &str, key: Option<&Path>) -> Result<()> {
 }
 
 async fn install_tikv(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     let script = r#"
         curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
         source ~/.bash_profile
         tiup install pd tikv
     "#;
-    
+
     StdCommand::new("ssh")
         .args(&[&key_arg, &format!("root@{}", host), script])
         .status()?;
@@ -824,9 +888,11 @@ async fn install_tikv(host: &str, key: Option<&Path>) -> Result<()> {
 }
 
 async fn create_directories(host: &str, dirs: &[&str], key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     let mkdir_cmd = format!("mkdir -p {}", dirs.join(" "));
-    
+
     StdCommand::new("ssh")
         .args(&[&key_arg, &format!("root@{}", host), &mkdir_cmd])
         .status()?;
@@ -839,21 +905,32 @@ async fn start_cockroachdb_node(
     _key: Option<&Path>,
 ) -> Result<()> {
     // In production: use systemd or Docker
-    println!("    ⚠️  Manual step: Start with 'cockroach start --join={}'", 
-             cluster.join_addresses.join(","));
+    println!(
+        "    ⚠️  Manual step: Start with 'cockroach start --join={}'",
+        cluster.join_addresses.join(",")
+    );
     Ok(())
 }
 
 async fn initialize_cockroachdb(host: &str, port: u16, key: Option<&Path>) -> Result<()> {
-    let key_arg = key.map(|k| format!("-i {}", k.display())).unwrap_or_default();
+    let key_arg = key
+        .map(|k| format!("-i {}", k.display()))
+        .unwrap_or_default();
     StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), 
-               &format!("cockroach init --host=localhost:{}", port)])
+        .args(&[
+            &key_arg,
+            &format!("root@{}", host),
+            &format!("cockroach init --host=localhost:{}", port),
+        ])
         .status()?;
     Ok(())
 }
 
-async fn configure_redis_node(_cluster: &RedisConfig, _node: &RedisNode, _key: Option<&Path>) -> Result<()> {
+async fn configure_redis_node(
+    _cluster: &RedisConfig,
+    _node: &RedisNode,
+    _key: Option<&Path>,
+) -> Result<()> {
     println!("    ⚠️  Manual step: Configure redis.conf for cluster mode");
     Ok(())
 }
@@ -868,7 +945,11 @@ async fn create_redis_cluster(_config: &RedisConfig, _key: Option<&Path>) -> Res
     Ok(())
 }
 
-async fn start_minio_node(_cluster: &MinIOConfig, _node: &MinIONode, _key: Option<&Path>) -> Result<()> {
+async fn start_minio_node(
+    _cluster: &MinIOConfig,
+    _node: &MinIONode,
+    _key: Option<&Path>,
+) -> Result<()> {
     println!("    ⚠️  Manual step: Start with 'minio server <drives>'");
     Ok(())
 }
@@ -878,7 +959,11 @@ async fn start_tikv_pd(_cluster: &TiKVConfig, _pd: &TiKVPDNode, _key: Option<&Pa
     Ok(())
 }
 
-async fn start_tikv_storage(_cluster: &TiKVConfig, _tikv: &TiKVStorageNode, _key: Option<&Path>) -> Result<()> {
+async fn start_tikv_storage(
+    _cluster: &TiKVConfig,
+    _tikv: &TiKVStorageNode,
+    _key: Option<&Path>,
+) -> Result<()> {
     println!("    ⚠️  Manual step: Start with 'tiup tikv:v6 --config=tikv.toml'");
     Ok(())
 }
@@ -886,11 +971,12 @@ async fn start_tikv_storage(_cluster: &TiKVConfig, _tikv: &TiKVStorageNode, _key
 async fn check_cockroachdb_health(host: &str, port: u16) -> Result<()> {
     let url = format!("http://{}:{}/health", host, port);
     let client = reqwest::Client::new();
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -903,7 +989,7 @@ async fn check_redis_health(host: &str, port: u16) -> Result<()> {
     let output = StdCommand::new("redis-cli")
         .args(&["-h", host, "-p", &port.to_string(), "PING"])
         .output()?;
-    
+
     if output.status.success() {
         Ok(())
     } else {
@@ -914,11 +1000,12 @@ async fn check_redis_health(host: &str, port: u16) -> Result<()> {
 async fn check_minio_health(host: &str, port: u16) -> Result<()> {
     let url = format!("http://{}:{}/minio/health/live", host, port);
     let client = reqwest::Client::new();
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -929,11 +1016,12 @@ async fn check_minio_health(host: &str, port: u16) -> Result<()> {
 async fn check_tikv_pd_health(host: &str, port: u16) -> Result<()> {
     let url = format!("http://{}:{}/pd/health", host, port);
     let client = reqwest::Client::new();
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -944,11 +1032,12 @@ async fn check_tikv_pd_health(host: &str, port: u16) -> Result<()> {
 async fn check_tikv_storage_health(host: &str, port: u16) -> Result<()> {
     let url = format!("http://{}:{}/status", host, port);
     let client = reqwest::Client::new();
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -963,11 +1052,11 @@ fn estimate_cost(config: &DistributedStorageConfig) -> f64 {
     // MinIO: 4 nodes × $100/month = $400
     // TiKV: 8 nodes × $100/month = $800
     // Total: ~$2,250/month
-    
+
     let cockroach_cost = config.cockroachdb.nodes.len() as f64 * 150.0;
     let redis_cost = (config.redis.masters.len() + config.redis.replicas.len()) as f64 * 50.0;
     let minio_cost = config.minio.nodes.len() as f64 * 100.0;
     let tikv_cost = (config.tikv.pd_nodes.len() + config.tikv.tikv_nodes.len()) as f64 * 100.0;
-    
+
     cockroach_cost + redis_cost + minio_cost + tikv_cost
 }

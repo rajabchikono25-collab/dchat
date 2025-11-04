@@ -4,13 +4,13 @@
 // for dchat storage. CockroachDB handles multi-region replication, automatic
 // failover, and horizontal scalability.
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::error::{StorageError, StorageResult};
 
@@ -34,9 +34,7 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            database_urls: vec![
-                "postgresql://dchat:password@localhost:26257/dchat".to_string(),
-            ],
+            database_urls: vec!["postgresql://dchat:password@localhost:26257/dchat".to_string()],
             max_connections: 50,
             acquire_timeout_seconds: 10,
             replication_factor: 3,
@@ -82,13 +80,20 @@ pub struct DatabaseStats {
 impl DistributedDatabase {
     /// Create new distributed database connection
     pub async fn new(config: DatabaseConfig) -> StorageResult<Self> {
-        info!("Connecting to distributed database with {} nodes", config.database_urls.len());
-        
+        info!(
+            "Connecting to distributed database with {} nodes",
+            config.database_urls.len()
+        );
+
         // Try each database URL until one succeeds
         let mut last_error = None;
         for (i, url) in config.database_urls.iter().enumerate() {
-            debug!("Attempting connection to node {}: {}", i + 1, mask_password(url));
-            
+            debug!(
+                "Attempting connection to node {}: {}",
+                i + 1,
+                mask_password(url)
+            );
+
             match PgPoolOptions::new()
                 .max_connections(config.max_connections)
                 .acquire_timeout(Duration::from_secs(config.acquire_timeout_seconds))
@@ -105,15 +110,15 @@ impl DistributedDatabase {
                 }
             }
         }
-        
+
         error!("Failed to connect to any database node");
         Err(StorageError::Database(
             last_error
                 .map(|e| e.to_string())
-                .unwrap_or_else(|| "No database URLs provided".to_string())
+                .unwrap_or_else(|| "No database URLs provided".to_string()),
         ))
     }
-    
+
     /// Insert message with geographic awareness
     pub async fn insert_message_geo(
         &self,
@@ -121,7 +126,7 @@ impl DistributedDatabase {
         region: &str,
     ) -> StorageResult<()> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         let result = tokio::time::timeout(
             query_timeout,
             sqlx::query(
@@ -141,7 +146,7 @@ impl DistributedDatabase {
             .bind(&message.content_hash)
             .execute(&self.pool)
         ).await;
-        
+
         match result {
             Ok(Ok(_)) => {
                 debug!("Inserted message {} to region {}", message.id, region);
@@ -157,11 +162,11 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Get message by ID
     pub async fn get_message(&self, message_id: Uuid) -> StorageResult<Option<MessageRow>> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         let result = tokio::time::timeout(
             query_timeout,
             sqlx::query_as::<_, MessageRow>(
@@ -171,7 +176,7 @@ impl DistributedDatabase {
             .bind(message_id)
             .fetch_optional(&self.pool)
         ).await;
-        
+
         match result {
             Ok(Ok(msg)) => Ok(msg),
             Ok(Err(e)) => {
@@ -184,7 +189,7 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Get recent messages for a user with pagination
     pub async fn get_recent_messages(
         &self,
@@ -193,7 +198,7 @@ impl DistributedDatabase {
         offset: i64,
     ) -> StorageResult<Vec<MessageRow>> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         let result = tokio::time::timeout(
             query_timeout,
             sqlx::query_as::<_, MessageRow>(
@@ -209,7 +214,7 @@ impl DistributedDatabase {
             .bind(offset)
             .fetch_all(&self.pool)
         ).await;
-        
+
         match result {
             Ok(Ok(messages)) => Ok(messages),
             Ok(Err(e)) => {
@@ -222,7 +227,7 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Get messages for a channel with pagination
     pub async fn get_channel_messages(
         &self,
@@ -231,7 +236,7 @@ impl DistributedDatabase {
         offset: i64,
     ) -> StorageResult<Vec<MessageRow>> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         let result = tokio::time::timeout(
             query_timeout,
             sqlx::query_as::<_, MessageRow>(
@@ -246,7 +251,7 @@ impl DistributedDatabase {
             .bind(offset)
             .fetch_all(&self.pool)
         ).await;
-        
+
         match result {
             Ok(Ok(messages)) => Ok(messages),
             Ok(Err(e)) => {
@@ -259,7 +264,7 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Update message tier (for lifecycle management)
     pub async fn update_message_tier(
         &self,
@@ -268,7 +273,7 @@ impl DistributedDatabase {
         s3_key: Option<&str>,
     ) -> StorageResult<()> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         let result = tokio::time::timeout(
             query_timeout,
             sqlx::query(
@@ -279,7 +284,7 @@ impl DistributedDatabase {
             .bind(message_id)
             .execute(&self.pool)
         ).await;
-        
+
         match result {
             Ok(Ok(_)) => {
                 debug!("Updated message {} to tier {}", message_id, new_tier);
@@ -295,42 +300,43 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Get database statistics
     pub async fn get_stats(&self) -> StorageResult<DatabaseStats> {
         let query_timeout = Duration::from_secs(self.config.query_timeout_seconds);
-        
+
         // Get total message count
         let total_result = tokio::time::timeout(
             query_timeout,
-            sqlx::query("SELECT COUNT(*) as count FROM messages")
-                .fetch_one(&self.pool)
-        ).await;
-        
+            sqlx::query("SELECT COUNT(*) as count FROM messages").fetch_one(&self.pool),
+        )
+        .await;
+
         let total_messages = match total_result {
             Ok(Ok(row)) => row.try_get::<i64, _>("count").unwrap_or(0),
             _ => 0,
         };
-        
+
         // Get messages by tier
         let tier_result = tokio::time::timeout(
             query_timeout,
             sqlx::query("SELECT tier, COUNT(*) as count FROM messages GROUP BY tier")
-                .fetch_all(&self.pool)
-        ).await;
-        
+                .fetch_all(&self.pool),
+        )
+        .await;
+
         let mut messages_by_tier = std::collections::HashMap::new();
         if let Ok(Ok(rows)) = tier_result {
             for row in rows {
                 if let (Ok(tier), Ok(count)) = (
                     row.try_get::<String, _>("tier"),
-                    row.try_get::<i64, _>("count")
+                    row.try_get::<i64, _>("count"),
                 ) {
                     messages_by_tier.insert(tier, count);
                 }
             }
         }
-        
+
         Ok(DatabaseStats {
             total_messages,
             messages_by_tier,
@@ -338,15 +344,15 @@ impl DistributedDatabase {
             avg_message_size: 0,
         })
     }
-    
+
     /// Health check - test database connectivity
     pub async fn health_check(&self) -> StorageResult<bool> {
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            sqlx::query("SELECT 1")
-                .fetch_one(&self.pool)
-        ).await;
-        
+            sqlx::query("SELECT 1").fetch_one(&self.pool),
+        )
+        .await;
+
         match result {
             Ok(Ok(_)) => Ok(true),
             Ok(Err(e)) => {
@@ -359,12 +365,12 @@ impl DistributedDatabase {
             }
         }
     }
-    
+
     /// Get connection pool reference (for direct queries)
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
-    
+
     /// Close database connection pool
     pub async fn close(self) {
         info!("Closing database connection pool");
@@ -387,7 +393,7 @@ fn mask_password(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_mask_password() {
         let url = "postgresql://user:password@localhost:26257/dchat";
@@ -395,7 +401,7 @@ mod tests {
         assert!(!masked.contains("password"));
         assert!(masked.contains("****"));
     }
-    
+
     #[test]
     fn test_default_config() {
         let config = DatabaseConfig::default();

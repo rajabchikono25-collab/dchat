@@ -23,22 +23,28 @@ use tracing::{error, info, warn};
 pub enum MultiRegionError {
     #[error("Insufficient validator signatures: got {got}, need {required}")]
     InsufficientSignatures { got: usize, required: usize },
-    
+
     #[error("Region diversity requirement not met: {details}")]
     RegionDiversityViolation { details: String },
-    
+
     #[error("Validator {validator_id} not found in region {region:?}")]
-    ValidatorNotFound { validator_id: String, region: GeographicRegion },
-    
+    ValidatorNotFound {
+        validator_id: String,
+        region: GeographicRegion,
+    },
+
     #[error("Health check failed for validator {validator_id}: {reason}")]
-    HealthCheckFailed { validator_id: String, reason: String },
-    
+    HealthCheckFailed {
+        validator_id: String,
+        reason: String,
+    },
+
     #[error("Byzantine behavior detected from validator {validator_id}")]
     ByzantineBehavior { validator_id: String },
-    
+
     #[error("Network partition detected: {details}")]
     NetworkPartition { details: String },
-    
+
     #[error("Invalid signature from validator {validator_id}")]
     InvalidSignature { validator_id: String },
 }
@@ -70,7 +76,7 @@ impl GeographicRegion {
             Self::MiddleEast,
         ]
     }
-    
+
     /// Returns the continent name
     pub fn name(&self) -> &str {
         match self {
@@ -90,22 +96,22 @@ impl GeographicRegion {
 pub struct ValidatorConfig {
     /// Unique identifier for this validator
     pub id: String,
-    
+
     /// Geographic region where this validator is deployed
     pub region: GeographicRegion,
-    
+
     /// RPC endpoint address
     pub rpc_address: SocketAddr,
-    
+
     /// P2P network address
     pub p2p_address: SocketAddr,
-    
+
     /// Public key for signature verification
     pub public_key: Vec<u8>,
-    
+
     /// Minimum hardware requirements
     pub hardware: HardwareRequirements,
-    
+
     /// DNS hostname for this validator
     pub hostname: String,
 }
@@ -115,13 +121,13 @@ pub struct ValidatorConfig {
 pub struct HardwareRequirements {
     /// CPU cores (minimum)
     pub cpu_cores: u32,
-    
+
     /// RAM in GB (minimum)
     pub ram_gb: u32,
-    
+
     /// Storage in GB (minimum, NVMe SSD)
     pub storage_gb: u32,
-    
+
     /// Network bandwidth in Mbps (minimum)
     pub bandwidth_mbps: u32,
 }
@@ -141,16 +147,16 @@ impl Default for HardwareRequirements {
 pub struct MultiRegionCoordinator {
     /// All configured validators by ID
     validators: HashMap<String, ValidatorConfig>,
-    
+
     /// Validators grouped by region
     validators_by_region: HashMap<GeographicRegion, Vec<String>>,
-    
+
     /// Health status of each validator
     health_status: HashMap<String, ValidatorHealth>,
-    
+
     /// BFT consensus configuration
     bft_config: BftConfig,
-    
+
     /// Local signing key (if this node is a validator)
     signing_key: Option<SigningKey>,
 }
@@ -160,13 +166,13 @@ pub struct MultiRegionCoordinator {
 pub struct BftConfig {
     /// Total number of validators
     pub total_validators: usize,
-    
+
     /// Number of signatures required for finality (typically 2f+1 where f is Byzantine nodes)
     pub required_signatures: usize,
-    
+
     /// Minimum number of distinct regions required
     pub min_regions: usize,
-    
+
     /// Maximum percentage of validators from any single region
     pub max_region_percentage: f64,
 }
@@ -187,22 +193,22 @@ impl Default for BftConfig {
 pub struct ValidatorHealth {
     /// Validator ID
     pub validator_id: String,
-    
+
     /// Current health status
     pub status: HealthStatus,
-    
+
     /// Uptime percentage (last 24 hours)
     pub uptime_percentage: f64,
-    
+
     /// Average response time in milliseconds
     pub avg_response_time_ms: u64,
-    
+
     /// Last successful health check timestamp
     pub last_check: SystemTime,
-    
+
     /// Number of consecutive failures
     pub consecutive_failures: u32,
-    
+
     /// Block height of this validator
     pub block_height: u64,
 }
@@ -220,16 +226,16 @@ pub enum HealthStatus {
 pub struct ValidatorSignature {
     /// ID of the signing validator
     pub validator_id: String,
-    
+
     /// Block hash being signed
     pub block_hash: [u8; 32],
-    
+
     /// Block height
     pub block_height: u64,
-    
+
     /// Signature bytes
     pub signature: Vec<u8>,
-    
+
     /// Timestamp of signature
     pub timestamp: SystemTime,
 }
@@ -245,23 +251,26 @@ impl MultiRegionCoordinator {
             signing_key,
         }
     }
-    
+
     /// Register a validator node
     pub fn register_validator(&mut self, config: ValidatorConfig) -> Result<()> {
         let validator_id = config.id.clone();
         let region = config.region;
-        
-        info!("Registering validator {} in region {:?}", validator_id, region);
-        
+
+        info!(
+            "Registering validator {} in region {:?}",
+            validator_id, region
+        );
+
         // Add to validators map
         self.validators.insert(validator_id.clone(), config);
-        
+
         // Add to region index
         self.validators_by_region
             .entry(region)
             .or_insert_with(Vec::new)
             .push(validator_id.clone());
-        
+
         // Initialize health status
         self.health_status.insert(
             validator_id.clone(),
@@ -275,10 +284,10 @@ impl MultiRegionCoordinator {
                 block_height: 0,
             },
         );
-        
+
         Ok(())
     }
-    
+
     /// Verify that a set of validator signatures meets BFT requirements
     pub fn verify_bft_signatures(
         &self,
@@ -293,12 +302,12 @@ impl MultiRegionCoordinator {
                 required: self.bft_config.required_signatures,
             });
         }
-        
+
         // Verify each signature
         let mut valid_signatures = Vec::new();
         let mut regions_represented = HashSet::new();
         let mut region_counts: HashMap<GeographicRegion, usize> = HashMap::new();
-        
+
         for sig in signatures {
             // Verify this is a known validator
             let validator = self.validators.get(&sig.validator_id).ok_or(
@@ -307,18 +316,16 @@ impl MultiRegionCoordinator {
                     region: GeographicRegion::NorthAmerica, // Placeholder
                 },
             )?;
-            
+
             // Verify the signature
-            let public_key = VerifyingKey::from_bytes(
-                validator.public_key.as_slice().try_into().unwrap()
-            ).map_err(|_| MultiRegionError::InvalidSignature {
-                validator_id: sig.validator_id.clone(),
-            })?;
-            
-            let signature = Signature::from_bytes(
-                sig.signature.as_slice().try_into().unwrap()
-            );
-            
+            let public_key =
+                VerifyingKey::from_bytes(validator.public_key.as_slice().try_into().unwrap())
+                    .map_err(|_| MultiRegionError::InvalidSignature {
+                        validator_id: sig.validator_id.clone(),
+                    })?;
+
+            let signature = Signature::from_bytes(sig.signature.as_slice().try_into().unwrap());
+
             // Verify signature on block hash
             if public_key.verify(block_hash, &signature).is_ok() {
                 valid_signatures.push(sig);
@@ -328,7 +335,7 @@ impl MultiRegionCoordinator {
                 warn!("Invalid signature from validator {}", sig.validator_id);
             }
         }
-        
+
         // Check if we still have enough valid signatures
         if valid_signatures.len() < self.bft_config.required_signatures {
             return Err(MultiRegionError::InsufficientSignatures {
@@ -336,7 +343,7 @@ impl MultiRegionCoordinator {
                 required: self.bft_config.required_signatures,
             });
         }
-        
+
         // Verify geographic diversity
         if regions_represented.len() < self.bft_config.min_regions {
             return Err(MultiRegionError::RegionDiversityViolation {
@@ -347,7 +354,7 @@ impl MultiRegionCoordinator {
                 ),
             });
         }
-        
+
         // Check that no single region has too many signatures
         for (region, count) in region_counts {
             let percentage = count as f64 / valid_signatures.len() as f64;
@@ -362,17 +369,17 @@ impl MultiRegionCoordinator {
                 });
             }
         }
-        
+
         info!(
             "BFT verification passed: {} valid signatures from {} regions for block {}",
             valid_signatures.len(),
             regions_represented.len(),
             block_height
         );
-        
+
         Ok(())
     }
-    
+
     /// Sign a block with this validator's key
     pub fn sign_block(
         &self,
@@ -380,15 +387,16 @@ impl MultiRegionCoordinator {
         block_hash: &[u8; 32],
         block_height: u64,
     ) -> Result<ValidatorSignature> {
-        let signing_key = self.signing_key.as_ref().ok_or(
-            MultiRegionError::ValidatorNotFound {
+        let signing_key = self
+            .signing_key
+            .as_ref()
+            .ok_or(MultiRegionError::ValidatorNotFound {
                 validator_id: validator_id.to_string(),
                 region: GeographicRegion::NorthAmerica, // Placeholder
-            },
-        )?;
-        
+            })?;
+
         let signature = signing_key.sign(block_hash);
-        
+
         Ok(ValidatorSignature {
             validator_id: validator_id.to_string(),
             block_hash: *block_hash,
@@ -397,12 +405,12 @@ impl MultiRegionCoordinator {
             timestamp: SystemTime::now(),
         })
     }
-    
+
     /// Update health status for a validator
     pub fn update_health(&mut self, validator_id: &str, health: ValidatorHealth) {
         self.health_status.insert(validator_id.to_string(), health);
     }
-    
+
     /// Get healthy validators (excluding unhealthy/unreachable)
     pub fn get_healthy_validators(&self) -> Vec<&ValidatorConfig> {
         self.validators
@@ -415,12 +423,12 @@ impl MultiRegionCoordinator {
             })
             .collect()
     }
-    
+
     /// Detect network partition
     pub fn detect_partition(&self) -> Option<String> {
         let healthy_validators = self.get_healthy_validators();
         let healthy_count = healthy_validators.len();
-        
+
         // If less than 2f+1 validators are healthy, we may have a partition
         if healthy_count < self.bft_config.required_signatures {
             return Some(format!(
@@ -430,13 +438,13 @@ impl MultiRegionCoordinator {
                 self.bft_config.required_signatures
             ));
         }
-        
+
         // Check if healthy validators are spread across enough regions
         let mut regions: HashSet<GeographicRegion> = HashSet::new();
         for validator in healthy_validators {
             regions.insert(validator.region);
         }
-        
+
         if regions.len() < self.bft_config.min_regions {
             return Some(format!(
                 "Healthy validators only in {} regions (need {})",
@@ -444,14 +452,14 @@ impl MultiRegionCoordinator {
                 self.bft_config.min_regions
             ));
         }
-        
+
         None
     }
-    
+
     /// Get validator statistics by region
     pub fn get_region_stats(&self) -> HashMap<GeographicRegion, RegionStats> {
         let mut stats: HashMap<GeographicRegion, RegionStats> = HashMap::new();
-        
+
         for (region, validator_ids) in &self.validators_by_region {
             let total = validator_ids.len();
             let healthy = validator_ids
@@ -463,7 +471,7 @@ impl MultiRegionCoordinator {
                         .unwrap_or(false)
                 })
                 .count();
-            
+
             stats.insert(
                 *region,
                 RegionStats {
@@ -473,7 +481,7 @@ impl MultiRegionCoordinator {
                 },
             );
         }
-        
+
         stats
     }
 }
@@ -489,11 +497,11 @@ pub struct RegionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn create_test_validator(id: &str, region: GeographicRegion) -> ValidatorConfig {
         let signing_key = SigningKey::generate(&mut rand::thread_rng());
         let public_key = signing_key.verifying_key();
-        
+
         ValidatorConfig {
             id: id.to_string(),
             region,
@@ -504,41 +512,70 @@ mod tests {
             hostname: format!("validator-{}.dchat.network", id),
         }
     }
-    
+
     #[test]
     fn test_validator_registration() {
         let mut coordinator = MultiRegionCoordinator::new(BftConfig::default(), None);
-        
+
         let validator = create_test_validator("us-east-1", GeographicRegion::NorthAmerica);
         coordinator.register_validator(validator).unwrap();
-        
+
         assert_eq!(coordinator.validators.len(), 1);
-        assert_eq!(coordinator.validators_by_region[&GeographicRegion::NorthAmerica].len(), 1);
+        assert_eq!(
+            coordinator.validators_by_region[&GeographicRegion::NorthAmerica].len(),
+            1
+        );
     }
-    
+
     #[test]
     fn test_geographic_diversity() {
         let mut coordinator = MultiRegionCoordinator::new(BftConfig::default(), None);
-        
+
         // Register validators across multiple regions
-        coordinator.register_validator(create_test_validator("us-east", GeographicRegion::NorthAmerica)).unwrap();
-        coordinator.register_validator(create_test_validator("us-west", GeographicRegion::NorthAmerica)).unwrap();
-        coordinator.register_validator(create_test_validator("eu-west", GeographicRegion::Europe)).unwrap();
-        coordinator.register_validator(create_test_validator("eu-central", GeographicRegion::Europe)).unwrap();
-        coordinator.register_validator(create_test_validator("asia-se", GeographicRegion::Asia)).unwrap();
-        coordinator.register_validator(create_test_validator("asia-ne", GeographicRegion::Asia)).unwrap();
-        coordinator.register_validator(create_test_validator("sa-east", GeographicRegion::SouthAmerica)).unwrap();
-        
+        coordinator
+            .register_validator(create_test_validator(
+                "us-east",
+                GeographicRegion::NorthAmerica,
+            ))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator(
+                "us-west",
+                GeographicRegion::NorthAmerica,
+            ))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator("eu-west", GeographicRegion::Europe))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator(
+                "eu-central",
+                GeographicRegion::Europe,
+            ))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator("asia-se", GeographicRegion::Asia))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator("asia-ne", GeographicRegion::Asia))
+            .unwrap();
+        coordinator
+            .register_validator(create_test_validator(
+                "sa-east",
+                GeographicRegion::SouthAmerica,
+            ))
+            .unwrap();
+
         let stats = coordinator.get_region_stats();
         assert_eq!(stats.len(), 4); // 4 distinct regions
         assert_eq!(stats[&GeographicRegion::NorthAmerica].total_validators, 2);
         assert_eq!(stats[&GeographicRegion::Europe].total_validators, 2);
     }
-    
+
     #[test]
     fn test_partition_detection() {
         let mut coordinator = MultiRegionCoordinator::new(BftConfig::default(), None);
-        
+
         // Register 7 validators
         for i in 0..7 {
             let region = match i % 4 {
@@ -547,12 +584,14 @@ mod tests {
                 2 => GeographicRegion::Asia,
                 _ => GeographicRegion::SouthAmerica,
             };
-            coordinator.register_validator(create_test_validator(&format!("v{}", i), region)).unwrap();
+            coordinator
+                .register_validator(create_test_validator(&format!("v{}", i), region))
+                .unwrap();
         }
-        
+
         // All healthy - no partition
         assert!(coordinator.detect_partition().is_none());
-        
+
         // Mark some validators as unhealthy
         for i in 0..4 {
             let validator_id = format!("v{}", i);
@@ -560,7 +599,7 @@ mod tests {
                 health.status = HealthStatus::Unreachable;
             }
         }
-        
+
         // Should detect partition (only 3 healthy validators, need 5)
         assert!(coordinator.detect_partition().is_some());
     }

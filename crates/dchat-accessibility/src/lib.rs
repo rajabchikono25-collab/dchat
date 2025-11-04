@@ -230,11 +230,7 @@ impl AccessibilityManager {
 
     /// Get focusable elements in tab order
     pub fn get_focus_order(&self) -> Vec<&AccessibleElement> {
-        let mut focusable: Vec<_> = self
-            .elements
-            .values()
-            .filter(|e| e.is_focusable)
-            .collect();
+        let mut focusable: Vec<_> = self.elements.values().filter(|e| e.is_focusable).collect();
 
         focusable.sort_by_key(|e| e.tab_index.unwrap_or(0));
         focusable
@@ -338,7 +334,9 @@ mod tests {
         };
 
         manager.register_element(element).unwrap();
-        manager.update_label("link1", "New Label".to_string()).unwrap();
+        manager
+            .update_label("link1", "New Label".to_string())
+            .unwrap();
 
         let updated = manager.get_element("link1").unwrap();
         assert_eq!(updated.label, "New Label");
@@ -434,7 +432,8 @@ mod tests {
         let light_gray = Color::new(200, 200, 200);
         let white = Color::new(255, 255, 255);
 
-        let passes = AccessibilityManager::check_contrast(&light_gray, &white, WcagLevel::AA, false);
+        let passes =
+            AccessibilityManager::check_contrast(&light_gray, &white, WcagLevel::AA, false);
         assert!(!passes);
     }
 
@@ -480,7 +479,7 @@ mod tests {
             label: "Test Button".to_string(), // Has label but missing other attributes
             description: None,
             is_focusable: true,
-            tab_index: None, // Missing tab index
+            tab_index: None,                 // Missing tab index
             aria_attributes: HashMap::new(), // Missing aria-label
         };
 

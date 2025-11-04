@@ -108,7 +108,10 @@ impl EscrowManager {
         let escrow = Escrow {
             id: escrow_id,
             listing_id,
-            escrow_type: EscrowType::TwoParty { buyer: buyer.clone(), seller: seller.clone() },
+            escrow_type: EscrowType::TwoParty {
+                buyer: buyer.clone(),
+                seller: seller.clone(),
+            },
             amount,
             state: EscrowState::Locked,
             created_at: now,
@@ -139,7 +142,10 @@ impl EscrowManager {
         let escrow = Escrow {
             id: escrow_id,
             listing_id,
-            escrow_type: EscrowType::MultiParty { buyer: buyer.clone(), recipients },
+            escrow_type: EscrowType::MultiParty {
+                buyer: buyer.clone(),
+                recipients,
+            },
             amount: total,
             state: EscrowState::Locked,
             created_at: now,
@@ -288,8 +294,7 @@ impl EscrowManager {
 
         for (id, escrow) in escrows.iter_mut() {
             // Auto-refund if locked and expired
-            if (escrow.state == EscrowState::Locked
-                || escrow.state == EscrowState::AwaitingRelease)
+            if (escrow.state == EscrowState::Locked || escrow.state == EscrowState::AwaitingRelease)
                 && now > escrow.locked_until
             {
                 escrow.state = EscrowState::Expired;
@@ -446,7 +451,10 @@ mod tests {
 
         // Buyer raises dispute
         manager
-            .raise_dispute(escrow_id, &buyer, DisputeReason::ItemNotAsDescribed,
+            .raise_dispute(
+                escrow_id,
+                &buyer,
+                DisputeReason::ItemNotAsDescribed,
                 "Wrong color".to_string(),
             )
             .unwrap();
@@ -467,7 +475,10 @@ mod tests {
             .unwrap();
 
         manager
-            .raise_dispute(escrow_id, &buyer, DisputeReason::ItemNotReceived,
+            .raise_dispute(
+                escrow_id,
+                &buyer,
+                DisputeReason::ItemNotReceived,
                 "Never arrived".to_string(),
             )
             .unwrap();
@@ -492,7 +503,10 @@ mod tests {
             .unwrap();
 
         manager
-            .raise_dispute(escrow_id, &buyer, DisputeReason::QualityIssue,
+            .raise_dispute(
+                escrow_id,
+                &buyer,
+                DisputeReason::QualityIssue,
                 "Minor issue".to_string(),
             )
             .unwrap();
@@ -517,7 +531,10 @@ mod tests {
             .unwrap();
 
         manager
-            .raise_dispute(escrow_id, &buyer, DisputeReason::QualityIssue,
+            .raise_dispute(
+                escrow_id,
+                &buyer,
+                DisputeReason::QualityIssue,
                 "Damaged".to_string(),
             )
             .unwrap();
@@ -620,4 +637,3 @@ mod tests {
         }
     }
 }
-

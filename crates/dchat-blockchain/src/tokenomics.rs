@@ -33,11 +33,11 @@ pub struct TokenSupplyConfig {
 impl Default for TokenSupplyConfig {
     fn default() -> Self {
         Self {
-            initial_supply: 100_000_000_000, // 100 billion tokens
+            initial_supply: 100_000_000_000,     // 100 billion tokens
             max_supply: Some(1_000_000_000_000), // 1 trillion cap
-            inflation_rate_bps: 500, // 5% annual
-            inflation_interval_seconds: 15, // per block
-            burn_rate_bps: 100, // 1% of transactions burned
+            inflation_rate_bps: 500,             // 5% annual
+            inflation_interval_seconds: 15,      // per block
+            burn_rate_bps: 100,                  // 1% of transactions burned
         }
     }
 }
@@ -201,7 +201,7 @@ impl TokenomicsManager {
         recipient: Option<UserId>,
     ) -> Result<Uuid> {
         let mut supply = self.circulating_supply.write().unwrap();
-        
+
         // Check max supply cap
         if let Some(max) = self.config.max_supply {
             if *supply + amount > max {
@@ -231,14 +231,9 @@ impl TokenomicsManager {
     }
 
     /// Burn tokens (deflationary mechanism)
-    pub fn burn_tokens(
-        &self,
-        amount: u64,
-        reason: BurnReason,
-        burner: UserId,
-    ) -> Result<Uuid> {
+    pub fn burn_tokens(&self, amount: u64, reason: BurnReason, burner: UserId) -> Result<Uuid> {
         let mut supply = self.circulating_supply.write().unwrap();
-        
+
         if *supply < amount {
             return Err(Error::InvalidInput(format!(
                 "Cannot burn {} tokens, only {} in circulation",
@@ -268,17 +263,9 @@ impl TokenomicsManager {
     }
 
     /// Create marketplace liquidity pool
-    pub fn create_liquidity_pool(
-        &self,
-        name: String,
-        initial_tokens: u64,
-    ) -> Result<Uuid> {
+    pub fn create_liquidity_pool(&self, name: String, initial_tokens: u64) -> Result<Uuid> {
         // Mint tokens for liquidity pool
-        self.mint_tokens(
-            initial_tokens,
-            MintReason::MarketplaceLiquidity,
-            None,
-        )?;
+        self.mint_tokens(initial_tokens, MintReason::MarketplaceLiquidity, None)?;
 
         let pool = LiquidityPool {
             id: Uuid::new_v4(),
@@ -298,13 +285,10 @@ impl TokenomicsManager {
     }
 
     /// Allocate tokens from liquidity pool (for marketplace sales)
-    pub fn allocate_from_pool(
-        &self,
-        pool_id: &Uuid,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn allocate_from_pool(&self, pool_id: &Uuid, amount: u64) -> Result<()> {
         let mut pools = self.liquidity_pools.write().unwrap();
-        let pool = pools.get_mut(pool_id)
+        let pool = pools
+            .get_mut(pool_id)
             .ok_or_else(|| Error::NotFound("Liquidity pool not found".to_string()))?;
 
         if pool.available_tokens < amount {
@@ -322,17 +306,16 @@ impl TokenomicsManager {
     }
 
     /// Release allocated tokens (complete sale)
-    pub fn release_allocation(
-        &self,
-        pool_id: &Uuid,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn release_allocation(&self, pool_id: &Uuid, amount: u64) -> Result<()> {
         let mut pools = self.liquidity_pools.write().unwrap();
-        let pool = pools.get_mut(pool_id)
+        let pool = pools
+            .get_mut(pool_id)
             .ok_or_else(|| Error::NotFound("Liquidity pool not found".to_string()))?;
 
         if pool.pending_allocations < amount {
-            return Err(Error::InvalidInput("Invalid allocation release".to_string()));
+            return Err(Error::InvalidInput(
+                "Invalid allocation release".to_string(),
+            ));
         }
 
         pool.pending_allocations -= amount;
@@ -342,20 +325,13 @@ impl TokenomicsManager {
     }
 
     /// Replenish liquidity pool (from inflation or treasury)
-    pub fn replenish_pool(
-        &self,
-        pool_id: &Uuid,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn replenish_pool(&self, pool_id: &Uuid, amount: u64) -> Result<()> {
         // Mint new tokens for replenishment
-        self.mint_tokens(
-            amount,
-            MintReason::MarketplaceLiquidity,
-            None,
-        )?;
+        self.mint_tokens(amount, MintReason::MarketplaceLiquidity, None)?;
 
         let mut pools = self.liquidity_pools.write().unwrap();
-        let pool = pools.get_mut(pool_id)
+        let pool = pools
+            .get_mut(pool_id)
             .ok_or_else(|| Error::NotFound("Liquidity pool not found".to_string()))?;
 
         pool.total_tokens += amount;
@@ -404,11 +380,7 @@ impl TokenomicsManager {
         let inflation_per_block = (annual_inflation / blocks_per_year as f64) as u64;
 
         if inflation_per_block > 0 {
-            let mint_id = self.mint_tokens(
-                inflation_per_block,
-                MintReason::Inflation,
-                None,
-            )?;
+            let mint_id = self.mint_tokens(inflation_per_block, MintReason::Inflation, None)?;
             mint_ids.push(mint_id);
         }
 
@@ -466,7 +438,12 @@ impl TokenomicsManager {
 
     /// Get all liquidity pools
     pub fn get_all_pools(&self) -> Vec<LiquidityPool> {
-        self.liquidity_pools.read().unwrap().values().cloned().collect()
+        self.liquidity_pools
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Get mint history
@@ -545,7 +522,9 @@ mod tests {
         assert_eq!(initial, 100_000_000_000);
 
         let user = UserId(Uuid::new_v4());
-        let mint_id = manager.mint_tokens(1000, MintReason::BlockReward, Some(user)).unwrap();
+        let mint_id = manager
+            .mint_tokens(1000, MintReason::BlockReward, Some(user))
+            .unwrap();
         assert!(!mint_id.is_nil());
 
         let new_supply = manager.get_circulating_supply();
@@ -559,7 +538,9 @@ mod tests {
         let manager = TokenomicsManager::new(config);
 
         // Should succeed (within cap)
-        manager.mint_tokens(500, MintReason::Inflation, None).unwrap();
+        manager
+            .mint_tokens(500, MintReason::Inflation, None)
+            .unwrap();
 
         // Should fail (exceeds cap)
         let result = manager.mint_tokens(1000, MintReason::Inflation, None);
@@ -574,7 +555,9 @@ mod tests {
         let initial = manager.get_circulating_supply();
         let user = UserId(Uuid::new_v4());
 
-        manager.burn_tokens(1000, BurnReason::TransactionFee, user).unwrap();
+        manager
+            .burn_tokens(1000, BurnReason::TransactionFee, user)
+            .unwrap();
 
         let new_supply = manager.get_circulating_supply();
         assert_eq!(new_supply, initial - 1000);
@@ -588,15 +571,17 @@ mod tests {
         let config = TokenSupplyConfig::default();
         let manager = TokenomicsManager::new(config);
 
-        let pool_id = manager.create_liquidity_pool("Marketplace".to_string(), 10_000_000).unwrap();
-        
+        let pool_id = manager
+            .create_liquidity_pool("Marketplace".to_string(), 10_000_000)
+            .unwrap();
+
         let pool = manager.get_pool(&pool_id).unwrap();
         assert_eq!(pool.total_tokens, 10_000_000);
         assert_eq!(pool.available_tokens, 10_000_000);
 
         // Allocate some tokens
         manager.allocate_from_pool(&pool_id, 1000).unwrap();
-        
+
         let pool = manager.get_pool(&pool_id).unwrap();
         assert_eq!(pool.available_tokens, 9_999_000);
         assert_eq!(pool.reserved_tokens, 1000);
@@ -607,12 +592,9 @@ mod tests {
         let config = TokenSupplyConfig::default();
         let manager = TokenomicsManager::new(config);
 
-        let schedule_id = manager.create_distribution_schedule(
-            RecipientType::Validators,
-            1000,
-            100,
-            Some(1000),
-        ).unwrap();
+        let schedule_id = manager
+            .create_distribution_schedule(RecipientType::Validators, 1000, 100, Some(1000))
+            .unwrap();
 
         assert!(!schedule_id.is_nil());
     }

@@ -1,9 +1,9 @@
 //! Core types for dchat
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// Unique identifier for users
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -14,7 +14,7 @@ impl UserId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
-    
+
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -88,7 +88,7 @@ impl PublicKey {
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
-    
+
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -104,7 +104,7 @@ impl Signature {
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
-    
+
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0

@@ -8,18 +8,18 @@
 //! - Channel creation with on-chain registration
 
 use crate::prelude::*;
-use dchat_blockchain::{ChatChainClient, CurrencyChainClient, CrossChainBridge};
-use dchat_storage::{Database, MessageRow};
-use dchat_identity::Identity;
-use dchat_crypto::keys::KeyPair;
+use dchat_blockchain::{ChatChainClient, CrossChainBridge, CurrencyChainClient};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
+use dchat_crypto::keys::KeyPair;
+use dchat_identity::Identity;
+use dchat_storage::{Database, MessageRow};
+use hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use tracing::{info, error};
+use tracing::{error, info};
 use uuid::Uuid;
-use hex;
 
 /// Response when creating a user
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +108,13 @@ impl UserManager {
         bridge: std::sync::Arc<CrossChainBridge>,
         keys_dir: PathBuf,
     ) -> Self {
-        Self { database, chat_chain, currency_chain, bridge, keys_dir }
+        Self {
+            database,
+            chat_chain,
+            currency_chain,
+            bridge,
+            keys_dir,
+        }
     }
 
     /// Create a new user with generated keypair and on-chain registration
@@ -124,13 +130,16 @@ impl UserManager {
 
         // Create identity
         let identity = Identity::new(username.to_string(), &keypair);
-        let user_id_uuid = UserId(uuid::Uuid::parse_str(&identity.user_id.to_string())
-            .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?);
+        let user_id_uuid = UserId(
+            uuid::Uuid::parse_str(&identity.user_id.to_string())
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
         let created_at_rfc3339 = chrono::Utc::now().to_rfc3339();
 
         // Submit on-chain transaction to chat chain
         info!("Registering user on chat chain...");
-        let tx_id = self.chat_chain
+        let tx_id = self
+            .chat_chain
             .register_user(&user_id_uuid, public_key_bytes.to_vec())
             .map_err(|e| {
                 error!("Failed to register on chat chain: {}", e);
@@ -150,7 +159,10 @@ impl UserManager {
                 e
             })?;
 
-        info!("✓ User created successfully: {} ({})", username, identity.user_id);
+        info!(
+            "✓ User created successfully: {} ({})",
+            username, identity.user_id
+        );
 
         Ok(CreateUserResponse {
             user_id: identity.user_id.to_string(),
@@ -160,7 +172,8 @@ impl UserManager {
             created_at: created_at_rfc3339,
             on_chain_confirmed,
             tx_id: Some(tx_id.to_string()),
-            message: "User created and confirmed on-chain! Store your private key safely.".to_string(),
+            message: "User created and confirmed on-chain! Store your private key safely."
+                .to_string(),
         })
     }
 
@@ -175,11 +188,12 @@ impl UserManager {
             .ok_or_else(|| Error::storage(format!("User not found: {}", user_id)))?;
 
         let public_key_hex = hex::encode(&user.public_key);
-        let created_at_rfc3339 = if let Some(dt) = chrono::DateTime::from_timestamp(user.created_at, 0) {
-            dt.to_rfc3339()
-        } else {
-            return Err(Error::internal("Invalid timestamp in user data"));
-        };
+        let created_at_rfc3339 =
+            if let Some(dt) = chrono::DateTime::from_timestamp(user.created_at, 0) {
+                dt.to_rfc3339()
+            } else {
+                return Err(Error::internal("Invalid timestamp in user data"));
+            };
 
         Ok(UserProfile {
             user_id: user.id,
@@ -216,10 +230,14 @@ impl UserManager {
 
         // Generate message ID
         let message_id = MessageId(Uuid::new_v4());
-        let sender_uuid = UserId(uuid::Uuid::parse_str(sender_id)
-            .map_err(|e| Error::validation(format!("Invalid sender ID: {}", e)))?);
-        let recipient_uuid = UserId(uuid::Uuid::parse_str(recipient_id)
-            .map_err(|e| Error::validation(format!("Invalid recipient ID: {}", e)))?);
+        let sender_uuid = UserId(
+            uuid::Uuid::parse_str(sender_id)
+                .map_err(|e| Error::validation(format!("Invalid sender ID: {}", e)))?,
+        );
+        let recipient_uuid = UserId(
+            uuid::Uuid::parse_str(recipient_id)
+                .map_err(|e| Error::validation(format!("Invalid recipient ID: {}", e)))?,
+        );
         let timestamp = chrono::Utc::now().timestamp();
         let timestamp_rfc3339 = chrono::Utc::now().to_rfc3339();
 
@@ -229,12 +247,9 @@ impl UserManager {
 
         // Submit on-chain transaction to chat chain for message ordering
         info!("Recording message on chat chain...");
-        let tx_id = self.chat_chain
-            .send_direct_message(
-                &sender_uuid,
-                &recipient_uuid,
-                message_id,
-            )
+        let tx_id = self
+            .chat_chain
+            .send_direct_message(&sender_uuid, &recipient_uuid, message_id)
             .map_err(|e| {
                 error!("Failed to record on chat chain: {}", e);
                 Error::internal(format!("Chat chain recording failed: {}", e))
@@ -255,7 +270,12 @@ impl UserManager {
                 encrypted_payload: content.as_bytes().to_vec(),
                 timestamp,
                 sequence_num: None,
-                status: if on_chain_confirmed { "confirmed" } else { "pending" }.to_string(),
+                status: if on_chain_confirmed {
+                    "confirmed"
+                } else {
+                    "pending"
+                }
+                .to_string(),
                 expires_at: None,
                 size: content.len(),
                 content_hash: Some(content_hash),
@@ -266,7 +286,10 @@ impl UserManager {
                 e
             })?;
 
-        info!("✓ Direct message sent and confirmed on-chain: {}", message_id);
+        info!(
+            "✓ Direct message sent and confirmed on-chain: {}",
+            message_id
+        );
 
         Ok(DirectMessageResponse {
             message_id: message_id.to_string(),
@@ -291,18 +314,17 @@ impl UserManager {
 
         // Generate channel ID
         let channel_id = ChannelId(Uuid::new_v4());
-        let creator_uuid = UserId(uuid::Uuid::parse_str(creator_id)
-            .map_err(|e| Error::validation(format!("Invalid creator ID: {}", e)))?);
+        let creator_uuid = UserId(
+            uuid::Uuid::parse_str(creator_id)
+                .map_err(|e| Error::validation(format!("Invalid creator ID: {}", e)))?,
+        );
         let created_at = chrono::Utc::now().to_rfc3339();
 
         // Submit on-chain transaction to chat chain
         info!("Creating channel on chat chain...");
-        let tx_id = self.chat_chain
-            .create_channel(
-                &creator_uuid,
-                &channel_id,
-                channel_name.to_string(),
-            )
+        let tx_id = self
+            .chat_chain
+            .create_channel(&creator_uuid, &channel_id, channel_name.to_string())
             .map_err(|e| {
                 error!("Failed to create channel on chat chain: {}", e);
                 Error::internal(format!("Chat chain channel creation failed: {}", e))
@@ -311,7 +333,10 @@ impl UserManager {
         // Simulate confirmation
         let on_chain_confirmed = true;
 
-        info!("✓ Channel created and confirmed on-chain: {} ({})", channel_name, channel_id);
+        info!(
+            "✓ Channel created and confirmed on-chain: {} ({})",
+            channel_name, channel_id
+        );
 
         Ok(CreateChannelResponse {
             channel_id: channel_id.to_string(),
@@ -330,20 +355,21 @@ impl UserManager {
         channel_id: &str,
         content: &str,
     ) -> Result<DirectMessageResponse> {
-        info!(
-            "Posting to channel {} by user {}",
-            channel_id, sender_id
-        );
+        info!("Posting to channel {} by user {}", channel_id, sender_id);
 
         // Verify user exists
         let _sender = self.get_user_profile(sender_id).await?;
 
         // Generate message ID
         let message_id = MessageId(Uuid::new_v4());
-        let sender_uuid = UserId(uuid::Uuid::parse_str(sender_id)
-            .map_err(|e| Error::validation(format!("Invalid sender ID: {}", e)))?);
-        let channel_uuid = ChannelId(uuid::Uuid::parse_str(channel_id)
-            .map_err(|e| Error::validation(format!("Invalid channel ID: {}", e)))?);
+        let sender_uuid = UserId(
+            uuid::Uuid::parse_str(sender_id)
+                .map_err(|e| Error::validation(format!("Invalid sender ID: {}", e)))?,
+        );
+        let channel_uuid = ChannelId(
+            uuid::Uuid::parse_str(channel_id)
+                .map_err(|e| Error::validation(format!("Invalid channel ID: {}", e)))?,
+        );
         let timestamp = chrono::Utc::now().timestamp();
         let timestamp_rfc3339 = chrono::Utc::now().to_rfc3339();
 
@@ -353,12 +379,9 @@ impl UserManager {
 
         // Submit on-chain transaction to chat chain for message ordering
         info!("Posting message to chat chain...");
-        let tx_id = self.chat_chain
-            .post_to_channel(
-                &sender_uuid,
-                &channel_uuid,
-                message_id,
-            )
+        let tx_id = self
+            .chat_chain
+            .post_to_channel(&sender_uuid, &channel_uuid, message_id)
             .map_err(|e| {
                 error!("Failed to post to chat chain: {}", e);
                 Error::internal(format!("Chat chain posting failed: {}", e))
@@ -379,7 +402,12 @@ impl UserManager {
                 encrypted_payload: content.as_bytes().to_vec(),
                 timestamp,
                 sequence_num: None,
-                status: if on_chain_confirmed { "confirmed" } else { "pending" }.to_string(),
+                status: if on_chain_confirmed {
+                    "confirmed"
+                } else {
+                    "pending"
+                }
+                .to_string(),
                 expires_at: None,
                 size: content.len(),
                 content_hash: Some(content_hash),
@@ -390,7 +418,10 @@ impl UserManager {
                 e
             })?;
 
-        info!("✓ Message posted to channel and confirmed on-chain: {}", message_id);
+        info!(
+            "✓ Message posted to channel and confirmed on-chain: {}",
+            message_id
+        );
 
         Ok(DirectMessageResponse {
             message_id: message_id.to_string(),
@@ -410,11 +441,12 @@ impl UserManager {
         let mut dms = Vec::new();
         for msg in messages {
             if msg.recipient_id.is_some() {
-                let timestamp_rfc3339 = if let Some(dt) = chrono::DateTime::from_timestamp(msg.timestamp, 0) {
-                    dt.to_rfc3339()
-                } else {
-                    return Err(Error::internal("Invalid message timestamp"));
-                };
+                let timestamp_rfc3339 =
+                    if let Some(dt) = chrono::DateTime::from_timestamp(msg.timestamp, 0) {
+                        dt.to_rfc3339()
+                    } else {
+                        return Err(Error::internal("Invalid message timestamp"));
+                    };
 
                 // Check if message status indicates on-chain confirmation
                 let on_chain_confirmed = msg.status == "confirmed";
@@ -433,22 +465,30 @@ impl UserManager {
     }
 
     /// Get channel messages with on-chain confirmation status
-    pub async fn get_channel_messages(&self, channel_id: &str) -> Result<Vec<DirectMessageResponse>> {
+    pub async fn get_channel_messages(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<DirectMessageResponse>> {
         info!("Fetching messages for channel: {}", channel_id);
 
         // Get all messages from database and filter for this channel
         // Note: We need to retrieve messages that have channel_id set and no recipient_id
-        let all_messages = self.database.get_all_messages(1000).await.unwrap_or_default();
+        let all_messages = self
+            .database
+            .get_all_messages(1000)
+            .await
+            .unwrap_or_default();
 
         let mut channel_msgs = Vec::new();
         for msg in all_messages {
             // Filter for channel messages: no recipient (NULL), matching channel_id
             if msg.recipient_id.is_none() && msg.channel_id.as_deref() == Some(channel_id) {
-                let timestamp_rfc3339 = if let Some(dt) = chrono::DateTime::from_timestamp(msg.timestamp, 0) {
-                    dt.to_rfc3339()
-                } else {
-                    return Err(Error::internal("Invalid message timestamp"));
-                };
+                let timestamp_rfc3339 =
+                    if let Some(dt) = chrono::DateTime::from_timestamp(msg.timestamp, 0) {
+                        dt.to_rfc3339()
+                    } else {
+                        return Err(Error::internal("Invalid message timestamp"));
+                    };
 
                 // Check if message status indicates on-chain confirmation
                 let on_chain_confirmed = msg.status == "confirmed";

@@ -1,35 +1,35 @@
 // Multi-Party Computation (MPC) Threshold Signing for dchat
 // Implements 2-of-3 threshold signature scheme for keyless UX fallback
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use thiserror::Error;
-use sha2::{Sha256, Digest};
 
 /// MPC errors
 #[derive(Error, Debug)]
 pub enum MpcError {
     #[error("Insufficient signers: need {required}, have {available}")]
     InsufficientSigners { required: usize, available: usize },
-    
+
     #[error("Invalid signature share from signer {0}")]
     InvalidSignatureShare(String),
-    
+
     #[error("Key generation failed: {0}")]
     KeyGenerationFailed(String),
-    
+
     #[error("Signature aggregation failed: {0}")]
     AggregationFailed(String),
-    
+
     #[error("Signer {0} not found")]
     SignerNotFound(String),
-    
+
     #[error("Communication error: {0}")]
     CommunicationError(String),
-    
+
     #[error("Timeout waiting for signers")]
     Timeout,
-    
+
     #[error("Signature verification failed: {0}")]
     VerificationFailed(String),
 }
@@ -190,17 +190,17 @@ impl MpcSigner {
         // 2. Create polynomial of degree (threshold - 1)
         // 3. Distribute shares to each party
         // 4. Compute verification commitments
-        
-        use curve25519_dalek::scalar::Scalar;
+
         use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+        use curve25519_dalek::scalar::Scalar;
         use rand::rngs::OsRng;
         use rand::RngCore;
-        
+
         // Generate random secret for DKG
         let mut secret_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut secret_bytes);
         let secret = Scalar::from_bytes_mod_order(secret_bytes);
-        
+
         // Create polynomial coefficients (degree = threshold - 1)
         let mut coefficients = vec![secret];
         for _ in 1..self.config.threshold {
@@ -208,20 +208,20 @@ impl MpcSigner {
             OsRng.fill_bytes(&mut coeff_bytes);
             coefficients.push(Scalar::from_bytes_mod_order(coeff_bytes));
         }
-        
+
         // Compute public key from secret
         let public_point = &secret * ED25519_BASEPOINT_TABLE;
         let public_key = public_point.compress().to_bytes().to_vec();
-        
+
         // Generate shares using polynomial evaluation
         // f(x) = a0 + a1*x + a2*x^2 + ... + a(t-1)*x^(t-1)
         let mut verification_shares = HashMap::new();
         let mut private_key_share = Vec::new();
-        
+
         for (idx, id) in signer_ids.iter().enumerate() {
             // Use index + 1 as x-coordinate (never use 0)
             let x = Scalar::from((idx + 1) as u64);
-            
+
             // Evaluate polynomial at x
             let mut share = coefficients[0];
             let mut x_power = x;
@@ -229,17 +229,20 @@ impl MpcSigner {
                 share += coeff * x_power;
                 x_power *= x;
             }
-            
+
             // Compute verification point for this share
             let verification_point = &share * ED25519_BASEPOINT_TABLE;
-            verification_shares.insert(id.clone(), verification_point.compress().to_bytes().to_vec());
-            
+            verification_shares.insert(
+                id.clone(),
+                verification_point.compress().to_bytes().to_vec(),
+            );
+
             // Store our own share if this is us
             if idx == 0 {
                 private_key_share = share.to_bytes().to_vec();
             }
         }
-        
+
         // Create commitment (public key and polynomial commitments)
         let mut commitment = public_key.clone();
         for coeff in coefficients.iter().skip(1) {
@@ -262,25 +265,21 @@ impl MpcSigner {
 
     /// Remove a signer
     pub fn remove_signer(&mut self, signer_id: &SignerId) -> Result<(), MpcError> {
-        self.signers.remove(signer_id)
+        self.signers
+            .remove(signer_id)
             .ok_or_else(|| MpcError::SignerNotFound(signer_id.0.clone()))?;
         Ok(())
     }
 
     /// Get available signers
     pub fn get_available_signers(&self) -> Vec<&Signer> {
-        self.signers.values()
-            .filter(|s| s.available)
-            .collect()
+        self.signers.values().filter(|s| s.available).collect()
     }
 
     /// Start a new signing session
-    pub async fn start_signing_session(
-        &mut self,
-        message: Vec<u8>,
-    ) -> Result<String, MpcError> {
+    pub async fn start_signing_session(&mut self, message: Vec<u8>) -> Result<String, MpcError> {
         let available = self.get_available_signers();
-        
+
         if available.len() < self.config.threshold {
             return Err(MpcError::InsufficientSigners {
                 required: self.config.threshold,
@@ -289,7 +288,7 @@ impl MpcSigner {
         }
 
         let session_id = self.generate_session_id(&message);
-        
+
         let session = SigningSession {
             session_id: session_id.clone(),
             message,
@@ -317,11 +316,17 @@ impl MpcSigner {
 
         // Get session and extract message before verification
         let message = {
-            let session = self.active_sessions.get_mut(session_id)
+            let session = self
+                .active_sessions
+                .get_mut(session_id)
                 .ok_or_else(|| MpcError::SignerNotFound(session_id.to_string()))?;
 
             // Check if we already have a share from this signer
-            if session.shares.iter().any(|s| s.signer_id == share.signer_id) {
+            if session
+                .shares
+                .iter()
+                .any(|s| s.signer_id == share.signer_id)
+            {
                 return Ok(()); // Already have share from this signer
             }
 
@@ -334,7 +339,9 @@ impl MpcSigner {
         }
 
         // Get session again after verification
-        let session = self.active_sessions.get_mut(session_id)
+        let session = self
+            .active_sessions
+            .get_mut(session_id)
             .ok_or_else(|| MpcError::SignerNotFound(session_id.to_string()))?;
 
         session.shares.push(share);
@@ -354,7 +361,9 @@ impl MpcSigner {
     ) -> Result<ThresholdSignature, MpcError> {
         // Extract data we need before getting mutable reference
         let (shares, signers) = {
-            let session = self.active_sessions.get(session_id)
+            let session = self
+                .active_sessions
+                .get(session_id)
                 .ok_or_else(|| MpcError::SignerNotFound(session_id.to_string()))?;
 
             if session.shares.len() < session.threshold {
@@ -365,10 +374,9 @@ impl MpcSigner {
             }
 
             let shares = session.shares.clone();
-            let signers: Vec<SignerId> = session.shares.iter()
-                .map(|s| s.signer_id.clone())
-                .collect();
-            
+            let signers: Vec<SignerId> =
+                session.shares.iter().map(|s| s.signer_id.clone()).collect();
+
             (shares, signers)
         };
 
@@ -413,109 +421,133 @@ impl MpcSigner {
         format!("{:x}", hasher.finalize())
     }
 
-    fn verify_signature_share(&self, message: &[u8], share: &SignatureShare) -> Result<bool, MpcError> {
+    fn verify_signature_share(
+        &self,
+        message: &[u8],
+        share: &SignatureShare,
+    ) -> Result<bool, MpcError> {
         // Real cryptographic verification of signature share
         // Verify that the share is a valid signature under the signer's public key share
-        
-        let signer = self.signers.get(&share.signer_id)
+
+        let signer = self
+            .signers
+            .get(&share.signer_id)
             .ok_or_else(|| MpcError::SignerNotFound(share.signer_id.0.clone()))?;
 
         if share.share.len() != 64 {
             return Ok(false);
         }
-        
+
         if signer.public_key_share.len() != 32 {
             return Ok(false);
         }
-        
+
         use curve25519_dalek::edwards::CompressedEdwardsY;
         use curve25519_dalek::scalar::Scalar;
-        
+
         // Parse the signature share components (R || s)
-        let r_bytes: [u8; 32] = share.share[..32].try_into()
+        let r_bytes: [u8; 32] = share.share[..32]
+            .try_into()
             .map_err(|_| MpcError::VerificationFailed("Invalid R component".to_string()))?;
-        let s_bytes: [u8; 32] = share.share[32..].try_into()
+        let s_bytes: [u8; 32] = share.share[32..]
+            .try_into()
             .map_err(|_| MpcError::VerificationFailed("Invalid s component".to_string()))?;
-        
-        let r_point = CompressedEdwardsY(r_bytes).decompress()
+
+        let r_point = CompressedEdwardsY(r_bytes)
+            .decompress()
             .ok_or(MpcError::VerificationFailed("Invalid R point".to_string()))?;
         let s_scalar = Scalar::from_canonical_bytes(s_bytes)
             .into_option()
             .ok_or(MpcError::VerificationFailed("Invalid s scalar".to_string()))?;
-        
+
         // Parse public key share
-        let pk_bytes: [u8; 32] = signer.public_key_share.as_slice().try_into()
-            .map_err(|_| MpcError::VerificationFailed("Invalid public key share".to_string()))?;
-        let pk_point = CompressedEdwardsY(pk_bytes).decompress()
-            .ok_or(MpcError::VerificationFailed("Invalid public key point".to_string()))?;
-        
+        let pk_bytes: [u8; 32] =
+            signer.public_key_share.as_slice().try_into().map_err(|_| {
+                MpcError::VerificationFailed("Invalid public key share".to_string())
+            })?;
+        let pk_point =
+            CompressedEdwardsY(pk_bytes)
+                .decompress()
+                .ok_or(MpcError::VerificationFailed(
+                    "Invalid public key point".to_string(),
+                ))?;
+
         // Hash message for signature verification
-        use sha2::{Sha512, Digest};
+        use sha2::{Digest, Sha512};
         let mut hasher = Sha512::new();
         hasher.update(r_bytes);
         hasher.update(pk_bytes);
         hasher.update(message);
         let h = Scalar::from_hash(hasher);
-        
+
         // Verify: s*G = R + h*PK
         use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
         let left = &s_scalar * ED25519_BASEPOINT_TABLE;
         let right = r_point + (h * pk_point);
-        
+
         Ok(left == right)
     }
 
     fn aggregate_shares(&self, shares: &[SignatureShare]) -> Result<Vec<u8>, MpcError> {
         // Real threshold signature aggregation using Lagrange interpolation
         // Reconstruct the signature from threshold shares
-        
+
         if shares.is_empty() {
-            return Err(MpcError::AggregationFailed("No shares to aggregate".to_string()));
-        }
-        
-        if shares.len() < self.config.threshold {
             return Err(MpcError::AggregationFailed(
-                format!("Insufficient shares: got {}, need {}", shares.len(), self.config.threshold)
+                "No shares to aggregate".to_string(),
             ));
         }
-        
+
+        if shares.len() < self.config.threshold {
+            return Err(MpcError::AggregationFailed(format!(
+                "Insufficient shares: got {}, need {}",
+                shares.len(),
+                self.config.threshold
+            )));
+        }
+
         use curve25519_dalek::scalar::Scalar;
-        
-        
+
         // Extract R (same for all shares) from first share
         if shares[0].share.len() != 64 {
-            return Err(MpcError::AggregationFailed("Invalid share length".to_string()));
+            return Err(MpcError::AggregationFailed(
+                "Invalid share length".to_string(),
+            ));
         }
-        let r_bytes: [u8; 32] = shares[0].share[..32].try_into()
+        let r_bytes: [u8; 32] = shares[0].share[..32]
+            .try_into()
             .map_err(|_| MpcError::AggregationFailed("Invalid R component".to_string()))?;
-        
+
         // Parse s_i values and compute Lagrange coefficients
         let mut x_coords = Vec::new();
         let mut s_shares = Vec::new();
-        
+
         for (idx, share) in shares.iter().enumerate() {
-            let s_bytes: [u8; 32] = share.share[32..].try_into()
+            let s_bytes: [u8; 32] = share.share[32..]
+                .try_into()
                 .map_err(|_| MpcError::AggregationFailed("Invalid s component".to_string()))?;
             let s_i = Scalar::from_canonical_bytes(s_bytes)
                 .into_option()
                 .ok_or(MpcError::AggregationFailed("Invalid scalar".to_string()))?;
-            
+
             // Use signer index + 1 as x-coordinate
-            let _signer = self.signers.get(&share.signer_id)
+            let _signer = self
+                .signers
+                .get(&share.signer_id)
                 .ok_or_else(|| MpcError::SignerNotFound(share.signer_id.0.clone()))?;
             let x = Scalar::from((idx + 1) as u64); // Should match DKG index
-            
+
             x_coords.push(x);
             s_shares.push(s_i);
         }
-        
+
         // Compute Lagrange interpolation at x=0 to recover s
         // s = Σ s_i * λ_i where λ_i = Π (x_j / (x_j - x_i)) for j ≠ i
         let mut s_aggregated = Scalar::ZERO;
-        
+
         for i in 0..s_shares.len() {
             let mut lambda_i = Scalar::ONE;
-            
+
             for j in 0..x_coords.len() {
                 if i != j {
                     // λ_i *= x_j / (x_j - x_i)
@@ -525,15 +557,15 @@ impl MpcSigner {
                     lambda_i *= numerator * denominator_inv;
                 }
             }
-            
+
             s_aggregated += s_shares[i] * lambda_i;
         }
-        
+
         // Construct final signature: R || s
         let mut result = Vec::with_capacity(64);
         result.extend_from_slice(&r_bytes);
         result.extend_from_slice(s_aggregated.as_bytes());
-        
+
         Ok(result)
     }
 }
@@ -559,23 +591,24 @@ impl MpcCoordinator {
         &mut self,
         signer_configs: Vec<(String, String)>, // (id, name) pairs
     ) -> Result<DkgResult, MpcError> {
-        use curve25519_dalek::scalar::Scalar;
         use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+        use curve25519_dalek::scalar::Scalar;
         use rand::rngs::OsRng;
         use rand::RngCore;
-        
-        let _signer_ids: Vec<SignerId> = signer_configs.iter()
+
+        let _signer_ids: Vec<SignerId> = signer_configs
+            .iter()
             .map(|(id, _)| SignerId(id.clone()))
             .collect();
 
         // For testing, generate ALL private key shares here
         // In production, each signer would only know their own share
-        
+
         // Generate random secret
         let mut secret_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut secret_bytes);
         let secret = Scalar::from_bytes_mod_order(secret_bytes);
-        
+
         // Create polynomial coefficients
         let mut coefficients = vec![secret];
         for _ in 1..self.signer.config.threshold {
@@ -583,13 +616,13 @@ impl MpcCoordinator {
             OsRng.fill_bytes(&mut coeff_bytes);
             coefficients.push(Scalar::from_bytes_mod_order(coeff_bytes));
         }
-        
+
         // Generate shares for all signers
         let mut verification_shares = HashMap::new();
-        
+
         for (idx, (id, name)) in signer_configs.iter().enumerate() {
             let x = Scalar::from((idx + 1) as u64);
-            
+
             // Evaluate polynomial to get private key share
             let mut share_scalar = coefficients[0];
             let mut x_power = x;
@@ -597,18 +630,19 @@ impl MpcCoordinator {
                 share_scalar += coeff * x_power;
                 x_power *= x;
             }
-            
+
             let share_bytes = share_scalar.to_bytes().to_vec();
-            
+
             // Compute public verification point
             let verification_point = &share_scalar * ED25519_BASEPOINT_TABLE;
             let verification_bytes = verification_point.compress().to_bytes().to_vec();
-            
+
             // Store private share for testing
             let signer_id = SignerId(id.clone());
-            self.private_key_shares.insert(signer_id.clone(), share_bytes);
+            self.private_key_shares
+                .insert(signer_id.clone(), share_bytes);
             verification_shares.insert(signer_id.clone(), verification_bytes.clone());
-            
+
             // Register signer
             let signer = Signer {
                 id: signer_id,
@@ -619,11 +653,11 @@ impl MpcCoordinator {
             };
             self.signer.register_signer(signer);
         }
-        
+
         // Compute public key
         let public_point = &secret * ED25519_BASEPOINT_TABLE;
         let public_key = public_point.compress().to_bytes().to_vec();
-        
+
         // Create commitment
         let mut commitment = public_key.clone();
         for coeff in coefficients.iter().skip(1) {
@@ -653,7 +687,8 @@ impl MpcCoordinator {
         // Clone the data we need to avoid borrowing issues
         let available_signers = self.signer.get_available_signers();
         let required = self.signer.config.threshold.min(available_signers.len());
-        let signer_ids: Vec<SignerId> = available_signers.iter()
+        let signer_ids: Vec<SignerId> = available_signers
+            .iter()
             .take(required)
             .map(|s| s.id.clone())
             .collect();
@@ -675,47 +710,53 @@ impl MpcCoordinator {
     ) -> Result<SignatureShare, MpcError> {
         use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
         use curve25519_dalek::scalar::Scalar;
-        use sha2::{Sha512, Digest};
         use rand::RngCore;
-        
+        use sha2::{Digest, Sha512};
+
         // Get the signer's public key share
-        let signer = self.signer.signers.get(signer_id)
+        let signer = self
+            .signer
+            .signers
+            .get(signer_id)
             .ok_or_else(|| MpcError::SignerNotFound(signer_id.0.clone()))?;
-        
+
         // Get the private key share (in production, each signer only has their own)
-        let private_share_bytes = self.private_key_shares.get(signer_id)
-            .ok_or_else(|| MpcError::SignerNotFound(format!("No private share for {}", signer_id.0)))?;
-        
+        let private_share_bytes = self.private_key_shares.get(signer_id).ok_or_else(|| {
+            MpcError::SignerNotFound(format!("No private share for {}", signer_id.0))
+        })?;
+
         let sk_i = Scalar::from_bytes_mod_order(
-            private_share_bytes.as_slice().try_into()
-                .map_err(|_| MpcError::KeyGenerationFailed("Invalid private share".to_string()))?
+            private_share_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| MpcError::KeyGenerationFailed("Invalid private share".to_string()))?,
         );
-        
+
         // 1. Generate ephemeral nonce k
         let mut rng = rand::thread_rng();
         let mut k_bytes = [0u8; 64];
         rng.fill_bytes(&mut k_bytes);
         let k = Scalar::from_bytes_mod_order_wide(&k_bytes);
-        
+
         // 2. Compute R = k*G
         let r_point = &k * ED25519_BASEPOINT_TABLE;
         let r_bytes = r_point.compress().to_bytes();
-        
+
         // 3. Compute challenge h = H(R || PK || m)
         let mut hasher = Sha512::new();
         hasher.update(r_bytes);
         hasher.update(&signer.public_key_share);
         hasher.update(message);
         let h = Scalar::from_hash(hasher);
-        
+
         // 4. Compute signature share: s_i = k + h * sk_i
         let s_i = k + (h * sk_i);
-        
+
         // 5. Combine R and s_i into signature share (R || s_i)
         let mut share = Vec::with_capacity(64);
         share.extend_from_slice(&r_bytes);
         share.extend_from_slice(&s_i.to_bytes());
-        
+
         Ok(SignatureShare {
             signer_id: signer_id.clone(),
             share,
@@ -724,10 +765,17 @@ impl MpcCoordinator {
     }
 
     /// Update signer availability
-    pub fn set_signer_available(&mut self, signer_id: &SignerId, available: bool) -> Result<(), MpcError> {
-        let signer = self.signer.signers.get_mut(signer_id)
+    pub fn set_signer_available(
+        &mut self,
+        signer_id: &SignerId,
+        available: bool,
+    ) -> Result<(), MpcError> {
+        let signer = self
+            .signer
+            .signers
+            .get_mut(signer_id)
             .ok_or_else(|| MpcError::SignerNotFound(signer_id.0.clone()))?;
-        
+
         signer.available = available;
         if available {
             signer.last_seen = chrono::Utc::now().timestamp();

@@ -152,11 +152,10 @@ impl BridgeManager {
         let validator1 = multisig::ValidatorId::new(UserId::new(), vec![1; 32]);
         let validator2 = multisig::ValidatorId::new(UserId::new(), vec![2; 32]);
         let validator3 = multisig::ValidatorId::new(UserId::new(), vec![3; 32]);
-        
-        let multisig_config = multisig::MultiSigConfig::new(
-            2,
-            vec![validator1, validator2, validator3],
-        ).expect("Failed to create multi-sig config");
+
+        let multisig_config =
+            multisig::MultiSigConfig::new(2, vec![validator1, validator2, validator3])
+                .expect("Failed to create multi-sig config");
 
         Self {
             transactions: HashMap::new(),
@@ -390,10 +389,7 @@ impl BridgeManager {
 
     /// Get all active validators
     pub fn get_active_validators(&self) -> Vec<&BridgeValidator> {
-        self.validators
-            .values()
-            .filter(|v| v.is_active)
-            .collect()
+        self.validators.values().filter(|v| v.is_active).collect()
     }
 
     /// Get finality proof
@@ -507,17 +503,13 @@ mod tests {
         bridge.update_pending_finality(tx_id).unwrap();
 
         bridge
-            .submit_finality_proof(
-                "tx_def".to_string(),
-                ChainId::ChatChain,
-                200,
-                20,
-                vec![],
-            )
+            .submit_finality_proof("tx_def".to_string(), ChainId::ChatChain, 200, 20, vec![])
             .unwrap();
 
         bridge.mark_ready_to_execute(tx_id).unwrap();
-        bridge.execute_transaction(tx_id, "dest_tx_123".to_string()).unwrap();
+        bridge
+            .execute_transaction(tx_id, "dest_tx_123".to_string())
+            .unwrap();
 
         let tx = bridge.get_transaction(tx_id).unwrap();
         assert_eq!(tx.status, BridgeTransactionStatus::Executed);

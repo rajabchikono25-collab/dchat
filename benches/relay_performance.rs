@@ -15,7 +15,7 @@ fn bench_proof_of_delivery_creation(c: &mut Criterion) {
     c.bench_function("proof_of_delivery", |b| {
         let keypair = KeyPair::generate();
         let signing_key = SigningKey::from_private_key(keypair.private_key());
-        
+
         b.iter(|| {
             let message_id = "msg_12345";
             let timestamp = "2024-01-01T00:00:00Z";

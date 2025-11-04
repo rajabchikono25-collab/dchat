@@ -128,7 +128,10 @@ pub enum TransactionStatus {
     /// Transaction submitted to mempool
     Pending,
     /// Transaction included in block
-    Confirmed { block_height: u64, block_hash: String },
+    Confirmed {
+        block_height: u64,
+        block_hash: String,
+    },
     /// Transaction failed validation
     Failed { reason: String },
     /// Transaction timed out
@@ -160,9 +163,9 @@ impl Transaction {
     /// Create a new transaction
     pub fn new(tx_type: TransactionType, payload: Vec<u8>) -> Self {
         use sha2::{Digest, Sha256};
-        
+
         let tx_hash = format!("{:x}", Sha256::digest(&payload));
-        
+
         Self {
             tx_id: Uuid::new_v4(),
             tx_type,
@@ -174,20 +177,23 @@ impl Transaction {
             fee_paid: 0,
         }
     }
-    
+
     /// Check if transaction is confirmed
     pub fn is_confirmed(&self) -> bool {
         matches!(self.status, TransactionStatus::Confirmed { .. })
     }
-    
+
     /// Check if transaction is pending
     pub fn is_pending(&self) -> bool {
         matches!(self.status, TransactionStatus::Pending)
     }
-    
+
     /// Check if transaction failed
     pub fn is_failed(&self) -> bool {
-        matches!(self.status, TransactionStatus::Failed { .. } | TransactionStatus::TimedOut)
+        matches!(
+            self.status,
+            TransactionStatus::Failed { .. } | TransactionStatus::TimedOut
+        )
     }
 }
 
@@ -226,21 +232,21 @@ mod tests {
             timestamp: Utc::now(),
             initial_reputation: 0,
         };
-        
+
         assert_eq!(tx.user_id, user_id);
         assert_eq!(tx.username, "alice");
     }
-    
+
     #[test]
     fn test_transaction_status() {
         let payload = b"test_payload".to_vec();
         let tx = Transaction::new(TransactionType::RegisterUser, payload);
-        
+
         assert!(tx.is_pending());
         assert!(!tx.is_confirmed());
         assert!(!tx.is_failed());
     }
-    
+
     #[test]
     fn test_channel_visibility() {
         let public_channel = CreateChannelTx {
@@ -252,7 +258,7 @@ mod tests {
             timestamp: Utc::now(),
             stake_amount: None,
         };
-        
+
         assert_eq!(public_channel.visibility, ChannelVisibility::Public);
     }
 }

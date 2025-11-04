@@ -3,11 +3,11 @@
 // This module implements decentralized protocol upgrade voting,
 // hard fork coordination, and backward compatibility management.
 
-use dchat_core::{UserId, Result, Error, PROTOCOL_VERSION};
-use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+use chrono::{DateTime, Duration, Utc};
+use dchat_core::{Error, Result, UserId, PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Semantic version representation
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -19,20 +19,36 @@ pub struct Version {
 
 impl Version {
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() != 3 {
-            return Err(Error::validation("Invalid version format. Expected: major.minor.patch"));
+            return Err(Error::validation(
+                "Invalid version format. Expected: major.minor.patch",
+            ));
         }
 
-        let major = parts[0].parse().map_err(|_| Error::validation("Invalid major version"))?;
-        let minor = parts[1].parse().map_err(|_| Error::validation("Invalid minor version"))?;
-        let patch = parts[2].parse().map_err(|_| Error::validation("Invalid patch version"))?;
+        let major = parts[0]
+            .parse()
+            .map_err(|_| Error::validation("Invalid major version"))?;
+        let minor = parts[1]
+            .parse()
+            .map_err(|_| Error::validation("Invalid minor version"))?;
+        let patch = parts[2]
+            .parse()
+            .map_err(|_| Error::validation("Invalid patch version"))?;
 
-        Ok(Self { major, minor, patch })
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
     }
 
     /// Check if this is a breaking change (major version bump)
@@ -90,32 +106,32 @@ pub struct UpgradeProposal {
     pub upgrade_type: UpgradeType,
     pub current_version: Version,
     pub target_version: Version,
-    
+
     /// Human-readable title
     pub title: String,
     /// Detailed description and rationale
     pub description: String,
     /// Technical specification URL (e.g., GitHub PR)
     pub spec_url: Option<String>,
-    
+
     /// When voting ends
     pub voting_deadline: DateTime<Utc>,
     /// When upgrade activates (if approved)
     pub activation_time: Option<DateTime<Utc>>,
     /// Block height at which to activate
     pub activation_height: Option<u64>,
-    
+
     /// Current status
     pub status: UpgradeStatus,
-    
+
     /// Vote tally
     pub votes_for: u64,
     pub votes_against: u64,
     pub quorum_percentage: u32,
-    
+
     /// Created timestamp
     pub created_at: DateTime<Utc>,
-    
+
     /// Validator signatures (for hard forks)
     pub validator_signatures: Vec<ValidatorSignature>,
 }
@@ -141,12 +157,12 @@ pub struct ForkState {
     /// When fork occurred
     pub fork_height: u64,
     pub fork_time: DateTime<Utc>,
-    
+
     /// Nodes that followed this fork
     pub supporting_nodes: HashSet<UserId>,
     /// Cumulative stake on this fork
     pub total_stake: u64,
-    
+
     /// Is this the canonical chain?
     pub is_canonical: bool,
 }
@@ -155,19 +171,19 @@ pub struct ForkState {
 pub struct UpgradeManager {
     /// Active upgrade proposals
     proposals: HashMap<Uuid, UpgradeProposal>,
-    
+
     /// Current protocol version
     current_version: Version,
-    
+
     /// Fork history
     fork_history: Vec<ForkState>,
-    
+
     /// Total network stake
     total_stake: u64,
-    
+
     /// Minimum validator approval for hard forks (percentage)
     hard_fork_threshold: u32,
-    
+
     /// Minimum voting period for upgrades (days)
     min_voting_period_days: i64,
 }
@@ -190,11 +206,15 @@ impl UpgradeProposal {
 
         // Validate version progression
         if target_version <= current_version {
-            return Err(Error::validation("Target version must be greater than current version"));
+            return Err(Error::validation(
+                "Target version must be greater than current version",
+            ));
         }
 
         // Hard forks require major version bump
-        if matches!(upgrade_type, UpgradeType::HardFork) && !target_version.is_breaking_change(&current_version) {
+        if matches!(upgrade_type, UpgradeType::HardFork)
+            && !target_version.is_breaking_change(&current_version)
+        {
             return Err(Error::validation("Hard forks require major version bump"));
         }
 
@@ -231,14 +251,18 @@ impl UpgradeProposal {
     pub fn passes(&self, total_stake: u64) -> bool {
         let total_votes = self.votes_for + self.votes_against;
         let required_votes = (total_stake * self.quorum_percentage as u64) / 100;
-        
+
         total_votes >= required_votes && self.votes_for > self.votes_against
     }
 
     /// Add validator signature (for hard forks)
     pub fn add_validator_signature(&mut self, signature: ValidatorSignature) -> Result<()> {
         // Check for duplicate
-        if self.validator_signatures.iter().any(|s| s.validator_id == signature.validator_id) {
+        if self
+            .validator_signatures
+            .iter()
+            .any(|s| s.validator_id == signature.validator_id)
+        {
             return Err(Error::validation("Validator already signed"));
         }
 
@@ -248,7 +272,11 @@ impl UpgradeProposal {
 
     /// Calculate validator approval percentage
     pub fn validator_approval_percentage(&self, total_stake: u64) -> u32 {
-        let signed_stake: u64 = self.validator_signatures.iter().map(|s| s.stake_amount).sum();
+        let signed_stake: u64 = self
+            .validator_signatures
+            .iter()
+            .map(|s| s.stake_amount)
+            .sum();
         ((signed_stake * 100) / total_stake) as u32
     }
 }
@@ -257,7 +285,7 @@ impl UpgradeManager {
     /// Create a new upgrade manager
     pub fn new() -> Self {
         let current = Version::parse(PROTOCOL_VERSION).unwrap_or_else(|_| Version::new(0, 1, 0));
-        
+
         Self {
             proposals: HashMap::new(),
             current_version: current,
@@ -274,9 +302,10 @@ impl UpgradeManager {
         if matches!(proposal.upgrade_type, UpgradeType::HardFork) {
             let voting_days = (proposal.voting_deadline - proposal.created_at).num_days();
             if voting_days < self.min_voting_period_days {
-                return Err(Error::validation(
-                    format!("Hard forks require minimum {} day voting period", self.min_voting_period_days)
-                ));
+                return Err(Error::validation(format!(
+                    "Hard forks require minimum {} day voting period",
+                    self.min_voting_period_days
+                )));
             }
         }
 
@@ -291,8 +320,16 @@ impl UpgradeManager {
     }
 
     /// Cast vote on upgrade proposal
-    pub fn cast_upgrade_vote(&mut self, proposal_id: Uuid, _voter: UserId, vote_for: bool, voting_power: u64) -> Result<()> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+    pub fn cast_upgrade_vote(
+        &mut self,
+        proposal_id: Uuid,
+        _voter: UserId,
+        vote_for: bool,
+        voting_power: u64,
+    ) -> Result<()> {
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
         if !proposal.is_voting_open() {
@@ -310,7 +347,9 @@ impl UpgradeManager {
 
     /// Finalize upgrade proposal voting
     pub fn finalize_proposal(&mut self, proposal_id: Uuid) -> Result<bool> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
         if !matches!(proposal.status, UpgradeStatus::Proposed) {
@@ -348,7 +387,9 @@ impl UpgradeManager {
         activation_height: u64,
         activation_time: DateTime<Utc>,
     ) -> Result<()> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
         if !matches!(proposal.status, UpgradeStatus::Approved) {
@@ -364,7 +405,9 @@ impl UpgradeManager {
 
     /// Activate an upgrade at the scheduled height
     pub fn activate_upgrade(&mut self, proposal_id: Uuid, current_height: u64) -> Result<()> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
         match proposal.status {
@@ -400,7 +443,9 @@ impl UpgradeManager {
 
     /// Emergency cancel an upgrade (requires governance vote)
     pub fn cancel_upgrade(&mut self, proposal_id: Uuid) -> Result<()> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
         proposal.status = UpgradeStatus::Cancelled;
@@ -414,7 +459,8 @@ impl UpgradeManager {
 
     /// Get all active proposals
     pub fn get_active_proposals(&self) -> Vec<&UpgradeProposal> {
-        self.proposals.values()
+        self.proposals
+            .values()
             .filter(|p| p.is_voting_open())
             .collect()
     }
@@ -494,7 +540,8 @@ mod tests {
             "Description".to_string(),
             7,
             60,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(proposal.status, UpgradeStatus::Proposed);
         assert!(proposal.is_voting_open());
@@ -544,7 +591,7 @@ mod tests {
     fn test_upgrade_manager_submit_proposal() {
         let mut manager = UpgradeManager::new();
         let proposer = UserId::new();
-        
+
         let current = manager.current_version().clone();
         let target = Version::new(current.major, current.minor + 1, 0);
 
@@ -557,7 +604,8 @@ mod tests {
             "Description".to_string(),
             7,
             60,
-        ).unwrap();
+        )
+        .unwrap();
 
         let id = manager.submit_proposal(proposal).unwrap();
         assert!(manager.get_proposal(&id).is_some());
@@ -567,11 +615,11 @@ mod tests {
     fn test_vote_and_finalize() {
         let mut manager = UpgradeManager::new();
         manager.update_total_stake(10000);
-        
+
         let proposer = UserId::new();
         let voter1 = UserId::new();
         let voter2 = UserId::new();
-        
+
         let current = manager.current_version().clone();
         let target = Version::new(current.major, current.minor + 1, 0);
 
@@ -584,15 +632,20 @@ mod tests {
             "Description".to_string(),
             0, // Immediate deadline for testing
             60,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         // Set deadline to past
         proposal.voting_deadline = Utc::now() - Duration::seconds(1);
         let proposal_id = manager.submit_proposal(proposal).unwrap();
 
         // Cast votes
-        manager.cast_upgrade_vote(proposal_id, voter1, true, 7000).unwrap();
-        manager.cast_upgrade_vote(proposal_id, voter2, false, 2000).unwrap();
+        manager
+            .cast_upgrade_vote(proposal_id, voter1, true, 7000)
+            .unwrap();
+        manager
+            .cast_upgrade_vote(proposal_id, voter2, false, 2000)
+            .unwrap();
 
         // Finalize
         let passed = manager.finalize_proposal(proposal_id).unwrap();
@@ -604,7 +657,7 @@ mod tests {
         let proposer = UserId::new();
         let validator1 = UserId::new();
         let validator2 = UserId::new();
-        
+
         let current = Version::new(1, 0, 0);
         let target = Version::new(2, 0, 0);
 
@@ -617,7 +670,8 @@ mod tests {
             "Description".to_string(),
             14,
             67,
-        ).unwrap();
+        )
+        .unwrap();
 
         let sig1 = ValidatorSignature {
             validator_id: validator1,
@@ -644,7 +698,7 @@ mod tests {
         let mut manager = UpgradeManager::new();
         manager.update_total_stake(10000);
         manager.set_hard_fork_threshold(67).unwrap();
-        
+
         let proposer = UserId::new();
         let current = manager.current_version().clone();
         let target = Version::new(current.major + 1, 0, 0);
@@ -658,7 +712,8 @@ mod tests {
             "Description".to_string(),
             0,
             60,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Add validator signatures (only 60% approval)
         let validator = UserId::new();
@@ -673,7 +728,7 @@ mod tests {
         proposal.voting_deadline = Utc::now() - Duration::seconds(1);
         proposal.votes_for = 7000;
         proposal.votes_against = 2000;
-        
+
         let proposal_id = manager.submit_proposal(proposal).unwrap();
 
         // Should fail due to insufficient validator approval (60% < 67%)
@@ -685,7 +740,7 @@ mod tests {
     fn test_schedule_and_activate() {
         let mut manager = UpgradeManager::new();
         manager.update_total_stake(10000);
-        
+
         let proposer = UserId::new();
         let current = manager.current_version().clone();
         let target = Version::new(current.major, current.minor + 1, 0);
@@ -699,17 +754,20 @@ mod tests {
             "Description".to_string(),
             0,
             60,
-        ).unwrap();
+        )
+        .unwrap();
 
         proposal.voting_deadline = Utc::now() - Duration::seconds(1);
         proposal.votes_for = 7000;
         proposal.votes_against = 2000;
-        
+
         let proposal_id = manager.submit_proposal(proposal).unwrap();
         manager.finalize_proposal(proposal_id).unwrap();
 
         // Schedule
-        manager.schedule_upgrade(proposal_id, 1000, Utc::now() + Duration::hours(1)).unwrap();
+        manager
+            .schedule_upgrade(proposal_id, 1000, Utc::now() + Duration::hours(1))
+            .unwrap();
 
         // Activate
         manager.activate_upgrade(proposal_id, 1000).unwrap();
@@ -721,7 +779,7 @@ mod tests {
     fn test_fork_history_tracking() {
         let mut manager = UpgradeManager::new();
         manager.update_total_stake(10000);
-        
+
         let proposer = UserId::new();
         let current = manager.current_version().clone();
         let target = Version::new(current.major + 1, 0, 0);
@@ -735,7 +793,8 @@ mod tests {
             "Description".to_string(),
             0,
             60,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Add sufficient validator signatures
         for i in 0..7 {
@@ -752,10 +811,12 @@ mod tests {
         proposal.voting_deadline = Utc::now() - Duration::seconds(1);
         proposal.votes_for = 7000;
         proposal.votes_against = 2000;
-        
+
         let proposal_id = manager.submit_proposal(proposal).unwrap();
         manager.finalize_proposal(proposal_id).unwrap();
-        manager.schedule_upgrade(proposal_id, 1000, Utc::now()).unwrap();
+        manager
+            .schedule_upgrade(proposal_id, 1000, Utc::now())
+            .unwrap();
         manager.activate_upgrade(proposal_id, 1000).unwrap();
 
         // Check fork history

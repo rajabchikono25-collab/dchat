@@ -75,40 +75,40 @@ impl RelayTier {
 pub struct RelayConfig {
     /// Unique relay identifier
     pub relay_id: String,
-    
+
     /// Geographic region
     pub region: GeographicRegion,
-    
+
     /// Public address (DNS or IP)
     pub public_address: String,
-    
+
     /// Listen addresses for incoming connections
     pub listen_addresses: Vec<String>,
-    
+
     /// WebSocket endpoint for clients
     pub websocket_address: SocketAddr,
-    
+
     /// RPC endpoint for health checks
     pub rpc_address: SocketAddr,
-    
+
     /// Relay tier (determines rewards)
     pub tier: RelayTier,
-    
+
     /// Staked amount (in DCHAT tokens)
     pub stake_amount: u64,
-    
+
     /// Operator's wallet address for reward payouts
     pub operator_address: String,
-    
+
     /// Bootstrap validators to connect to
     pub validator_addresses: Vec<String>,
-    
+
     /// Maximum concurrent connections
     pub max_connections: usize,
-    
+
     /// Message rate limit (messages/second)
     pub rate_limit: u32,
-    
+
     /// Geographic bonus multiplier (1.0-2.0)
     pub geographic_bonus: f64,
 }
@@ -124,20 +124,20 @@ impl RelayConfig {
     ) -> f64 {
         // Base reward (for being online)
         let base = base_reward as f64 * self.tier.stake_multiplier();
-        
+
         // Message fees (per-message earnings)
         let message_fees = messages_relayed as f64 * fee_per_message;
-        
+
         // Geographic bonus (incentivize underserved regions)
         let geo_bonus = base * (self.geographic_bonus - 1.0);
-        
+
         // Uptime penalty/bonus
         let uptime_multiplier = if uptime >= self.tier.required_uptime() {
             1.0 + (uptime - self.tier.required_uptime()) * 2.0 // Bonus for exceeding
         } else {
             uptime / self.tier.required_uptime() // Penalty for falling short
         };
-        
+
         (base + message_fees + geo_bonus) * uptime_multiplier
     }
 
@@ -151,17 +151,17 @@ impl RelayConfig {
     ) -> f64 {
         // Latency score (lower is better, 0ms=50 points, 200ms=0 points)
         let latency_score = ((200 - latency_ms.min(200)) as f64 / 4.0).max(0.0);
-        
+
         // Load score (fewer connections = higher score)
         let load_factor = 1.0 - (current_connections as f64 / self.max_connections as f64);
         let load_score = load_factor * 20.0;
-        
+
         // Uptime score (99.9% uptime = 15 points)
         let uptime_score = uptime * 15.0;
-        
+
         // Reputation score (1.0 reputation = 10 points)
         let reputation_score = reputation * 10.0;
-        
+
         // Tier bonus (premium relays get priority)
         let tier_bonus = match self.tier {
             RelayTier::Premium => 5.0,
@@ -169,7 +169,7 @@ impl RelayConfig {
             RelayTier::Basic => 1.0,
             RelayTier::Trial => 0.0,
         };
-        
+
         latency_score + load_score + uptime_score + reputation_score + tier_bonus
     }
 }
@@ -179,31 +179,31 @@ impl RelayConfig {
 pub struct RelayReputation {
     /// Relay identifier
     pub relay_id: String,
-    
+
     /// Total messages relayed successfully
     pub messages_relayed: u64,
-    
+
     /// Total messages dropped/failed
     pub messages_failed: u64,
-    
+
     /// Total uptime duration
     pub total_uptime: Duration,
-    
+
     /// Total registered duration
     pub total_duration: Duration,
-    
+
     /// Number of slashing events
     pub slashing_events: u32,
-    
+
     /// Current reputation score (0.0-1.0)
     pub reputation_score: f64,
-    
+
     /// Last health check timestamp
     pub last_seen: SystemTime,
-    
+
     /// Average latency (milliseconds)
     pub avg_latency_ms: u32,
-    
+
     /// Current connections
     pub current_connections: usize,
 }
@@ -246,13 +246,15 @@ impl RelayReputation {
     pub fn update_reputation(&mut self) {
         let uptime = self.uptime_percentage();
         let success_rate = self.success_rate();
-        
+
         // Reputation = 40% uptime + 40% success rate + 20% anti-slashing
         let uptime_component = uptime * 0.4;
         let success_component = success_rate * 0.4;
         let slashing_penalty = (1.0 - (self.slashing_events as f64 * 0.1).min(1.0)) * 0.2;
-        
-        self.reputation_score = (uptime_component + success_component + slashing_penalty).max(0.0).min(1.0);
+
+        self.reputation_score = (uptime_component + success_component + slashing_penalty)
+            .max(0.0)
+            .min(1.0);
     }
 
     /// Apply slashing penalty for misbehavior
@@ -266,7 +268,7 @@ impl RelayReputation {
         let age = SystemTime::now()
             .duration_since(self.last_seen)
             .unwrap_or(Duration::from_secs(u64::MAX));
-        
+
         age < max_stale_duration && self.reputation_score > 0.5
     }
 }
@@ -276,22 +278,22 @@ impl RelayReputation {
 pub struct IncentiveConfig {
     /// Base reward per day for running a relay (DCHAT tokens)
     pub base_reward_per_day: u64,
-    
+
     /// Fee per message relayed (DCHAT tokens)
     pub fee_per_message: f64,
-    
+
     /// Geographic bonus multipliers by region
     pub geographic_bonuses: HashMap<GeographicRegion, f64>,
-    
+
     /// Minimum uptime to receive rewards
     pub min_uptime_for_rewards: f64,
-    
+
     /// Slashing penalty for downtime (% of stake)
     pub downtime_slashing_rate: f64,
-    
+
     /// Slashing penalty for message drops (% of stake)
     pub drop_slashing_rate: f64,
-    
+
     /// Maximum connections bonus multiplier
     pub max_connections_bonus: f64,
 }
@@ -324,22 +326,22 @@ impl Default for IncentiveConfig {
 pub struct RelayNetworkConfig {
     /// Network name
     pub network_name: String,
-    
+
     /// All relay configurations
     pub relays: Vec<RelayConfig>,
-    
+
     /// Incentive system configuration
     pub incentives: IncentiveConfig,
-    
+
     /// Minimum number of relays per region
     pub min_relays_per_region: usize,
-    
+
     /// Target total relay count
     pub target_relay_count: usize,
-    
+
     /// Health check interval (seconds)
     pub health_check_interval: u64,
-    
+
     /// Maximum relay staleness (seconds)
     pub max_relay_staleness: u64,
 }
@@ -349,16 +351,16 @@ impl RelayNetworkConfig {
     pub fn new_recommended(network_name: String, relay_count: usize) -> Result<Self, RelayError> {
         if relay_count < 20 || relay_count > 50 {
             return Err(RelayError::InvalidConfig(
-                "Relay count must be between 20 and 50".to_string()
+                "Relay count must be between 20 and 50".to_string(),
             ));
         }
 
         let mut relays = Vec::new();
         let regions = vec![
-            (GeographicRegion::USEast, 0.25),      // 25% in US East
-            (GeographicRegion::USWest, 0.20),      // 20% in US West
-            (GeographicRegion::EUWest, 0.20),      // 20% in EU West
-            (GeographicRegion::EUCentral, 0.10),   // 10% in EU Central
+            (GeographicRegion::USEast, 0.25),        // 25% in US East
+            (GeographicRegion::USWest, 0.20),        // 20% in US West
+            (GeographicRegion::EUWest, 0.20),        // 20% in EU West
+            (GeographicRegion::EUCentral, 0.10),     // 10% in EU Central
             (GeographicRegion::AsiaPacificSE, 0.10), // 10% in Asia SE
             (GeographicRegion::AsiaPacificNE, 0.10), // 10% in Asia NE
             (GeographicRegion::SouthAmerica, 0.05),  // 5% in South America
@@ -366,7 +368,7 @@ impl RelayNetworkConfig {
 
         let mut relay_id_counter = 0;
         let mut allocated = 0;
-        
+
         for (idx, (region, percentage)) in regions.iter().enumerate() {
             // For the last region, allocate remaining relays to avoid rounding errors
             let region_count = if idx == regions.len() - 1 {
@@ -374,9 +376,9 @@ impl RelayNetworkConfig {
             } else {
                 ((relay_count as f64 * percentage).round() as usize).min(relay_count - allocated)
             };
-            
+
             allocated += region_count;
-            
+
             let geographic_bonus = IncentiveConfig::default()
                 .geographic_bonuses
                 .get(region)
@@ -446,7 +448,7 @@ impl RelayNetworkConfig {
     /// Verify network has sufficient geographic diversity
     pub fn verify_diversity(&self) -> Result<(), RelayError> {
         let mut region_counts: HashMap<GeographicRegion, usize> = HashMap::new();
-        
+
         for relay in &self.relays {
             *region_counts.entry(relay.region).or_insert(0) += 1;
         }
@@ -454,18 +456,19 @@ impl RelayNetworkConfig {
         // Check minimum relays per region
         for (region, count) in &region_counts {
             if *count < self.min_relays_per_region {
-                return Err(RelayError::InsufficientDiversity(
-                    format!("Region {:?} has only {} relays (minimum {})", 
-                            region, count, self.min_relays_per_region)
-                ));
+                return Err(RelayError::InsufficientDiversity(format!(
+                    "Region {:?} has only {} relays (minimum {})",
+                    region, count, self.min_relays_per_region
+                )));
             }
         }
 
         // Check we have at least 4 regions
         if region_counts.len() < 4 {
-            return Err(RelayError::InsufficientDiversity(
-                format!("Only {} regions covered (minimum 4)", region_counts.len())
-            ));
+            return Err(RelayError::InsufficientDiversity(format!(
+                "Only {} regions covered (minimum 4)",
+                region_counts.len()
+            )));
         }
 
         // Check no region has >50% of relays
@@ -473,10 +476,11 @@ impl RelayNetworkConfig {
         for (region, count) in &region_counts {
             let percentage = *count as f64 / total_relays as f64;
             if percentage > 0.5 {
-                return Err(RelayError::InsufficientDiversity(
-                    format!("Region {:?} has {:.1}% of relays (maximum 50%)", 
-                            region, percentage * 100.0)
-                ));
+                return Err(RelayError::InsufficientDiversity(format!(
+                    "Region {:?} has {:.1}% of relays (maximum 50%)",
+                    region,
+                    percentage * 100.0
+                )));
             }
         }
 
@@ -490,7 +494,8 @@ impl RelayNetworkConfig {
         count: usize,
         reputations: &HashMap<String, RelayReputation>,
     ) -> Vec<String> {
-        let mut scored_relays: Vec<(String, f64)> = self.relays
+        let mut scored_relays: Vec<(String, f64)> = self
+            .relays
             .iter()
             .filter_map(|relay| {
                 let reputation = reputations.get(&relay.relay_id)?;
@@ -500,7 +505,7 @@ impl RelayNetworkConfig {
 
                 // Calculate latency to client
                 let latency_ms = relay.region.latency_to(&client_region);
-                
+
                 // Calculate relay score
                 let score = relay.calculate_score(
                     latency_ms as u32,
@@ -526,7 +531,8 @@ impl RelayNetworkConfig {
 
     /// Generate TOML configuration for a specific relay
     pub fn generate_relay_toml(&self, relay_id: &str) -> Result<String, RelayError> {
-        let relay = self.relays
+        let relay = self
+            .relays
             .iter()
             .find(|r| r.relay_id == relay_id)
             .ok_or_else(|| RelayError::InvalidConfig(format!("Relay {} not found", relay_id)))?;
@@ -582,7 +588,8 @@ max_relay_staleness = {}
             relay.relay_id,
             self.network_name,
             relay.region,
-            relay.listen_addresses
+            relay
+                .listen_addresses
                 .iter()
                 .map(|addr| format!("    \"{}\"", addr))
                 .collect::<Vec<_>>()
@@ -590,7 +597,8 @@ max_relay_staleness = {}
             relay.websocket_address,
             relay.rpc_address,
             relay.public_address,
-            relay.validator_addresses
+            relay
+                .validator_addresses
                 .iter()
                 .map(|addr| format!("    \"{}\"", addr))
                 .collect::<Vec<_>>()
@@ -613,18 +621,12 @@ max_relay_staleness = {}
 
     /// Get relays by region
     pub fn get_relays_in_region(&self, region: GeographicRegion) -> Vec<&RelayConfig> {
-        self.relays
-            .iter()
-            .filter(|r| r.region == region)
-            .collect()
+        self.relays.iter().filter(|r| r.region == region).collect()
     }
 
     /// Get relays by tier
     pub fn get_relays_by_tier(&self, tier: RelayTier) -> Vec<&RelayConfig> {
-        self.relays
-            .iter()
-            .filter(|r| r.tier == tier)
-            .collect()
+        self.relays.iter().filter(|r| r.tier == tier).collect()
     }
 }
 
@@ -636,7 +638,7 @@ mod tests {
     fn test_relay_network_creation() {
         let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 30)
             .expect("Failed to create relay network");
-        
+
         assert_eq!(network.relays.len(), 30);
         assert_eq!(network.network_name, "dchat-mainnet");
     }
@@ -645,7 +647,7 @@ mod tests {
     fn test_relay_network_diversity() {
         let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 40)
             .expect("Failed to create relay network");
-        
+
         network.verify_diversity().expect("Diversity check failed");
     }
 
@@ -653,7 +655,7 @@ mod tests {
     fn test_relay_tier_rewards() {
         let premium = RelayTier::Premium;
         let standard = RelayTier::Standard;
-        
+
         assert!(premium.stake_multiplier() > standard.stake_multiplier());
         assert!(premium.min_stake() > standard.min_stake());
     }
@@ -683,15 +685,15 @@ mod tests {
     #[test]
     fn test_relay_reputation_tracking() {
         let mut reputation = RelayReputation::new("test-relay".to_string());
-        
+
         reputation.messages_relayed = 1000;
         reputation.messages_failed = 10;
         reputation.total_uptime = Duration::from_secs(86400); // 1 day
         reputation.total_duration = Duration::from_secs(86400);
-        
+
         assert_eq!(reputation.uptime_percentage(), 1.0);
         assert_eq!(reputation.success_rate(), 1000.0 / 1010.0);
-        
+
         reputation.update_reputation();
         assert!(reputation.reputation_score > 0.95);
     }
@@ -700,7 +702,7 @@ mod tests {
     fn test_relay_selection() {
         let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 30)
             .expect("Failed to create relay network");
-        
+
         let mut reputations = HashMap::new();
         for relay in &network.relays {
             let mut rep = RelayReputation::new(relay.relay_id.clone());
@@ -719,10 +721,12 @@ mod tests {
     fn test_relay_toml_generation() {
         let network = RelayNetworkConfig::new_recommended("dchat-mainnet".to_string(), 20)
             .expect("Failed to create relay network");
-        
+
         let relay_id = &network.relays[0].relay_id;
-        let toml = network.generate_relay_toml(relay_id).expect("Failed to generate TOML");
-        
+        let toml = network
+            .generate_relay_toml(relay_id)
+            .expect("Failed to generate TOML");
+
         assert!(toml.contains("relay_id"));
         assert!(toml.contains("network_name"));
         assert!(toml.contains("dchat-mainnet"));

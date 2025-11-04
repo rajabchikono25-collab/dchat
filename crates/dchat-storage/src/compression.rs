@@ -54,7 +54,7 @@ impl Default for CompressionConfig {
         Self {
             algorithm: CompressionAlgorithm::Zstd,
             level: CompressionLevel::FAST,
-            min_size_bytes: 512, // Don't compress tiny content
+            min_size_bytes: 512,               // Don't compress tiny content
             max_size_bytes: 100 * 1024 * 1024, // 100MB max
         }
     }
@@ -81,33 +81,36 @@ impl CompressionEngine {
     /// Compress data with Zstd
     pub fn compress_zstd(data: &[u8], level: u8) -> Result<Vec<u8>, CompressionError> {
         let level = level.clamp(1, 22) as i32; // Zstd supports levels 1-22
-        
+
         let mut encoder = zstd::Encoder::new(Vec::new(), level)
             .map_err(|e| CompressionError::ZstdError(e.to_string()))?;
-        
-        encoder.write_all(data)
+
+        encoder
+            .write_all(data)
             .map_err(|e| CompressionError::IoError(e.to_string()))?;
-        
-        encoder.finish()
+
+        encoder
+            .finish()
             .map_err(|e| CompressionError::ZstdError(e.to_string()))
     }
 
     /// Decompress Zstd data
     pub fn decompress_zstd(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        let mut decoder = zstd::Decoder::new(data)
-            .map_err(|e| CompressionError::ZstdError(e.to_string()))?;
-        
+        let mut decoder =
+            zstd::Decoder::new(data).map_err(|e| CompressionError::ZstdError(e.to_string()))?;
+
         let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)
+        decoder
+            .read_to_end(&mut decompressed)
             .map_err(|e| CompressionError::IoError(e.to_string()))?;
-        
+
         Ok(decompressed)
     }
 
     /// Compress data with Brotli
     pub fn compress_brotli(data: &[u8], level: u8) -> Result<Vec<u8>, CompressionError> {
         let level = level.clamp(1, 11) as u32; // Brotli supports levels 1-11
-        
+
         let mut compressed = Vec::new();
         let mut encoder = brotli::CompressorWriter::new(
             &mut compressed,
@@ -115,10 +118,11 @@ impl CompressionEngine {
             level,
             22, // window size (default)
         );
-        
-        encoder.write_all(data)
+
+        encoder
+            .write_all(data)
             .map_err(|e| CompressionError::IoError(e.to_string()))?;
-        
+
         drop(encoder); // Flush
         Ok(compressed)
     }
@@ -127,10 +131,11 @@ impl CompressionEngine {
     pub fn decompress_brotli(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
         let mut decompressed = Vec::new();
         let mut decoder = brotli::Decompressor::new(data, 4096);
-        
-        decoder.read_to_end(&mut decompressed)
+
+        decoder
+            .read_to_end(&mut decompressed)
             .map_err(|e| CompressionError::IoError(e.to_string()))?;
-        
+
         Ok(decompressed)
     }
 
@@ -203,22 +208,23 @@ impl CompressionEngine {
     /// Select best algorithm for content type
     pub fn select_algorithm(content_type: &str, size: usize) -> CompressionAlgorithm {
         // Hot tier / real-time: Use LZ4 for speed
-        if size < 10 * 1024 { // < 10KB
+        if size < 10 * 1024 {
+            // < 10KB
             return CompressionAlgorithm::Lz4;
         }
 
         match content_type {
             // Text-based: Zstd with good compression
-            "text/plain" | "text/html" | "text/css" | "text/javascript" 
-            | "application/json" | "application/xml" => CompressionAlgorithm::Zstd,
-            
+            "text/plain" | "text/html" | "text/css" | "text/javascript" | "application/json"
+            | "application/xml" => CompressionAlgorithm::Zstd,
+
             // Static content: Brotli for maximum compression
             "text/markdown" | "text/csv" => CompressionAlgorithm::Brotli,
-            
+
             // Binary / media: Often already compressed, use LZ4 or none
-            "image/jpeg" | "image/png" | "video/mp4" | "audio/mp3" 
-            | "application/zip" | "application/gzip" => CompressionAlgorithm::None,
-            
+            "image/jpeg" | "image/png" | "video/mp4" | "audio/mp3" | "application/zip"
+            | "application/gzip" => CompressionAlgorithm::None,
+
             // Default: Zstd for balanced performance
             _ => CompressionAlgorithm::Zstd,
         }
@@ -329,10 +335,13 @@ mod tests {
     #[test]
     fn test_zstd_compression() {
         let data = b"Hello, World! This is a test message that should compress well because it has repeated patterns.";
-        
+
         let compressed = CompressionEngine::compress_zstd(data, 3).unwrap();
-        assert!(compressed.len() < data.len(), "Compressed should be smaller");
-        
+        assert!(
+            compressed.len() < data.len(),
+            "Compressed should be smaller"
+        );
+
         let decompressed = CompressionEngine::decompress_zstd(&compressed).unwrap();
         assert_eq!(decompressed, data, "Round-trip should preserve data");
     }
@@ -340,10 +349,13 @@ mod tests {
     #[test]
     fn test_brotli_compression() {
         let data = b"Brotli compression test with some repeated patterns. Brotli is great for text compression!";
-        
+
         let compressed = CompressionEngine::compress_brotli(data, 5).unwrap();
-        assert!(compressed.len() < data.len(), "Compressed should be smaller");
-        
+        assert!(
+            compressed.len() < data.len(),
+            "Compressed should be smaller"
+        );
+
         let decompressed = CompressionEngine::decompress_brotli(&compressed).unwrap();
         assert_eq!(decompressed, data, "Round-trip should preserve data");
     }
@@ -351,10 +363,10 @@ mod tests {
     #[test]
     fn test_lz4_compression() {
         let data = b"LZ4 is fast! LZ4 is fast! LZ4 is fast!";
-        
+
         let compressed = CompressionEngine::compress_lz4(data).unwrap();
         let decompressed = CompressionEngine::decompress_lz4(&compressed).unwrap();
-        
+
         assert_eq!(decompressed, data, "Round-trip should preserve data");
     }
 
@@ -364,12 +376,12 @@ mod tests {
             CompressionEngine::select_algorithm("text/plain", 100 * 1024),
             CompressionAlgorithm::Zstd
         );
-        
+
         assert_eq!(
             CompressionEngine::select_algorithm("image/jpeg", 1024),
             CompressionAlgorithm::None
         );
-        
+
         assert_eq!(
             CompressionEngine::select_algorithm("text/plain", 5 * 1024),
             CompressionAlgorithm::Lz4
@@ -385,7 +397,7 @@ mod tests {
             min_size_bytes: 10,
             max_size_bytes: 1024 * 1024,
         };
-        
+
         let result = CompressionEngine::compress(data, &config).unwrap();
         assert!(result.ratio < 1.0, "Should achieve some compression");
         assert_eq!(result.algorithm, CompressionAlgorithm::Zstd);

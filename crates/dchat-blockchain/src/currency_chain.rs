@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-use crate::tokenomics::{TokenomicsManager, BurnReason};
+use crate::tokenomics::{BurnReason, TokenomicsManager};
 
 /// Configuration for Currency Chain client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +99,10 @@ impl CurrencyChainClient {
     }
 
     /// Create new currency chain client with tokenomics integration
-    pub fn with_tokenomics(config: CurrencyChainConfig, tokenomics: Arc<TokenomicsManager>) -> Self {
+    pub fn with_tokenomics(
+        config: CurrencyChainConfig,
+        tokenomics: Arc<TokenomicsManager>,
+    ) -> Self {
         Self {
             config,
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -123,7 +126,10 @@ impl CurrencyChainClient {
             staked: 0,
             rewards_pending: 0,
         };
-        self.wallets.write().unwrap().insert(user_id.clone(), wallet.clone());
+        self.wallets
+            .write()
+            .unwrap()
+            .insert(user_id.clone(), wallet.clone());
         Ok(wallet)
     }
 
@@ -134,46 +140,45 @@ impl CurrencyChainClient {
     }
 
     /// Transfer tokens between users
-    pub fn transfer(
-        &self,
-        from: &UserId,
-        to: &UserId,
-        amount: u64,
-    ) -> Result<Uuid> {
+    pub fn transfer(&self, from: &UserId, to: &UserId, amount: u64) -> Result<Uuid> {
         let mut wallets = self.wallets.write().unwrap();
-        
-        let from_wallet = wallets.get_mut(from)
+
+        let from_wallet = wallets
+            .get_mut(from)
             .ok_or_else(|| Error::NotFound(format!("User not found: {}", from)))?;
-        
+
         if from_wallet.balance < amount {
-            return Err(Error::InvalidInput(format!("Insufficient balance: have {}, need {}", from_wallet.balance, amount)));
+            return Err(Error::InvalidInput(format!(
+                "Insufficient balance: have {}, need {}",
+                from_wallet.balance, amount
+            )));
         }
-        
+
         // Calculate transaction fee burn (1% default)
         let burn_amount = if let Some(ref tokenomics) = self.tokenomics {
             (amount * tokenomics.get_statistics().burn_rate_bps as u64) / 10000
         } else {
             0
         };
-        
+
         let net_amount = amount - burn_amount;
-        
+
         from_wallet.balance -= amount;
-        
-        let to_wallet = wallets.entry(to.clone())
-            .or_insert_with(|| Wallet {
-                user_id: to.clone(),
-                balance: 0,
-                staked: 0,
-                rewards_pending: 0,
-            });
-        
+
+        let to_wallet = wallets.entry(to.clone()).or_insert_with(|| Wallet {
+            user_id: to.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+
         to_wallet.balance += net_amount;
 
         // Burn transaction fee
         if burn_amount > 0 {
             if let Some(ref tokenomics) = self.tokenomics {
-                let _ = tokenomics.burn_tokens(burn_amount, BurnReason::TransactionFee, from.clone());
+                let _ =
+                    tokenomics.burn_tokens(burn_amount, BurnReason::TransactionFee, from.clone());
             }
         }
 
@@ -191,21 +196,25 @@ impl CurrencyChainClient {
 
         let tx_id = tx.id;
         self.transactions.write().unwrap().insert(tx_id, tx);
-        
+
         Ok(tx_id)
     }
 
     /// Stake tokens for rewards
     pub fn stake(&self, user_id: &UserId, amount: u64, lock_duration_seconds: i64) -> Result<Uuid> {
         let mut wallets = self.wallets.write().unwrap();
-        
-        let wallet = wallets.get_mut(user_id)
+
+        let wallet = wallets
+            .get_mut(user_id)
             .ok_or_else(|| Error::NotFound(format!("User not found: {}", user_id)))?;
-        
+
         if wallet.balance < amount {
-            return Err(Error::InvalidInput(format!("Insufficient balance: have {}, need {}", wallet.balance, amount)));
+            return Err(Error::InvalidInput(format!(
+                "Insufficient balance: have {}, need {}",
+                wallet.balance, amount
+            )));
         }
-        
+
         wallet.balance -= amount;
         wallet.staked += amount;
 
@@ -217,7 +226,10 @@ impl CurrencyChainClient {
             rewards_earned: 0,
         };
 
-        self.stakes.write().unwrap().insert(user_id.clone(), stake_position);
+        self.stakes
+            .write()
+            .unwrap()
+            .insert(user_id.clone(), stake_position);
 
         let tx = CurrencyTransaction {
             id: Uuid::new_v4(),
@@ -233,16 +245,17 @@ impl CurrencyChainClient {
 
         let tx_id = tx.id;
         self.transactions.write().unwrap().insert(tx_id, tx);
-        
+
         Ok(tx_id)
     }
 
     /// Claim rewards
     pub fn claim_rewards(&self, user_id: &UserId) -> Result<Uuid> {
         let mut wallets = self.wallets.write().unwrap();
-        let wallet = wallets.get_mut(user_id)
+        let wallet = wallets
+            .get_mut(user_id)
             .ok_or_else(|| Error::NotFound(format!("User not found: {}", user_id)))?;
-        
+
         let rewards = wallet.rewards_pending;
         wallet.balance += rewards;
         wallet.rewards_pending = 0;
@@ -261,7 +274,7 @@ impl CurrencyChainClient {
 
         let tx_id = tx.id;
         self.transactions.write().unwrap().insert(tx_id, tx);
-        
+
         Ok(tx_id)
     }
 
@@ -279,7 +292,7 @@ impl CurrencyChainClient {
     pub fn advance_block(&self) {
         let mut block = self.current_block.write().unwrap();
         *block += 1;
-        
+
         // Update confirmations for pending transactions
         let mut txs = self.transactions.write().unwrap();
         for tx in txs.values_mut() {
@@ -296,7 +309,8 @@ impl CurrencyChainClient {
     /// Get all transactions for a user
     pub fn get_user_transactions(&self, user_id: &UserId) -> Result<Vec<CurrencyTransaction>> {
         let txs = self.transactions.read().unwrap();
-        Ok(txs.values()
+        Ok(txs
+            .values()
             .filter(|tx| tx.from == *user_id)
             .cloned()
             .collect())
@@ -325,14 +339,14 @@ mod tests {
         let client = CurrencyChainClient::new(CurrencyChainConfig::default());
         let alice = UserId(Uuid::new_v4());
         let bob = UserId(Uuid::new_v4());
-        
+
         client.create_wallet(&alice, 1000).unwrap();
         client.create_wallet(&bob, 0).unwrap();
-        
+
         let tx_id = client.transfer(&alice, &bob, 100).unwrap();
         let tx = client.get_transaction(&tx_id).unwrap();
         assert!(tx.is_some());
-        
+
         assert_eq!(client.get_balance(&alice).unwrap(), 900);
         assert_eq!(client.get_balance(&bob).unwrap(), 100);
     }
@@ -341,12 +355,12 @@ mod tests {
     fn test_stake() {
         let client = CurrencyChainClient::new(CurrencyChainConfig::default());
         let user_id = UserId(Uuid::new_v4());
-        
+
         client.create_wallet(&user_id, 1000).unwrap();
         let tx_id = client.stake(&user_id, 500, 86400).unwrap();
         let tx = client.get_transaction(&tx_id).unwrap();
         assert!(tx.is_some());
-        
+
         let wallet = client.get_wallet(&user_id).unwrap().unwrap();
         assert_eq!(wallet.balance, 500);
         assert_eq!(wallet.staked, 500);

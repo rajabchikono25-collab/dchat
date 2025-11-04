@@ -14,16 +14,16 @@ use crate::swarm::NetworkManager;
 pub struct RelayConfig {
     /// Enable relay functionality
     pub enabled: bool,
-    
+
     /// Maximum concurrent relayed connections
     pub max_connections: usize,
-    
+
     /// Bandwidth limit in bytes per second
     pub bandwidth_limit: u64,
-    
+
     /// Minimum stake required for relay operations
     pub min_stake: u64,
-    
+
     /// Reward rate per message relayed
     pub reward_per_message: u64,
 }
@@ -31,7 +31,7 @@ pub struct RelayConfig {
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
-            enabled: true,  // Relay enabled by default when running as relay node
+            enabled: true, // Relay enabled by default when running as relay node
             max_connections: 100,
             bandwidth_limit: 10_000_000, // 10 MB/s
             min_stake: 1000,
@@ -44,19 +44,19 @@ impl Default for RelayConfig {
 pub struct RelayNode {
     config: RelayConfig,
     peer_id: PeerId,
-    
+
     /// Network manager for P2P communication
     network: NetworkManager,
-    
+
     /// Track relayed messages for proof-of-delivery
     relayed_messages: HashMap<String, RelayProof>,
-    
+
     /// Uptime tracking
     start_time: SystemTime,
-    
+
     /// Total messages relayed
     total_messages: u64,
-    
+
     /// Total bandwidth used
     total_bandwidth: u64,
 }
@@ -74,12 +74,12 @@ impl RelayNode {
             total_bandwidth: 0,
         }
     }
-    
+
     /// Check if relay is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
-    
+
     /// Record a relayed message
     pub fn record_relay(
         &mut self,
@@ -91,12 +91,12 @@ impl RelayNode {
         if !self.config.enabled {
             return Err(Error::network("Relay not enabled".to_string()));
         }
-        
+
         // Check bandwidth limit
         if self.total_bandwidth + size as u64 > self.config.bandwidth_limit {
             return Err(Error::network("Bandwidth limit exceeded".to_string()));
         }
-        
+
         let proof = RelayProof {
             message_id: message_id.clone(),
             relay_peer_id: self.peer_id.to_string(),
@@ -105,22 +105,26 @@ impl RelayNode {
             timestamp: SystemTime::now(),
             size,
         };
-        
+
         self.relayed_messages.insert(message_id, proof.clone());
         self.total_messages += 1;
         self.total_bandwidth += size as u64;
-        
-        tracing::debug!("Relayed message {}, total: {}", proof.message_id, self.total_messages);
-        
+
+        tracing::debug!(
+            "Relayed message {}, total: {}",
+            proof.message_id,
+            self.total_messages
+        );
+
         Ok(proof)
     }
-    
+
     /// Get relay statistics
     pub fn stats(&self) -> RelayStats {
         let uptime = SystemTime::now()
             .duration_since(self.start_time)
             .unwrap_or(Duration::from_secs(0));
-        
+
         RelayStats {
             peer_id: self.peer_id,
             total_messages: self.total_messages,
@@ -129,32 +133,32 @@ impl RelayNode {
             active_connections: self.relayed_messages.len(),
         }
     }
-    
+
     /// Calculate earned rewards
     pub fn calculate_rewards(&self) -> u64 {
         self.total_messages * self.config.reward_per_message
     }
-    
+
     /// Run the relay node event loop
     /// This is a long-running async task that handles relay operations
     pub async fn run(&mut self) -> Result<()> {
         if !self.config.enabled {
             return Err(Error::network("Relay is not enabled".to_string()));
         }
-        
+
         tracing::info!("🔀 Relay node starting (peer_id: {})", self.peer_id);
         tracing::info!("   Max connections: {}", self.config.max_connections);
         tracing::info!("   Bandwidth limit: {} bytes", self.config.bandwidth_limit);
-        
+
         // Subscribe to global channel to participate in gossipsub mesh
         self.network.subscribe_to_channel("global").ok();
         tracing::info!("📡 Subscribed to #global channel for gossipsub mesh participation");
-        
+
         // Stats reporting interval
         let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
         let mut test_publish_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         let mut message_counter: u64 = 0;
-        
+
         // Main event loop: poll network events
         loop {
             tokio::select! {
@@ -164,7 +168,7 @@ impl RelayNode {
                         self.handle_network_event(net_event).await?;
                     }
                 }
-                
+
                 // Publish test messages periodically
                 _ = test_publish_interval.tick() => {
                     message_counter += 1;
@@ -172,7 +176,7 @@ impl RelayNode {
                         tracing::warn!("Failed to publish test message: {}", e);
                     }
                 }
-                
+
                 // Report stats periodically
                 _ = stats_interval.tick() => {
                     let stats = self.stats();
@@ -186,31 +190,36 @@ impl RelayNode {
             }
         }
     }
-    
+
     /// Publish a test message to verify gossipsub propagation
     async fn publish_test_message(&mut self, counter: u64) -> Result<()> {
         use crate::behavior::DchatMessage;
         use dchat_core::types::UserId;
-        
+
         // Create a test user ID (in production this would be a real user)
         let sender = UserId::new();
-        
+
         let test_message = DchatMessage::ChannelMessage {
             sender,
             channel_id: "test-mesh".to_string(),
-            encrypted_payload: format!("Test message #{} from relay {}", counter, self.peer_id).into_bytes(),
+            encrypted_payload: format!("Test message #{} from relay {}", counter, self.peer_id)
+                .into_bytes(),
         };
-        
-        self.network.publish_to_channel("test-mesh", &test_message)?;
-        tracing::info!("📤 Published test message #{} to test-mesh channel", counter);
+
+        self.network
+            .publish_to_channel("test-mesh", &test_message)?;
+        tracing::info!(
+            "📤 Published test message #{} to test-mesh channel",
+            counter
+        );
         Ok(())
     }
-    
+
     /// Handle network events
     async fn handle_network_event(&mut self, event: crate::swarm::NetworkEvent) -> Result<()> {
-        use crate::swarm::NetworkEvent;
         use crate::behavior::DchatMessage;
-        
+        use crate::swarm::NetworkEvent;
+
         match event {
             NetworkEvent::PeerConnected(peer_id) => {
                 tracing::info!("✅ Relay connected to peer: {}", peer_id);
@@ -224,57 +233,97 @@ impl RelayNode {
             NetworkEvent::MessageReceived { from, message } => {
                 // Process and relay the message
                 match &message {
-                    DchatMessage::ChannelMessage { sender: _, channel_id, encrypted_payload } => {
+                    DchatMessage::ChannelMessage {
+                        sender: _,
+                        channel_id,
+                        encrypted_payload,
+                    } => {
                         let payload_str = String::from_utf8_lossy(encrypted_payload);
                         tracing::info!(
                             "📨 Relay received channel message from {} in channel '{}': {}",
-                            from, channel_id, payload_str
+                            from,
+                            channel_id,
+                            payload_str
                         );
-                        
+
                         // Track message size for bandwidth monitoring
                         let message_size = encrypted_payload.len();
                         self.total_bandwidth += message_size as u64;
                         self.total_messages += 1;
-                        
+
                         // Generate proof of relay for this message
-                        let _message_id = format!("msg_{}_{}", from, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis());
-                        
+                        let _message_id = format!(
+                            "msg_{}_{}",
+                            from,
+                            SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis()
+                        );
+
                         // In a full implementation, we would:
                         // 1. Verify the sender's signature
                         // 2. Forward to recipient if they're connected
                         // 3. Submit proof to chain for rewards
-                        
+
                         tracing::debug!(
                             "🔄 Message relayed: {} bytes, total bandwidth: {} bytes",
-                            message_size, self.total_bandwidth
+                            message_size,
+                            self.total_bandwidth
                         );
                     }
-                    DchatMessage::DirectMessage { sender, recipient, encrypted_payload } => {
+                    DchatMessage::DirectMessage {
+                        sender,
+                        recipient,
+                        encrypted_payload,
+                    } => {
                         tracing::info!(
                             "📬 Relay received direct message from {} to {} ({} bytes)",
-                            sender, recipient, encrypted_payload.len()
+                            sender,
+                            recipient,
+                            encrypted_payload.len()
                         );
-                        
+
                         let message_size = encrypted_payload.len();
                         self.total_bandwidth += message_size as u64;
                         self.total_messages += 1;
-                        
+
                         // Generate relay proof
-                        let message_id = format!("dm_{}_{}", from, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis());
+                        let message_id = format!(
+                            "dm_{}_{}",
+                            from,
+                            SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis()
+                        );
                         let proof = self.record_relay(
                             message_id,
                             sender.clone(),
                             recipient.clone(),
                             message_size,
                         )?;
-                        
-                        tracing::debug!("✅ Generated relay proof for direct message: {:?}", proof.message_id);
+
+                        tracing::debug!(
+                            "✅ Generated relay proof for direct message: {:?}",
+                            proof.message_id
+                        );
                     }
-                    DchatMessage::DeliveryProof { message_id, relay_signature: _ } => {
+                    DchatMessage::DeliveryProof {
+                        message_id,
+                        relay_signature: _,
+                    } => {
                         tracing::info!("📋 Received delivery proof for message: {}", message_id);
                     }
-                    DchatMessage::SyncRequest { user_id, last_sequence } => {
-                        tracing::info!("🔄 Sync request from {} (last_seq: {})", user_id, last_sequence);
+                    DchatMessage::SyncRequest {
+                        user_id,
+                        last_sequence,
+                    } => {
+                        tracing::info!(
+                            "🔄 Sync request from {} (last_seq: {})",
+                            user_id,
+                            last_sequence
+                        );
                     }
                 }
                 Ok(())
@@ -323,17 +372,17 @@ impl RelayClient {
             available_relays: HashMap::new(),
         }
     }
-    
+
     /// Register an available relay node
     pub fn register_relay(&mut self, peer_id: PeerId, info: RelayNodeInfo) {
         self.available_relays.insert(peer_id, info);
     }
-    
+
     /// Remove a relay node
     pub fn remove_relay(&mut self, peer_id: &PeerId) {
         self.available_relays.remove(peer_id);
     }
-    
+
     /// Select best relay for a connection
     pub fn select_relay(&self) -> Option<(PeerId, &RelayNodeInfo)> {
         // Select relay with lowest latency and highest reputation
@@ -346,7 +395,7 @@ impl RelayClient {
             })
             .map(|(peer_id, info)| (*peer_id, info))
     }
-    
+
     /// Get number of available relays
     pub fn available_count(&self) -> usize {
         self.available_relays.len()
@@ -374,24 +423,26 @@ mod tests {
             ..Default::default()
         };
         let peer_id = PeerId::random();
-        let network = NetworkManager::new(crate::NetworkConfig::default()).await.unwrap();
+        let network = NetworkManager::new(crate::NetworkConfig::default())
+            .await
+            .unwrap();
         let mut relay = RelayNode::new(config, peer_id, network);
-        
+
         assert!(relay.is_enabled());
-        
+
         let sender = UserId(Uuid::new_v4());
         let recipient = UserId(Uuid::new_v4());
         let result = relay.record_relay("msg1".to_string(), sender, recipient, 1024);
-        
+
         assert!(result.is_ok());
         assert_eq!(relay.total_messages, 1);
         assert_eq!(relay.calculate_rewards(), 1);
     }
-    
+
     #[test]
     fn test_relay_client() {
         let mut client = RelayClient::new();
-        
+
         let peer_id = PeerId::random();
         let info = RelayNodeInfo {
             peer_id,
@@ -399,10 +450,10 @@ mod tests {
             reputation: 100,
             available_bandwidth: 1_000_000,
         };
-        
+
         client.register_relay(peer_id, info);
         assert_eq!(client.available_count(), 1);
-        
+
         let selected = client.select_relay();
         assert!(selected.is_some());
     }

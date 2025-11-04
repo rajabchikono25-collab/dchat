@@ -9,13 +9,13 @@ use std::time::{Duration, Instant};
 pub struct RateLimiter {
     /// Maximum messages per window
     max_messages: u32,
-    
+
     /// Time window duration
     window: Duration,
-    
+
     /// Current message count in window
     message_count: u32,
-    
+
     /// Window start time
     window_start: Instant,
 }
@@ -34,7 +34,7 @@ impl RateLimiter {
     /// Check if rate limit allows a message
     pub fn check(&mut self) -> bool {
         self.reset_if_needed();
-        
+
         if self.message_count < self.max_messages {
             self.message_count += 1;
             true
@@ -75,10 +75,10 @@ impl RateLimiter {
 pub struct FloodControl {
     /// Per-peer rate limiters
     peer_limits: HashMap<PeerId, RateLimiter>,
-    
+
     /// Global rate limiter
     global_rate: RateLimiter,
-    
+
     /// Per-peer limit
     per_peer_limit: u32,
 }
@@ -99,25 +99,25 @@ impl FloodControl {
         if !self.global_rate.check() {
             return false;
         }
-        
+
         // Check per-peer rate limit
         let limiter = self
             .peer_limits
             .entry(*peer_id)
             .or_insert_with(|| RateLimiter::new(self.per_peer_limit));
-        
+
         limiter.check()
     }
 
     /// Record a message from a peer
     pub fn record_message(&mut self, peer_id: &PeerId) {
         self.global_rate.record();
-        
+
         let limiter = self
             .peer_limits
             .entry(*peer_id)
             .or_insert_with(|| RateLimiter::new(self.per_peer_limit));
-        
+
         limiter.record();
     }
 
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_rate_limiter_allows_under_limit() {
         let mut limiter = RateLimiter::new(5);
-        
+
         for _ in 0..5 {
             assert!(limiter.check());
         }
@@ -175,12 +175,12 @@ mod tests {
     #[test]
     fn test_rate_limiter_blocks_over_limit() {
         let mut limiter = RateLimiter::new(3);
-        
+
         // First 3 should succeed
         for _ in 0..3 {
             assert!(limiter.check());
         }
-        
+
         // 4th should fail
         assert!(!limiter.check());
     }
@@ -188,14 +188,14 @@ mod tests {
     #[test]
     fn test_rate_limiter_reset() {
         let mut limiter = RateLimiter::new(2);
-        
+
         assert!(limiter.check());
         assert!(limiter.check());
         assert!(!limiter.check());
-        
+
         // Wait for window to elapse
         thread::sleep(Duration::from_millis(1100));
-        
+
         // Should allow again after reset
         assert!(limiter.check());
     }
@@ -203,14 +203,14 @@ mod tests {
     #[test]
     fn test_rate_limiter_current_usage() {
         let mut limiter = RateLimiter::new(10);
-        
+
         let (used, max) = limiter.current_usage();
         assert_eq!(used, 0);
         assert_eq!(max, 10);
-        
+
         limiter.check();
         limiter.check();
-        
+
         let (used, _) = limiter.current_usage();
         assert_eq!(used, 2);
     }
@@ -225,12 +225,12 @@ mod tests {
     fn test_flood_control_per_peer_limit() {
         let mut fc = FloodControl::new(3, 1000);
         let peer = PeerId::random();
-        
+
         // First 3 should succeed
         for _ in 0..3 {
             assert!(fc.check_rate_limit(&peer));
         }
-        
+
         // 4th should fail
         assert!(!fc.check_rate_limit(&peer));
     }
@@ -238,17 +238,17 @@ mod tests {
     #[test]
     fn test_flood_control_global_limit() {
         let mut fc = FloodControl::new(100, 5);
-        
+
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
-        
+
         // Use up global limit with two peers
         assert!(fc.check_rate_limit(&peer1));
         assert!(fc.check_rate_limit(&peer1));
         assert!(fc.check_rate_limit(&peer2));
         assert!(fc.check_rate_limit(&peer2));
         assert!(fc.check_rate_limit(&peer1));
-        
+
         // Global limit reached
         assert!(!fc.check_rate_limit(&peer1));
         assert!(!fc.check_rate_limit(&peer2));
@@ -258,10 +258,10 @@ mod tests {
     fn test_flood_control_remove_peer() {
         let mut fc = FloodControl::new(10, 100);
         let peer = PeerId::random();
-        
+
         fc.check_rate_limit(&peer);
         assert_eq!(fc.peer_count(), 1);
-        
+
         fc.remove_peer(&peer);
         assert_eq!(fc.peer_count(), 0);
     }
@@ -270,13 +270,13 @@ mod tests {
     fn test_flood_control_peer_usage() {
         let mut fc = FloodControl::new(10, 100);
         let peer = PeerId::random();
-        
+
         fc.check_rate_limit(&peer);
         fc.check_rate_limit(&peer);
-        
+
         let usage = fc.peer_usage(&peer);
         assert!(usage.is_some());
-        
+
         let (used, max) = usage.unwrap();
         assert_eq!(used, 2);
         assert_eq!(max, 10);
@@ -287,11 +287,11 @@ mod tests {
         let mut fc = FloodControl::new(10, 100);
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
-        
+
         fc.check_rate_limit(&peer1);
         fc.check_rate_limit(&peer2);
         fc.check_rate_limit(&peer1);
-        
+
         let (used, max) = fc.global_usage();
         assert_eq!(used, 3);
         assert_eq!(max, 100);

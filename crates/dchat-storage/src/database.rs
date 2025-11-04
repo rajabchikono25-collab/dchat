@@ -11,19 +11,19 @@ use std::path::PathBuf;
 pub struct DatabaseConfig {
     /// Path to database file
     pub path: PathBuf,
-    
+
     /// Maximum number of connections in the pool
     pub max_connections: u32,
-    
+
     /// Connection acquisition timeout in seconds
     pub connection_timeout_secs: u64,
-    
+
     /// Idle connection timeout in seconds
     pub idle_timeout_secs: u64,
-    
+
     /// Maximum connection lifetime in seconds
     pub max_lifetime_secs: u64,
-    
+
     /// Enable WAL mode for better concurrency
     pub enable_wal: bool,
 }
@@ -53,16 +53,16 @@ impl Database {
     pub async fn new(config: DatabaseConfig) -> Result<Self> {
         use sqlx::sqlite::SqlitePoolOptions;
         use std::time::Duration;
-        
+
         // Create database URL
         let db_url = format!("sqlite:{}?mode=rwc", config.path.display());
-        
+
         tracing::info!(
             "Initializing database pool: max_connections={}, timeout={}s",
             config.max_connections,
             config.connection_timeout_secs
         );
-        
+
         // Create connection pool with configuration
         let pool = SqlitePoolOptions::new()
             .max_connections(config.max_connections)
@@ -72,16 +72,16 @@ impl Database {
             .connect(&db_url)
             .await
             .map_err(|e| Error::storage(format!("Failed to connect to database: {}", e)))?;
-        
+
         tracing::info!("Database connection pool established");
-        
+
         // Initialize schema
         let mut db = Self { pool, config };
         db.initialize_schema().await?;
-        
+
         Ok(db)
     }
-    
+
     /// Initialize database schema
     async fn initialize_schema(&mut self) -> Result<()> {
         // Enable WAL mode if configured
@@ -91,7 +91,7 @@ impl Database {
                 .await
                 .map_err(|e| Error::storage(format!("Failed to enable WAL: {}", e)))?;
         }
-        
+
         // Create tables
         for sql in Schema::create_tables() {
             sqlx::query(sql)
@@ -99,7 +99,7 @@ impl Database {
                 .await
                 .map_err(|e| Error::storage(format!("Failed to create table: {}", e)))?;
         }
-        
+
         // Create indexes
         for sql in Schema::create_indexes() {
             sqlx::query(sql)
@@ -107,34 +107,27 @@ impl Database {
                 .await
                 .map_err(|e| Error::storage(format!("Failed to create index: {}", e)))?;
         }
-        
+
         tracing::info!("Database schema initialized");
         Ok(())
     }
-    
+
     /// Insert a user
-    pub async fn insert_user(
-        &self,
-        id: &str,
-        username: &str,
-        public_key: &[u8],
-    ) -> Result<()> {
+    pub async fn insert_user(&self, id: &str, username: &str, public_key: &[u8]) -> Result<()> {
         let created_at = chrono::Utc::now().timestamp();
-        
-        sqlx::query(
-            "INSERT INTO users (id, username, public_key, created_at) VALUES (?, ?, ?, ?)"
-        )
-        .bind(id)
-        .bind(username)
-        .bind(public_key)
-        .bind(created_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| Error::storage(format!("Failed to insert user: {}", e)))?;
-        
+
+        sqlx::query("INSERT INTO users (id, username, public_key, created_at) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind(username)
+            .bind(public_key)
+            .bind(created_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to insert user: {}", e)))?;
+
         Ok(())
     }
-    
+
     /// Get a user by ID
     pub async fn get_user(&self, id: &str) -> Result<Option<UserRow>> {
         let row = sqlx::query("SELECT * FROM users WHERE id = ?")
@@ -142,7 +135,7 @@ impl Database {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| Error::storage(format!("Failed to get user: {}", e)))?;
-        
+
         if let Some(row) = row {
             Ok(Some(UserRow {
                 id: row.get("id"),
@@ -154,14 +147,14 @@ impl Database {
             Ok(None)
         }
     }
-    
+
     /// Insert a message
     pub async fn insert_message(&self, message: &MessageRow) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO messages 
             (id, sender_id, recipient_id, channel_id, content_type, content, 
              encrypted_payload, timestamp, sequence_num, status, expires_at, size, content_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&message.id)
         .bind(&message.sender_id)
@@ -179,12 +172,16 @@ impl Database {
         .execute(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to insert message: {}", e)))?;
-        
+
         Ok(())
     }
-    
+
     /// Get messages for a user
-    pub async fn get_messages_for_user(&self, user_id: &str, limit: i64) -> Result<Vec<MessageRow>> {
+    pub async fn get_messages_for_user(
+        &self,
+        user_id: &str,
+        limit: i64,
+    ) -> Result<Vec<MessageRow>> {
         let rows = sqlx::query(
             "SELECT * FROM messages WHERE recipient_id = ? OR sender_id = ? ORDER BY timestamp DESC LIMIT ?"
         )
@@ -194,108 +191,116 @@ impl Database {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to get messages: {}", e)))?;
-        
-        let messages = rows.iter().map(|row| MessageRow {
-            id: row.get("id"),
-            sender_id: row.get("sender_id"),
-            recipient_id: row.get("recipient_id"),
-            channel_id: row.get("channel_id"),
-            content_type: row.get("content_type"),
-            content: row.get("content"),
-            encrypted_payload: row.get("encrypted_payload"),
-            timestamp: row.get("timestamp"),
-            sequence_num: row.get("sequence_num"),
-            status: row.get("status"),
-            expires_at: row.get("expires_at"),
-            size: row.get::<i64, _>("size") as usize,
-            content_hash: row.get("content_hash"),
-        }).collect();
-        
+
+        let messages = rows
+            .iter()
+            .map(|row| MessageRow {
+                id: row.get("id"),
+                sender_id: row.get("sender_id"),
+                recipient_id: row.get("recipient_id"),
+                channel_id: row.get("channel_id"),
+                content_type: row.get("content_type"),
+                content: row.get("content"),
+                encrypted_payload: row.get("encrypted_payload"),
+                timestamp: row.get("timestamp"),
+                sequence_num: row.get("sequence_num"),
+                status: row.get("status"),
+                expires_at: row.get("expires_at"),
+                size: row.get::<i64, _>("size") as usize,
+                content_hash: row.get("content_hash"),
+            })
+            .collect();
+
         Ok(messages)
     }
 
     /// Get all messages (for filtering by channel, etc.)
     pub async fn get_all_messages(&self, limit: i64) -> Result<Vec<MessageRow>> {
-        let rows = sqlx::query(
-            "SELECT * FROM messages ORDER BY timestamp DESC LIMIT ?"
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::storage(format!("Failed to get all messages: {}", e)))?;
-        
-        let messages = rows.iter().map(|row| MessageRow {
-            id: row.get("id"),
-            sender_id: row.get("sender_id"),
-            recipient_id: row.get("recipient_id"),
-            channel_id: row.get("channel_id"),
-            content_type: row.get("content_type"),
-            content: row.get("content"),
-            encrypted_payload: row.get("encrypted_payload"),
-            timestamp: row.get("timestamp"),
-            sequence_num: row.get("sequence_num"),
-            status: row.get("status"),
-            expires_at: row.get("expires_at"),
-            size: row.get::<i64, _>("size") as usize,
-            content_hash: row.get("content_hash"),
-        }).collect();
-        
+        let rows = sqlx::query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT ?")
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to get all messages: {}", e)))?;
+
+        let messages = rows
+            .iter()
+            .map(|row| MessageRow {
+                id: row.get("id"),
+                sender_id: row.get("sender_id"),
+                recipient_id: row.get("recipient_id"),
+                channel_id: row.get("channel_id"),
+                content_type: row.get("content_type"),
+                content: row.get("content"),
+                encrypted_payload: row.get("encrypted_payload"),
+                timestamp: row.get("timestamp"),
+                sequence_num: row.get("sequence_num"),
+                status: row.get("status"),
+                expires_at: row.get("expires_at"),
+                size: row.get::<i64, _>("size") as usize,
+                content_hash: row.get("content_hash"),
+            })
+            .collect();
+
         Ok(messages)
     }
-    
+
     /// Delete expired messages
     pub async fn delete_expired_messages(&self) -> Result<u64> {
         let now = chrono::Utc::now().timestamp();
-        
-        let result = sqlx::query("DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?")
-            .bind(now)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::storage(format!("Failed to delete expired messages: {}", e)))?;
-        
+
+        let result =
+            sqlx::query("DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?")
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::storage(format!("Failed to delete expired messages: {}", e)))?;
+
         Ok(result.rows_affected())
     }
-    
+
     /// Get database statistics
     pub async fn stats(&self) -> Result<DatabaseStats> {
         let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::storage(format!("Failed to get stats: {}", e)))?;
-        
+
         let message_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::storage(format!("Failed to get stats: {}", e)))?;
-        
+
         let channel_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::storage(format!("Failed to get stats: {}", e)))?;
-        
+
         Ok(DatabaseStats {
             user_count: user_count as usize,
             message_count: message_count as usize,
             channel_count: channel_count as usize,
         })
     }
-    
+
     /// Perform health check on the database connection pool
     pub async fn health_check(&self) -> Result<PoolHealth> {
         // Check if we can acquire a connection
         let start = std::time::Instant::now();
-        let _conn = self.pool.acquire().await
+        let _conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| Error::storage(format!("Health check failed: {}", e)))?;
         let acquire_time = start.elapsed();
-        
+
         // Simple query to verify database is responsive
         let _: i64 = sqlx::query_scalar("SELECT 1")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::storage(format!("Health check query failed: {}", e)))?;
-        
+
         let total_time = start.elapsed();
-        
+
         Ok(PoolHealth {
             is_healthy: true,
             pool_size: self.pool.size(),
@@ -304,26 +309,24 @@ impl Database {
             query_time_ms: total_time.as_millis() as u64,
         })
     }
-    
+
     /// Validate all connections in the pool
     pub async fn validate_connections(&self) -> Result<ConnectionValidation> {
         let mut valid_count = 0;
         let mut invalid_count = 0;
         let max_connections = self.config.max_connections as usize;
-        
+
         // Try to validate by acquiring and testing each connection
         for _ in 0..self.pool.size() {
             match self.pool.acquire().await {
-                Ok(mut conn) => {
-                    match sqlx::query("SELECT 1").execute(&mut *conn).await {
-                        Ok(_) => valid_count += 1,
-                        Err(_) => invalid_count += 1,
-                    }
-                }
+                Ok(mut conn) => match sqlx::query("SELECT 1").execute(&mut *conn).await {
+                    Ok(_) => valid_count += 1,
+                    Err(_) => invalid_count += 1,
+                },
                 Err(_) => invalid_count += 1,
             }
         }
-        
+
         Ok(ConnectionValidation {
             valid_connections: valid_count,
             invalid_connections: invalid_count,
@@ -331,7 +334,7 @@ impl Database {
             validation_passed: invalid_count == 0,
         })
     }
-    
+
     /// Get connection pool metrics
     pub fn pool_metrics(&self) -> PoolMetrics {
         PoolMetrics {
@@ -340,7 +343,7 @@ impl Database {
             max_connections: self.config.max_connections,
         }
     }
-    
+
     /// Close the database connection pool gracefully
     pub async fn close(self) -> Result<()> {
         tracing::info!("Closing database connection pool");
@@ -420,7 +423,7 @@ mod tests {
     async fn test_database_creation() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        
+
         let config = DatabaseConfig {
             path: db_path,
             max_connections: 5,
@@ -429,7 +432,7 @@ mod tests {
             idle_timeout_secs: 300,
             max_lifetime_secs: 1800,
         };
-        
+
         let db = Database::new(config).await;
         assert!(db.is_ok());
     }

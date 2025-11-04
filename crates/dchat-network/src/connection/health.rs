@@ -7,7 +7,6 @@
 /// - Health status tracking
 ///
 /// See ARCHITECTURE.md Section 12.3: Connection Management
-
 use dchat_core::Result;
 use libp2p::PeerId;
 use std::collections::HashMap;
@@ -29,7 +28,7 @@ impl HealthMonitor {
             last_check: Instant::now(),
         }
     }
-    
+
     /// Start monitoring peer
     pub async fn monitor_peer(&mut self, peer_id: PeerId) -> Result<()> {
         self.peers.insert(
@@ -46,52 +45,53 @@ impl HealthMonitor {
         );
         Ok(())
     }
-    
+
     /// Stop monitoring peer
     pub async fn stop_monitoring(&mut self, peer_id: &PeerId) -> Result<()> {
         self.peers.remove(peer_id);
         Ok(())
     }
-    
+
     /// Check all peers (returns list of unhealthy peers)
     pub async fn check_all(&mut self) -> Result<Vec<PeerId>> {
         let now = Instant::now();
-        
+
         // Only check if interval has passed
         if now.duration_since(self.last_check) < self.check_interval {
             return Ok(Vec::new());
         }
-        
+
         self.last_check = now;
-        
+
         let mut unhealthy = Vec::new();
-        
+
         for (peer_id, health) in &mut self.peers {
             health.total_checks += 1;
-            
+
             // Simulate health check (in production, would send actual ping)
             let check_result = Self::perform_health_check_static(peer_id).await;
-            
+
             match check_result {
                 Ok(latency) => {
                     health.status = HealthStatus::Healthy;
                     health.last_response = now;
                     health.consecutive_failures = 0;
                     health.successful_checks += 1;
-                    
+
                     // Update average latency (exponential moving average)
                     health.average_latency = if health.average_latency.as_millis() == 0 {
                         latency
                     } else {
                         Duration::from_millis(
                             (health.average_latency.as_millis() as f64 * 0.7
-                                + latency.as_millis() as f64 * 0.3) as u64,
+                                + latency.as_millis() as f64 * 0.3)
+                                as u64,
                         )
                     };
                 }
                 Err(_) => {
                     health.consecutive_failures += 1;
-                    
+
                     if health.consecutive_failures >= 3 {
                         health.status = HealthStatus::Unhealthy;
                         unhealthy.push(*peer_id);
@@ -100,36 +100,36 @@ impl HealthMonitor {
                     }
                 }
             }
-            
+
             health.last_check = now;
         }
-        
+
         Ok(unhealthy)
     }
-    
+
     /// Perform health check on peer (ping/pong)
     async fn perform_health_check_static(_peer_id: &PeerId) -> Result<Duration> {
         // In production, this would:
         // 1. Send ping message to peer
         // 2. Wait for pong response
         // 3. Measure round-trip time
-        
+
         // For now, simulate with random latency
         let latency = Duration::from_millis(10 + (rand::random::<u64>() % 100));
-        
+
         // Simulate occasional failures (10% chance)
         if rand::random::<f64>() < 0.1 {
             return Err(dchat_core::Error::network("Health check timeout"));
         }
-        
+
         Ok(latency)
     }
-    
+
     /// Get health status for peer
     pub fn get_health_status(&self, peer_id: &PeerId) -> Option<HealthStatus> {
         self.peers.get(peer_id).map(|h| h.status)
     }
-    
+
     /// Get health check result for peer
     pub fn get_health_result(&self, peer_id: &PeerId) -> Option<HealthCheckResult> {
         self.peers.get(peer_id).map(|h| HealthCheckResult {
@@ -141,7 +141,7 @@ impl HealthMonitor {
             average_latency: h.average_latency,
         })
     }
-    
+
     /// Get count of healthy peers
     pub fn healthy_count(&self) -> usize {
         self.peers
@@ -149,7 +149,7 @@ impl HealthMonitor {
             .filter(|h| h.status == HealthStatus::Healthy)
             .count()
     }
-    
+
     /// Get count of unhealthy peers
     pub fn unhealthy_count(&self) -> usize {
         self.peers
@@ -157,7 +157,7 @@ impl HealthMonitor {
             .filter(|h| h.status == HealthStatus::Unhealthy)
             .count()
     }
-    
+
     /// Get all health results
     pub fn get_all_health_results(&self) -> Vec<(PeerId, HealthCheckResult)> {
         self.peers
@@ -222,84 +222,84 @@ pub struct HealthCheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn create_test_peer() -> PeerId {
         PeerId::random()
     }
-    
+
     #[tokio::test]
     async fn test_health_monitor_creation() {
         let monitor = HealthMonitor::new(Duration::from_secs(30));
         assert_eq!(monitor.healthy_count(), 0);
         assert_eq!(monitor.unhealthy_count(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_monitor_peer() {
         let mut monitor = HealthMonitor::new(Duration::from_secs(30));
         let peer = create_test_peer();
-        
+
         let result = monitor.monitor_peer(peer).await;
         assert!(result.is_ok());
-        
+
         let status = monitor.get_health_status(&peer);
         assert_eq!(status, Some(HealthStatus::Healthy));
     }
-    
+
     #[tokio::test]
     async fn test_stop_monitoring() {
         let mut monitor = HealthMonitor::new(Duration::from_secs(30));
         let peer = create_test_peer();
-        
+
         monitor.monitor_peer(peer).await.unwrap();
         assert_eq!(monitor.healthy_count(), 1);
-        
+
         monitor.stop_monitoring(&peer).await.unwrap();
         assert_eq!(monitor.healthy_count(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_check_all() {
         let mut monitor = HealthMonitor::new(Duration::from_millis(100));
         let peer = create_test_peer();
-        
+
         monitor.monitor_peer(peer).await.unwrap();
-        
+
         // Wait for check interval
         tokio::time::sleep(Duration::from_millis(150)).await;
-        
+
         let unhealthy = monitor.check_all().await.unwrap();
-        
+
         // May or may not be unhealthy due to simulated randomness
         // Just verify it doesn't crash
         assert!(unhealthy.len() <= 1);
     }
-    
+
     #[tokio::test]
     async fn test_health_result() {
         let mut monitor = HealthMonitor::new(Duration::from_secs(30));
         let peer = create_test_peer();
-        
+
         monitor.monitor_peer(peer).await.unwrap();
-        
+
         let result = monitor.get_health_result(&peer);
         assert!(result.is_some());
-        
+
         let result = result.unwrap();
         assert_eq!(result.status, HealthStatus::Healthy);
         assert_eq!(result.consecutive_failures, 0);
     }
-    
+
     #[tokio::test]
     async fn test_healthy_count() {
         let mut monitor = HealthMonitor::new(Duration::from_secs(30));
-        
+
         let peer1 = create_test_peer();
         let peer2 = create_test_peer();
-        
+
         monitor.monitor_peer(peer1).await.unwrap();
         monitor.monitor_peer(peer2).await.unwrap();
-        
+
         assert_eq!(monitor.healthy_count(), 2);
     }
 }

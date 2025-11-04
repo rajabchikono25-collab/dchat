@@ -9,19 +9,19 @@ use std::time::{Duration, Instant};
 pub struct PeerInfo {
     /// The peer's unique identifier
     pub peer_id: PeerId,
-    
+
     /// Known addresses for this peer
     pub addresses: Vec<Multiaddr>,
-    
+
     /// Last time we saw this peer
     pub last_seen: Instant,
-    
+
     /// Measured latency to this peer
     pub latency: Option<Duration>,
-    
+
     /// Reputation score (for future use)
     pub reputation: i32,
-    
+
     /// Peer capabilities
     pub capabilities: PeerCapabilities,
 }
@@ -72,13 +72,13 @@ impl PeerInfo {
 pub struct PeerCapabilities {
     /// Whether this peer is a relay node
     pub is_relay: bool,
-    
+
     /// Whether this peer supports NAT traversal
     pub supports_nat_traversal: bool,
-    
+
     /// Maximum bandwidth this peer can handle (bytes/sec)
     pub max_bandwidth: Option<u64>,
-    
+
     /// Protocol version
     pub protocol_version: String,
 }
@@ -114,9 +114,9 @@ mod tests {
     fn test_peer_info_creation() {
         let peer_id = PeerId::random();
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
-        
+
         let info = PeerInfo::new(peer_id, vec![addr.clone()]);
-        
+
         assert_eq!(info.peer_id, peer_id);
         assert_eq!(info.addresses.len(), 1);
         assert_eq!(info.addresses[0], addr);
@@ -127,10 +127,10 @@ mod tests {
     fn test_peer_staleness() {
         let peer_id = PeerId::random();
         let info = PeerInfo::new(peer_id, vec![]);
-        
+
         // Should not be stale immediately
         assert!(!info.is_stale(Duration::from_secs(1)));
-        
+
         // Wait and check staleness
         thread::sleep(Duration::from_millis(100));
         assert!(info.is_stale(Duration::from_millis(50)));
@@ -140,16 +140,16 @@ mod tests {
     fn test_add_address() {
         let peer_id = PeerId::random();
         let mut info = PeerInfo::new(peer_id, vec![]);
-        
+
         let addr1: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let addr2: Multiaddr = "/ip4/127.0.0.1/tcp/9001".parse().unwrap();
-        
+
         info.add_address(addr1.clone());
         assert_eq!(info.addresses.len(), 1);
-        
+
         info.add_address(addr2.clone());
         assert_eq!(info.addresses.len(), 2);
-        
+
         // Adding duplicate should not increase count
         info.add_address(addr1.clone());
         assert_eq!(info.addresses.len(), 2);
@@ -161,7 +161,7 @@ mod tests {
         assert!(relay_caps.is_relay);
         assert!(relay_caps.supports_nat_traversal);
         assert!(relay_caps.max_bandwidth.is_some());
-        
+
         let user_caps = PeerCapabilities::user();
         assert!(!user_caps.is_relay);
         assert!(user_caps.supports_nat_traversal);

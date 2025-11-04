@@ -32,16 +32,12 @@ pub struct StorageBond {
 impl StorageBond {
     /// Calculate storage cost using bonding curve
     /// Formula: cost = base_rate * size_gb * sqrt(duration_days) * demand_multiplier
-    pub fn calculate_cost(
-        size_bytes: i64,
-        duration_days: i64,
-        demand_multiplier: f64,
-    ) -> f64 {
+    pub fn calculate_cost(size_bytes: i64, duration_days: i64, demand_multiplier: f64) -> f64 {
         const BASE_RATE_PER_GB_DAY: f64 = 0.0001; // 0.0001 DCHAT per GB per day base rate
-        
+
         let size_gb = size_bytes as f64 / 1_073_741_824.0;
         let duration_factor = (duration_days as f64).sqrt();
-        
+
         BASE_RATE_PER_GB_DAY * size_gb * duration_factor * demand_multiplier
     }
 
@@ -79,7 +75,7 @@ impl MicropaymentStream {
     pub fn calculate_owed(&self) -> f64 {
         let now = Utc::now();
         let duration_secs = (now - self.last_payment_at).num_seconds() as f64;
-        
+
         self.flow_rate_tokens_per_sec * duration_secs
     }
 
@@ -88,7 +84,7 @@ impl MicropaymentStream {
         let storage_gb = storage_bytes as f64 / 1_073_741_824.0;
         let cost_per_month = storage_gb * cost_per_gb_month;
         let seconds_per_month = 30.0 * 24.0 * 3600.0;
-        
+
         cost_per_month / seconds_per_month
     }
 }
@@ -123,7 +119,7 @@ impl Default for EconomicsConfig {
             enable_micropayments: true,
             storage_bond_apy: 0.05, // 5% APY
             demand_multiplier: 1.0,
-            min_bond_amount: 10.0, // 10 DCHAT minimum
+            min_bond_amount: 10.0,          // 10 DCHAT minimum
             min_stream_duration_secs: 3600, // 1 hour minimum
         }
     }
@@ -199,7 +195,17 @@ impl StorageEconomicsManager {
         .fetch_optional(&self.db_pool)
         .await?;
 
-        if let Some((id, user_id, amount_tokens, storage_bytes, duration_days, created_at_str, expires_at_str, withdrawn_int)) = row {
+        if let Some((
+            id,
+            user_id,
+            amount_tokens,
+            storage_bytes,
+            duration_days,
+            created_at_str,
+            expires_at_str,
+            withdrawn_int,
+        )) = row
+        {
             Ok(Some(StorageBond {
                 id,
                 user_id,
@@ -229,22 +235,36 @@ impl StorageEconomicsManager {
         .fetch_all(&self.db_pool)
         .await?;
 
-        let bonds = rows.into_iter().map(|(id, user_id, amount_tokens, storage_bytes, duration_days, created_at_str, expires_at_str, withdrawn_int)| {
-            StorageBond {
-                id,
-                user_id,
-                amount_tokens,
-                storage_bytes,
-                duration_days,
-                created_at: DateTime::parse_from_rfc3339(&created_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                expires_at: DateTime::parse_from_rfc3339(&expires_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                withdrawn: withdrawn_int != 0,
-            }
-        }).collect();
+        let bonds = rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    user_id,
+                    amount_tokens,
+                    storage_bytes,
+                    duration_days,
+                    created_at_str,
+                    expires_at_str,
+                    withdrawn_int,
+                )| {
+                    StorageBond {
+                        id,
+                        user_id,
+                        amount_tokens,
+                        storage_bytes,
+                        duration_days,
+                        created_at: DateTime::parse_from_rfc3339(&created_at_str)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now()),
+                        expires_at: DateTime::parse_from_rfc3339(&expires_at_str)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now()),
+                        withdrawn: withdrawn_int != 0,
+                    }
+                },
+            )
+            .collect();
 
         Ok(bonds)
     }
@@ -252,7 +272,9 @@ impl StorageEconomicsManager {
     /// Withdraw expired bond with yield calculation
     pub async fn withdraw_bond(&self, bond_id: i64) -> Result<f64, EconomicsError> {
         // Fetch bond details
-        let bond = self.get_bond(bond_id).await?
+        let bond = self
+            .get_bond(bond_id)
+            .await?
             .ok_or(EconomicsError::Database("Bond not found".to_string()))?;
 
         if bond.withdrawn {
@@ -276,7 +298,7 @@ impl StorageEconomicsManager {
         sqlx::query(
             "UPDATE storage_bonds 
              SET withdrawn = 1, accrued_interest = ?1 
-             WHERE id = ?2"
+             WHERE id = ?2",
         )
         .bind(yield_tokens)
         .bind(bond_id)
@@ -291,7 +313,7 @@ impl StorageEconomicsManager {
         let rows = sqlx::query_as::<_, (i64, f64, i64, String)>(
             "SELECT id, amount_tokens, duration_days, created_at
              FROM storage_bonds 
-             WHERE withdrawn = 0 AND datetime(expires_at) > datetime('now')"
+             WHERE withdrawn = 0 AND datetime(expires_at) > datetime('now')",
         )
         .fetch_all(&self.db_pool)
         .await?;
@@ -302,7 +324,7 @@ impl StorageEconomicsManager {
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
-            
+
             let elapsed_days = (Utc::now() - created_at).num_days();
             let partial_yield = StorageBond::calculate_yield(
                 amount_tokens,
@@ -310,13 +332,11 @@ impl StorageEconomicsManager {
                 self.config.storage_bond_apy,
             );
 
-            sqlx::query(
-                "UPDATE storage_bonds SET accrued_interest = ?1 WHERE id = ?2"
-            )
-            .bind(partial_yield)
-            .bind(bond_id)
-            .execute(&self.db_pool)
-            .await?;
+            sqlx::query("UPDATE storage_bonds SET accrued_interest = ?1 WHERE id = ?2")
+                .bind(partial_yield)
+                .bind(bond_id)
+                .execute(&self.db_pool)
+                .await?;
 
             total_accrued += partial_yield as u64;
         }
@@ -368,7 +388,10 @@ impl StorageEconomicsManager {
     }
 
     /// Get stream by ID
-    pub async fn get_stream(&self, stream_id: i64) -> Result<Option<MicropaymentStream>, EconomicsError> {
+    pub async fn get_stream(
+        &self,
+        stream_id: i64,
+    ) -> Result<Option<MicropaymentStream>, EconomicsError> {
         let row = sqlx::query_as::<_, (i64, String, String, f64, f64, String, String, i64)>(
             "SELECT id, sender_id, receiver_id, flow_rate_tokens_per_sec, total_streamed, started_at, last_payment_at, is_active
              FROM micropayment_streams WHERE id = ?1"
@@ -377,7 +400,17 @@ impl StorageEconomicsManager {
         .fetch_optional(&self.db_pool)
         .await?;
 
-        if let Some((id, sender_id, receiver_id, flow_rate, total_streamed, started_at_str, last_payment_at_str, is_active_int)) = row {
+        if let Some((
+            id,
+            sender_id,
+            receiver_id,
+            flow_rate,
+            total_streamed,
+            started_at_str,
+            last_payment_at_str,
+            is_active_int,
+        )) = row
+        {
             Ok(Some(MicropaymentStream {
                 id,
                 sender_id,
@@ -399,7 +432,9 @@ impl StorageEconomicsManager {
 
     /// Process payment for stream
     pub async fn process_stream_payment(&self, stream_id: i64) -> Result<f64, EconomicsError> {
-        let stream = self.get_stream(stream_id).await?
+        let stream = self
+            .get_stream(stream_id)
+            .await?
             .ok_or(EconomicsError::Database("Stream not found".to_string()))?;
 
         if !stream.active {
@@ -413,7 +448,7 @@ impl StorageEconomicsManager {
         sqlx::query(
             "UPDATE micropayment_streams 
              SET total_streamed = total_streamed + ?1, last_payment_at = ?2 
-             WHERE id = ?3"
+             WHERE id = ?3",
         )
         .bind(amount_owed)
         .bind(now.to_rfc3339())
@@ -430,12 +465,10 @@ impl StorageEconomicsManager {
         self.process_stream_payment(stream_id).await?;
 
         // Mark as inactive
-        sqlx::query(
-            "UPDATE micropayment_streams SET is_active = 0 WHERE id = ?1"
-        )
-        .bind(stream_id)
-        .execute(&self.db_pool)
-        .await?;
+        sqlx::query("UPDATE micropayment_streams SET is_active = 0 WHERE id = ?1")
+            .bind(stream_id)
+            .execute(&self.db_pool)
+            .await?;
 
         Ok(())
     }
@@ -445,7 +478,7 @@ impl StorageEconomicsManager {
         // Query bond statistics
         let bond_stats = sqlx::query_as::<_, (i64, f64, i64)>(
             "SELECT COUNT(*), COALESCE(SUM(amount_tokens), 0.0), COALESCE(SUM(storage_bytes), 0)
-             FROM storage_bonds WHERE withdrawn = 0"
+             FROM storage_bonds WHERE withdrawn = 0",
         )
         .fetch_one(&self.db_pool)
         .await?;
@@ -453,7 +486,7 @@ impl StorageEconomicsManager {
         // Query stream statistics
         let stream_stats = sqlx::query_as::<_, (i64, f64)>(
             "SELECT COUNT(*), COALESCE(SUM(total_streamed), 0.0)
-             FROM micropayment_streams WHERE is_active = 1"
+             FROM micropayment_streams WHERE is_active = 1",
         )
         .fetch_one(&self.db_pool)
         .await?;
@@ -520,7 +553,7 @@ mod tests {
     fn test_storage_bond_cost() {
         // 10GB for 30 days with normal demand
         let cost = StorageBond::calculate_cost(10 * 1_073_741_824, 30, 1.0);
-        
+
         // Base: 0.0001 * 10GB * sqrt(30) * 1.0 = 0.001 * 5.477 ≈ 0.005477 DCHAT
         assert!((cost - 0.005477).abs() < 0.0001);
     }
@@ -529,7 +562,7 @@ mod tests {
     fn test_storage_bond_yield() {
         // 100 DCHAT for 365 days at 5% APY
         let yield_tokens = StorageBond::calculate_yield(100.0, 365, 0.05);
-        
+
         // 100 * 0.05 * 1 year = 5.0 DCHAT
         assert!((yield_tokens - 5.0).abs() < 0.01);
     }
@@ -538,7 +571,7 @@ mod tests {
     fn test_micropayment_flow_rate() {
         // 10GB at $0.023/GB/month
         let flow_rate = MicropaymentStream::required_flow_rate(10 * 1_073_741_824, 0.023);
-        
+
         // 10GB * $0.023/GB/month / (30*24*3600 seconds)
         // = 0.23 / 2592000 ≈ 0.0000000887 tokens/sec
         assert!(flow_rate > 0.0);
@@ -560,7 +593,7 @@ mod tests {
         };
 
         let owed = stream.calculate_owed();
-        
+
         // 3600 seconds * 0.000001 tokens/sec = 0.0036 tokens
         assert!((owed - 0.0036).abs() < 0.0001);
     }
@@ -570,7 +603,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         let config = EconomicsConfig::default();
         let manager = StorageEconomicsManager::new(pool, config);
-        
+
         assert_eq!(manager.config.storage_bond_apy, 0.05);
         assert_eq!(manager.config.demand_multiplier, 1.0);
     }
@@ -578,7 +611,7 @@ mod tests {
     #[tokio::test]
     async fn test_bond_creation_validation() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         // Create storage_bonds table
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS storage_bonds (
@@ -592,7 +625,7 @@ mod tests {
                 expires_at TEXT NOT NULL,
                 withdrawn INTEGER NOT NULL DEFAULT 0,
                 accrued_interest REAL NOT NULL DEFAULT 0
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -603,11 +636,13 @@ mod tests {
         let manager = StorageEconomicsManager::new(pool, config);
 
         // Small bond should fail
-        let result = manager.create_bond(
-            "user123".to_string(),
-            1_073_741_824, // 1GB
-            30,
-        ).await;
+        let result = manager
+            .create_bond(
+                "user123".to_string(),
+                1_073_741_824, // 1GB
+                30,
+            )
+            .await;
 
         assert!(matches!(result, Err(EconomicsError::BondTooSmall)));
     }
@@ -620,7 +655,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_full_bond_lifecycle() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         // Create table
         sqlx::query(
             "CREATE TABLE storage_bonds (
@@ -634,7 +669,7 @@ mod integration_tests {
                 expires_at TEXT NOT NULL,
                 withdrawn INTEGER NOT NULL DEFAULT 0,
                 accrued_interest REAL NOT NULL DEFAULT 0
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -645,11 +680,14 @@ mod integration_tests {
 
         // Create bond (need large size for cost to exceed min_bond_amount of 10.0)
         // 100TB for 365 days: 0.0001 * 100000 * sqrt(365) ≈ 191 DCHAT
-        let bond = manager.create_bond(
-            "user456".to_string(),
-            100_000 * 1_073_741_824, // 100TB
-            365,
-        ).await.unwrap();
+        let bond = manager
+            .create_bond(
+                "user456".to_string(),
+                100_000 * 1_073_741_824, // 100TB
+                365,
+            )
+            .await
+            .unwrap();
 
         assert_eq!(bond.user_id, "user456");
         assert_eq!(bond.storage_bytes, 100_000 * 1_073_741_824);
@@ -669,7 +707,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_full_stream_lifecycle() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         // Create table
         sqlx::query(
             "CREATE TABLE micropayment_streams (
@@ -681,7 +719,7 @@ mod integration_tests {
                 started_at TEXT NOT NULL,
                 last_payment_at TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -691,11 +729,14 @@ mod integration_tests {
         let manager = StorageEconomicsManager::new(pool, config);
 
         // Start stream
-        let stream = manager.start_stream(
-            "sender789".to_string(),
-            "receiver456".to_string(),
-            5 * 1_073_741_824, // 5GB
-        ).await.unwrap();
+        let stream = manager
+            .start_stream(
+                "sender789".to_string(),
+                "receiver456".to_string(),
+                5 * 1_073_741_824, // 5GB
+            )
+            .await
+            .unwrap();
 
         assert_eq!(stream.sender_id, "sender789");
         assert_eq!(stream.receiver_id, "receiver456");
@@ -708,7 +749,7 @@ mod integration_tests {
 
         // Stop stream
         manager.stop_stream(stream.id).await.unwrap();
-        
+
         let stopped = manager.get_stream(stream.id).await.unwrap().unwrap();
         assert!(!stopped.active);
     }
@@ -716,7 +757,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_economics_statistics() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        
+
         // Create tables
         sqlx::query(
             "CREATE TABLE storage_bonds (
@@ -730,7 +771,7 @@ mod integration_tests {
                 expires_at TEXT NOT NULL,
                 withdrawn INTEGER NOT NULL DEFAULT 0,
                 accrued_interest REAL NOT NULL DEFAULT 0
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -746,7 +787,7 @@ mod integration_tests {
                 started_at TEXT NOT NULL,
                 last_payment_at TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -761,9 +802,18 @@ mod integration_tests {
         assert_eq!(stats.total_active_streams, 0);
 
         // Create some bonds and streams (100TB each to exceed min_bond_amount)
-        manager.create_bond("user1".to_string(), 100_000 * 1_073_741_824, 365).await.unwrap();
-        manager.create_bond("user2".to_string(), 100_000 * 1_073_741_824, 180).await.unwrap();
-        manager.start_stream("user1".to_string(), "provider1".to_string(), 5_368_709_120).await.unwrap();
+        manager
+            .create_bond("user1".to_string(), 100_000 * 1_073_741_824, 365)
+            .await
+            .unwrap();
+        manager
+            .create_bond("user2".to_string(), 100_000 * 1_073_741_824, 180)
+            .await
+            .unwrap();
+        manager
+            .start_stream("user1".to_string(), "provider1".to_string(), 5_368_709_120)
+            .await
+            .unwrap();
 
         let stats = manager.get_statistics().await.unwrap();
         assert_eq!(stats.total_bonds, 2);

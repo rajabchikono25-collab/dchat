@@ -1,9 +1,9 @@
 //! Identity verification and badges
 
-use dchat_core::error::{Error, Result};
-use dchat_core::types::{UserId, Signature};
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use dchat_core::error::{Error, Result};
+use dchat_core::types::{Signature, UserId};
+use serde::{Deserialize, Serialize};
 
 /// A verified badge for an identity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,7 +66,7 @@ impl VerifiedBadge {
             false
         }
     }
-    
+
     /// Check if badge is valid
     pub fn is_valid(&self) -> bool {
         !self.is_expired()
@@ -85,20 +85,23 @@ impl BadgeManager {
             user_badges: std::collections::HashMap::new(),
         }
     }
-    
+
     /// Award a badge to a user
     pub fn award_badge(&mut self, user_id: UserId, badge: VerifiedBadge) -> Result<()> {
         let badges = self.user_badges.entry(user_id).or_default();
-        
+
         // Check if user already has this type of badge
-        if badges.iter().any(|b| b.badge_type == badge.badge_type && b.is_valid()) {
+        if badges
+            .iter()
+            .any(|b| b.badge_type == badge.badge_type && b.is_valid())
+        {
             return Err(Error::identity("User already has this badge"));
         }
-        
+
         badges.push(badge);
         Ok(())
     }
-    
+
     /// Get badges for a user
     pub fn get_badges(&self, user_id: &UserId) -> Vec<&VerifiedBadge> {
         self.user_badges
@@ -106,17 +109,19 @@ impl BadgeManager {
             .map(|badges| badges.iter().filter(|b| b.is_valid()).collect())
             .unwrap_or_default()
     }
-    
+
     /// Check if user has a specific badge
     pub fn has_badge(&self, user_id: &UserId, badge_type: &BadgeType) -> bool {
         self.user_badges
             .get(user_id)
             .map(|badges| {
-                badges.iter().any(|b| b.badge_type == *badge_type && b.is_valid())
+                badges
+                    .iter()
+                    .any(|b| b.badge_type == *badge_type && b.is_valid())
             })
             .unwrap_or(false)
     }
-    
+
     /// Remove expired badges
     pub fn cleanup_expired_badges(&mut self) {
         for badges in self.user_badges.values_mut() {
@@ -134,13 +139,13 @@ impl Default for BadgeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_badge_expiry() {
         let now = Utc::now();
         let past = now - chrono::Duration::days(1);
         let future = now + chrono::Duration::days(1);
-        
+
         let expired_badge = VerifiedBadge {
             badge_type: BadgeType::EarlyAdopter,
             issued_at: past,
@@ -152,10 +157,10 @@ mod tests {
                 metadata: Default::default(),
             },
         };
-        
+
         assert!(expired_badge.is_expired());
         assert!(!expired_badge.is_valid());
-        
+
         let valid_badge = VerifiedBadge {
             badge_type: BadgeType::EarlyAdopter,
             issued_at: now,
@@ -167,7 +172,7 @@ mod tests {
                 metadata: Default::default(),
             },
         };
-        
+
         assert!(!valid_badge.is_expired());
         assert!(valid_badge.is_valid());
     }

@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --package dchat-sdk-rust --example relay_node
 
-use dchat_sdk_rust::{RelayNode, RelayConfig, Result};
+use dchat_sdk_rust::{RelayConfig, RelayNode, Result};
 use std::time::Duration;
 
 #[tokio::main]
@@ -19,9 +19,13 @@ async fn main() -> Result<()> {
     };
 
     let relay = RelayNode::with_config(config);
-    
+
     println!("✅ Relay node created: {}", relay.config().name);
-    println!("📍 Listening on: {}:{}\n", relay.config().listen_addr, relay.config().listen_port);
+    println!(
+        "📍 Listening on: {}:{}\n",
+        relay.config().listen_addr,
+        relay.config().listen_port
+    );
 
     // Start the relay
     println!("🌐 Starting relay node...");

@@ -23,7 +23,13 @@ pub struct Voice {
 
 impl Voice {
     /// Create a new voice
-    pub fn new(id: String, name: String, gender: VoiceGender, language: String, sample_rate: u32) -> Self {
+    pub fn new(
+        id: String,
+        name: String,
+        gender: VoiceGender,
+        language: String,
+        sample_rate: u32,
+    ) -> Self {
         Self {
             id,
             name,
@@ -90,7 +96,12 @@ pub enum SsmlElement {
     /// Emphasis
     Emphasis { level: EmphasisLevel, text: String },
     /// Prosody (rate, pitch, volume)
-    Prosody { rate: Option<String>, pitch: Option<String>, volume: Option<String>, text: String },
+    Prosody {
+        rate: Option<String>,
+        pitch: Option<String>,
+        volume: Option<String>,
+        text: String,
+    },
     /// Say-as (interpret text in specific way)
     SayAs { interpret_as: String, text: String },
 }
@@ -188,9 +199,17 @@ impl Utterance {
                         EmphasisLevel::Moderate => "moderate",
                         EmphasisLevel::Strong => "strong",
                     };
-                    ssml.push_str(&format!("<emphasis level=\"{}\">{}</emphasis>", level_str, text));
+                    ssml.push_str(&format!(
+                        "<emphasis level=\"{}\">{}</emphasis>",
+                        level_str, text
+                    ));
                 }
-                SsmlElement::Prosody { rate, pitch, volume, text } => {
+                SsmlElement::Prosody {
+                    rate,
+                    pitch,
+                    volume,
+                    text,
+                } => {
                     ssml.push_str("<prosody");
                     if let Some(r) = rate {
                         ssml.push_str(&format!(" rate=\"{}\"", r));
@@ -204,7 +223,10 @@ impl Utterance {
                     ssml.push_str(&format!(">{}</prosody>", text));
                 }
                 SsmlElement::SayAs { interpret_as, text } => {
-                    ssml.push_str(&format!("<say-as interpret-as=\"{}\">{}</say-as>", interpret_as, text));
+                    ssml.push_str(&format!(
+                        "<say-as interpret-as=\"{}\">{}</say-as>",
+                        interpret_as, text
+                    ));
                 }
             }
         }
@@ -260,13 +282,21 @@ impl TtsEngine {
     /// Get voices by gender
     pub fn get_voices_by_gender(&self, gender: &VoiceGender) -> Vec<Voice> {
         let voices = self.voices.read().unwrap();
-        voices.values().filter(|v| &v.gender == gender).cloned().collect()
+        voices
+            .values()
+            .filter(|v| &v.gender == gender)
+            .cloned()
+            .collect()
     }
 
     /// Get voices by language
     pub fn get_voices_by_language(&self, language: &str) -> Vec<Voice> {
         let voices = self.voices.read().unwrap();
-        voices.values().filter(|v| v.language == language).cloned().collect()
+        voices
+            .values()
+            .filter(|v| v.language == language)
+            .cloned()
+            .collect()
     }
 
     /// Set the default voice
@@ -590,7 +620,7 @@ mod tests {
 
         // Current should be cleared
         assert_eq!(engine.get_state(), TtsState::Idle);
-        
+
         // Queue should have urgent message
         assert_eq!(engine.queue_size(), 1);
     }

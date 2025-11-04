@@ -1,31 +1,31 @@
 //! Inline query handling for bots
 
+use chrono::{DateTime, Utc};
 use dchat_core::Result;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// Inline query from user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineQuery {
     /// Query ID
     pub id: Uuid,
-    
+
     /// User who made the query
     pub from: dchat_core::types::UserId,
-    
+
     /// Query text
     pub query: String,
-    
+
     /// Offset for pagination
     pub offset: String,
-    
+
     /// Chat type (if sent from chat)
     pub chat_type: Option<ChatType>,
-    
+
     /// User location (if shared)
     pub location: Option<Location>,
-    
+
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -51,19 +51,19 @@ pub struct Location {
 pub struct InlineResult {
     /// Result type
     pub result_type: InlineResultType,
-    
+
     /// Unique result ID
     pub id: String,
-    
+
     /// Title
     pub title: String,
-    
+
     /// Description
     pub description: Option<String>,
-    
+
     /// Thumbnail URL
     pub thumbnail_url: Option<String>,
-    
+
     /// Content
     pub content: InlineContent,
 }
@@ -119,16 +119,16 @@ pub enum InlineContent {
 pub struct AnswerInlineQueryRequest {
     /// Inline query ID
     pub inline_query_id: Uuid,
-    
+
     /// Results to show
     pub results: Vec<InlineResult>,
-    
+
     /// Cache time in seconds
     pub cache_time: Option<u32>,
-    
+
     /// Is result personal (not cached)?
     pub is_personal: bool,
-    
+
     /// Next offset for pagination
     pub next_offset: Option<String>,
 }
@@ -154,21 +154,19 @@ impl TextInlineQueryHandler {
 impl InlineQueryHandler for TextInlineQueryHandler {
     fn handle(&self, query: &InlineQuery) -> Result<Vec<InlineResult>> {
         if query.query.is_empty() {
-            return Ok(vec![
-                InlineResult {
-                    result_type: InlineResultType::Article,
-                    id: "help".to_string(),
-                    title: "Type something...".to_string(),
-                    description: Some("Start typing to search".to_string()),
-                    thumbnail_url: None,
-                    content: InlineContent::Text {
-                        text: "Please type something to search".to_string(),
-                        parse_mode: None,
-                    },
+            return Ok(vec![InlineResult {
+                result_type: InlineResultType::Article,
+                id: "help".to_string(),
+                title: "Type something...".to_string(),
+                description: Some("Start typing to search".to_string()),
+                thumbnail_url: None,
+                content: InlineContent::Text {
+                    text: "Please type something to search".to_string(),
+                    parse_mode: None,
                 },
-            ]);
+            }]);
         }
-        
+
         // Simple echo example
         let results = vec![
             InlineResult {
@@ -194,7 +192,7 @@ impl InlineQueryHandler for TextInlineQueryHandler {
                 },
             },
         ];
-        
+
         Ok(results)
     }
 }
@@ -219,7 +217,7 @@ impl InlineQueryHandler for ImageSearchHandler {
                 },
             })
             .collect();
-        
+
         Ok(results)
     }
 }
@@ -228,7 +226,7 @@ impl InlineQueryHandler for ImageSearchHandler {
 mod tests {
     use super::*;
     use dchat_core::types::UserId;
-    
+
     #[test]
     fn test_inline_query() {
         let query = InlineQuery {
@@ -240,10 +238,10 @@ mod tests {
             location: None,
             timestamp: Utc::now(),
         };
-        
+
         assert_eq!(query.query, "test search");
     }
-    
+
     #[test]
     fn test_text_inline_handler_empty() {
         let handler = TextInlineQueryHandler::new("testbot".to_string());
@@ -256,12 +254,12 @@ mod tests {
             location: None,
             timestamp: Utc::now(),
         };
-        
+
         let results = handler.handle(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "help");
     }
-    
+
     #[test]
     fn test_text_inline_handler_with_query() {
         let handler = TextInlineQueryHandler::new("testbot".to_string());
@@ -274,13 +272,13 @@ mod tests {
             location: None,
             timestamp: Utc::now(),
         };
-        
+
         let results = handler.handle(&query).unwrap();
         assert_eq!(results.len(), 2); // echo and markdown
         assert_eq!(results[0].id, "echo");
         assert_eq!(results[1].id, "markdown");
     }
-    
+
     #[test]
     fn test_image_search_handler() {
         let handler = ImageSearchHandler;
@@ -293,10 +291,10 @@ mod tests {
             location: None,
             timestamp: Utc::now(),
         };
-        
+
         let results = handler.handle(&query).unwrap();
         assert_eq!(results.len(), 5);
-        
+
         for (i, result) in results.iter().enumerate() {
             assert_eq!(result.id, format!("photo_{}", i + 1));
             assert!(matches!(result.result_type, InlineResultType::Photo));

@@ -25,16 +25,16 @@ use tracing;
 pub enum LockupTier {
     /// No lockup, instant withdrawal, 1.0x multiplier
     Fluid,
-    
+
     /// 30-day lockup, 1.5x multiplier
     Monthly,
-    
+
     /// 90-day lockup, 2.25x multiplier
     Quarterly,
-    
+
     /// 365-day lockup, 4.0x multiplier
     Annual,
-    
+
     /// 1095-day (3-year) lockup, 8.0x multiplier
     MultiYear,
 }
@@ -50,7 +50,7 @@ impl LockupTier {
             LockupTier::MultiYear => 8.0,
         }
     }
-    
+
     /// Lockup duration
     pub fn duration(&self) -> Duration {
         match self {
@@ -61,15 +61,15 @@ impl LockupTier {
             LockupTier::MultiYear => Duration::from_secs(1095 * 86400),
         }
     }
-    
+
     /// Early withdrawal penalty (% of stake)
     pub fn early_withdrawal_penalty(&self) -> f64 {
         match self {
             LockupTier::Fluid => 0.0,
-            LockupTier::Monthly => 0.05,      // 5%
-            LockupTier::Quarterly => 0.10,    // 10%
-            LockupTier::Annual => 0.25,       // 25%
-            LockupTier::MultiYear => 0.50,    // 50%
+            LockupTier::Monthly => 0.05,   // 5%
+            LockupTier::Quarterly => 0.10, // 10%
+            LockupTier::Annual => 0.25,    // 25%
+            LockupTier::MultiYear => 0.50, // 50%
         }
     }
 }
@@ -79,25 +79,25 @@ impl LockupTier {
 pub struct TemporalStake {
     /// Validator public key
     pub validator_id: VerifyingKey,
-    
+
     /// Staked amount (base)
     pub stake_amount: u64,
-    
+
     /// Lockup tier
     pub lockup_tier: LockupTier,
-    
+
     /// Timestamp when stake was deposited
     pub deposit_time: SystemTime,
-    
+
     /// Timestamp when stake can be withdrawn
     pub withdrawal_available_time: SystemTime,
-    
+
     /// Historical uptime percentage (0.0-1.0)
     pub uptime_percentage: f64,
-    
+
     /// Number of blocks validated
     pub blocks_validated: u64,
-    
+
     /// Last activity timestamp
     pub last_activity: SystemTime,
 }
@@ -109,38 +109,38 @@ impl TemporalStake {
     pub fn calculate_temporal_weight(&self) -> f64 {
         const COMPOUNDING_CONSTANT_DAYS: f64 = 365.0;
         const MAX_MULTIPLIER: f64 = 10.0; // Cap at 10x to prevent excessive concentration
-        
+
         let time_staked = SystemTime::now()
             .duration_since(self.deposit_time)
             .unwrap_or(Duration::from_secs(0));
-        
+
         let days_staked = time_staked.as_secs() as f64 / 86400.0;
-        
+
         // Exponential temporal factor with cap
         let temporal_factor = (days_staked / COMPOUNDING_CONSTANT_DAYS).exp();
         let capped_temporal_factor = temporal_factor.min(MAX_MULTIPLIER);
-        
+
         // Combine with lockup tier multiplier
         let tier_multiplier = self.lockup_tier.multiplier();
-        
+
         // Uptime adjustment (penalize poor uptime)
         let uptime_multiplier = self.uptime_percentage.max(0.5); // Min 50% credit
-        
+
         let base_weight = self.stake_amount as f64;
         base_weight * tier_multiplier * capped_temporal_factor * uptime_multiplier
     }
-    
+
     /// Check if stake can be withdrawn
     pub fn can_withdraw(&self) -> bool {
         SystemTime::now() >= self.withdrawal_available_time
     }
-    
+
     /// Calculate penalty for early withdrawal
     pub fn calculate_early_withdrawal_penalty(&self) -> u64 {
         if self.can_withdraw() {
             return 0;
         }
-        
+
         let penalty_rate = self.lockup_tier.early_withdrawal_penalty();
         (self.stake_amount as f64 * penalty_rate) as u64
     }
@@ -151,16 +151,16 @@ impl TemporalStake {
 pub struct PredictiveOracle {
     /// Oracle validator ID
     pub oracle_id: VerifyingKey,
-    
+
     /// Prediction for next block hash
     pub predicted_hash: Hash,
-    
+
     /// Confidence score (0.0-1.0)
     pub confidence: f64,
-    
+
     /// Historical accuracy (0.0-1.0)
     pub historical_accuracy: f64,
-    
+
     /// Timestamp of prediction
     pub prediction_time: SystemTime,
 }
@@ -177,16 +177,16 @@ impl PredictiveOracle {
 pub struct TSCVote {
     /// Validator ID
     pub validator_id: VerifyingKey,
-    
+
     /// Block hash being voted on
     pub block_hash: Hash,
-    
+
     /// Temporal weight of vote
     pub vote_weight: f64,
-    
+
     /// Predictive oracle (optional)
     pub oracle: Option<PredictiveOracle>,
-    
+
     /// Timestamp of vote
     pub timestamp: SystemTime,
 }
@@ -196,16 +196,16 @@ pub struct TSCVote {
 pub struct TSCBlockVotes {
     /// Block hash
     pub block_hash: Hash,
-    
+
     /// Individual votes
     pub votes: Vec<TSCVote>,
-    
+
     /// Total temporal weight
     pub total_weight: f64,
-    
+
     /// Oracle consensus weight
     pub oracle_weight: f64,
-    
+
     /// Whether TSC finality is reached
     pub finalized: bool,
 }
@@ -226,20 +226,20 @@ impl TSCBlockVotes {
 pub struct TemporalStakeConsensus {
     /// Validator stakes with temporal information
     validator_stakes: Arc<RwLock<HashMap<VerifyingKey, TemporalStake>>>,
-    
+
     /// Active TSC votes for blocks
     active_votes: Arc<RwLock<HashMap<Hash, TSCBlockVotes>>>,
-    
+
     /// Predictive oracles
     #[allow(dead_code)]
     oracles: Arc<RwLock<HashMap<VerifyingKey, PredictiveOracle>>>,
-    
+
     /// Total network stake (for calculating percentages)
     total_network_stake: Arc<RwLock<u64>>,
-    
+
     /// TSC finality threshold (default 51% weighted stake)
     finality_threshold: f64,
-    
+
     /// Oracle consensus weight requirement (default 60%)
     #[allow(dead_code)]
     oracle_threshold: f64,
@@ -256,7 +256,7 @@ impl TemporalStakeConsensus {
             oracle_threshold: 0.60,   // 60% oracle agreement
         }
     }
-    
+
     /// Register validator stake
     pub fn register_stake(
         &self,
@@ -267,10 +267,10 @@ impl TemporalStakeConsensus {
         if stake_amount < 1000 {
             return Err(TSCError::InsufficientStake);
         }
-        
+
         let now = SystemTime::now();
         let withdrawal_time = now + lockup_tier.duration();
-        
+
         let stake = TemporalStake {
             validator_id,
             stake_amount,
@@ -281,25 +281,25 @@ impl TemporalStakeConsensus {
             blocks_validated: 0,
             last_activity: now,
         };
-        
+
         let temporal_weight = stake.calculate_temporal_weight();
-        
+
         let mut stakes = self.validator_stakes.write().unwrap();
         stakes.insert(validator_id, stake);
-        
+
         let mut total = self.total_network_stake.write().unwrap();
         *total += stake_amount;
-        
+
         tracing::info!(
             "Registered validator stake: {} tokens, {:?} tier, {:.2}x temporal weight",
             stake_amount,
             lockup_tier,
             temporal_weight / stake_amount as f64
         );
-        
+
         Ok(())
     }
-    
+
     /// Submit TSC vote for block
     pub fn submit_vote(
         &self,
@@ -312,17 +312,18 @@ impl TemporalStakeConsensus {
         let stake = stakes
             .get(&validator_id)
             .ok_or(TSCError::ValidatorNotRegistered)?;
-        
+
         // Calculate temporal weight
         let vote_weight = stake.calculate_temporal_weight();
-        
+
         // Calculate oracle weight if present
-        let oracle_weight = oracle.as_ref()
+        let oracle_weight = oracle
+            .as_ref()
             .map(|o| o.calculate_vote_weight())
             .unwrap_or(0.0);
-        
+
         drop(stakes);
-        
+
         // Create vote
         let vote = TSCVote {
             validator_id,
@@ -331,29 +332,33 @@ impl TemporalStakeConsensus {
             oracle,
             timestamp: SystemTime::now(),
         };
-        
+
         // Add to active votes
         let mut votes = self.active_votes.write().unwrap();
         let block_votes = votes
             .entry(block_hash)
             .or_insert_with(|| TSCBlockVotes::new(block_hash));
-        
+
         // Check for double voting
-        if block_votes.votes.iter().any(|v| v.validator_id == validator_id) {
+        if block_votes
+            .votes
+            .iter()
+            .any(|v| v.validator_id == validator_id)
+        {
             return Err(TSCError::DoubleVote);
         }
-        
+
         block_votes.votes.push(vote);
         block_votes.total_weight += vote_weight;
         block_votes.oracle_weight += oracle_weight;
-        
+
         // Check finality
         let total_stake = *self.total_network_stake.read().unwrap();
         let weight_percentage = block_votes.total_weight / total_stake as f64;
-        
+
         if weight_percentage >= self.finality_threshold {
             block_votes.finalized = true;
-            
+
             tracing::info!(
                 "Block {} reached TSC finality: {:.2}% temporal weight, {:.2}% oracle consensus",
                 hex::encode(block_hash.as_bytes()),
@@ -361,27 +366,27 @@ impl TemporalStakeConsensus {
                 block_votes.oracle_weight * 100.0
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if block has reached TSC finality
     pub fn check_finality(&self, block_hash: &Hash) -> bool {
         let votes = self.active_votes.read().unwrap();
-        
+
         if let Some(block_votes) = votes.get(block_hash) {
             block_votes.finalized
         } else {
             false
         }
     }
-    
+
     /// Get TSC votes for a block
     pub fn get_votes(&self, block_hash: &Hash) -> Option<TSCBlockVotes> {
         let votes = self.active_votes.read().unwrap();
         votes.get(block_hash).cloned()
     }
-    
+
     /// Update validator uptime (called periodically)
     pub fn update_validator_uptime(
         &self,
@@ -392,32 +397,29 @@ impl TemporalStakeConsensus {
         let stake = stakes
             .get_mut(validator_id)
             .ok_or(TSCError::ValidatorNotRegistered)?;
-        
+
         stake.uptime_percentage = uptime_percentage.clamp(0.0, 1.0);
         stake.last_activity = SystemTime::now();
-        
+
         Ok(())
     }
-    
+
     /// Withdraw stake (with penalty if early)
-    pub fn withdraw_stake(
-        &self,
-        validator_id: &VerifyingKey,
-    ) -> Result<u64, TSCError> {
+    pub fn withdraw_stake(&self, validator_id: &VerifyingKey) -> Result<u64, TSCError> {
         let mut stakes = self.validator_stakes.write().unwrap();
         let stake = stakes
             .get(validator_id)
             .ok_or(TSCError::ValidatorNotRegistered)?
             .clone();
-        
+
         let penalty = stake.calculate_early_withdrawal_penalty();
         let withdrawal_amount = stake.stake_amount - penalty;
-        
+
         stakes.remove(validator_id);
-        
+
         let mut total = self.total_network_stake.write().unwrap();
         *total = total.saturating_sub(stake.stake_amount);
-        
+
         if penalty > 0 {
             tracing::warn!(
                 "Early withdrawal penalty applied: {} tokens ({:.1}%)",
@@ -425,16 +427,14 @@ impl TemporalStakeConsensus {
                 penalty as f64 / stake.stake_amount as f64 * 100.0
             );
         }
-        
+
         Ok(withdrawal_amount)
     }
-    
+
     /// Get total temporal weight in the network
     pub fn total_temporal_weight(&self) -> f64 {
         let stakes = self.validator_stakes.read().unwrap();
-        stakes.values()
-            .map(|s| s.calculate_temporal_weight())
-            .sum()
+        stakes.values().map(|s| s.calculate_temporal_weight()).sum()
     }
 }
 
@@ -448,19 +448,19 @@ impl Default for TemporalStakeConsensus {
 pub enum TSCError {
     #[error("Insufficient stake amount (minimum 1000 tokens)")]
     InsufficientStake,
-    
+
     #[error("Validator not registered")]
     ValidatorNotRegistered,
-    
+
     #[error("Double vote detected")]
     DoubleVote,
-    
+
     #[error("Stake still locked (early withdrawal penalty applies)")]
     StakeLocked,
-    
+
     #[error("Oracle prediction failed")]
     OraclePredictionFailed,
-    
+
     #[error("Insufficient oracle consensus")]
     InsufficientOracleConsensus,
 }
@@ -468,7 +468,7 @@ pub enum TSCError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_lockup_tier_multipliers() {
         assert_eq!(LockupTier::Fluid.multiplier(), 1.0);
@@ -477,11 +477,11 @@ mod tests {
         assert_eq!(LockupTier::Annual.multiplier(), 4.0);
         assert_eq!(LockupTier::MultiYear.multiplier(), 8.0);
     }
-    
+
     #[test]
     fn test_temporal_weight_calculation() {
         let validator_id = VerifyingKey::from_bytes(&[1u8; 32]).unwrap();
-        
+
         let mut stake = TemporalStake {
             validator_id,
             stake_amount: 10000,
@@ -492,24 +492,24 @@ mod tests {
             blocks_validated: 1000,
             last_activity: SystemTime::now(),
         };
-        
+
         let weight = stake.calculate_temporal_weight();
-        
+
         // After 1 year with Annual tier (4x multiplier) and e^1 temporal factor
         // Expected: 10000 * 4.0 * e^1 ≈ 108,731
         assert!(weight > 100000.0 && weight < 120000.0);
-        
+
         // Test uptime penalty
         stake.uptime_percentage = 0.5;
         let penalized_weight = stake.calculate_temporal_weight();
         assert!(penalized_weight < weight * 0.6); // Should be roughly halved
     }
-    
+
     #[test]
     fn test_early_withdrawal_penalty() {
         let validator_id = VerifyingKey::from_bytes(&[1u8; 32]).unwrap();
         let now = SystemTime::now();
-        
+
         let stake = TemporalStake {
             validator_id,
             stake_amount: 10000,
@@ -520,10 +520,10 @@ mod tests {
             blocks_validated: 0,
             last_activity: now,
         };
-        
+
         // Should not be able to withdraw yet
         assert!(!stake.can_withdraw());
-        
+
         // Penalty should be 25% for Annual tier
         let penalty = stake.calculate_early_withdrawal_penalty();
         assert_eq!(penalty, 2500); // 25% of 10000

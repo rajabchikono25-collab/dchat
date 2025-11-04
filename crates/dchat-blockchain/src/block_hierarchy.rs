@@ -30,7 +30,7 @@ impl Hash {
     pub fn from(bytes: [u8; 32]) -> Self {
         Self(blake3::Hash::from(bytes))
     }
-    
+
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
@@ -185,22 +185,22 @@ pub struct FinalityProof {
 pub enum BlockError {
     #[error("Subblock limit exceeded (max 10)")]
     SubblockLimitExceeded,
-    
+
     #[error("Miniblock limit exceeded (max 10)")]
     MiniblockLimitExceeded,
-    
+
     #[error("Invalid subblock order")]
     InvalidSubblockOrder,
-    
+
     #[error("Invalid timestamp")]
     InvalidTimestamp,
-    
+
     #[error("Insufficient validator signatures (need 5-of-7)")]
     InsufficientSignatures,
-    
+
     #[error("Invalid state transition")]
     InvalidStateTransition,
-    
+
     #[error("Execution failed: {0}")]
     ExecutionFailed(String),
 }
@@ -231,10 +231,7 @@ impl Block {
 
     /// Calculate total transaction count in block
     pub fn transaction_count(&self) -> usize {
-        self.subblocks
-            .iter()
-            .map(|sb| sb.transaction_count())
-            .sum()
+        self.subblocks.iter().map(|sb| sb.transaction_count()).sum()
     }
 
     /// Calculate block hash
@@ -295,10 +292,7 @@ impl Subblock {
 
     /// Calculate total transaction count in subblock
     pub fn transaction_count(&self) -> usize {
-        self.miniblocks
-            .iter()
-            .map(|mb| mb.transactions.len())
-            .sum()
+        self.miniblocks.iter().map(|mb| mb.transactions.len()).sum()
     }
 
     /// Calculate subblock hash
@@ -309,11 +303,12 @@ impl Subblock {
 
     /// Calculate merkle root of all miniblocks
     pub fn calculate_merkle_root(&self) -> Hash {
-        let hashes: Vec<_> = self.miniblocks
+        let hashes: Vec<_> = self
+            .miniblocks
             .iter()
             .map(|mb| mb.calculate_hash())
             .collect();
-        
+
         if hashes.is_empty() {
             return Hash::from([0u8; 32]);
         }
@@ -373,17 +368,18 @@ impl FinalityProof {
         // All three consensus layers must agree
         if !self.porw_finalized || !self.pot_finalized || !self.tsc_finalized {
             return Err(BlockError::ExecutionFailed(
-                "Not all consensus layers finalized".to_string()
+                "Not all consensus layers finalized".to_string(),
             ));
         }
-        
+
         // Confidence must be high enough
         if self.confidence < 0.67 {
-            return Err(BlockError::ExecutionFailed(
-                format!("Confidence too low: {:.2}%", self.confidence * 100.0)
-            ));
+            return Err(BlockError::ExecutionFailed(format!(
+                "Confidence too low: {:.2}%",
+                self.confidence * 100.0
+            )));
         }
-        
+
         Ok(())
     }
 
@@ -398,7 +394,7 @@ fn calculate_merkle_root(hashes: &[Hash]) -> Hash {
     if hashes.is_empty() {
         return Hash::from([0u8; 32]);
     }
-    
+
     if hashes.len() == 1 {
         return hashes[0];
     }
@@ -459,13 +455,13 @@ mod tests {
     #[test]
     fn test_subblock_limit() {
         let mut block = Block::new(1, Hash::from([0u8; 32]));
-        
+
         // Add 10 subblocks (should work)
         for i in 0..10 {
             let subblock = Subblock::new(i);
             assert!(block.add_subblock(subblock).is_ok());
         }
-        
+
         // Try to add 11th subblock (should fail)
         let subblock = Subblock::new(10);
         assert!(block.add_subblock(subblock).is_err());
@@ -474,13 +470,13 @@ mod tests {
     #[test]
     fn test_miniblock_limit() {
         let mut subblock = Subblock::new(0);
-        
+
         // Add 10 miniblocks (should work)
         for i in 0..10 {
             let miniblock = Miniblock::new(i, vec![]);
             assert!(subblock.add_miniblock(miniblock).is_ok());
         }
-        
+
         // Try to add 11th miniblock (should fail)
         let miniblock = Miniblock::new(10, vec![]);
         assert!(subblock.add_miniblock(miniblock).is_err());
@@ -489,7 +485,7 @@ mod tests {
     #[test]
     fn test_transaction_count() {
         let mut block = Block::new(1, Hash::from([0u8; 32]));
-        
+
         // Create subblock with miniblocks containing transactions
         let mut subblock = Subblock::new(0);
         for i in 0..10 {
@@ -505,9 +501,9 @@ mod tests {
             let miniblock = Miniblock::new(i, transactions);
             subblock.add_miniblock(miniblock).unwrap();
         }
-        
+
         block.add_subblock(subblock).unwrap();
-        
+
         // Should have 250 transactions (10 miniblocks × 25 txs)
         assert_eq!(block.transaction_count(), 250);
     }
@@ -517,13 +513,13 @@ mod tests {
         let hash1 = Hash::from(blake3::hash(b"data1").into());
         let hash2 = Hash::from(blake3::hash(b"data2").into());
         let hash3 = Hash::from(blake3::hash(b"data3").into());
-        
+
         let root = calculate_merkle_root(&[hash1, hash2, hash3]);
-        
+
         // Root should be deterministic
         let root2 = calculate_merkle_root(&[hash1, hash2, hash3]);
         assert_eq!(root, root2);
-        
+
         // Different data should produce different root
         let hash4 = Hash::from(blake3::hash(b"data4").into());
         let root3 = calculate_merkle_root(&[hash1, hash2, hash4]);
@@ -538,15 +534,15 @@ mod tests {
             tsc_finalized: true,
             confidence: 0.95,
         };
-        
+
         assert!(proof.verify().is_ok());
         assert!(proof.is_finalized());
-        
+
         // Test low confidence
         proof.confidence = 0.5;
         assert!(proof.verify().is_err());
         assert!(!proof.is_finalized());
-        
+
         // Test missing consensus layer
         proof.confidence = 0.95;
         proof.porw_finalized = false;

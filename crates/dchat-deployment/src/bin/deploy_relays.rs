@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(name = "deploy-relays")]
@@ -129,67 +129,82 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::GenerateConfig { network, count, output } => {
-            generate_relay_config(network, count, output).await
-        }
-        Commands::DeployRelay { relay_id, config, server, user, key } => {
-            deploy_relay(&relay_id, &config, &server, &user, key.as_deref()).await
-        }
-        Commands::DeployAll { config, servers, user, key, parallel } => {
-            deploy_all_relays(&config, &servers, &user, key.as_deref(), parallel).await
-        }
-        Commands::HealthCheck { config, timeout } => {
-            health_check_all(&config, timeout).await
-        }
-        Commands::CalculateRewards { config, reputations, days } => {
-            calculate_rewards(&config, &reputations, days).await
-        }
-        Commands::Monitor { config, interval } => {
-            monitor_network(&config, interval).await
-        }
+        Commands::GenerateConfig {
+            network,
+            count,
+            output,
+        } => generate_relay_config(network, count, output).await,
+        Commands::DeployRelay {
+            relay_id,
+            config,
+            server,
+            user,
+            key,
+        } => deploy_relay(&relay_id, &config, &server, &user, key.as_deref()).await,
+        Commands::DeployAll {
+            config,
+            servers,
+            user,
+            key,
+            parallel,
+        } => deploy_all_relays(&config, &servers, &user, key.as_deref(), parallel).await,
+        Commands::HealthCheck { config, timeout } => health_check_all(&config, timeout).await,
+        Commands::CalculateRewards {
+            config,
+            reputations,
+            days,
+        } => calculate_rewards(&config, &reputations, days).await,
+        Commands::Monitor { config, interval } => monitor_network(&config, interval).await,
     }
 }
 
-async fn generate_relay_config(
-    network: String,
-    count: usize,
-    output: PathBuf,
-) -> Result<()> {
-    info!("Generating relay network configuration for {} relays", count);
+async fn generate_relay_config(network: String, count: usize, output: PathBuf) -> Result<()> {
+    info!(
+        "Generating relay network configuration for {} relays",
+        count
+    );
 
     let config = RelayNetworkConfig::new_recommended(network.clone(), count)
         .context("Failed to create relay network config")?;
 
-    config.verify_diversity()
+    config
+        .verify_diversity()
         .context("Failed diversity verification")?;
 
     // Create output directory
-    fs::create_dir_all(&output)
-        .context("Failed to create output directory")?;
+    fs::create_dir_all(&output).context("Failed to create output directory")?;
 
     // Generate TOML for each relay
     for relay in &config.relays {
-        let toml = config.generate_relay_toml(&relay.relay_id)
+        let toml = config
+            .generate_relay_toml(&relay.relay_id)
             .context(format!("Failed to generate TOML for {}", relay.relay_id))?;
 
         let filename = output.join(format!("{}.toml", relay.relay_id));
-        fs::write(&filename, toml)
-            .context(format!("Failed to write {}", filename.display()))?;
+        fs::write(&filename, toml).context(format!("Failed to write {}", filename.display()))?;
 
         info!("Generated configuration: {}", filename.display());
     }
 
     // Save deployment summary as JSON
-    let summary = serde_json::to_string_pretty(&config)
-        .context("Failed to serialize config")?;
+    let summary = serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
     let summary_path = output.join("deployment-summary.json");
-    fs::write(&summary_path, summary)
-        .context("Failed to write deployment summary")?;
+    fs::write(&summary_path, summary).context("Failed to write deployment summary")?;
 
-    info!("✅ Generated {} relay configurations in {:?}", config.relays.len(), output);
+    info!(
+        "✅ Generated {} relay configurations in {:?}",
+        config.relays.len(),
+        output
+    );
     info!("   - Target relay count: {}", config.target_relay_count);
-    info!("   - Minimum relays per region: {}", config.min_relays_per_region);
-    info!("   - Health check interval: {}s", config.health_check_interval);
+    info!(
+        "   - Minimum relays per region: {}",
+        config.min_relays_per_region
+    );
+    info!(
+        "   - Health check interval: {}s",
+        config.health_check_interval
+    );
 
     Ok(())
 }
@@ -236,7 +251,7 @@ async fn deploy_relay(
         .and_then(|n| n.get("rpc_address"))
         .and_then(|a| a.as_str())
         .context("Missing rpc_address in config")?;
-    
+
     check_relay_health(server, rpc_address, 60).await?;
 
     // Step 8: Register relay on-chain
@@ -254,7 +269,10 @@ async fn deploy_all_relays(
     key: Option<&std::path::Path>,
     parallel: bool,
 ) -> Result<()> {
-    info!("Deploying all relays in {} mode", if parallel { "PARALLEL" } else { "SEQUENTIAL" });
+    info!(
+        "Deploying all relays in {} mode",
+        if parallel { "PARALLEL" } else { "SEQUENTIAL" }
+    );
 
     // Load config
     let config_json = fs::read_to_string(config_path)?;
@@ -268,13 +286,15 @@ async fn deploy_all_relays(
         // Deploy all relays in parallel
         let mut handles = vec![];
         for relay in &network_config.relays {
-            let server = server_mapping.get(&relay.relay_id)
+            let server = server_mapping
+                .get(&relay.relay_id)
                 .context(format!("No server mapping for {}", relay.relay_id))?
                 .clone();
-            
+
             let relay_id = relay.relay_id.clone();
             let relay_id_for_handle = relay_id.clone();
-            let config_path = config_path.parent()
+            let config_path = config_path
+                .parent()
                 .unwrap()
                 .join(format!("{}.toml", relay_id));
             let user = user.to_string();
@@ -297,10 +317,12 @@ async fn deploy_all_relays(
     } else {
         // Deploy sequentially
         for relay in &network_config.relays {
-            let server = server_mapping.get(&relay.relay_id)
+            let server = server_mapping
+                .get(&relay.relay_id)
                 .context(format!("No server mapping for {}", relay.relay_id))?;
-            
-            let config_path = config_path.parent()
+
+            let config_path = config_path
+                .parent()
                 .unwrap()
                 .join(format!("{}.toml", relay.relay_id));
 
@@ -331,15 +353,13 @@ async fn health_check_all(config_path: &PathBuf, timeout: u64) -> Result<()> {
     let mut unhealthy = 0;
 
     for relay in &network_config.relays {
-        let rpc_url = format!("http://{}:{}/health", 
+        let rpc_url = format!(
+            "http://{}:{}/health",
             relay.public_address,
             relay.rpc_address.port()
         );
 
-        match tokio::time::timeout(
-            Duration::from_secs(timeout),
-            reqwest::get(&rpc_url)
-        ).await {
+        match tokio::time::timeout(Duration::from_secs(timeout), reqwest::get(&rpc_url)).await {
             Ok(Ok(response)) if response.status().is_success() => {
                 info!("✅ {} is HEALTHY", relay.relay_id);
                 healthy += 1;
@@ -351,14 +371,23 @@ async fn health_check_all(config_path: &PathBuf, timeout: u64) -> Result<()> {
         }
     }
 
-    info!("\nHealth check complete: {} healthy, {} unhealthy", healthy, unhealthy);
-    
+    info!(
+        "\nHealth check complete: {} healthy, {} unhealthy",
+        healthy, unhealthy
+    );
+
     let health_percentage = healthy as f64 / (healthy + unhealthy) as f64;
     if health_percentage >= 0.8 {
-        info!("✅ Network health: {:.1}% (GOOD)", health_percentage * 100.0);
+        info!(
+            "✅ Network health: {:.1}% (GOOD)",
+            health_percentage * 100.0
+        );
         Ok(())
     } else {
-        error!("❌ Network health: {:.1}% (POOR)", health_percentage * 100.0);
+        error!(
+            "❌ Network health: {:.1}% (POOR)",
+            health_percentage * 100.0
+        );
         Err(anyhow::anyhow!("Network health below 80%"))
     }
 }
@@ -378,8 +407,10 @@ async fn calculate_rewards(
 
     let mut total_rewards = 0.0;
 
-    info!("\n{:<30} {:<10} {:<15} {:<10} {:<15}", 
-        "Relay ID", "Tier", "Messages", "Uptime", "Daily Reward");
+    info!(
+        "\n{:<30} {:<10} {:<15} {:<10} {:<15}",
+        "Relay ID", "Tier", "Messages", "Uptime", "Daily Reward"
+    );
     info!("{}", "-".repeat(80));
 
     for relay in &network_config.relays {
@@ -394,7 +425,8 @@ async fn calculate_rewards(
 
             total_rewards += reward * days as f64;
 
-            info!("{:<30} {:<10?} {:<15} {:<10.1}% {:<15.2} DCHAT/day",
+            info!(
+                "{:<30} {:<10?} {:<15} {:<10.1}% {:<15.2} DCHAT/day",
                 relay.relay_id,
                 relay.tier,
                 reputation.messages_relayed,
@@ -423,7 +455,8 @@ async fn monitor_network(config_path: &PathBuf, interval: u64) -> Result<()> {
         let mut total_connections = 0;
 
         for relay in &network_config.relays {
-            let rpc_url = format!("http://{}:{}/health",
+            let rpc_url = format!(
+                "http://{}:{}/health",
                 relay.public_address,
                 relay.rpc_address.port()
             );
@@ -433,7 +466,8 @@ async fn monitor_network(config_path: &PathBuf, interval: u64) -> Result<()> {
                     healthy += 1;
                     // Try to get connection count from response
                     if let Ok(body) = response.json::<serde_json::Value>().await {
-                        if let Some(connections) = body.get("connections").and_then(|c| c.as_u64()) {
+                        if let Some(connections) = body.get("connections").and_then(|c| c.as_u64())
+                        {
                             total_connections += connections;
                         }
                     }
@@ -445,13 +479,18 @@ async fn monitor_network(config_path: &PathBuf, interval: u64) -> Result<()> {
         let health_percentage = healthy as f64 / (healthy + unhealthy) as f64;
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
 
-        info!("[{}] Health: {:.1}% ({}/{}) | Connections: {} | Status: {}",
+        info!(
+            "[{}] Health: {:.1}% ({}/{}) | Connections: {} | Status: {}",
             timestamp,
             health_percentage * 100.0,
             healthy,
             healthy + unhealthy,
             total_connections,
-            if health_percentage >= 0.8 { "✅ GOOD" } else { "⚠️ DEGRADED" }
+            if health_percentage >= 0.8 {
+                "✅ GOOD"
+            } else {
+                "⚠️ DEGRADED"
+            }
         );
 
         sleep(Duration::from_secs(interval)).await;
@@ -488,7 +527,7 @@ async fn install_relay_dependencies(
         "ssh {}@{} 'apt-get update && apt-get install -y docker.io docker-compose curl'",
         user, server
     );
-    
+
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&install_cmd)
@@ -582,14 +621,12 @@ async fn deploy_relay_container(
     }
 }
 
-async fn check_relay_health(
-    server: &str,
-    rpc_address: &str,
-    timeout_secs: u64,
-) -> Result<()> {
-    let rpc_port = rpc_address.split(':').nth(1)
+async fn check_relay_health(server: &str, rpc_address: &str, timeout_secs: u64) -> Result<()> {
+    let rpc_port = rpc_address
+        .split(':')
+        .nth(1)
         .context("Invalid RPC address")?;
-    
+
     let health_url = format!("http://{}:{}/health", server, rpc_port);
 
     let start = std::time::Instant::now();

@@ -1,5 +1,5 @@
 //! dchat-crypto: Cryptographic primitives for dchat
-//! 
+//!
 //! This crate provides the cryptographic foundation for dchat, including:
 //! - Noise Protocol implementation for end-to-end encryption
 //! - Key management and rotation
@@ -7,20 +7,20 @@
 //! - Post-quantum cryptography support
 //! - Zero-knowledge proofs
 
-pub mod noise;
-pub mod keys;
-pub mod signatures;
-pub mod post_quantum;
-pub mod kdf;
-pub mod rotation;
-pub mod handshake;
 mod encryption;
+pub mod handshake;
+pub mod kdf;
+pub mod keys;
+pub mod noise;
+pub mod post_quantum;
+pub mod rotation;
+pub mod signatures;
 
+pub use encryption::{decrypt_with_password, encrypt_with_password};
 pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
-pub use signatures::{SigningKey, VerifyingKey, sign, verify};
-pub use noise::{NoiseSession, NoiseHandshake};
+pub use noise::{NoiseHandshake, NoiseSession};
 pub use rotation::{KeyRotationManager, RotationPolicy};
-pub use encryption::{encrypt_with_password, decrypt_with_password};
+pub use signatures::{sign, verify, SigningKey, VerifyingKey};
 
 use dchat_core::error::{Error, Result};
 
@@ -57,32 +57,35 @@ pub fn derive_key_from_password(
     salt: &[u8; 16],
     output_length: usize,
 ) -> Result<Vec<u8>> {
-    use argon2::Argon2;
     use argon2::password_hash::{PasswordHasher, SaltString};
+    use argon2::Argon2;
     use base64::engine::general_purpose;
     use base64::Engine;
-    
+
     let salt_string = SaltString::encode_b64(salt)
         .map_err(|e| Error::crypto(format!("Salt encoding error: {}", e)))?;
-    
+
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(password.as_bytes(), &salt_string)
         .map_err(|e| Error::crypto(format!("Argon2 error: {}", e)))?
         .to_string();
-    
+
     // Extract the hash portion and truncate to requested length
-    let hash_part = password_hash.split('$').next_back()
+    let hash_part = password_hash
+        .split('$')
+        .next_back()
         .ok_or_else(|| Error::crypto("Invalid hash format".to_string()))?;
-    
+
     // Add padding if necessary
     let mut hash_b64 = hash_part.to_string();
     while hash_b64.len() % 4 != 0 {
         hash_b64.push('=');
     }
-    
-    let decoded = general_purpose::STANDARD.decode(&hash_b64)
+
+    let decoded = general_purpose::STANDARD
+        .decode(&hash_b64)
         .map_err(|e| Error::crypto(format!("Decode error: {}", e)))?;
-    
+
     Ok(decoded[..output_length.min(decoded.len())].to_vec())
 }

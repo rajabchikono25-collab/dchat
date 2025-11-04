@@ -7,11 +7,11 @@
 //! - Cover traffic generation
 //! - Timing obfuscation
 
+use blake3::Hasher;
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use blake3::Hasher;
 
 /// Onion circuit identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -168,39 +168,42 @@ impl OnionRoutingManager {
         let circuit_id = CircuitId(format!("circuit-{}", uuid::Uuid::new_v4()));
 
         // Perform Curve25519 ECDH with each hop to establish shared secrets
-        use x25519_dalek::{EphemeralSecret, PublicKey};
         use rand::rngs::OsRng;
         use sha2::Sha256;
-        
+        use x25519_dalek::{EphemeralSecret, PublicKey};
+
         let mut shared_secrets = Vec::new();
         for hop in &path {
             // Generate ephemeral key pair for this hop
             let our_secret = EphemeralSecret::random_from_rng(OsRng);
             let _our_public = PublicKey::from(&our_secret);
-            
+
             // Get hop's public key (from relay node info)
-            let hop_public_bytes: [u8; 32] = hop.public_key.as_slice().try_into()
+            let hop_public_bytes: [u8; 32] = hop
+                .public_key
+                .as_slice()
+                .try_into()
                 .map_err(|_| Error::network("Invalid hop public key"))?;
             let hop_public = PublicKey::from(hop_public_bytes);
-            
+
             // Perform ECDH
             let shared_point = our_secret.diffie_hellman(&hop_public);
-            
+
             // Derive key material using HKDF-SHA256
             use hkdf::Hkdf;
             type HkdfSha256 = Hkdf<Sha256>;
-            
+
             let hkdf = HkdfSha256::new(None, shared_point.as_bytes());
             let mut secret = vec![0u8; 32];
             hkdf.expand(b"dchat-onion-circuit", &mut secret)
                 .map_err(|_| Error::network("HKDF expansion failed"))?;
-            
+
             shared_secrets.push(secret);
-            
+
             // Send CREATE cell with our_public to hop and wait for CREATED response
             // CREATE cell format: version(1) || circuit_id(16) || command(1) || public_key(32)
             let create_cell = self.build_create_cell(&circuit_id, &_our_public);
-            
+
             // Send CREATE cell to hop and await CREATED response
             // In production, this would use libp2p stream to the hop's address
             match self.send_create_cell(&hop.address, create_cell).await {
@@ -211,7 +214,8 @@ impl OnionRoutingManager {
                 Err(e) => {
                     tracing::error!("Failed to establish hop {}: {}", hop.node_id, e);
                     return Err(Error::network(format!(
-                        "Circuit build failed at hop {}: {}", hop.node_id, e
+                        "Circuit build failed at hop {}: {}",
+                        hop.node_id, e
                     )));
                 }
             }
@@ -237,7 +241,9 @@ impl OnionRoutingManager {
         circuit_id: &CircuitId,
         payload: &[u8],
     ) -> Result<SphinxPacket> {
-        let circuit = self.circuits.get(circuit_id)
+        let circuit = self
+            .circuits
+            .get(circuit_id)
             .ok_or_else(|| Error::network("Circuit not found"))?;
 
         if circuit.status != CircuitStatus::Active {
@@ -249,35 +255,38 @@ impl OnionRoutingManager {
             aead::{Aead, KeyInit},
             ChaCha20Poly1305, Nonce,
         };
-        
+
         let mut encrypted_payload = payload.to_vec();
-        
+
         // Encrypt in reverse order (innermost hop first)
         for secret in circuit.shared_secrets.iter().rev() {
             // Derive encryption key from shared secret
-            let key_bytes: [u8; 32] = secret.as_slice().try_into()
+            let key_bytes: [u8; 32] = secret
+                .as_slice()
+                .try_into()
                 .map_err(|_| Error::network("Invalid secret length"))?;
             let cipher = ChaCha20Poly1305::new(&key_bytes.into());
-            
+
             // Generate nonce (12 bytes)
             use rand::RngCore;
             let mut nonce_bytes = [0u8; 12];
             rand::thread_rng().fill_bytes(&mut nonce_bytes);
             let nonce = Nonce::from_slice(&nonce_bytes);
-            
+
             // Encrypt layer
-            encrypted_payload = cipher.encrypt(nonce, encrypted_payload.as_ref())
+            encrypted_payload = cipher
+                .encrypt(nonce, encrypted_payload.as_ref())
                 .map_err(|_| Error::network("Encryption failed"))?;
-            
+
             // Prepend nonce so it can be used for decryption
             let mut layer = nonce_bytes.to_vec();
             layer.extend_from_slice(&encrypted_payload);
             encrypted_payload = layer;
         }
-        
+
         // Encrypt payload in layers (onion-style) - continued
         let mut encrypted_payload = payload.to_vec();
-        
+
         // Encrypt from exit node backwards to entry node
         for secret in circuit.shared_secrets.iter().rev() {
             encrypted_payload = self.encrypt_layer(&encrypted_payload, secret);
@@ -304,21 +313,19 @@ impl OnionRoutingManager {
             ChaCha20Poly1305, Nonce,
         };
         use rand::RngCore;
-        
+
         // Derive encryption key from shared secret
-        let key_bytes: [u8; 32] = key[..32].try_into()
-            .expect("Key must be 32 bytes");
+        let key_bytes: [u8; 32] = key[..32].try_into().expect("Key must be 32 bytes");
         let cipher = ChaCha20Poly1305::new(&key_bytes.into());
-        
+
         // Generate random nonce (12 bytes)
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        
+
         // Encrypt with AEAD
-        let ciphertext = cipher.encrypt(nonce, data)
-            .expect("Encryption failed");
-        
+        let ciphertext = cipher.encrypt(nonce, data).expect("Encryption failed");
+
         // Return nonce || ciphertext for decryption
         let mut result = nonce_bytes.to_vec();
         result.extend_from_slice(&ciphertext);
@@ -328,11 +335,11 @@ impl OnionRoutingManager {
     /// Create encrypted routing header with proper node addressing
     fn create_routing_header(&self, circuit: &Circuit) -> Result<Vec<u8>> {
         use std::io::Write;
-        
+
         // Encode routing information: [hop_count, (node_id_len, node_id, port)*]
         let mut header = Vec::new();
         header.push(circuit.hops.len() as u8);
-        
+
         for hop in &circuit.hops {
             let node_id_bytes = hop.node_id.as_bytes();
             // Write length-prefixed node ID
@@ -365,7 +372,9 @@ impl OnionRoutingManager {
         circuit_id: &CircuitId,
         _packet: SphinxPacket,
     ) -> Result<()> {
-        let circuit = self.circuits.get_mut(circuit_id)
+        let circuit = self
+            .circuits
+            .get_mut(circuit_id)
             .ok_or_else(|| Error::network("Circuit not found"))?;
 
         if circuit.status != CircuitStatus::Active {
@@ -376,7 +385,7 @@ impl OnionRoutingManager {
 
         // In production, send packet to first hop
         // Each hop will decrypt one layer and forward to next hop
-        
+
         Ok(())
     }
 
@@ -384,9 +393,9 @@ impl OnionRoutingManager {
     pub async fn tear_down_circuit(&mut self, circuit_id: &CircuitId) -> Result<()> {
         if let Some(circuit) = self.circuits.get_mut(circuit_id) {
             circuit.status = CircuitStatus::TearingDown;
-            
+
             // In production, send DESTROY cells to all hops
-            
+
             circuit.status = CircuitStatus::Closed;
         }
 
@@ -408,7 +417,9 @@ impl OnionRoutingManager {
         }
 
         // Select random active circuit
-        let active_circuits: Vec<_> = self.circuits.iter()
+        let active_circuits: Vec<_> = self
+            .circuits
+            .iter()
             .filter(|(_, c)| c.status == CircuitStatus::Active)
             .map(|(id, _)| id.clone())
             .collect();
@@ -431,18 +442,21 @@ impl OnionRoutingManager {
         let max_age = Duration::from_secs(self.config.max_lifetime_secs);
         let now = Instant::now();
 
-        self.circuits.retain(|_, circuit| {
-            now.duration_since(circuit.created_at) < max_age
-        });
+        self.circuits
+            .retain(|_, circuit| now.duration_since(circuit.created_at) < max_age);
     }
 
     /// Get circuit statistics
     pub fn get_stats(&self) -> CircuitStats {
         let total = self.circuits.len();
-        let active = self.circuits.values()
+        let active = self
+            .circuits
+            .values()
             .filter(|c| c.status == CircuitStatus::Active)
             .count();
-        let building = self.circuits.values()
+        let building = self
+            .circuits
+            .values()
             .filter(|c| c.status == CircuitStatus::Building)
             .count();
 
@@ -453,64 +467,78 @@ impl OnionRoutingManager {
             available_relays: self.available_relays.len(),
         }
     }
-    
+
     /// Build CREATE cell for circuit handshake
-    fn build_create_cell(&self, circuit_id: &CircuitId, public_key: &x25519_dalek::PublicKey) -> Vec<u8> {
+    fn build_create_cell(
+        &self,
+        circuit_id: &CircuitId,
+        public_key: &x25519_dalek::PublicKey,
+    ) -> Vec<u8> {
         use std::io::Write;
-        
+
         let mut cell = Vec::new();
-        
+
         // Version (1 byte)
         cell.push(1u8);
-        
+
         // Circuit ID (16 bytes - use first 16 bytes of circuit ID string hash)
         let mut hasher = Hasher::new();
         hasher.update(circuit_id.0.as_bytes());
         let id_hash = hasher.finalize();
         cell.extend_from_slice(&id_hash.as_bytes()[..16]);
-        
+
         // Command (1 byte): CREATE = 0x01
         cell.push(0x01);
-        
+
         // Public key (32 bytes)
         cell.extend_from_slice(public_key.as_bytes());
-        
+
         cell
     }
-    
+
     /// Send CREATE cell to relay node and await CREATED response
     async fn send_create_cell(&self, relay_address: &str, create_cell: Vec<u8>) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpStream;
-        use tokio::io::{AsyncWriteExt, AsyncReadExt};
-        
+
         // Connect to relay
-        let mut stream = TcpStream::connect(relay_address).await
+        let mut stream = TcpStream::connect(relay_address)
+            .await
             .map_err(|e| Error::network(format!("Failed to connect to relay: {}", e)))?;
-        
+
         // Send CREATE cell
-        stream.write_all(&create_cell).await
+        stream
+            .write_all(&create_cell)
+            .await
             .map_err(|e| Error::network(format!("Failed to send CREATE cell: {}", e)))?;
-        
+
         // Wait for CREATED response
         // CREATED format: version(1) || circuit_id(16) || command(1=CREATED) || public_key(32) || status(1)
         let mut response = vec![0u8; 51];
-        stream.read_exact(&mut response).await
+        stream
+            .read_exact(&mut response)
+            .await
             .map_err(|e| Error::network(format!("Failed to read CREATED response: {}", e)))?;
-        
+
         // Verify response
         if response[0] != 1 {
             return Err(Error::network("Invalid CREATED response version"));
         }
-        
-        if response[17] != 0x02 { // CREATED command = 0x02
+
+        if response[17] != 0x02 {
+            // CREATED command = 0x02
             return Err(Error::network("Invalid CREATED response command"));
         }
-        
+
         let status = response[50];
-        if status != 0x00 { // 0x00 = success
-            return Err(Error::network(format!("Circuit creation failed with status: {}", status)));
+        if status != 0x00 {
+            // 0x00 = success
+            return Err(Error::network(format!(
+                "Circuit creation failed with status: {}",
+                status
+            )));
         }
-        
+
         Ok(())
     }
 }
@@ -558,7 +586,7 @@ mod tests {
 
         // Build circuit
         let circuit_id = manager.build_circuit().await.unwrap();
-        
+
         let circuit = manager.circuits.get(&circuit_id).unwrap();
         assert_eq!(circuit.hops.len(), 3);
         assert_eq!(circuit.status, CircuitStatus::Active);
@@ -583,12 +611,13 @@ mod tests {
         let circuit = manager.circuits.get(&circuit_id).unwrap();
 
         // Check all ASNs are different
-        let asns: Vec<_> = circuit.hops.iter()
-            .filter_map(|h| h.asn)
-            .collect();
-        
+        let asns: Vec<_> = circuit.hops.iter().filter_map(|h| h.asn).collect();
+
         assert_eq!(asns.len(), 3);
-        assert_eq!(asns.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        assert_eq!(
+            asns.iter().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
     }
 
     #[tokio::test]
@@ -602,7 +631,7 @@ mod tests {
         }
 
         let circuit_id = manager.build_circuit().await.unwrap();
-        
+
         // Create packet
         let payload = b"secret message";
         let packet = manager.create_sphinx_packet(&circuit_id, payload).unwrap();
@@ -635,7 +664,7 @@ mod tests {
         let manager = OnionRoutingManager::new(config);
 
         let traffic = manager.generate_cover_traffic();
-        
+
         // Should be between 512 and 1024 bytes
         assert!(traffic.len() >= 512);
         assert!(traffic.len() <= 1024);

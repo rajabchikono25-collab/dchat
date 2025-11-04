@@ -21,9 +21,9 @@ pub use delivery::{DeliveryProof, DeliveryTracker};
 pub use expiration::{ExpirationPolicy, MessageExpiration};
 pub use media::{
     Animation, Audio, Contact, Document, EnhancedBotMessage, EntityType, LinkPreview, Location,
-    MediaType, MessageEntity, Photo, PhotoSize, Poll, PollOption, PollType, Sticker,
-    StickerType, Video, VideoNote, Voice,
+    MediaType, MessageEntity, Photo, PhotoSize, Poll, PollOption, PollType, Sticker, StickerType,
+    Video, VideoNote, Voice,
 };
 pub use ordering::{MessageOrder, SequenceNumber};
 pub use queue::{MessageQueue, OfflineQueue};
-pub use types::{Message, MessageBuilder, MessageType, MessageStatus};
+pub use types::{Message, MessageBuilder, MessageStatus, MessageType};

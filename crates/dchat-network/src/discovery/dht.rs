@@ -13,16 +13,16 @@ use thiserror::Error;
 pub struct DhtConfig {
     /// Local peer ID
     pub local_peer_id: PeerId,
-    
+
     /// Bootstrap nodes to connect to
     pub bootstrap_nodes: Vec<Multiaddr>,
-    
+
     /// K-bucket size (typically 20)
     pub k_bucket_size: usize,
-    
+
     /// Concurrency parameter (typically 3)
     pub alpha: usize,
-    
+
     /// Query timeout
     pub query_timeout: Duration,
 }
@@ -44,13 +44,13 @@ impl Default for DhtConfig {
 pub enum DhtError {
     #[error("Bootstrap failed: {0}")]
     BootstrapFailed(String),
-    
+
     #[error("Peer not found: {0}")]
     PeerNotFound(String),
-    
+
     #[error("Query timeout")]
     QueryTimeout,
-    
+
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 }
@@ -68,7 +68,7 @@ impl Dht {
     /// Create a new DHT instance
     pub async fn new(config: DhtConfig) -> Result<Self> {
         let routing_table = RoutingTable::new(config.local_peer_id, config.k_bucket_size);
-        
+
         Ok(Self {
             config,
             routing_table,
@@ -80,9 +80,7 @@ impl Dht {
     /// Bootstrap the node into the network
     pub async fn bootstrap(&mut self) -> Result<()> {
         if self.config.bootstrap_nodes.is_empty() {
-            return Err(dchat_core::Error::network(
-                "No bootstrap nodes configured"
-            ));
+            return Err(dchat_core::Error::network("No bootstrap nodes configured"));
         }
 
         tracing::info!(
@@ -96,7 +94,7 @@ impl Dht {
             // For now, use a deterministic peer ID based on address
             let peer_id = self.peer_id_from_addr(addr, i);
             let peer_info = PeerInfo::new(peer_id, vec![addr.clone()]);
-            
+
             if let Err(e) = self.routing_table.add_peer(peer_info) {
                 tracing::warn!("Failed to add bootstrap node: {}", e);
             }
@@ -119,12 +117,12 @@ impl Dht {
         tracing::debug!("Finding peers close to {:?}", peer_id);
 
         // Get k closest peers from local routing table
-        let closest = self.routing_table.find_closest(peer_id, self.config.k_bucket_size);
+        let closest = self
+            .routing_table
+            .find_closest(peer_id, self.config.k_bucket_size);
 
         if closest.is_empty() {
-            return Err(dchat_core::Error::network(
-                "No peers in routing table"
-            ));
+            return Err(dchat_core::Error::network("No peers in routing table"));
         }
 
         // In a full implementation, we would:
@@ -144,10 +142,7 @@ impl Dht {
         let self_id = self.config.local_peer_id;
         let closest = self.find_peer(&self_id).await?;
 
-        tracing::info!(
-            "Announced to {} peers",
-            closest.len()
-        );
+        tracing::info!("Announced to {} peers", closest.len());
 
         Ok(())
     }
@@ -179,7 +174,8 @@ impl Dht {
     /// Perform periodic maintenance
     pub async fn maintain(&mut self) -> Result<()> {
         // Remove stale peers (not seen in 5 minutes)
-        self.routing_table.remove_stale_peers(Duration::from_secs(300));
+        self.routing_table
+            .remove_stale_peers(Duration::from_secs(300));
 
         // Refresh buckets that haven't been updated recently
         // In a full implementation, perform FIND_NODE for random IDs in stale buckets
@@ -201,7 +197,7 @@ impl Dht {
         // For now, generate deterministic ID based on index
         let mut bytes = [0u8; 32];
         bytes[0] = index as u8;
-        
+
         // Create a deterministic but unique peer ID
         // This is a placeholder - real implementation would parse from multiaddr
         PeerId::random()
@@ -246,7 +242,7 @@ mod tests {
     async fn test_bootstrap_no_nodes() {
         let config = test_config();
         let mut dht = Dht::new(config).await.unwrap();
-        
+
         let result = dht.bootstrap().await;
         assert!(result.is_err());
     }
@@ -255,11 +251,11 @@ mod tests {
     async fn test_add_peer() {
         let config = test_config();
         let mut dht = Dht::new(config).await.unwrap();
-        
+
         let peer_id = PeerId::random();
         let addr: Multiaddr = "/ip4/127.0.0.1/tcp/9000".parse().unwrap();
         let peer_info = PeerInfo::new(peer_id, vec![addr]);
-        
+
         assert!(dht.add_peer(peer_info).is_ok());
         assert_eq!(dht.routing_table().peer_count(), 1);
     }
@@ -268,7 +264,7 @@ mod tests {
     async fn test_find_peer_empty_table() {
         let config = test_config();
         let dht = Dht::new(config).await.unwrap();
-        
+
         let target = PeerId::random();
         let result = dht.find_peer(&target).await;
         assert!(result.is_err());
@@ -278,7 +274,7 @@ mod tests {
     async fn test_find_peer_with_peers() {
         let config = test_config();
         let mut dht = Dht::new(config).await.unwrap();
-        
+
         // Add some peers
         for i in 0..5 {
             let peer_id = PeerId::random();
@@ -286,7 +282,7 @@ mod tests {
             let peer_info = PeerInfo::new(peer_id, vec![addr]);
             dht.add_peer(peer_info).unwrap();
         }
-        
+
         let target = PeerId::random();
         let result = dht.find_peer(&target).await;
         assert!(result.is_ok());
@@ -297,7 +293,7 @@ mod tests {
     async fn test_maintain() {
         let config = test_config();
         let mut dht = Dht::new(config).await.unwrap();
-        
+
         let result = dht.maintain().await;
         assert!(result.is_ok());
     }

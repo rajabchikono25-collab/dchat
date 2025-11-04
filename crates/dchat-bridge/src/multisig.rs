@@ -172,10 +172,7 @@ impl MultiSigManager {
     }
 
     /// Initialize multi-sig for a transaction
-    pub fn init_transaction(
-        &self,
-        transaction_id: TransactionId,
-    ) -> Result<(), BridgeError> {
+    pub fn init_transaction(&self, transaction_id: TransactionId) -> Result<(), BridgeError> {
         let config = self.global_config.read().unwrap().clone();
         let state = MultiSigState::new(transaction_id, config);
 
@@ -259,7 +256,7 @@ impl SignatureAggregator {
         // In production: use BLS signature aggregation
         // This creates a single signature from multiple signatures
         // For now, concatenate for demonstration
-        
+
         let mut aggregated = Vec::new();
         for sig in signatures {
             aggregated.extend_from_slice(&sig.signature);
@@ -275,7 +272,7 @@ impl SignatureAggregator {
     ) -> Result<(), BridgeError> {
         // In production: use BLS signature verification
         // Verifies that aggregated signature is valid for all public keys
-        
+
         if aggregated.is_empty() {
             return Err(BridgeError::InvalidSignature);
         }
@@ -310,7 +307,11 @@ mod tests {
 
     #[test]
     fn test_multisig_config_creation() {
-        let validators = vec![create_validator(1), create_validator(2), create_validator(3)];
+        let validators = vec![
+            create_validator(1),
+            create_validator(2),
+            create_validator(3),
+        ];
 
         let config = MultiSigConfig::new(2, validators).unwrap();
         assert_eq!(config.threshold, 2);
@@ -341,7 +342,11 @@ mod tests {
 
     #[test]
     fn test_quorum_check() {
-        let validators = vec![create_validator(1), create_validator(2), create_validator(3)];
+        let validators = vec![
+            create_validator(1),
+            create_validator(2),
+            create_validator(3),
+        ];
         let config = MultiSigConfig::new(2, validators).unwrap();
 
         assert!(!config.has_quorum(1));
@@ -351,7 +356,11 @@ mod tests {
 
     #[test]
     fn test_add_signature() {
-        let validators = vec![create_validator(1), create_validator(2), create_validator(3)];
+        let validators = vec![
+            create_validator(1),
+            create_validator(2),
+            create_validator(3),
+        ];
         let config = MultiSigConfig::new(2, validators.clone()).unwrap();
 
         let tx_id = Uuid::new_v4();
@@ -405,7 +414,11 @@ mod tests {
 
     #[test]
     fn test_multisig_manager_init() {
-        let validators = vec![create_validator(1), create_validator(2), create_validator(3)];
+        let validators = vec![
+            create_validator(1),
+            create_validator(2),
+            create_validator(3),
+        ];
         let config = MultiSigConfig::new(2, validators).unwrap();
         let manager = MultiSigManager::new(config);
 
@@ -418,7 +431,11 @@ mod tests {
 
     #[test]
     fn test_multisig_manager_submit_signatures() {
-        let validators = vec![create_validator(1), create_validator(2), create_validator(3)];
+        let validators = vec![
+            create_validator(1),
+            create_validator(2),
+            create_validator(3),
+        ];
         let config = MultiSigConfig::new(2, validators.clone()).unwrap();
         let manager = MultiSigManager::new(config);
 
@@ -488,9 +505,12 @@ mod tests {
 
         assert_eq!(aggregated.len(), 128); // 2 signatures × 64 bytes
 
-        let public_keys = vec![validators[0].public_key.clone(), validators[1].public_key.clone()];
+        let public_keys = vec![
+            validators[0].public_key.clone(),
+            validators[1].public_key.clone(),
+        ];
         let message = b"transaction_data";
-        
+
         SignatureAggregator::verify_aggregated(&aggregated, &public_keys, message).unwrap();
     }
 

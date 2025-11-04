@@ -12,7 +12,7 @@ pub mod protocol;
 
 pub use flood_control::{FloodControl, RateLimiter};
 pub use message_cache::{MessageCache, MessageId};
-pub use protocol::{GossipMessage, GossipProtocol, GossipConfig};
+pub use protocol::{GossipConfig, GossipMessage, GossipProtocol};
 
 use dchat_core::Result;
 use libp2p::PeerId;
@@ -35,11 +35,7 @@ impl Gossip {
     }
 
     /// Handle incoming gossip message
-    pub async fn handle_message(
-        &mut self,
-        from: PeerId,
-        message: GossipMessage,
-    ) -> Result<()> {
+    pub async fn handle_message(&mut self, from: PeerId, message: GossipMessage) -> Result<()> {
         self.protocol.handle_incoming(from, message).await
     }
 
@@ -83,7 +79,7 @@ mod tests {
     async fn test_broadcast() {
         let config = test_config();
         let mut gossip = Gossip::new(config).unwrap();
-        
+
         let payload = b"test message".to_vec();
         let result = gossip.broadcast(payload).await;
         assert!(result.is_ok());

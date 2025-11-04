@@ -107,64 +107,64 @@ pub struct RelayVote {
 pub enum ConsensusError {
     #[error("Stale proof (older than 30 seconds)")]
     StaleProof,
-    
+
     #[error("Future timestamp detected")]
     FutureTimestamp,
-    
+
     #[error("Invalid routing path")]
     InvalidRoutingPath,
-    
+
     #[error("Routing path too long (max 10 hops)")]
     RoutingPathTooLong,
-    
+
     #[error("Relay not in routing path")]
     RelayNotInPath,
-    
+
     #[error("Suspiciously low latency")]
     SuspiciouslyLowLatency,
-    
+
     #[error("Excessive latency")]
     ExcessiveLatency,
-    
+
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
-    
+
     #[error("Insufficient stake (minimum 1000 tokens)")]
     InsufficientStake,
-    
+
     #[error("Relay is slashed")]
     RelaySlashed,
-    
+
     #[error("Stake is unlocked")]
     StakeUnlocked,
-    
+
     #[error("Unknown relay")]
     UnknownRelay,
-    
+
     #[error("Reputation too low")]
     ReputationTooLow,
-    
+
     #[error("Relay too new (minimum 7 days)")]
     RelayTooNew,
-    
+
     #[error("No delivery proofs")]
     NoDeliveryProofs,
-    
+
     #[error("Proof relay mismatch")]
     ProofRelayMismatch,
-    
+
     #[error("Stale delivery proof")]
     StaleDeliveryProof,
-    
+
     #[error("Double vote detected")]
     DoubleVote,
-    
+
     #[error("Equivocation detected")]
     Equivocation,
-    
+
     #[error("Signature verification failed")]
     SignatureError,
-    
+
     #[error("Serialization failed")]
     SerializationError,
 }
@@ -192,16 +192,13 @@ impl ProofOfRelayWork {
     }
 
     /// Submit delivery proof from relay
-    pub fn submit_delivery_proof(
-        &self,
-        proof: DeliveryProof,
-    ) -> Result<(), ConsensusError> {
+    pub fn submit_delivery_proof(&self, proof: DeliveryProof) -> Result<(), ConsensusError> {
         // Verify timestamp is recent and not future
         let now = SystemTime::now();
         let age = now
             .duration_since(proof.timestamp)
             .unwrap_or(Duration::from_secs(u64::MAX));
-        
+
         if age > Duration::from_secs(30) {
             return Err(ConsensusError::StaleProof);
         }
@@ -222,7 +219,7 @@ impl ProofOfRelayWork {
         let max_latency_per_hop = 500;
         let expected_min_latency = (proof.route_path.len() as u64 - 1) * min_latency_per_hop;
         let expected_max_latency = (proof.route_path.len() as u64 - 1) * max_latency_per_hop;
-        
+
         if proof.latency_ms < expected_min_latency {
             return Err(ConsensusError::SuspiciouslyLowLatency);
         }
@@ -235,11 +232,11 @@ impl ProofOfRelayWork {
         let relay_score = scores
             .entry(proof.relay_id)
             .or_insert_with(|| RelayScore::new(proof.relay_id));
-        
+
         let time_since_last_active = now
             .duration_since(relay_score.last_active)
             .unwrap_or(Duration::from_secs(0));
-        
+
         if time_since_last_active < Duration::from_millis(10) {
             relay_score.consecutive_failures += 1;
             return Err(ConsensusError::RateLimitExceeded);
@@ -265,7 +262,7 @@ impl ProofOfRelayWork {
         relay_score.verified_delivery_proofs += 1;
         relay_score.last_active = now;
         relay_score.consecutive_failures = 0;
-        
+
         // Gradual reputation increase
         if proof.latency_ms < 100 {
             relay_score.reputation_score = (relay_score.reputation_score + 0.0001).min(1.0);
@@ -284,9 +281,7 @@ impl ProofOfRelayWork {
     ) -> Result<(), ConsensusError> {
         // Get and validate relay score
         let scores = self.relay_scores.read().unwrap();
-        let relay_score = scores
-            .get(&relay_id)
-            .ok_or(ConsensusError::UnknownRelay)?;
+        let relay_score = scores.get(&relay_id).ok_or(ConsensusError::UnknownRelay)?;
 
         // Verify relay is in good standing
         if relay_score.consecutive_failures > 10 {
@@ -314,7 +309,7 @@ impl ProofOfRelayWork {
 
         // Calculate vote weight
         let vote_weight = self.calculate_vote_weight(relay_score);
-        
+
         // Store geographic region before dropping scores
         let geographic_region = relay_score.geographic_region;
 
@@ -412,7 +407,7 @@ impl ProofOfRelayWork {
             relay_score.slashing_count += 1;
             relay_score.consecutive_failures = 100;
             relay_score.reputation_score = 0.0;
-            
+
             tracing::error!(
                 "SLASHED relay for double-voting: {} DCHAT tokens seized",
                 slash_amount
@@ -471,15 +466,16 @@ mod tests {
     #[test]
     fn test_vote_weight_calculation() {
         let porw = ProofOfRelayWork::new();
-        
-        let mut relay = RelayScore::new(SigningKey::generate(&mut rand::thread_rng()).verifying_key());
+
+        let mut relay =
+            RelayScore::new(SigningKey::generate(&mut rand::thread_rng()).verifying_key());
         relay.stake_amount = 10_000;
         relay.messages_delivered = 1_000_000;
         relay.reputation_score = 1.0;
         relay.uptime_percentage = 99.9;
-        
+
         let weight = porw.calculate_vote_weight(&relay);
-        
+
         // Weight should be capped at 0.05 (5%)
         assert!(weight <= 0.05);
         assert!(weight > 0.0);
@@ -489,13 +485,19 @@ mod tests {
     fn test_finality_threshold() {
         let porw = ProofOfRelayWork::new();
         let block_hash = Hash::from(*blake3::hash(b"test_block").as_bytes());
-        
+
         let mut votes = BlockVotes::new(block_hash);
         votes.total_weight = 0.68;
-        votes.geographic_representation.insert(GeographicRegion::NorthAmerica, 0.25);
-        votes.geographic_representation.insert(GeographicRegion::Europe, 0.23);
-        votes.geographic_representation.insert(GeographicRegion::Asia, 0.20);
-        
+        votes
+            .geographic_representation
+            .insert(GeographicRegion::NorthAmerica, 0.25);
+        votes
+            .geographic_representation
+            .insert(GeographicRegion::Europe, 0.23);
+        votes
+            .geographic_representation
+            .insert(GeographicRegion::Asia, 0.20);
+
         assert!(porw.check_finality(&votes));
     }
 
@@ -503,11 +505,13 @@ mod tests {
     fn test_geographic_diversity_required() {
         let porw = ProofOfRelayWork::new();
         let block_hash = Hash::from(*blake3::hash(b"test_block").as_bytes());
-        
+
         let mut votes = BlockVotes::new(block_hash);
         votes.total_weight = 0.70;
-        votes.geographic_representation.insert(GeographicRegion::NorthAmerica, 0.70);
-        
+        votes
+            .geographic_representation
+            .insert(GeographicRegion::NorthAmerica, 0.70);
+
         // Should fail due to lack of geographic diversity
         assert!(!porw.check_finality(&votes));
     }

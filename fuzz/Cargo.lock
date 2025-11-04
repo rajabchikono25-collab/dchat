@@ -1047,6 +1047,7 @@ dependencies = [
  "dchat-chain",
  "dchat-core",
  "dchat-crypto",
+ "dchat-deployment",
  "dchat-distribution",
  "dchat-governance",
  "dchat-identity",
@@ -1208,6 +1209,26 @@ dependencies = [
  "tracing",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "dchat-deployment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bs58",
+ "chrono",
+ "clap",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

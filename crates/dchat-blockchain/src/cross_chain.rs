@@ -42,10 +42,7 @@ pub struct CrossChainBridge {
 
 impl CrossChainBridge {
     /// Create new cross-chain bridge
-    pub fn new(
-        chat_chain: Arc<ChatChainClient>,
-        currency_chain: Arc<CurrencyChainClient>,
-    ) -> Self {
+    pub fn new(chat_chain: Arc<ChatChainClient>, currency_chain: Arc<CurrencyChainClient>) -> Self {
         Self {
             chat_chain,
             currency_chain,
@@ -61,15 +58,21 @@ impl CrossChainBridge {
         stake_amount: u64,
     ) -> Result<Uuid, String> {
         let bridge_tx_id = Uuid::new_v4();
-        
+
         // Step 1: Create wallet on currency chain
-        let _wallet = self.currency_chain.create_wallet(user_id, stake_amount).map_err(|e| e.to_string())?;
+        let _wallet = self
+            .currency_chain
+            .create_wallet(user_id, stake_amount)
+            .map_err(|e| e.to_string())?;
 
         // Step 2: Register identity on chat chain
         let chat_tx = self.chat_chain.register_user(user_id, public_key)?;
 
         // Step 3: Stake tokens on currency chain
-        let currency_tx = self.currency_chain.stake(user_id, stake_amount, 86400).map_err(|e| e.to_string())?;
+        let currency_tx = self
+            .currency_chain
+            .stake(user_id, stake_amount, 86400)
+            .map_err(|e| e.to_string())?;
 
         // Record cross-chain transaction
         let cross_tx = CrossChainTransaction {
@@ -83,8 +86,11 @@ impl CrossChainBridge {
             finalized_at: None,
         };
 
-        self.transactions.write().unwrap().insert(bridge_tx_id, cross_tx);
-        
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(bridge_tx_id, cross_tx);
+
         Ok(bridge_tx_id)
     }
 
@@ -101,10 +107,15 @@ impl CrossChainBridge {
         let channel_id = ChannelId(uuid::Uuid::new_v4());
 
         // Step 1: Pay creation fee on currency chain
-        let fee_tx = self.currency_chain.transfer(owner, &UserId(uuid::Uuid::new_v4()), creation_fee).map_err(|e| e.to_string())?;
+        let fee_tx = self
+            .currency_chain
+            .transfer(owner, &UserId(uuid::Uuid::new_v4()), creation_fee)
+            .map_err(|e| e.to_string())?;
 
         // Step 2: Create channel on chat chain
-        let chat_tx = self.chat_chain.create_channel(owner, &channel_id, channel_name)?;
+        let chat_tx = self
+            .chat_chain
+            .create_channel(owner, &channel_id, channel_name)?;
 
         // Record cross-chain transaction
         let cross_tx = CrossChainTransaction {
@@ -118,8 +129,11 @@ impl CrossChainBridge {
             finalized_at: None,
         };
 
-        self.transactions.write().unwrap().insert(bridge_tx_id, cross_tx);
-        
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(bridge_tx_id, cross_tx);
+
         Ok(bridge_tx_id)
     }
 
@@ -131,13 +145,16 @@ impl CrossChainBridge {
     /// Check and finalize cross-chain transactions
     pub fn finalize_pending_transactions(&self) -> Result<(), String> {
         let mut txs = self.transactions.write().unwrap();
-        
+
         for tx in txs.values_mut() {
             if tx.status == CrossChainStatus::Pending {
                 // Check if both chains confirmed
                 let chat_confirmed = if let Some(chat_tx_id) = tx.chat_chain_tx {
                     match self.chat_chain.get_transaction(&chat_tx_id) {
-                        Ok(chat_tx) => matches!(chat_tx.status, dchat_chain::TransactionStatus::Confirmed { .. }),
+                        Ok(chat_tx) => matches!(
+                            chat_tx.status,
+                            dchat_chain::TransactionStatus::Confirmed { .. }
+                        ),
                         _ => false,
                     }
                 } else {
@@ -164,9 +181,13 @@ impl CrossChainBridge {
     }
 
     /// Get all cross-chain transactions for a user
-    pub fn get_user_transactions(&self, user_id: &UserId) -> Result<Vec<CrossChainTransaction>, String> {
+    pub fn get_user_transactions(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<CrossChainTransaction>, String> {
         let txs = self.transactions.read().unwrap();
-        Ok(txs.values()
+        Ok(txs
+            .values()
             .filter(|tx| tx.user_id == *user_id)
             .cloned()
             .collect())
@@ -188,9 +209,11 @@ mod tests {
         let user_id = UserId(Uuid::new_v4());
         let public_key = vec![1, 2, 3, 4];
 
-        let bridge_tx_id = bridge.register_user_with_stake(&user_id, public_key, 1000).unwrap();
+        let bridge_tx_id = bridge
+            .register_user_with_stake(&user_id, public_key, 1000)
+            .unwrap();
         let status = bridge.get_status(&bridge_tx_id).unwrap();
-        
+
         assert!(status.is_some());
         let tx = status.unwrap();
         assert_eq!(tx.user_id, user_id);

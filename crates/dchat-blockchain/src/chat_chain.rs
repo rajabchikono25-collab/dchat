@@ -92,10 +92,13 @@ impl ChatChainClient {
         };
 
         self.transactions.write().unwrap().insert(tx_id, tx);
-        
+
         // Initialize reputation score
-        self.reputation_scores.write().unwrap().insert(user_id.clone(), 50);
-        
+        self.reputation_scores
+            .write()
+            .unwrap()
+            .insert(user_id.clone(), 50);
+
         Ok(tx_id)
     }
 
@@ -281,11 +284,7 @@ mod tests {
 
         let owner = UserId(Uuid::new_v4());
         let channel_id = ChannelId(Uuid::new_v4());
-        let result = client.create_channel(
-            &owner,
-            &channel_id,
-            "Test Channel".to_string(),
-        );
+        let result = client.create_channel(&owner, &channel_id, "Test Channel".to_string());
         assert!(result.is_ok());
     }
 

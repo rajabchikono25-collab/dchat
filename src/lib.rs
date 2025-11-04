@@ -95,28 +95,28 @@
 pub mod user_management;
 
 // Re-export all crate modules
+pub use dchat_accessibility as accessibility;
+pub use dchat_blockchain as blockchain;
+pub use dchat_bots as bots;
+pub use dchat_bridge as bridge;
+pub use dchat_chain as chain;
 pub use dchat_core as core;
 pub use dchat_crypto as crypto;
+pub use dchat_governance as governance;
 pub use dchat_identity as identity;
+pub use dchat_marketplace as marketplace;
 pub use dchat_messaging as messaging;
 pub use dchat_network as network;
-pub use dchat_storage as storage;
-pub use dchat_blockchain as blockchain;
-pub use dchat_chain as chain;
-pub use dchat_privacy as privacy;
-pub use dchat_governance as governance;
-pub use dchat_bridge as bridge;
 pub use dchat_observability as observability;
-pub use dchat_bots as bots;
-pub use dchat_marketplace as marketplace;
-pub use dchat_accessibility as accessibility;
-pub use dchat_testing as testing;
+pub use dchat_privacy as privacy;
 pub use dchat_sdk_rust as sdk;
+pub use dchat_storage as storage;
+pub use dchat_testing as testing;
 
 // Re-export user management types
 pub use user_management::{
-    UserManager, CreateUserResponse, UserProfile, DirectMessageRequest, DirectMessageResponse,
-    CreateChannelRequest, CreateChannelResponse,
+    CreateChannelRequest, CreateChannelResponse, CreateUserResponse, DirectMessageRequest,
+    DirectMessageResponse, UserManager, UserProfile,
 };
 
 /// Commonly used types and traits
@@ -128,17 +128,17 @@ pub mod prelude {
         events::{Event, EventBus},
         types::*,
     };
-    
+
     // Cryptography
     pub use dchat_crypto::{
         handshake::{HandshakeManager, HandshakeState},
         kdf::DchatKdf,
         keys::{KeyPair, PrivateKey, PublicKey},
-        noise::{NoiseHandshake, NoiseSession, NoisePattern},
+        noise::{NoiseHandshake, NoisePattern, NoiseSession},
         rotation::{KeyRotationManager, RotationPolicy},
         signatures::{sign, verify},
     };
-    
+
     // Identity
     pub use dchat_identity::{
         biometric::{BiometricAuthenticator, BiometricType},
@@ -148,11 +148,11 @@ pub mod prelude {
         enclave::SecureEnclave,
         guardian::{Guardian, GuardianManager, RecoveryRequest},
         identity::{Identity, IdentityManager},
-        mpc::{MpcCoordinator, MpcConfig, SignatureShare},
+        mpc::{MpcConfig, MpcCoordinator, SignatureShare},
         sync::{SyncManager, SyncMessage},
         verification::{BadgeManager, BadgeType, VerifiedBadge},
     };
-    
+
     // Messaging
     pub use dchat_messaging::{
         delivery::{DeliveryProof, DeliveryTracker},
@@ -161,7 +161,7 @@ pub mod prelude {
         queue::{MessageQueue, OfflineQueue},
         types::{Message, MessageBuilder, MessageStatus, MessageType},
     };
-    
+
     // Network
     pub use dchat_network::{
         behavior::{DchatBehavior, DchatMessage},
@@ -171,7 +171,7 @@ pub mod prelude {
         routing::{Router, RoutingTable},
         swarm::{NetworkConfig, NetworkEvent, NetworkManager},
     };
-    
+
     // Storage
     pub use dchat_storage::{
         backup::{BackupManager, EncryptedBackup},
@@ -179,61 +179,52 @@ pub mod prelude {
         deduplication::{ContentAddressable, DeduplicationStore},
         lifecycle::{LifecycleManager, TtlConfig},
     };
-    
+
     // Observability
     pub use dchat_observability::{
-        Metric, MetricType, HealthCheck, HealthStatus,
-        TraceSpan, alerting::AlertManager,
+        alerting::AlertManager, HealthCheck, HealthStatus, Metric, MetricType, TraceSpan,
     };
-    
+
     // Bots
     pub use dchat_bots::{
-        BotManager, BotFather, BotApi, BotClient,
-        WebhookManager, WebhookConfig,
-        CommandHandler, CommandRegistry,
-        InlineQueryHandler, BotPermissions, BotScope,
+        BotApi, BotClient, BotFather, BotManager, BotPermissions, BotScope, CommandHandler,
+        CommandRegistry, InlineQueryHandler, WebhookConfig, WebhookManager,
     };
-    
+
     // Marketplace
     pub use dchat_marketplace::{
-        MarketplaceManager, DigitalGoodType, Listing, Purchase,
-        NftMetadata, CreatorStats, PricingModel,
-        escrow::EscrowManager,
+        escrow::EscrowManager, CreatorStats, DigitalGoodType, Listing, MarketplaceManager,
+        NftMetadata, PricingModel, Purchase,
     };
-    
+
     // Accessibility
     pub use dchat_accessibility::{
-        AccessibilityManager, WcagLevel, AccessibilityRole, Color,
-        tts::Voice as TtsVoice,
+        tts::Voice as TtsVoice, AccessibilityManager, AccessibilityRole, Color, WcagLevel,
     };
-    
+
     // Testing (Chaos Engineering)
     pub use dchat_testing::{
-        ChaosOrchestrator, ChaosExperimentType,
-        NetworkSimulator, FaultInjection,
-        chaos::{ChaosScenario, ChaosResult, ChaosState},
+        chaos::{ChaosResult, ChaosScenario, ChaosState},
+        ChaosExperimentType, ChaosOrchestrator, FaultInjection, NetworkSimulator,
     };
-    
+
     // Bridge
     pub use dchat_bridge::{
-        BridgeManager, ChainId as BridgeChainId, BridgeTransaction, BridgeTransactionStatus,
-        multisig::MultiSigManager,
-        slashing::SlashingManager,
+        multisig::MultiSigManager, slashing::SlashingManager, BridgeManager, BridgeTransaction,
+        BridgeTransactionStatus, ChainId as BridgeChainId,
     };
-    
+
     // Chain
     pub use dchat_chain::{
-        Transaction, TransactionReceipt, TransactionStatus,
-        sharding::ShardManager,
-        dispute_resolution::DisputeResolver,
-        pruning::PruningManager,
-        insurance_fund::InsuranceFund,
+        dispute_resolution::DisputeResolver, insurance_fund::InsuranceFund,
+        pruning::PruningManager, sharding::ShardManager, Transaction, TransactionReceipt,
+        TransactionStatus,
     };
-    
+
     // Utilities
+    pub use chrono;
     pub use hex;
     pub use uuid;
-    pub use chrono;
 }
 
 /// High-level dchat client builder
@@ -304,7 +295,8 @@ pub mod client {
 
         /// Build the client
         pub async fn build(self) -> Result<DchatClient> {
-            let identity = self.identity
+            let identity = self
+                .identity
                 .ok_or_else(|| Error::Config("Identity required".into()))?;
             let _config = self.config.unwrap_or_default();
 

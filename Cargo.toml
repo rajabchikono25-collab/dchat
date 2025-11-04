@@ -64,6 +64,7 @@ dchat-accessibility = { path = "crates/dchat-accessibility" }
 dchat-testing = { path = "crates/dchat-testing" }
 dchat-bots = { path = "crates/dchat-bots" }
 dchat-sdk-rust = { path = "crates/dchat-sdk-rust" }
+dchat-deployment = { path = "crates/dchat-deployment" }
 
 tokio = { version = "1.40", features = ["full"] }
 tracing = "0.1"

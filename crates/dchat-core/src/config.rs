@@ -1,8 +1,8 @@
 //! Configuration management for dchat
 
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::error::{Error, Result};
 
 /// Main configuration structure for dchat
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ pub struct StorageConfig {
     pub message_retention_days: u32,
     pub enable_backup: bool,
     pub backup_interval_hours: u32,
-    
+
     // Database connection pool settings
     pub db_pool_size: u32,
     pub db_connection_timeout_secs: u64,
@@ -124,47 +124,57 @@ impl Config {
     pub fn from_file(path: &PathBuf) -> Result<Self> {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file: {}", e)))?;
-        
+
         let config: Config = toml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse config: {}", e)))?;
-        
+
         config.validate()?;
         Ok(config)
     }
-    
+
     /// Save configuration to a TOML file
     pub fn to_file(&self, path: &PathBuf) -> Result<()> {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
-        
+
         std::fs::write(path, contents)
             .map_err(|e| Error::Config(format!("Failed to write config file: {}", e)))?;
-        
+
         Ok(())
     }
-    
+
     /// Validate configuration values
     pub fn validate(&self) -> Result<()> {
         if self.network.max_connections == 0 {
-            return Err(Error::Config("max_connections must be greater than 0".to_string()));
+            return Err(Error::Config(
+                "max_connections must be greater than 0".to_string(),
+            ));
         }
-        
+
         if self.network.connection_timeout_ms == 0 {
-            return Err(Error::Config("connection_timeout_ms must be greater than 0".to_string()));
+            return Err(Error::Config(
+                "connection_timeout_ms must be greater than 0".to_string(),
+            ));
         }
-        
+
         if self.crypto.key_rotation_interval_hours == 0 {
-            return Err(Error::Config("key_rotation_interval_hours must be greater than 0".to_string()));
+            return Err(Error::Config(
+                "key_rotation_interval_hours must be greater than 0".to_string(),
+            ));
         }
-        
+
         if self.crypto.max_messages_per_key == 0 {
-            return Err(Error::Config("max_messages_per_key must be greater than 0".to_string()));
+            return Err(Error::Config(
+                "max_messages_per_key must be greater than 0".to_string(),
+            ));
         }
-        
+
         if !(0.0..=1.0).contains(&self.governance.quorum_threshold) {
-            return Err(Error::Config("quorum_threshold must be between 0.0 and 1.0".to_string()));
+            return Err(Error::Config(
+                "quorum_threshold must be between 0.0 and 1.0".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 }

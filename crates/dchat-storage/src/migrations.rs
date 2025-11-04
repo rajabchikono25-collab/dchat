@@ -4,7 +4,7 @@
 //! Migrations are applied in order and tracked in the database to prevent re-application.
 
 use sqlx::{PgPool, Postgres, Transaction};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Migration metadata
 #[derive(Debug, Clone)]
@@ -74,12 +74,11 @@ impl MigrationRunner {
 
     /// Check if a migration has been applied
     async fn is_applied(&self, migration_id: &str) -> Result<bool, sqlx::Error> {
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM _schema_migrations WHERE id = $1"
-        )
-        .bind(migration_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let result: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM _schema_migrations WHERE id = $1")
+                .bind(migration_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(result.is_some())
     }
@@ -90,13 +89,11 @@ impl MigrationRunner {
         tx: &mut Transaction<'_, Postgres>,
         migration: &Migration,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO _schema_migrations (id, name) VALUES ($1, $2)"
-        )
-        .bind(migration.id)
-        .bind(migration.name)
-        .execute(&mut **tx)
-        .await?;
+        sqlx::query("INSERT INTO _schema_migrations (id, name) VALUES ($1, $2)")
+            .bind(migration.id)
+            .bind(migration.name)
+            .execute(&mut **tx)
+            .await?;
 
         Ok(())
     }
@@ -178,12 +175,14 @@ impl MigrationRunner {
     }
 
     /// Get list of applied migrations
-    pub async fn list_applied(&self) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    pub async fn list_applied(
+        &self,
+    ) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
         // Ensure table exists
         self.init_migrations_table().await?;
 
         let results: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-            "SELECT id, name, applied_at FROM _schema_migrations ORDER BY applied_at"
+            "SELECT id, name, applied_at FROM _schema_migrations ORDER BY applied_at",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -207,11 +206,7 @@ impl MigrationRunner {
     /// Verify database schema matches expected state
     pub async fn verify(&self) -> Result<bool, sqlx::Error> {
         // Check that all tables exist
-        let tables = vec![
-            "content_store",
-            "storage_bonds",
-            "micropayment_streams",
-        ];
+        let tables = vec!["content_store", "storage_bonds", "micropayment_streams"];
 
         for table in &tables {
             let exists: bool = sqlx::query_scalar(
@@ -219,7 +214,7 @@ impl MigrationRunner {
                     SELECT FROM information_schema.tables 
                     WHERE table_schema = 'public' 
                     AND table_name = $1
-                )"
+                )",
             )
             .bind(table)
             .fetch_one(&self.pool)
@@ -237,7 +232,7 @@ impl MigrationRunner {
                 SELECT FROM information_schema.columns 
                 WHERE table_name = 'messages' 
                 AND column_name = 'tier'
-            )"
+            )",
         )
         .fetch_one(&self.pool)
         .await?;
@@ -262,7 +257,7 @@ impl MigrationRunner {
                     SELECT FROM information_schema.views 
                     WHERE table_schema = 'public' 
                     AND table_name = $1
-                )"
+                )",
             )
             .bind(view)
             .fetch_one(&self.pool)

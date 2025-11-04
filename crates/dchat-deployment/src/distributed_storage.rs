@@ -43,7 +43,7 @@ pub enum StorageBackendType {
     Redis,
     MinIO,
     TiKV,
-    PostgreSQL,  // Legacy single-node
+    PostgreSQL, // Legacy single-node
 }
 
 /// CockroachDB cluster configuration
@@ -51,28 +51,28 @@ pub enum StorageBackendType {
 pub struct CockroachDBConfig {
     /// Cluster name
     pub cluster_name: String,
-    
+
     /// Node configurations
     pub nodes: Vec<CockroachDBNode>,
-    
+
     /// Replication factor (default 3, recommended 5 for production)
     pub replication_factor: usize,
-    
+
     /// Database name
     pub database_name: String,
-    
+
     /// Join addresses (for new nodes)
     pub join_addresses: Vec<String>,
-    
+
     /// SQL port (default 26257)
     pub sql_port: u16,
-    
+
     /// HTTP port for admin UI (default 8080)
     pub http_port: u16,
-    
+
     /// Enable encryption at rest
     pub encryption_at_rest: bool,
-    
+
     /// Maximum connections per node
     pub max_connections: usize,
 }
@@ -97,7 +97,7 @@ impl CockroachDBConfig {
             GeographicRegion::USWest,
             GeographicRegion::EUWest,
             GeographicRegion::AsiaPacificSE,
-            GeographicRegion::USEast,  // 5th node in US East for quorum
+            GeographicRegion::USEast, // 5th node in US East for quorum
         ];
 
         let nodes: Vec<CockroachDBNode> = regions
@@ -112,16 +112,13 @@ impl CockroachDBConfig {
                     sql_address: format!("0.0.0.0:26257").parse().unwrap(),
                     http_address: format!("0.0.0.0:8080").parse().unwrap(),
                     store_path: "/data/cockroach".to_string(),
-                    cache_size_mb: 4096,   // 4GB cache
+                    cache_size_mb: 4096,     // 4GB cache
                     max_sql_memory_mb: 8192, // 8GB SQL memory
                 }
             })
             .collect();
 
-        let join_addresses = nodes
-            .iter()
-            .map(|n| format!("{}:26257", n.host))
-            .collect();
+        let join_addresses = nodes.iter().map(|n| format!("{}:26257", n.host)).collect();
 
         Self {
             cluster_name,
@@ -138,7 +135,8 @@ impl CockroachDBConfig {
 
     /// Generate connection string for application
     pub fn connection_string(&self, username: &str, password: &str) -> String {
-        let hosts = self.nodes
+        let hosts = self
+            .nodes
             .iter()
             .map(|n| format!("{}:{}", n.host, self.sql_port))
             .collect::<Vec<_>>()
@@ -153,22 +151,25 @@ impl CockroachDBConfig {
     /// Verify cluster has sufficient redundancy
     pub fn verify_redundancy(&self) -> Result<(), StorageError> {
         if self.nodes.len() < 3 {
-            return Err(StorageError::InsufficientRedundancy(
-                format!("CockroachDB requires at least 3 nodes (found {})", self.nodes.len())
-            ));
+            return Err(StorageError::InsufficientRedundancy(format!(
+                "CockroachDB requires at least 3 nodes (found {})",
+                self.nodes.len()
+            )));
         }
 
         if self.replication_factor < 3 {
-            return Err(StorageError::InsufficientRedundancy(
-                format!("Replication factor must be at least 3 (found {})", self.replication_factor)
-            ));
+            return Err(StorageError::InsufficientRedundancy(format!(
+                "Replication factor must be at least 3 (found {})",
+                self.replication_factor
+            )));
         }
 
         if self.replication_factor > self.nodes.len() {
-            return Err(StorageError::InsufficientRedundancy(
-                format!("Replication factor ({}) exceeds node count ({})", 
-                        self.replication_factor, self.nodes.len())
-            ));
+            return Err(StorageError::InsufficientRedundancy(format!(
+                "Replication factor ({}) exceeds node count ({})",
+                self.replication_factor,
+                self.nodes.len()
+            )));
         }
 
         Ok(())
@@ -180,25 +181,25 @@ impl CockroachDBConfig {
 pub struct RedisConfig {
     /// Cluster name
     pub cluster_name: String,
-    
+
     /// Master nodes (3 recommended for distributed cluster)
     pub masters: Vec<RedisNode>,
-    
+
     /// Replica nodes (1 per master)
     pub replicas: Vec<RedisNode>,
-    
+
     /// Redis port (default 6379)
     pub port: u16,
-    
+
     /// Cluster bus port (default 16379)
     pub cluster_bus_port: u16,
-    
+
     /// Maximum memory per node (MB)
     pub max_memory_mb: usize,
-    
+
     /// Eviction policy (e.g., "allkeys-lru")
     pub eviction_policy: String,
-    
+
     /// Enable persistence (AOF + RDB)
     pub persistence_enabled: bool,
 }
@@ -210,7 +211,7 @@ pub struct RedisNode {
     pub host: String,
     pub address: SocketAddr,
     pub role: RedisNodeRole,
-    pub master_of: Option<String>,  // For replicas: which master they replicate
+    pub master_of: Option<String>, // For replicas: which master they replicate
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,7 +260,7 @@ impl RedisConfig {
             replicas,
             port: 6379,
             cluster_bus_port: 16379,
-            max_memory_mb: 4096,  // 4GB per node
+            max_memory_mb: 4096, // 4GB per node
             eviction_policy: "allkeys-lru".to_string(),
             persistence_enabled: true,
         }
@@ -267,7 +268,8 @@ impl RedisConfig {
 
     /// Generate Redis cluster connection string
     pub fn connection_string(&self, password: Option<&str>) -> String {
-        let hosts = self.masters
+        let hosts = self
+            .masters
             .iter()
             .map(|n| format!("{}:{}", n.host, self.port))
             .collect::<Vec<_>>()
@@ -283,16 +285,18 @@ impl RedisConfig {
     /// Verify cluster configuration
     pub fn verify_configuration(&self) -> Result<(), StorageError> {
         if self.masters.len() < 3 {
-            return Err(StorageError::InvalidConfig(
-                format!("Redis cluster requires at least 3 masters (found {})", self.masters.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "Redis cluster requires at least 3 masters (found {})",
+                self.masters.len()
+            )));
         }
 
         if self.replicas.len() != self.masters.len() {
-            return Err(StorageError::InvalidConfig(
-                format!("Each master should have 1 replica ({} masters, {} replicas)",
-                        self.masters.len(), self.replicas.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "Each master should have 1 replica ({} masters, {} replicas)",
+                self.masters.len(),
+                self.replicas.len()
+            )));
         }
 
         Ok(())
@@ -304,25 +308,25 @@ impl RedisConfig {
 pub struct MinIOConfig {
     /// Cluster name
     pub cluster_name: String,
-    
+
     /// Storage nodes (minimum 4 for distributed mode)
     pub nodes: Vec<MinIONode>,
-    
+
     /// S3 API port (default 9000)
     pub api_port: u16,
-    
+
     /// Console port (default 9001)
     pub console_port: u16,
-    
+
     /// Number of drives per node
     pub drives_per_node: usize,
-    
+
     /// Erasure coding parity (default 2)
     pub parity: usize,
-    
+
     /// Root user credentials
     pub root_user: String,
-    
+
     /// Enable versioning
     pub versioning_enabled: bool,
 }
@@ -334,7 +338,7 @@ pub struct MinIONode {
     pub host: String,
     pub api_address: SocketAddr,
     pub console_address: SocketAddr,
-    pub data_volumes: Vec<String>,  // Mount paths for data drives
+    pub data_volumes: Vec<String>, // Mount paths for data drives
 }
 
 impl MinIOConfig {
@@ -374,7 +378,7 @@ impl MinIOConfig {
             api_port: 9000,
             console_port: 9001,
             drives_per_node: 4,
-            parity: 2,  // EC:2 (2 drives can fail)
+            parity: 2, // EC:2 (2 drives can fail)
             root_user: "dchat-admin".to_string(),
             versioning_enabled: true,
         }
@@ -382,12 +386,12 @@ impl MinIOConfig {
 
     /// Generate MinIO server command for distributed deployment
     pub fn server_command(&self) -> String {
-        let drives = self.nodes
+        let drives = self
+            .nodes
             .iter()
             .flat_map(|node| {
-                (0..self.drives_per_node).map(move |i| {
-                    format!("http://{}:9000/data/minio/drive{}", node.host, i + 1)
-                })
+                (0..self.drives_per_node)
+                    .map(move |i| format!("http://{}:9000/data/minio/drive{}", node.host, i + 1))
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -398,23 +402,25 @@ impl MinIOConfig {
     /// Verify minimum requirements for distributed mode
     pub fn verify_configuration(&self) -> Result<(), StorageError> {
         if self.nodes.len() < 4 {
-            return Err(StorageError::InvalidConfig(
-                format!("MinIO distributed mode requires at least 4 nodes (found {})", self.nodes.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "MinIO distributed mode requires at least 4 nodes (found {})",
+                self.nodes.len()
+            )));
         }
 
         let total_drives = self.nodes.len() * self.drives_per_node;
         if total_drives < 4 {
-            return Err(StorageError::InvalidConfig(
-                format!("MinIO requires at least 4 total drives (found {})", total_drives)
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "MinIO requires at least 4 total drives (found {})",
+                total_drives
+            )));
         }
 
         if self.parity >= self.drives_per_node {
-            return Err(StorageError::InvalidConfig(
-                format!("Parity ({}) must be less than drives per node ({})",
-                        self.parity, self.drives_per_node)
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "Parity ({}) must be less than drives per node ({})",
+                self.parity, self.drives_per_node
+            )));
         }
 
         Ok(())
@@ -426,19 +432,19 @@ impl MinIOConfig {
 pub struct TiKVConfig {
     /// Cluster name
     pub cluster_name: String,
-    
+
     /// Placement Driver (PD) nodes (3-5 recommended)
     pub pd_nodes: Vec<TiKVPDNode>,
-    
+
     /// TiKV storage nodes (5+ recommended)
     pub tikv_nodes: Vec<TiKVStorageNode>,
-    
+
     /// Replication factor (default 3)
     pub replication_factor: usize,
-    
+
     /// PD port (default 2379)
     pub pd_port: u16,
-    
+
     /// TiKV port (default 20160)
     pub tikv_port: u16,
 }
@@ -494,7 +500,7 @@ impl TiKVConfig {
             GeographicRegion::USWest,
             GeographicRegion::EUWest,
             GeographicRegion::AsiaPacificSE,
-            GeographicRegion::USEast,  // 5th in US East
+            GeographicRegion::USEast, // 5th in US East
         ];
 
         let tikv_nodes = tikv_regions
@@ -509,7 +515,7 @@ impl TiKVConfig {
                     address: format!("0.0.0.0:20160").parse().unwrap(),
                     status_address: format!("0.0.0.0:20180").parse().unwrap(),
                     data_dir: "/data/tikv/storage".to_string(),
-                    capacity_gb: 500,  // 500GB per node
+                    capacity_gb: 500, // 500GB per node
                 }
             })
             .collect();
@@ -535,22 +541,25 @@ impl TiKVConfig {
     /// Verify cluster configuration
     pub fn verify_configuration(&self) -> Result<(), StorageError> {
         if self.pd_nodes.len() < 3 || self.pd_nodes.len() % 2 == 0 {
-            return Err(StorageError::InvalidConfig(
-                format!("TiKV requires odd number of PD nodes (3, 5, or 7), found {}", self.pd_nodes.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "TiKV requires odd number of PD nodes (3, 5, or 7), found {}",
+                self.pd_nodes.len()
+            )));
         }
 
         if self.tikv_nodes.len() < 3 {
-            return Err(StorageError::InvalidConfig(
-                format!("TiKV requires at least 3 storage nodes (found {})", self.tikv_nodes.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "TiKV requires at least 3 storage nodes (found {})",
+                self.tikv_nodes.len()
+            )));
         }
 
         if self.replication_factor > self.tikv_nodes.len() {
-            return Err(StorageError::InvalidConfig(
-                format!("Replication factor ({}) exceeds node count ({})",
-                        self.replication_factor, self.tikv_nodes.len())
-            ));
+            return Err(StorageError::InvalidConfig(format!(
+                "Replication factor ({}) exceeds node count ({})",
+                self.replication_factor,
+                self.tikv_nodes.len()
+            )));
         }
 
         Ok(())
@@ -601,20 +610,16 @@ impl DistributedStorageConfig {
     /// Get storage tier mapping
     pub fn tier_mapping(&self) -> HashMap<StorageTier, Vec<StorageBackendType>> {
         let mut mapping = HashMap::new();
-        
-        mapping.insert(StorageTier::Hot, vec![
-            StorageBackendType::Redis,
-            StorageBackendType::TiKV,
-        ]);
-        
-        mapping.insert(StorageTier::Warm, vec![
-            StorageBackendType::CockroachDB,
-        ]);
-        
-        mapping.insert(StorageTier::Cold, vec![
-            StorageBackendType::MinIO,
-        ]);
-        
+
+        mapping.insert(
+            StorageTier::Hot,
+            vec![StorageBackendType::Redis, StorageBackendType::TiKV],
+        );
+
+        mapping.insert(StorageTier::Warm, vec![StorageBackendType::CockroachDB]);
+
+        mapping.insert(StorageTier::Cold, vec![StorageBackendType::MinIO]);
+
         mapping
     }
 }
@@ -659,7 +664,7 @@ mod tests {
     fn test_distributed_storage_complete() {
         let config = DistributedStorageConfig::new_recommended("dchat-mainnet".to_string());
         config.verify_all().expect("Verification failed");
-        
+
         // Total: 5 CockroachDB + 6 Redis + 4 MinIO + 3 PD + 5 TiKV = 23 nodes
         assert_eq!(config.total_node_count(), 23);
     }
@@ -680,10 +685,22 @@ mod tests {
     fn test_storage_tier_mapping() {
         let config = DistributedStorageConfig::new_recommended("test".to_string());
         let tiers = config.tier_mapping();
-        
-        assert!(tiers.get(&StorageTier::Hot).unwrap().contains(&StorageBackendType::Redis));
-        assert!(tiers.get(&StorageTier::Hot).unwrap().contains(&StorageBackendType::TiKV));
-        assert!(tiers.get(&StorageTier::Warm).unwrap().contains(&StorageBackendType::CockroachDB));
-        assert!(tiers.get(&StorageTier::Cold).unwrap().contains(&StorageBackendType::MinIO));
+
+        assert!(tiers
+            .get(&StorageTier::Hot)
+            .unwrap()
+            .contains(&StorageBackendType::Redis));
+        assert!(tiers
+            .get(&StorageTier::Hot)
+            .unwrap()
+            .contains(&StorageBackendType::TiKV));
+        assert!(tiers
+            .get(&StorageTier::Warm)
+            .unwrap()
+            .contains(&StorageBackendType::CockroachDB));
+        assert!(tiers
+            .get(&StorageTier::Cold)
+            .unwrap()
+            .contains(&StorageBackendType::MinIO));
     }
 }

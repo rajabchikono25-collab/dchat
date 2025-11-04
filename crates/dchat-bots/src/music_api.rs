@@ -1,9 +1,9 @@
 //! Music API integration for Spotify, Apple Music, and other providers
 
-use dchat_identity::profile::{MusicApiTrack, MusicProvider};
-use dchat_core::{Error, Result};
-use serde::{Deserialize, Serialize};
 use base64::Engine;
+use dchat_core::{Error, Result};
+use dchat_identity::profile::{MusicApiTrack, MusicProvider};
+use serde::{Deserialize, Serialize};
 
 /// Music API client for fetching track metadata
 pub struct MusicApiClient {
@@ -114,7 +114,9 @@ impl MusicApiClient {
 
     /// Search for tracks on Spotify
     pub async fn search_spotify(&self, query: &str, limit: u32) -> Result<Vec<MusicApiTrack>> {
-        let token = self.spotify_token.as_ref()
+        let token = self
+            .spotify_token
+            .as_ref()
             .ok_or_else(|| Error::network("Spotify token not set"))?;
 
         let url = format!(
@@ -123,7 +125,8 @@ impl MusicApiClient {
             limit
         );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
@@ -131,41 +134,51 @@ impl MusicApiClient {
             .map_err(|e| Error::network(format!("Spotify API request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("Spotify API error: {}", response.status())));
+            return Err(Error::network(format!(
+                "Spotify API error: {}",
+                response.status()
+            )));
         }
 
-        let search_response: SpotifySearchResponse = response.json()
+        let search_response: SpotifySearchResponse = response
+            .json()
             .await
             .map_err(|e| Error::network(format!("Failed to parse Spotify response: {}", e)))?;
 
-        Ok(search_response.tracks.items.into_iter().map(|track| {
-            MusicApiTrack {
+        Ok(search_response
+            .tracks
+            .items
+            .into_iter()
+            .map(|track| MusicApiTrack {
                 provider: MusicProvider::Spotify,
                 track_id: format!("spotify:track:{}", track.id),
                 track_name: track.name,
-                artist_name: track.artists.first()
+                artist_name: track
+                    .artists
+                    .first()
                     .map(|a| a.name.clone())
                     .unwrap_or_default(),
                 album_name: Some(track.album.name),
-                album_art_url: track.album.images.first()
-                    .map(|img| img.url.clone()),
+                album_art_url: track.album.images.first().map(|img| img.url.clone()),
                 preview_url: track.preview_url,
-            }
-        }).collect())
+            })
+            .collect())
     }
 
     /// Get Spotify track by ID
     pub async fn get_spotify_track(&self, track_id: &str) -> Result<MusicApiTrack> {
-        let token = self.spotify_token.as_ref()
+        let token = self
+            .spotify_token
+            .as_ref()
             .ok_or_else(|| Error::network("Spotify token not set"))?;
 
         // Extract track ID from spotify URI (spotify:track:ID) or use directly
-        let id = track_id.strip_prefix("spotify:track:")
-            .unwrap_or(track_id);
+        let id = track_id.strip_prefix("spotify:track:").unwrap_or(track_id);
 
         let url = format!("https://api.spotify.com/v1/tracks/{}", id);
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
@@ -173,10 +186,14 @@ impl MusicApiClient {
             .map_err(|e| Error::network(format!("Spotify API request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("Spotify API error: {}", response.status())));
+            return Err(Error::network(format!(
+                "Spotify API error: {}",
+                response.status()
+            )));
         }
 
-        let track: SpotifyTrack = response.json()
+        let track: SpotifyTrack = response
+            .json()
             .await
             .map_err(|e| Error::network(format!("Failed to parse Spotify response: {}", e)))?;
 
@@ -184,19 +201,27 @@ impl MusicApiClient {
             provider: MusicProvider::Spotify,
             track_id: format!("spotify:track:{}", track.id),
             track_name: track.name,
-            artist_name: track.artists.first()
+            artist_name: track
+                .artists
+                .first()
                 .map(|a| a.name.clone())
                 .unwrap_or_default(),
             album_name: Some(track.album.name),
-            album_art_url: track.album.images.first()
-                .map(|img| img.url.clone()),
+            album_art_url: track.album.images.first().map(|img| img.url.clone()),
             preview_url: track.preview_url,
         })
     }
 
     /// Search for tracks on Apple Music
-    pub async fn search_apple_music(&self, query: &str, limit: u32, country: &str) -> Result<Vec<MusicApiTrack>> {
-        let token = self.apple_music_token.as_ref()
+    pub async fn search_apple_music(
+        &self,
+        query: &str,
+        limit: u32,
+        country: &str,
+    ) -> Result<Vec<MusicApiTrack>> {
+        let token = self
+            .apple_music_token
+            .as_ref()
             .ok_or_else(|| Error::network("Apple Music token not set"))?;
 
         let url = format!(
@@ -206,7 +231,8 @@ impl MusicApiClient {
             limit
         );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
@@ -214,35 +240,55 @@ impl MusicApiClient {
             .map_err(|e| Error::network(format!("Apple Music API request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("Apple Music API error: {}", response.status())));
+            return Err(Error::network(format!(
+                "Apple Music API error: {}",
+                response.status()
+            )));
         }
 
-        let search_response: AppleMusicSearchResponse = response.json()
+        let search_response: AppleMusicSearchResponse = response
+            .json()
             .await
             .map_err(|e| Error::network(format!("Failed to parse Apple Music response: {}", e)))?;
 
-        Ok(search_response.results.songs.data.into_iter().map(|track| {
-            let attrs = track.attributes;
-            MusicApiTrack {
-                provider: MusicProvider::AppleMusic,
-                track_id: track.id,
-                track_name: attrs.name,
-                artist_name: attrs.artist_name,
-                album_name: Some(attrs.album_name),
-                album_art_url: Some(attrs.artwork.url.replace("{w}x{h}", "600x600")),
-                preview_url: attrs.previews.first().map(|p| p.url.clone()),
-            }
-        }).collect())
+        Ok(search_response
+            .results
+            .songs
+            .data
+            .into_iter()
+            .map(|track| {
+                let attrs = track.attributes;
+                MusicApiTrack {
+                    provider: MusicProvider::AppleMusic,
+                    track_id: track.id,
+                    track_name: attrs.name,
+                    artist_name: attrs.artist_name,
+                    album_name: Some(attrs.album_name),
+                    album_art_url: Some(attrs.artwork.url.replace("{w}x{h}", "600x600")),
+                    preview_url: attrs.previews.first().map(|p| p.url.clone()),
+                }
+            })
+            .collect())
     }
 
     /// Get Apple Music track by ID
-    pub async fn get_apple_music_track(&self, track_id: &str, country: &str) -> Result<MusicApiTrack> {
-        let token = self.apple_music_token.as_ref()
+    pub async fn get_apple_music_track(
+        &self,
+        track_id: &str,
+        country: &str,
+    ) -> Result<MusicApiTrack> {
+        let token = self
+            .apple_music_token
+            .as_ref()
             .ok_or_else(|| Error::network("Apple Music token not set"))?;
 
-        let url = format!("https://api.music.apple.com/v1/catalog/{}/songs/{}", country, track_id);
+        let url = format!(
+            "https://api.music.apple.com/v1/catalog/{}/songs/{}",
+            country, track_id
+        );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
@@ -250,10 +296,14 @@ impl MusicApiClient {
             .map_err(|e| Error::network(format!("Apple Music API request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("Apple Music API error: {}", response.status())));
+            return Err(Error::network(format!(
+                "Apple Music API error: {}",
+                response.status()
+            )));
         }
 
-        let data: serde_json::Value = response.json()
+        let data: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| Error::network(format!("Failed to parse Apple Music response: {}", e)))?;
 
@@ -266,7 +316,8 @@ impl MusicApiClient {
             track_name: attrs["name"].as_str().unwrap_or_default().to_string(),
             artist_name: attrs["artistName"].as_str().unwrap_or_default().to_string(),
             album_name: Some(attrs["albumName"].as_str().unwrap_or_default().to_string()),
-            album_art_url: attrs["artwork"]["url"].as_str()
+            album_art_url: attrs["artwork"]["url"]
+                .as_str()
                 .map(|url| url.replace("{w}x{h}", "600x600")),
             preview_url: attrs["previews"][0]["url"].as_str().map(String::from),
         })
@@ -275,12 +326,11 @@ impl MusicApiClient {
     /// Authenticate with Spotify using client credentials flow
     pub async fn authenticate_spotify(client_id: &str, client_secret: &str) -> Result<String> {
         let client = reqwest::Client::new();
-        
-        let params = [
-            ("grant_type", "client_credentials"),
-        ];
 
-        let auth_header = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", client_id, client_secret));
+        let params = [("grant_type", "client_credentials")];
+
+        let auth_header = base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", client_id, client_secret));
 
         let response = client
             .post("https://accounts.spotify.com/api/token")
@@ -291,14 +341,19 @@ impl MusicApiClient {
             .map_err(|e| Error::network(format!("Spotify auth request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("Spotify auth failed: {}", response.status())));
+            return Err(Error::network(format!(
+                "Spotify auth failed: {}",
+                response.status()
+            )));
         }
 
-        let data: serde_json::Value = response.json()
+        let data: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| Error::network(format!("Failed to parse Spotify auth response: {}", e)))?;
 
-        data["access_token"].as_str()
+        data["access_token"]
+            .as_str()
             .map(String::from)
             .ok_or_else(|| Error::network("No access token in Spotify response"))
     }
@@ -326,8 +381,11 @@ mod tests {
         let mut client = MusicApiClient::new();
         client.set_spotify_token("test_spotify_token".to_string());
         client.set_apple_music_token("test_apple_token".to_string());
-        
+
         assert_eq!(client.spotify_token, Some("test_spotify_token".to_string()));
-        assert_eq!(client.apple_music_token, Some("test_apple_token".to_string()));
+        assert_eq!(
+            client.apple_music_token,
+            Some("test_apple_token".to_string())
+        );
     }
 }

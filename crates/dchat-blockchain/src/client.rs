@@ -2,8 +2,8 @@
 
 use chrono::Utc;
 use dchat_chain::{
-    Transaction, TransactionReceipt, TransactionStatus, TransactionType,
-    RegisterUserTx, SendDirectMessageTx, CreateChannelTx, PostToChannelTx,
+    CreateChannelTx, PostToChannelTx, RegisterUserTx, SendDirectMessageTx, Transaction,
+    TransactionReceipt, TransactionStatus, TransactionType,
 };
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
@@ -204,7 +204,7 @@ impl BlockchainClient {
     /// Check if a transaction is confirmed on-chain
     pub async fn is_transaction_confirmed(&self, tx_id: Uuid) -> Result<bool> {
         let transactions = self.transactions.read().unwrap();
-        
+
         if let Some(tx) = transactions.get(&tx_id) {
             Ok(tx.is_confirmed())
         } else {
@@ -264,7 +264,7 @@ impl BlockchainClient {
         // 2. Submit to blockchain node via RPC
         // 3. Return transaction hash
         // 4. Start monitoring for confirmation
-        
+
         // For now, simulate successful submission
         Ok(())
     }
@@ -289,12 +289,12 @@ mod tests {
     async fn test_register_user() {
         let client = BlockchainClient::default();
         let user_id = UserId::new();
-        
+
         let tx_id = client
             .register_user(user_id, "alice", "deadbeef")
             .await
             .unwrap();
-        
+
         assert!(client.get_transaction(tx_id).is_some());
     }
 
@@ -302,12 +302,12 @@ mod tests {
     async fn test_wait_for_confirmation() {
         let client = BlockchainClient::default();
         let user_id = UserId::new();
-        
+
         let tx_id = client
             .register_user(user_id, "bob", "cafebabe")
             .await
             .unwrap();
-        
+
         let receipt = client.wait_for_confirmation(tx_id).await.unwrap();
         assert!(receipt.success);
         assert!(client.is_transaction_confirmed(tx_id).await.unwrap());
@@ -319,19 +319,12 @@ mod tests {
         let sender = UserId::new();
         let recipient = UserId::new();
         let message_id = MessageId::new();
-        
+
         let tx_id = client
-            .send_direct_message(
-                message_id,
-                sender,
-                recipient,
-                "hash123",
-                100,
-                None,
-            )
+            .send_direct_message(message_id, sender, recipient, "hash123", 100, None)
             .await
             .unwrap();
-        
+
         assert!(client.get_transaction(tx_id).is_some());
     }
 
@@ -340,17 +333,12 @@ mod tests {
         let client = BlockchainClient::default();
         let creator = UserId::new();
         let channel_id = ChannelId::new();
-        
+
         let tx_id = client
-            .create_channel(
-                channel_id,
-                "general",
-                "General discussion",
-                creator,
-            )
+            .create_channel(channel_id, "general", "General discussion", creator)
             .await
             .unwrap();
-        
+
         let receipt = client.wait_for_confirmation(tx_id).await.unwrap();
         assert!(receipt.success);
     }
