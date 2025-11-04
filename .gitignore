@@ -21,6 +21,9 @@ Thumbs.db
 .env.local
 *.log
 
+# Deployment infrastructure
+foundation-servers/
+
 # Database
 *.db
 *.db-shm
