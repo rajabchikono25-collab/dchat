@@ -389,22 +389,54 @@ impl PruningManager {
         let checkpoint = self.checkpoints.get(checkpoint_id)
             .ok_or_else(|| Error::network("Checkpoint not found"))?;
         
-        // 2. Find message_id index in leaf level
-        // In production: store tree structure in checkpoint or rebuild from messages
-        // For each level, collect sibling hashes from leaf to root
+        // 2. Rebuild Merkle tree from checkpoint's message set
+        // Production implementation:
+        // a) Retrieve all message IDs from checkpoint metadata
+        // b) Sort lexicographically for determinism (same as tree construction)
+        // c) Hash each message ID to get leaf hashes
+        // d) Build tree bottom-up by hashing pairs: H(H(msg[i]) || H(msg[i+1]))
         
-        // 3. Build sibling path by traversing tree levels
-        // At each level, find node's sibling and add to path
-        // Example: if message is at index 5 (binary: 101)
-        //   - Level 0: sibling at index 4 (XOR with 1)
-        //   - Level 1: sibling at index 7 (parent pair sibling)
-        //   - Level 2: sibling at index 1 (grandparent pair sibling)
+        // Example tree rebuilding:
+        // let message_ids = checkpoint.message_ids; // Retrieved from checkpoint
+        // let mut leaf_hashes: Vec<Vec<u8>> = message_ids.iter()
+        //     .map(|id| blake3::hash(id.0.as_bytes()).as_bytes().to_vec())
+        //     .collect();
+        // leaf_hashes.sort(); // Lexicographic ordering
         
-        // Placeholder implementation - in production, reconstruct tree
-        let path = vec![
-            blake3::hash(b"sibling_level0").as_bytes().to_vec(),
-            blake3::hash(b"sibling_level1").as_bytes().to_vec(),
-        ];
+        // let mut tree_levels = vec![leaf_hashes.clone()];
+        // let mut current_level = leaf_hashes;
+        // while current_level.len() > 1 {
+        //     let mut next_level = Vec::new();
+        //     for pair in current_level.chunks(2) {
+        //         let hash = if pair.len() == 2 {
+        //             let mut combined = pair[0].clone();
+        //             combined.extend_from_slice(&pair[1]);
+        //             blake3::hash(&combined).as_bytes().to_vec()
+        //         } else {
+        //             pair[0].clone() // Odd node promoted
+        //         };
+        //         next_level.push(hash);
+        //     }
+        //     tree_levels.push(next_level.clone());
+        //     current_level = next_level;
+        // }
+        
+        // 3. Find message_id index in leaf level and build sibling path
+        // let leaf_hash = blake3::hash(message_id.0.as_bytes()).as_bytes().to_vec();
+        // let mut index = tree_levels[0].binary_search(&leaf_hash)
+        //     .map_err(|_| Error::network("Message not in tree"))?;
+        
+        // let mut path = Vec::new();
+        // for level in tree_levels.iter().take(tree_levels.len() - 1) {
+        //     let sibling_index = index ^ 1; // Toggle last bit (0↔1, 2↔3, 4↔5, ...)
+        //     if sibling_index < level.len() {
+        //         path.push(level[sibling_index].clone());
+        //     }
+        //     index /= 2; // Move to parent level
+        // }
+        
+        // Placeholder: use checkpoint root as proof (single-level)
+        let path = vec![checkpoint.merkle_root.clone()];
 
         Ok(MerkleProof::new(
             *message_id,
