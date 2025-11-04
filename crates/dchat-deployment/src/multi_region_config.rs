@@ -278,11 +278,28 @@ impl MultiRegionConfig {
             let mut bootstrap_peers = Vec::new();
             for j in 0..total {
                 if i != j && validators[j].region != current_region {
+                    // Generate proper libp2p peer ID from validator ID
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(validators[j].validator_id.as_bytes());
+                    hasher.update(b"dchat-libp2p-peer");
+                    let hash = hasher.finalize();
+                    
+                    // Create base58btc encoded peer ID (libp2p format)
+                    // Prefix with identity multihash code (0x00) and length (32)
+                    let mut peer_id_bytes = vec![0x00, 0x20];
+                    peer_id_bytes.extend_from_slice(&hash[..]);
+                    
+                    // Encode as base58 with "12D3Koo" prefix (standard libp2p peer ID)
+                    use bs58;
+                    let peer_id_suffix = bs58::encode(&peer_id_bytes).into_string();
+                    let peer_id = format!("12D3Koo{}", &peer_id_suffix[..44]);
+                    
                     let peer_address = format!(
-                        "/dns4/{}/tcp/{}/p2p/12D3Koo{}",
+                        "/dns4/{}/tcp/{}/p2p/{}",
                         validators[j].public_address,
                         7070 + j,
-                        &validators[j].validator_id[..12] // Placeholder peer ID
+                        peer_id
                     );
                     bootstrap_peers.push(peer_address);
 

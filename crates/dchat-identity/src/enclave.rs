@@ -341,21 +341,119 @@ impl SecureEnclave {
 
     #[cfg(target_os = "ios")]
     async fn attest_device_ios(&self, challenge: &[u8]) -> Result<DeviceAttestation, EnclaveError> {
-        // iOS Device Attestation using DeviceCheck framework
-        // Requires App Attest API (iOS 14+)
+        // iOS Device Attestation using DeviceCheck App Attest API (iOS 14+)
+        // Reference: https://developer.apple.com/documentation/devicecheck/dcappattestservice
         
-        // Generate attestation key
+        use sha2::{Sha256, Digest};
+        
+        // 1. Generate attestation key ID (one-time per app installation)
         let attestation_key_id = format!("{}_attestation", self.config.key_prefix);
         
-        // Create attestation object
-        // This would use DCAppAttestService in production
+        // 2. Compute clientDataHash = SHA256(challenge || bundleID)
+        let bundle_id = self.get_ios_bundle_id();
+        let mut hasher = Sha256::new();
+        hasher.update(challenge);
+        hasher.update(bundle_id.as_bytes());
+        let client_data_hash = hasher.finalize();
         
-        Ok(DeviceAttestation {
-            certificate_chain: vec![vec![0u8; 32]], // Placeholder
-            signature: vec![0u8; 64], // Placeholder
-            challenge: challenge.to_vec(),
-            platform_data: b"iOS Secure Enclave".to_vec(),
-        })
+        // 3. Call DCAppAttestService.attestKey(keyId, clientDataHash)
+        // This returns attestation object containing:
+        // - X.509 certificate chain (device cert, intermediate, Apple root)
+        // - Signature over clientDataHash using the attestation key
+        // - Receipt (authenticData || clientDataHash)
+        
+        // NOTE: This requires Swift/Objective-C bridge in production
+        // For Rust implementation, use Foreign Function Interface (FFI)
+        // Example: dchat_ios_attest_key(key_id, client_data_hash)
+        
+        #[cfg(not(target_os = "ios"))] // Compile-time safety
+        return Err(EnclaveError::PlatformError(
+            "iOS attestation only available on iOS devices".to_string()
+        ));
+        
+        #[cfg(target_os = "ios")]
+        {
+            // Call native iOS API via FFI
+            extern "C" {
+                fn dchat_ios_attest_key(
+                    key_id: *const u8,
+                    key_id_len: usize,
+                    client_data_hash: *const u8,
+                    client_data_hash_len: usize,
+                    out_cert_chain: *mut *mut u8,
+                    out_cert_chain_len: *mut usize,
+                    out_signature: *mut u8,
+                    out_signature_len: usize,
+                ) -> i32;
+            }
+            
+            let key_id_bytes = attestation_key_id.as_bytes();
+            let mut cert_chain_ptr: *mut u8 = std::ptr::null_mut();
+            let mut cert_chain_len: usize = 0;
+            let mut signature = vec![0u8; 64];
+            
+            let result = unsafe {
+                dchat_ios_attest_key(
+                    key_id_bytes.as_ptr(),
+                    key_id_bytes.len(),
+                    client_data_hash.as_ptr(),
+                    client_data_hash.len(),
+                    &mut cert_chain_ptr,
+                    &mut cert_chain_len,
+                    signature.as_mut_ptr(),
+                    signature.len(),
+                )
+            };
+            
+            if result != 0 {
+                return Err(EnclaveError::AttestationFailed(
+                    format!("iOS attestation failed with code: {}", result)
+                ));
+            }
+            
+            // Parse certificate chain (DER-encoded X.509 certificates)
+            let cert_chain_data = unsafe {
+                std::slice::from_raw_parts(cert_chain_ptr, cert_chain_len)
+            };
+            
+            // Split into individual certificates (each prefixed with 2-byte length)
+            let mut certificate_chain = Vec::new();
+            let mut offset = 0;
+            while offset + 2 <= cert_chain_len {
+                let cert_len = u16::from_be_bytes([cert_chain_data[offset], cert_chain_data[offset + 1]]) as usize;
+                offset += 2;
+                if offset + cert_len <= cert_chain_len {
+                    certificate_chain.push(cert_chain_data[offset..offset + cert_len].to_vec());
+                    offset += cert_len;
+                } else {
+                    break;
+                }
+            }
+            
+            // Free native memory
+            unsafe {
+                if !cert_chain_ptr.is_null() {
+                    extern "C" {
+                        fn dchat_ios_free(ptr: *mut u8);
+                    }
+                    dchat_ios_free(cert_chain_ptr);
+                }
+            }
+            
+            Ok(DeviceAttestation {
+                certificate_chain,
+                signature,
+                challenge: challenge.to_vec(),
+                platform_data: format!("iOS Secure Enclave - {}", bundle_id).into_bytes(),
+            })
+        }
+    }
+    
+    #[cfg(target_os = "ios")]
+    fn get_ios_bundle_id(&self) -> String {
+        // Get iOS bundle identifier
+        // Production: use CFBundleIdentifier from Info.plist
+        std::env::var("IOS_BUNDLE_ID").unwrap_or_else(|_| "network.dchat.app".to_string())
     }
 
     // Android StrongBox/TEE implementations
@@ -368,27 +466,207 @@ impl SecureEnclave {
 
     #[cfg(target_os = "android")]
     async fn generate_key_android(&self, key_id: &str) -> Result<EnclaveKey, EnclaveError> {
-        // Use Android Keystore with StrongBox backing
-        // KeyGenParameterSpec with setIsStrongBoxBacked(true)
-        Err(EnclaveError::PlatformError("Android implementation pending".to_string()))
+        // Use Android Keystore with StrongBox/TEE backing
+        // Reference: https://source.android.com/docs/security/features/keystore
+        
+        #[cfg(not(target_os = "android"))]
+        return Err(EnclaveError::PlatformError(
+            "Android Keystore only available on Android devices".to_string()
+        ));
+        
+        #[cfg(target_os = "android")]
+        {
+            // Call Android Keystore API via JNI
+            extern "C" {
+                fn dchat_android_generate_key(
+                    key_alias: *const u8,
+                    key_alias_len: usize,
+                    algorithm: i32, // 0 = EC P-256, 1 = Ed25519
+                    require_biometric: bool,
+                    require_strongbox: bool,
+                    out_public_key: *mut u8,
+                    out_public_key_len: *mut usize,
+                ) -> i32;
+            }
+            
+            let key_alias_bytes = key_id.as_bytes();
+            let algorithm = match self.config.algorithm {
+                EnclaveAlgorithm::EcdsaP256 => 0,
+                EnclaveAlgorithm::Ed25519 => 1,
+            };
+            
+            let mut public_key = vec![0u8; 128]; // Max size
+            let mut public_key_len: usize = 0;
+            
+            let result = unsafe {
+                dchat_android_generate_key(
+                    key_alias_bytes.as_ptr(),
+                    key_alias_bytes.len(),
+                    algorithm,
+                    self.config.require_biometric,
+                    true, // Try StrongBox first
+                    public_key.as_mut_ptr(),
+                    &mut public_key_len,
+                )
+            };
+            
+            if result != 0 {
+                return Err(EnclaveError::KeyGenerationFailed(
+                    format!("Android Keystore generation failed with code: {}", result)
+                ));
+            }
+            
+            public_key.truncate(public_key_len);
+            
+            Ok(EnclaveKey {
+                key_id: key_id.to_string(),
+                public_key,
+                algorithm: self.config.algorithm,
+                created_at: chrono::Utc::now(),
+            })
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn sign_android(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>, EnclaveError> {
-        // Sign using Android Keystore key
-        Err(EnclaveError::PlatformError("Android implementation pending".to_string()))
+        #[cfg(not(target_os = "android"))]
+        return Err(EnclaveError::PlatformError(
+            "Android Keystore only available on Android devices".to_string()
+        ));
+        
+        #[cfg(target_os = "android")]
+        {
+            extern "C" {
+                fn dchat_android_sign(
+                    key_alias: *const u8,
+                    key_alias_len: usize,
+                    data: *const u8,
+                    data_len: usize,
+                    out_signature: *mut u8,
+                    out_signature_len: *mut usize,
+                ) -> i32;
+            }
+            
+            let key_alias_bytes = key_id.as_bytes();
+            let mut signature = vec![0u8; 128];
+            let mut signature_len: usize = 0;
+            
+            let result = unsafe {
+                dchat_android_sign(
+                    key_alias_bytes.as_ptr(),
+                    key_alias_bytes.len(),
+                    data.as_ptr(),
+                    data.len(),
+                    signature.as_mut_ptr(),
+                    &mut signature_len,
+                )
+            };
+            
+            if result != 0 {
+                return Err(EnclaveError::SignatureFailed(
+                    format!("Android signing failed with code: {}", result)
+                ));
+            }
+            
+            signature.truncate(signature_len);
+            Ok(signature)
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn get_public_key_android(&self, key_id: &str) -> Result<Vec<u8>, EnclaveError> {
-        // Extract public key from Android Keystore
-        Err(EnclaveError::PlatformError("Android implementation pending".to_string()))
+        #[cfg(not(target_os = "android"))]
+        return Err(EnclaveError::PlatformError(
+            "Android Keystore only available on Android devices".to_string()
+        ));
+        
+        #[cfg(target_os = "android")]
+        {
+            extern "C" {
+                fn dchat_android_get_public_key(
+                    key_alias: *const u8,
+                    key_alias_len: usize,
+                    out_public_key: *mut u8,
+                    out_public_key_len: *mut usize,
+                ) -> i32;
+            }
+            
+            let key_alias_bytes = key_id.as_bytes();
+            let mut public_key = vec![0u8; 128];
+            let mut public_key_len: usize = 0;
+            
+            let result = unsafe {
+                dchat_android_get_public_key(
+                    key_alias_bytes.as_ptr(),
+                    key_alias_bytes.len(),
+                    public_key.as_mut_ptr(),
+                    &mut public_key_len,
+                )
+            };
+            
+            if result != 0 {
+                return Err(EnclaveError::KeyNotFound(
+                    format!("Key not found or retrieval failed: {}", result)
+                ));
+            }
+            
+            public_key.truncate(public_key_len);
+            Ok(public_key)
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn delete_key_android(&self, key_id: &str) -> Result<(), EnclaveError> {
-        // Delete from Android Keystore
-        Err(EnclaveError::PlatformError("Android implementation pending".to_string()))
+        #[cfg(not(target_os = "android"))]
+        return Err(EnclaveError::PlatformError(
+            "Android Keystore only available on Android devices".to_string()
+        ));
+        
+        #[cfg(target_os = "android")]
+        {
+            extern "C" {
+                fn dchat_android_delete_key(
+                    key_alias: *const u8,
+                    key_alias_len: usize,
+                ) -> i32;
+            }
+            
+            let key_alias_bytes = key_id.as_bytes();
+            
+            let result = unsafe {
+                dchat_android_delete_key(
+                    key_alias_bytes.as_ptr(),
+                    key_alias_bytes.len(),
+                )
+            };
+            
+            if result != 0 {
+                return Err(EnclaveError::KeyNotFound(
+                    format!("Key deletion failed: {}", result)
+                ));
+            }
+            
+            Ok(())
+        }
+    }
+    
+    #[cfg(target_os = "android")]
+    async fn is_available_android(&self) -> Result<bool, EnclaveError> {
+        #[cfg(not(target_os = "android"))]
+        return Ok(false);
+        
+        #[cfg(target_os = "android")]
+        {
+            // Check for StrongBox or TEE support
+            extern "C" {
+                fn dchat_android_has_strongbox() -> bool;
+                fn dchat_android_has_tee() -> bool;
+            }
+            
+            unsafe {
+                Ok(dchat_android_has_strongbox() || dchat_android_has_tee())
+            }
+        }
     }
 
     #[cfg(target_os = "android")]

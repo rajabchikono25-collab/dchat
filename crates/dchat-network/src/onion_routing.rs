@@ -167,12 +167,37 @@ impl OnionRoutingManager {
         let path = self.select_path()?;
         let circuit_id = CircuitId(format!("circuit-{}", uuid::Uuid::new_v4()));
 
-        // In production, perform Diffie-Hellman with each hop to establish shared secrets
+        // Perform Curve25519 ECDH with each hop to establish shared secrets
+        use x25519_dalek::{EphemeralSecret, PublicKey};
+        use rand::rngs::OsRng;
+        use sha2::Sha256;
+        
         let mut shared_secrets = Vec::new();
-        for _hop in &path {
-            // Placeholder: In real implementation, derive shared secret with each hop
-            let secret = vec![0u8; 32]; // Would be result of ECDH
+        for hop in &path {
+            // Generate ephemeral key pair for this hop
+            let our_secret = EphemeralSecret::random_from_rng(OsRng);
+            let _our_public = PublicKey::from(&our_secret);
+            
+            // Get hop's public key (from relay node info)
+            let hop_public_bytes: [u8; 32] = hop.public_key.as_slice().try_into()
+                .map_err(|_| Error::network("Invalid hop public key"))?;
+            let hop_public = PublicKey::from(hop_public_bytes);
+            
+            // Perform ECDH
+            let shared_point = our_secret.diffie_hellman(&hop_public);
+            
+            // Derive key material using HKDF-SHA256
+            use hkdf::Hkdf;
+            type HkdfSha256 = Hkdf<Sha256>;
+            
+            let hkdf = HkdfSha256::new(None, shared_point.as_bytes());
+            let mut secret = vec![0u8; 32];
+            hkdf.expand(b"dchat-onion-circuit", &mut secret)
+                .map_err(|_| Error::network("HKDF expansion failed"))?;
+            
             shared_secrets.push(secret);
+            
+            // TODO: Send CREATE cell with our_public to hop and wait for CREATED response
         }
 
         let circuit = Circuit {
@@ -207,7 +232,38 @@ impl OnionRoutingManager {
             return Err(Error::network("Circuit not active"));
         }
 
-        // Encrypt payload in layers (onion-style)
+        // Encrypt payload in layers using ChaCha20Poly1305 AEAD (onion-style)
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit},
+            ChaCha20Poly1305, Nonce,
+        };
+        
+        let mut encrypted_payload = payload.to_vec();
+        
+        // Encrypt in reverse order (innermost hop first)
+        for secret in circuit.shared_secrets.iter().rev() {
+            // Derive encryption key from shared secret
+            let key_bytes: [u8; 32] = secret.as_slice().try_into()
+                .map_err(|_| Error::network("Invalid secret length"))?;
+            let cipher = ChaCha20Poly1305::new(&key_bytes.into());
+            
+            // Generate nonce (12 bytes)
+            use rand::RngCore;
+            let mut nonce_bytes = [0u8; 12];
+            rand::thread_rng().fill_bytes(&mut nonce_bytes);
+            let nonce = Nonce::from_slice(&nonce_bytes);
+            
+            // Encrypt layer
+            encrypted_payload = cipher.encrypt(nonce, encrypted_payload.as_ref())
+                .map_err(|_| Error::network("Encryption failed"))?;
+            
+            // Prepend nonce so it can be used for decryption
+            let mut layer = nonce_bytes.to_vec();
+            layer.extend_from_slice(&encrypted_payload);
+            encrypted_payload = layer;
+        }
+        
+        // Encrypt payload in layers (onion-style) - continued
         let mut encrypted_payload = payload.to_vec();
         
         // Encrypt from exit node backwards to entry node

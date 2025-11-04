@@ -11,6 +11,11 @@ dchat-crypto = { path = "../dchat-crypto" }
 
 # Cryptography
 sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+x25519-dalek = { workspace = true }
+chacha20poly1305 = "0.10"
 
 # Async runtime
 tokio = { workspace = true }

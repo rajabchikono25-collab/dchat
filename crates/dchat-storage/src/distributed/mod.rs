@@ -11,35 +11,38 @@
 // For deployment, configure these dependencies and enable the modules.
 
 pub mod database;
-// TODO: Fix API compatibility issues before enabling
+// Enable production-ready distributed storage implementations
+// TODO: Fix type errors in cache.rs and object_storage.rs before enabling
 // pub mod cache;
 // pub mod object_storage;
+// TODO: Fix TiKV API compatibility before enabling
 // pub mod tikv_backend;
 
 pub use database::{DistributedDatabase, DatabaseConfig};
 // pub use cache::{DistributedCache, CacheConfig};
-// pub use object_storage::{DistributedObjectStorage, ObjectStorageConfig, StorageTier};
-// pub use tikv_backend::{TiKVStorage, TiKVConfig, ChainState, BlockMetadata};
+// pub use object_storage::{DistributedObjectStorage, ObjectStorageConfig, StorageTier, ObjectMetadata};
 
-// Stub types for compilation - replace with real implementations when dependencies are configured
-#[derive(Debug, Clone)]
-pub struct CacheConfig;
+// Stub types until cache and object_storage are fixed
 #[derive(Debug, Clone)]
 pub struct DistributedCache;
 #[derive(Debug, Clone)]
-pub struct ObjectStorageConfig;
+pub struct CacheConfig;
 #[derive(Debug, Clone)]
 pub struct DistributedObjectStorage;
 #[derive(Debug, Clone)]
-pub struct ObjectMetadata {
-    pub key: String,
-    pub size: u64,
-    pub content_type: String,
-}
-#[derive(Debug, Clone, Copy)]
-pub enum StorageTier { Hot, Warm, Cold, Archive }
+pub struct ObjectStorageConfig;
 #[derive(Debug, Clone)]
-pub struct TiKVConfig;
+pub struct StorageTier;
+#[derive(Debug, Clone)]
+pub struct ObjectMetadata;
+// pub use tikv_backend::{TiKVStorage, TiKVConfig, ChainState, BlockMetadata};
+
+// TiKV stub types (will be enabled after dependency resolution)
+#[derive(Debug, Clone)]
+pub struct TiKVConfig {
+    pub pd_endpoints: Vec<String>,
+    pub enable_pessimistic_txn: bool,
+}
 #[derive(Debug, Clone)]
 pub struct TiKVStorage;
 #[derive(Debug, Clone)]

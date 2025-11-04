@@ -202,7 +202,7 @@ impl DistributedCache {
         // Set TTL if provided and key is new
         if let Some(ttl) = ttl {
             if new_value == delta {
-                let _: () = conn.expire(key, ttl.as_secs() as usize)
+                let _: () = conn.expire(key, ttl.as_secs() as i64)
                     .map_err(|e| {
                         warn!("Failed to set TTL on counter: {}", e);
                         StorageError::Cache(format!("Cache EXPIRE failed: {}", e))

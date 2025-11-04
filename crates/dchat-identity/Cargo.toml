@@ -21,6 +21,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
+curve25519-dalek = { workspace = true }
+rand = { workspace = true }
 hex = { workspace = true }
 sha2 = "0.10"
 sqlx = { workspace = true }

@@ -379,13 +379,30 @@ pub struct GrafanaConfig {
 impl GrafanaConfig {
     pub fn new_production() -> Self {
         Self {
-            endpoint: "https://grafana.dchat.internal".to_string(),
-            api_key: "grafana_api_key_placeholder".to_string(),
+            endpoint: std::env::var("GRAFANA_ENDPOINT")
+                .unwrap_or_else(|_| "https://grafana.dchat.internal".to_string()),
+            api_key: std::env::var("GRAFANA_API_KEY")
+                .expect("GRAFANA_API_KEY environment variable must be set for production deployment"),
             dashboards: vec![
                 "infrastructure-overview".to_string(),
                 "validator-health".to_string(),
                 "storage-metrics".to_string(),
                 "backup-status".to_string(),
+            ],
+            org_id: std::env::var("GRAFANA_ORG_ID")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1),
+        }
+    }
+    
+    /// Create configuration for development/testing (API key not required)
+    pub fn new_dev() -> Self {
+        Self {
+            endpoint: "http://localhost:3000".to_string(),
+            api_key: std::env::var("GRAFANA_API_KEY").unwrap_or_default(),
+            dashboards: vec![
+                "infrastructure-overview".to_string(),
             ],
             org_id: 1,
         }
