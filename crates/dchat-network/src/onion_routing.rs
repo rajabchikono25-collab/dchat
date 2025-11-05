@@ -500,6 +500,10 @@ impl OnionRoutingManager {
     }
 
     /// Build CREATE cell for circuit handshake
+    /// 
+    /// Reserved for future implementation of Tor-style circuit creation protocol.
+    /// Currently using simplified onion routing without explicit CREATE cells.
+    #[allow(dead_code)]
     fn build_create_cell(
         &self,
         circuit_id: &CircuitId,

@@ -702,6 +702,10 @@ impl DeltaEncoder {
     }
 
     /// Find longest matching substring
+    /// 
+    /// Reserved for future implementation of advanced delta compression algorithm.
+    /// Currently using basic content-addressable deduplication.
+    #[allow(dead_code)]
     fn find_longest_match(
         &self,
         base: &[u8],

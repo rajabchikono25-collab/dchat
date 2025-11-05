@@ -87,6 +87,11 @@ mod merkle {
         &current == root
     }
 
+    /// Get root hash from Merkle tree
+    /// 
+    /// Reserved for future use in advanced Merkle proof verification.
+    /// Currently, root verification is performed inline during proof validation.
+    #[allow(dead_code)]
     pub fn get_root(tree: &[Hash]) -> Hash {
         *tree.last().unwrap_or(&blake3::hash(&[]))
     }

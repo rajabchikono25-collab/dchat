@@ -14,7 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;

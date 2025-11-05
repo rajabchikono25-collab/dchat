@@ -83,8 +83,7 @@ impl EncryptedBackup {
     }
 
     fn encrypt(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
-        use chacha20poly1305::aead::generic_array::GenericArray;
-        use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit};
+        use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
 
         if key.len() != 32 {
             return Err(Error::crypto("Key must be 32 bytes"));
@@ -93,7 +92,7 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = GenericArray::from_slice(&[0u8; 12]); // Will be replaced with random nonce
+        let nonce = Nonce::from_slice(&[0u8; 12]); // Will be replaced with random nonce
 
         let mut buffer = plaintext.to_vec();
         cipher
@@ -104,8 +103,7 @@ impl EncryptedBackup {
     }
 
     fn do_decrypt(ciphertext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
-        use chacha20poly1305::aead::generic_array::GenericArray;
-        use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit};
+        use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
 
         if key.len() != 32 {
             return Err(Error::crypto("Key must be 32 bytes"));
@@ -118,7 +116,7 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = GenericArray::from_slice(nonce);
+        let nonce = Nonce::from_slice(nonce);
 
         let mut buffer = ciphertext.to_vec();
         cipher
