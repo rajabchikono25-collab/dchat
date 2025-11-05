@@ -342,7 +342,7 @@ impl OnionRoutingManager {
 
     /// Create encrypted routing header with proper node addressing
     fn create_routing_header(&self, circuit: &Circuit) -> Result<Vec<u8>> {
-        use std::io::Write;
+        
 
         // Encode routing information: [hop_count, (node_id_len, node_id, port)*]
         let mut header = Vec::new();
@@ -505,7 +505,7 @@ impl OnionRoutingManager {
         circuit_id: &CircuitId,
         public_key: &x25519_dalek::PublicKey,
     ) -> Vec<u8> {
-        use std::io::Write;
+        
 
         let mut cell = Vec::new();
 

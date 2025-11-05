@@ -147,7 +147,7 @@ impl BotApi {
         
         // 2. Create edit transaction with new content
         tracing::debug!("Creating edit transaction");
-        let edit_hash = blake3::hash(request.text.as_bytes());
+        let _edit_hash = blake3::hash(request.text.as_bytes());
         
         // 3. Submit edit to messaging system and blockchain
         tracing::debug!("Submitting edit to blockchain: message_id={}", request.message_id);

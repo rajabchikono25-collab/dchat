@@ -205,7 +205,7 @@ impl GeoIPManager {
         let distance_score = (avg_distance / 10000.0).min(1.0); // Normalize to 10,000km max
 
         // Weighted combination
-        (continent_diversity * 0.4 + country_diversity * 0.3 + distance_score * 0.3)
+        continent_diversity * 0.4 + country_diversity * 0.3 + distance_score * 0.3
     }
 
     /// Check if geographic distribution meets consensus requirements

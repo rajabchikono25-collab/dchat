@@ -107,7 +107,7 @@ impl RelayNode {
                     break;
                 }
                 // Track uptime and relay metrics
-                let mut st = state.write().await;
+                let st = state.write().await;
                 
                 // Submit periodic uptime proofs to blockchain
                 let uptime = std::time::SystemTime::now()

@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tikv_client::{Config, Key, RawClient, Value};
-use tracing::{debug, error, info, warn};
+use tikv_client::{Key, RawClient, Value};
+use tracing::{debug, error, info};
 
 use crate::error::{StorageError, StorageResult};
 

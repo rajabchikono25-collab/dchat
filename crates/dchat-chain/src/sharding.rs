@@ -312,7 +312,7 @@ impl ShardManager {
             .ok_or_else(|| Error::network("Shard not found"))?;
 
         // Build leaves from all channels in this shard
-        let mut leaves: Vec<Vec<u8>> = shard_state
+        let leaves: Vec<Vec<u8>> = shard_state
             .channels
             .iter()
             .map(|ch_id| ch_id.0.as_bytes().to_vec())

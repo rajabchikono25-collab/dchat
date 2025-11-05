@@ -214,7 +214,6 @@ impl MultiRegionConfig {
         ];
 
         let mut validators = Vec::new();
-        let mut validator_index = 0;
 
         for (region, count) in regions {
             for i in 0..count {
@@ -254,7 +253,6 @@ impl MultiRegionConfig {
                 };
 
                 validators.push(config);
-                validator_index += 1;
             }
         }
 

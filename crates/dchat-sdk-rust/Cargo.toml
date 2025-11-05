@@ -22,5 +22,6 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
+blake3 = { workspace = true }
 
 [dev-dependencies]

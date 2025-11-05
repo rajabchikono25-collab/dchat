@@ -13,14 +13,12 @@
 //! - Slashing evidence storage
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::block_hierarchy::Hash;
 
 #[derive(Debug, Error)]
 pub enum VotePersistenceError {

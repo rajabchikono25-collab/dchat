@@ -17,6 +17,9 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 rand = "0.8"
 sha2 = "0.10"
 
+# Logging
+tracing = { workspace = true }
+
 # BLS signature aggregation for sharding
 blst = "0.3"
 

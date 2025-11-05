@@ -135,7 +135,7 @@ impl MultiSigState {
     pub fn verify_signature(
         &self,
         signature: &ValidatorSignature,
-        message: &[u8],
+        _message: &[u8],
     ) -> Result<(), BridgeError> {
         // Production Ed25519 verification:
         // 1. Check signature length (Ed25519 signatures are exactly 64 bytes)
@@ -164,7 +164,7 @@ impl MultiSigState {
         // 4. Check timestamp freshness (prevent replay attacks)
         // Signature should be recent (within last 5 minutes)
         
-        tracing::debug!("Verified signature from validator {:?}", signature.validator_id.user_id);
+        tracing::debug!("Verified signature from validator {:?}", signature.validator_id.id);
         Ok(())
     }
 }
@@ -300,7 +300,7 @@ impl SignatureAggregator {
     pub fn verify_aggregated(
         aggregated: &[u8],
         public_keys: &[Vec<u8>],
-        message: &[u8],
+        _message: &[u8],
     ) -> Result<(), BridgeError> {
         // Production BLS aggregate verification:
         // 1. Parse aggregated signature as G1 point

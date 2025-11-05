@@ -119,7 +119,7 @@ impl GossipMessage {
         
         // Reconstruct message bytes for verification
         let mut message_bytes = Vec::new();
-        message_bytes.extend_from_slice(self.id.0.as_bytes());
+        message_bytes.extend_from_slice(self.id.as_bytes());
         message_bytes.extend_from_slice(&self.payload);
         message_bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         message_bytes.push(self.ttl);
@@ -127,7 +127,6 @@ impl GossipMessage {
         // Production Ed25519 verification using sender's public key
         // Note: sender_public_key should be retrieved from network identity/libp2p PeerId
         // For now, verify signature format and structure
-        use ed25519_dalek::{Signature, VerifyingKey};
         
         if self.signature.len() != 64 {
             tracing::warn!("Invalid signature length: {}", self.signature.len());
@@ -153,7 +152,6 @@ impl GossipMessage {
         message_bytes.push(ttl);
         
         // Production: Sign with node's Ed25519 private key from identity management
-        use ed25519_dalek::SigningKey;
         
         // Production implementation:
         // let signing_key = identity_manager.get_signing_key()?;

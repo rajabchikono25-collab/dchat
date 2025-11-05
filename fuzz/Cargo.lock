@@ -1115,6 +1115,7 @@ version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "base64 0.21.7",
+ "blake3",
  "chrono",
  "dchat-core",
  "dchat-identity",
@@ -1143,6 +1144,7 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -1161,6 +1163,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "tracing",
  "uuid",
 ]
 
@@ -1354,6 +1357,7 @@ dependencies = [
  "chacha20poly1305",
  "dchat-core",
  "dchat-crypto",
+ "ed25519-dalek",
  "futures",
  "hex",
  "hkdf",
@@ -1397,6 +1401,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -1404,6 +1409,7 @@ name = "dchat-sdk-rust"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "dchat-core",
  "dchat-crypto",
  "dchat-identity",

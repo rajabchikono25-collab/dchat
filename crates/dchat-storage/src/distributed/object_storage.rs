@@ -311,7 +311,7 @@ impl DistributedObjectStorage {
         let data = self.download_bytes(source_key).await?;
 
         // Re-upload with new storage class
-        let storage_class = match tier {
+        let _storage_class = match tier {
             StorageTier::Hot => "STANDARD",
             StorageTier::Warm => "STANDARD_IA",
             StorageTier::Cold => "GLACIER",

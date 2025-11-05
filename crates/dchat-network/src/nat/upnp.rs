@@ -8,7 +8,7 @@
 ///
 /// See ARCHITECTURE.md Section 12.1: NAT Traversal
 use dchat_core::{error::Error, Result};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::time::timeout;
 

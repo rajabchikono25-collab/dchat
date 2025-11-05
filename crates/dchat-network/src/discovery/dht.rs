@@ -192,7 +192,7 @@ impl Dht {
     }
 
     /// Helper to create deterministic peer ID from address for bootstrap
-    fn peer_id_from_addr(&self, addr: &Multiaddr, index: usize) -> PeerId {
+    fn peer_id_from_addr(&self, _addr: &Multiaddr, index: usize) -> PeerId {
         // Production: extract peer ID from multiaddr
         // Multiaddrs with peer IDs look like: /ip4/1.2.3.4/tcp/1234/p2p/QmPeerId...
         // 
