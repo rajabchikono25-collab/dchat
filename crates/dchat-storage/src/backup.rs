@@ -92,11 +92,11 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = Nonce::from_slice(&[0u8; 12]); // Will be replaced with random nonce
+        let nonce = Nonce::from([0u8; 12]); // Will be replaced with random nonce
 
         let mut buffer = plaintext.to_vec();
         cipher
-            .encrypt_in_place(nonce, b"", &mut buffer)
+            .encrypt_in_place(&nonce, b"", &mut buffer)
             .map_err(|e| Error::crypto(format!("Encryption failed: {}", e)))?;
 
         Ok(buffer)
@@ -116,11 +116,11 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = Nonce::from_slice(nonce);
+        let nonce = Nonce::from(*<&[u8; 12]>::try_from(nonce).map_err(|_| Error::crypto("Invalid nonce length"))?);
 
         let mut buffer = ciphertext.to_vec();
         cipher
-            .decrypt_in_place(nonce, b"", &mut buffer)
+            .decrypt_in_place(&nonce, b"", &mut buffer)
             .map_err(|e| Error::crypto(format!("Decryption failed: {}", e)))?;
 
         Ok(buffer)

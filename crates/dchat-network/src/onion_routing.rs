@@ -279,11 +279,11 @@ impl OnionRoutingManager {
             use rand::RngCore;
             let mut nonce_bytes = [0u8; 12];
             rand::thread_rng().fill_bytes(&mut nonce_bytes);
-            let nonce = Nonce::from_slice(&nonce_bytes);
+            let nonce = Nonce::from(nonce_bytes);
 
             // Encrypt layer
             encrypted_payload = cipher
-                .encrypt(nonce, encrypted_payload.as_ref())
+                .encrypt(&nonce, encrypted_payload.as_ref())
                 .map_err(|_| Error::network("Encryption failed"))?;
 
             // Prepend nonce so it can be used for decryption
@@ -329,10 +329,10 @@ impl OnionRoutingManager {
         // Generate random nonce (12 bytes)
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         // Encrypt with AEAD
-        let ciphertext = cipher.encrypt(nonce, data).expect("Encryption failed");
+        let ciphertext = cipher.encrypt(&nonce, data).expect("Encryption failed");
 
         // Return nonce || ciphertext for decryption
         let mut result = nonce_bytes.to_vec();
