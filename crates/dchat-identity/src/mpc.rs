@@ -387,16 +387,32 @@ impl MpcSigner {
         // Production threshold signature aggregation:
         // Use Lagrange interpolation to reconstruct signature from t-of-n shares
         // 
-        // For FROST (Ed25519):
-        // 1. Each signer contributes partial signature: s_i = r_i + c * share_i
-        // 2. Aggregate using Lagrange coefficients:
-        //    s = Σ(λ_i * s_i) where λ_i = Π(j/(j-i)) for j ≠ i
-        // 3. Final signature: (R, s) where R = Σ(R_i)
+        // CRITICAL UPGRADE PATH: Replace with production-grade threshold signature
         // 
-        // For Schnorr:
-        // Similar aggregation but with different challenge derivation
+        // Current implementation uses basic Shamir secret sharing aggregation.
+        // For production deployment, integrate one of:
         // 
-        // Current: Simple share aggregation (UPGRADE TO FROST/GG20 IN PRODUCTION)
+        // 1. FROST (Flexible Round-Optimized Schnorr Threshold) for Ed25519:
+        //    - Crate: frost-ed25519 = "2.0"
+        //    - Each signer: s_i = r_i + c * share_i (partial signature)
+        //    - Aggregate with Lagrange: s = Σ(λ_i * s_i) where λ_i = Π(j/(j-i))
+        //    - Final signature: (R, s) where R = Σ(R_i)
+        //    - Audit status: Audited by NCC Group (2023)
+        // 
+        // 2. GG20 (Gennaro-Goldfeder) for ECDSA/secp256k1:
+        //    - Crate: multi-party-ecdsa = "0.10"
+        //    - Supports 2-round signing with abort-free guarantee
+        //    - Battle-tested in ZenGo, Fireblocks production systems
+        // 
+        // Security implications:
+        // - Current: susceptible to share interpolation attacks if dealer is malicious
+        // - FROST/GG20: provides honest-dealer security with dealer-free DKG option
+        // 
+        // Implementation timeline: Q2 2025 (see PRODUCTION_IMPROVEMENTS_ROADMAP.md)
+        tracing::warn!(
+            "Using basic Shamir aggregation. Upgrade to FROST/GG20 before mainnet launch."
+        );
+        
         let aggregated_sig = self.aggregate_shares(&shares)?;
 
         // Update session status

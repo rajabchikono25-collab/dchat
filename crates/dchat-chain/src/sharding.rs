@@ -277,11 +277,31 @@ impl ShardManager {
     /// Deliver message within same shard
     fn deliver_same_shard(
         &mut self,
-        _from_channel: &ChannelId,
-        _to_channel: &ChannelId,
-        _payload: Vec<u8>,
+        from_channel: &ChannelId,
+        to_channel: &ChannelId,
+        payload: Vec<u8>,
     ) -> Result<()> {
-        // In production: update shard state, emit events
+        // Update source shard state
+        if let Some(from_shard) = self.channel_assignments.get(from_channel) {
+            if let Some(state) = self.shard_states.get_mut(from_shard) {
+                state.message_count += 1;
+                
+                // Update timestamp as Unix epoch seconds
+                state.last_updated = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+            }
+        }
+
+        // Log routing event for observability
+        tracing::debug!(
+            from_channel = %from_channel.0,
+            to_channel = %to_channel.0,
+            payload_size = payload.len(),
+            "Same-shard message delivered"
+        );
+
         Ok(())
     }
 
@@ -766,10 +786,14 @@ mod tests {
         let sig2 = vec![4, 5, 6];
         let signatures = vec![sig1.clone(), sig2.clone()];
 
-        let aggregated = manager.aggregate_signatures(&signatures).unwrap();
-
-        // Placeholder implementation just concatenates
-        assert_eq!(aggregated.len(), 6);
+        // This test expects error because signatures are invalid (wrong length)
+        // Valid BLS signatures must be 96 bytes (compressed BLS12-381 points)
+        let result = manager.aggregate_signatures(&signatures);
+        assert!(result.is_err());
+        
+        // The error should indicate invalid signature length
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid BLS signature length"));
     }
 
     #[test]

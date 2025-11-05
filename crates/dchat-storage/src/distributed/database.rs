@@ -337,16 +337,18 @@ impl DistributedDatabase {
             }
         }
 
-        // Production: calculate actual message sizes
-        // let size_query = sqlx::query_as::<_, (i64, i64)>(
-        //     "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(metadata)), 0) as total_bytes,
-        //      COALESCE(AVG(LENGTH(content) + LENGTH(metadata)), 0) as avg_bytes
-        //      FROM messages"
-        // ).fetch_one(&self.pool).await?;
-        // let (total_size_bytes, avg_message_size) = size_query;
+        // Calculate actual message sizes from database
+        let size_query = sqlx::query_as::<_, (i64, i64)>(
+            "SELECT 
+                COALESCE(SUM(LENGTH(content) + LENGTH(metadata)), 0) as total_bytes,
+                COALESCE(AVG(LENGTH(content) + LENGTH(metadata)), 0) as avg_bytes
+             FROM messages"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::database(format!("Failed to calculate message sizes: {}", e)))?;
         
-        let total_size_bytes = 0; // Placeholder
-        let avg_message_size = 0; // Placeholder
+        let (total_size_bytes, avg_message_size) = size_query;
 
         Ok(DatabaseStats {
             total_messages,

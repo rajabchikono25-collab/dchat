@@ -310,12 +310,14 @@ impl MultiRegionCoordinator {
 
         for sig in signatures {
             // Verify this is a known validator
-            let validator = self.validators.get(&sig.validator_id).ok_or(
+            let validator = self.validators.get(&sig.validator_id).ok_or_else(|| {
+                // Use NorthAmerica as default for unknown validators (error case)
+                // In production, this error shouldn't occur (validators are registered)
                 MultiRegionError::ValidatorNotFound {
                     validator_id: sig.validator_id.clone(),
-                    region: GeographicRegion::NorthAmerica, // Placeholder
-                },
-            )?;
+                    region: GeographicRegion::NorthAmerica,
+                }
+            })?;
 
             // Verify the signature
             let public_key =
@@ -390,9 +392,16 @@ impl MultiRegionCoordinator {
         let signing_key = self
             .signing_key
             .as_ref()
-            .ok_or(MultiRegionError::ValidatorNotFound {
-                validator_id: validator_id.to_string(),
-                region: GeographicRegion::NorthAmerica, // Placeholder
+            .ok_or_else(|| {
+                // Get actual region from validator config or use default
+                let region = self.validators.get(validator_id)
+                    .map(|v| v.region)
+                    .unwrap_or(GeographicRegion::NorthAmerica);
+                
+                MultiRegionError::ValidatorNotFound {
+                    validator_id: validator_id.to_string(),
+                    region,
+                }
             })?;
 
         let signature = signing_key.sign(block_hash);

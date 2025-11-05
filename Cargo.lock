@@ -1246,6 +1246,7 @@ dependencies = [
 name = "dchat-bridge"
 version = "0.1.0"
 dependencies = [
+ "blst",
  "chrono",
  "dchat-core",
  "serde",

@@ -201,8 +201,27 @@ impl ChannelAccessManager {
                 minimum_stake,
                 stake_duration_secs,
             } => {
-                // Check if user has staked enough with proper duration verification
-                // In production: query blockchain for stake commitment
+                // Blockchain integration required for stake verification
+                // 
+                // Integration API (dchat-chain currency chain interface):
+                // 
+                // trait StakingVerifier {
+                //     async fn verify_stake_commitment(
+                //         &self,
+                //         user_id: &UserId,
+                //         minimum_stake: u64,
+                //         duration_secs: u64,
+                //     ) -> Result<bool>;
+                //     
+                //     async fn check_stake_status(
+                //         &self,
+                //         user_id: &UserId,
+                //         channel_id: &ChannelId,
+                //     ) -> Result<StakeStatus>; // Active, Slashed, Withdrawn
+                // }
+                // 
+                // TODO: Inject StakingVerifier via dependency injection when initializing ChannelAccessControl
+                // Current: Uses local stake map for testing/development
                 
                 // 1. Check if user has stake recorded for any channel
                 let user_total_stake: u64 = self
@@ -216,20 +235,24 @@ impl ChannelAccessManager {
                     return Ok(false);
                 }
                 
-                // 2. Verify stake duration on-chain (blockchain query)
+                // 2. Verify stake duration on-chain (requires blockchain client)
                 tracing::debug!(
-                    "Verifying stake commitment: user={:?}, required={}, duration={}s",
+                    "Verifying stake commitment: user={:?}, required={}, duration={}s (local map check)",
                     user_id, minimum_stake, stake_duration_secs
                 );
                 
-                // In production: blockchain_client.verify_stake_commitment(
-                //     user_id, 
-                //     minimum_stake, 
-                //     stake_duration_secs
-                // )?
-                
-                // 3. Check stake hasn't been slashed or withdrawn
-                // In production: blockchain_client.check_stake_status(user_id, channel_id)?
+                // When blockchain client integrated:
+                // let is_valid = self.blockchain_client
+                //     .verify_stake_commitment(user_id, minimum_stake, stake_duration_secs)
+                //     .await?;
+                // 
+                // let stake_status = self.blockchain_client
+                //     .check_stake_status(user_id, channel_id)
+                //     .await?;
+                // 
+                // if stake_status != StakeStatus::Active {
+                //     return Ok(false);
+                // }
                 
                 Ok(true)
             }
