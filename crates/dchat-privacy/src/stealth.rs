@@ -117,7 +117,9 @@ impl StealthGenerator {
         use chacha20poly1305::aead::Aead;
         
         let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
-        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&encryption_key.as_bytes()[0..12]);
+        let nonce_array: [u8; 12] = encryption_key.as_bytes()[0..12].try_into()
+            .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
+        let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
             .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
@@ -227,7 +229,9 @@ impl StealthScanner {
         use chacha20poly1305::aead::Aead;
         
         let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
-        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&decryption_key.as_bytes()[0..12]);
+        let nonce_array: [u8; 12] = decryption_key.as_bytes()[0..12].try_into()
+            .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
+        let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
         let mut plaintext = cipher
             .decrypt(nonce, payload.ciphertext.as_ref())
             .map_err(|_| Error::Crypto("Decryption failed".to_string()))?;

@@ -9,7 +9,7 @@
 use curve25519_dalek::Scalar;
 use dchat_core::{Error, Result};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use num_bigint::{BigInt, BigUint, ToBigUint};
+use num_bigint::BigUint;
 use num_traits::One;
 use std::ops::Rem;
 use rand::{CryptoRng, Rng};

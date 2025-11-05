@@ -247,7 +247,7 @@ impl OnionRouter {
             let mut nonce_bytes = [0u8; 12];
             use rand::RngCore;
             rand::thread_rng().fill_bytes(&mut nonce_bytes);
-            let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&nonce_bytes);
+            let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_bytes);
             
             let ciphertext = cipher
                 .encrypt(nonce, payload.as_ref())
@@ -312,7 +312,9 @@ impl OnionRouter {
         if encrypted_payload.len() < 12 {
             return Err(Error::crypto("Encrypted payload too short for nonce"));
         }
-        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&encrypted_payload[..12]);
+        let nonce_array: [u8; 12] = encrypted_payload[..12].try_into()
+            .map_err(|_| Error::crypto("Failed to extract nonce"))?;
+        let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
         let ciphertext = &encrypted_payload[12..]; // Actual ciphertext after nonce
         
         let payload = cipher

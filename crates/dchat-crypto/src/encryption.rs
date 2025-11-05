@@ -78,9 +78,8 @@ pub fn encrypt_with_password(password: &str, plaintext: &[u8]) -> Result<Encrypt
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    // Clone nonce from slice (modern API)
-    #[allow(deprecated)]
-    let nonce = Nonce::clone_from_slice(&nonce_bytes);
+    // Create nonce from array
+    let nonce = Nonce::from(nonce_bytes);
 
     // Create cipher and encrypt
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)
@@ -138,9 +137,8 @@ pub fn decrypt_with_password(password: &str, encrypted: &EncryptedData) -> Resul
     let cipher = Aes256Gcm::new_from_slice(&key_bytes)
         .map_err(|e| Error::crypto(format!("Cipher initialization failed: {}", e)))?;
 
-    // Clone nonce from slice (modern API)
-    #[allow(deprecated)]
-    let nonce = Nonce::clone_from_slice(&encrypted.nonce);
+    // Create nonce from array
+    let nonce = Nonce::from(encrypted.nonce);
     let plaintext = cipher
         .decrypt(&nonce, encrypted.ciphertext.as_ref())
         .map_err(|_| {
