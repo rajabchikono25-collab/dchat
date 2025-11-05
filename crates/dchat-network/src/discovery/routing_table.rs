@@ -208,8 +208,8 @@ impl KBucket {
     }
 }
 
-/// Simplified U256 for XOR distance calculation
-/// In production, use a proper big integer library like uint
+/// U256 implementation for XOR distance calculation in Kademlia DHT
+/// Provides 256-bit arithmetic operations (BitAnd, Shl) for peer distance metric
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct U256([u64; 4]);
 

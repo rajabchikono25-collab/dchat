@@ -146,9 +146,14 @@ impl UserManager {
                 Error::internal(format!("Chat chain registration failed: {}", e))
             })?;
 
-        // Simulate confirmation (in production, would wait for block finality)
-        info!("✓ User registered on chat chain");
-        let on_chain_confirmed = true;
+        // Wait for blockchain finality confirmation (3 blocks)
+        info!("Waiting for on-chain confirmation (finality threshold: 3 blocks)...");
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
+        if on_chain_confirmed {
+            info!("✓ User registration confirmed on chat chain");
+        } else {
+            return Err(Error::Blockchain("Transaction failed to achieve finality".to_string()));
+        }
 
         // Store user in database after on-chain confirmation
         self.database
@@ -207,12 +212,36 @@ impl UserManager {
         })
     }
 
-    /// List all users (placeholder - would need database API enhancement)
+    /// List all users from database
     pub async fn list_users(&self) -> Result<Vec<UserProfile>> {
         info!("Listing all users");
-        // Note: The current Database API doesn't have a list_all_users method
-        // This would need to be added to the database crate
-        Ok(Vec::new())
+        
+        // Fetch all users from database
+        let users = self.database.list_all_users().await?;
+        
+        // Convert to UserProfile format
+        let mut profiles = Vec::new();
+        for user in users {
+            let public_key_hex = hex::encode(&user.public_key);
+            let created_at_rfc3339 = if let Some(dt) = chrono::DateTime::from_timestamp(user.created_at, 0) {
+                dt.to_rfc3339()
+            } else {
+                return Err(Error::internal("Invalid timestamp in user data"));
+            };
+            
+            profiles.push(UserProfile {
+                user_id: user.id,
+                username: user.username.clone(),
+                display_name: Some(format!("@{}", user.username)),
+                public_key: public_key_hex,
+                reputation_score: 0,
+                verified: false,
+                created_at: created_at_rfc3339,
+                badges: vec![],
+            });
+        }
+        
+        Ok(profiles)
     }
 
     /// Send direct message with on-chain confirmation
@@ -330,8 +359,9 @@ impl UserManager {
                 Error::internal(format!("Chat chain channel creation failed: {}", e))
             })?;
 
-        // Simulate confirmation
-        let on_chain_confirmed = true;
+        // Wait for blockchain confirmation
+        info!("Waiting for channel creation confirmation...");
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
 
         info!(
             "✓ Channel created and confirmed on-chain: {} ({})",
@@ -387,8 +417,8 @@ impl UserManager {
                 Error::internal(format!("Chat chain posting failed: {}", e))
             })?;
 
-        // Simulate confirmation
-        let on_chain_confirmed = true;
+        // Wait for blockchain confirmation
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
 
         // Store message in database
         self.database
@@ -456,7 +486,7 @@ impl UserManager {
                     status: msg.status,
                     timestamp: timestamp_rfc3339,
                     on_chain_confirmed,
-                    tx_id: None, // Would be stored in database in production
+                    tx_id: msg.tx_id.clone(), // Transaction ID from database
                 });
             }
         }
@@ -498,7 +528,7 @@ impl UserManager {
                     status: msg.status,
                     timestamp: timestamp_rfc3339,
                     on_chain_confirmed,
-                    tx_id: None, // Would be stored in database in production
+                    tx_id: msg.tx_id.clone(), // Transaction ID from database
                 });
             }
         }

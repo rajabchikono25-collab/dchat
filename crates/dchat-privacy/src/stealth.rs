@@ -112,20 +112,15 @@ impl StealthGenerator {
         // Derive encryption key from shared secret using HKDF
         let encryption_key = blake3::hash(&shared_secret);
 
-        // Production: Use ChaCha20Poly1305 AEAD encryption
-        // use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
-        // use chacha20poly1305::aead::Nonce;
-        // let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
-        // let nonce = Nonce::from_slice(&encryption_key.as_bytes()[0..12]);
-        // let mut ciphertext = plaintext.to_vec();
-        // cipher.encrypt_in_place(nonce, &[], &mut ciphertext)
-        //     .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
+        // Production: ChaCha20Poly1305 AEAD encryption
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+        use chacha20poly1305::aead::Aead;
         
-        // Placeholder: XOR encryption (REPLACE WITH ChaCha20Poly1305 IN PRODUCTION)
-        let mut ciphertext = plaintext.to_vec();
-        for (i, byte) in ciphertext.iter_mut().enumerate() {
-            *byte ^= encryption_key.as_bytes()[i % 32];
-        }
+        let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
+        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&encryption_key.as_bytes()[0..12]);
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext)
+            .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
 
         // Create tag for recipient identification: H(view_key || ephemeral_key)
         let mut tag_input = Vec::new();
@@ -227,20 +222,15 @@ impl StealthScanner {
         // Derive decryption key
         let decryption_key = blake3::hash(&shared_secret);
 
-        // Production: Use ChaCha20Poly1305 AEAD decryption
-        // use chacha20poly1305::{ChaCha20Poly1305, KeyInit, AeadInPlace};
-        // use chacha20poly1305::aead::Nonce;
-        // let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
-        // let nonce = Nonce::from_slice(&decryption_key.as_bytes()[0..12]);
-        // let mut plaintext = payload.ciphertext.clone();
-        // cipher.decrypt_in_place(nonce, &[], &mut plaintext)
-        //     .map_err(|_| Error::Crypto("Decryption failed".to_string()))?;
+        // Production: ChaCha20Poly1305 AEAD decryption
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+        use chacha20poly1305::aead::Aead;
         
-        // Placeholder: XOR decryption (REPLACE WITH ChaCha20Poly1305 IN PRODUCTION)
-        let mut plaintext = payload.ciphertext.clone();
-        for (i, byte) in plaintext.iter_mut().enumerate() {
-            *byte ^= decryption_key.as_bytes()[i % 32];
-        }
+        let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
+        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&decryption_key.as_bytes()[0..12]);
+        let mut plaintext = cipher
+            .decrypt(nonce, payload.ciphertext.as_ref())
+            .map_err(|_| Error::Crypto("Decryption failed".to_string()))?;
 
         // Remove padding
         if plaintext.len() > payload.padding_size {

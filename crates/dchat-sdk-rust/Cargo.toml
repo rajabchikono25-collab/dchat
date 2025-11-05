@@ -24,4 +24,11 @@ anyhow = "1.0"
 tracing = "0.1"
 blake3 = { workspace = true }
 
+# Networking for libp2p swarm
+libp2p = { version = "0.54", features = ["kad", "noise", "tcp", "yamux", "dns"] }
+futures = "0.3"
+
+# Noise Protocol for message encryption
+snow = "0.9"
+
 [dev-dependencies]

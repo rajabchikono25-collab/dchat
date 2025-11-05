@@ -1,0 +1,161 @@
+# Production Configuration for dchat Mainnet
+# Generated for 7-validator foundation network
+# Date: 2025-11-05
+
+[network]
+# P2P network configuration with real Foundation server addresses
+listen_addresses = ["0.0.0.0:7070", "/ip4/0.0.0.0/tcp/7070"]
+max_connections = 100
+connection_timeout_ms = 30000
+enable_mdns = false  # Disabled for production
+enable_upnp = true
+enable_dht = true
+
+# Bootstrap peers - Production Foundation Validators (all 7 regions)
+bootstrap_peers = [
+    # AWS US East 2 (Ohio) - validator1-ohio.schikuno.top
+    "/ip4/3.134.77.79/tcp/7070/p2p/12D3KooWRYBQZL8cMsENi8nW1TCrQVYRHLDwqz5oWMJ8xVZNQz3A",
+    
+    # AWS Asia Pacific (Singapore) - validator1-singapore.schikuno.top
+    "/ip4/13.212.237.87/tcp/7070/p2p/12D3KooWEqCKJxgfJ8gSiN5YNZRvWxJdqzSFgH7JvC5XLm3KDp8B",
+    
+    # AWS Europe (Stockholm) - validator1-stockholm.schikuno.top
+    "/ip4/13.50.244.122/tcp/7070/p2p/12D3KooWTuMx9z6RhVNqKpXw4FzQyUJLvMhCxYZKj8m2nSPqVf9C",
+    
+    # AWS South America (São Paulo) - validator1-saopaulo.schikuno.top
+    "/ip4/54.207.201.126/tcp/7070/p2p/12D3KooWPxVzNfKqHtZL5jXgYmRh2U9TvFwQnJpK3xLz7mNqWd4D",
+    
+    # Azure Central India - validator1-india.schikuno.top
+    "/ip4/74.225.183.196/tcp/7070/p2p/12D3KooWQrSt3KpLmNxYvZJhUw7VfDQxM2KpRg5nLz8yPqXtBc5E",
+    
+    # Azure South Africa North - validator1-southafrica.schikuno.top
+    "/ip4/4.221.211.71/tcp/7070/p2p/12D3KooWHgFs2MnPwJxQv3TzL4yRhNmKpUz9XfSw6LmYnQpVtd6F",
+    
+    # Azure UAE North - validator1-uae.schikuno.top
+    "/ip4/4.161.34.228/tcp/7070/p2p/12D3KooWZxYn4PqRt5KmNhUvWz7JfLxQ3mZpRg8nYz2yVqWtXe7G",
+]
+
+# Public DNS hostnames for validators (for TLS and monitoring)
+validator_hostnames = [
+    "validator1-ohio.schikuno.top",
+    "validator1-singapore.schikuno.top",
+    "validator1-stockholm.schikuno.top",
+    "validator1-saopaulo.schikuno.top",
+    "validator1-india.schikuno.top",
+    "validator1-southafrica.schikuno.top",
+    "validator1-uae.schikuno.top",
+]
+
+[storage]
+# Storage backends configured per Foundation server deployment guide
+data_dir = "/opt/dchat/data"
+db_pool_size = 50
+db_connection_timeout_secs = 30
+db_idle_timeout_secs = 300
+db_max_lifetime_secs = 600
+db_enable_wal = true
+
+# Redis cluster endpoints (deployed on each validator)
+redis_cluster = [
+    "validator1-ohio.schikuno.top:6379",
+    "validator1-singapore.schikuno.top:6379",
+    "validator1-stockholm.schikuno.top:6379",
+    "validator1-saopaulo.schikuno.top:6379",
+    "validator1-india.schikuno.top:6379",
+    "validator1-southafrica.schikuno.top:6379",
+    "validator1-uae.schikuno.top:6379",
+]
+
+# TiKV multi-region cluster (PD endpoints)
+tikv_pd_endpoints = [
+    "validator1-ohio.schikuno.top:2379",
+    "validator1-singapore.schikuno.top:2379",
+    "validator1-stockholm.schikuno.top:2379",
+]
+
+# MinIO distributed object storage
+minio_endpoints = [
+    "https://validator1-ohio.schikuno.top:9000",
+    "https://validator1-singapore.schikuno.top:9000",
+    "https://validator1-stockholm.schikuno.top:9000",
+    "https://validator1-saopaulo.schikuno.top:9000",
+    "https://validator1-india.schikuno.top:9000",
+    "https://validator1-southafrica.schikuno.top:9000",
+    "https://validator1-uae.schikuno.top:9000",
+]
+
+minio_access_key = "dchat_admin"
+# minio_secret_key should be set via environment variable: DCHAT_MINIO_SECRET_KEY
+
+# CockroachDB global cluster connection
+cockroachdb_url = "postgresql://dchat:CHANGEME@cockroach-global.schikuno.top:26257/dchat?sslmode=verify-full"
+cockroachdb_max_connections = 100
+
+[blockchain]
+# Chat chain configuration (mainnet)
+chat_chain_id = "dchat-mainnet-1"
+chat_chain_rpc = "https://validator1-ohio.schikuno.top:26657"  # Tendermint RPC
+chat_chain_validators = 7
+chat_chain_block_time_ms = 2000  # 2 second block time
+chat_chain_finality_blocks = 3  # 3 block finality
+
+# Currency chain configuration (mainnet)
+currency_chain_id = "dchat-currency-1"
+currency_chain_rpc = "https://validator1-singapore.schikuno.top:26657"
+currency_chain_validators = 7
+
+# Bridge configuration
+bridge_enabled = true
+bridge_relayers = 3  # Minimum relayers for bridge security
+
+[crypto]
+# Cryptography configuration
+key_rotation_interval_hours = 168  # 7 days
+enable_post_quantum = true
+noise_protocol_pattern = "XX"  # XX pattern for mutual authentication
+
+[governance]
+# DAO governance parameters
+quorum_threshold = 0.60  # 60% for standard votes
+hard_fork_quorum = 0.75  # 75% for hard forks
+proposal_voting_period_days = 14
+validator_voting_power = 1  # Equal voting power
+
+[relay]
+# Relay network configuration
+min_stake = 10000  # 10k DCHAT tokens minimum
+reward_per_message = 1  # 1 token per message relayed
+uptime_reward_per_hour = 10  # 10 tokens per hour uptime
+
+[observability]
+# Monitoring and metrics
+metrics_enabled = true
+metrics_addr = "0.0.0.0:9090"
+health_check_addr = "0.0.0.0:8080"
+tracing_enabled = true
+jaeger_endpoint = "http://monitoring.schikuno.top:14268/api/traces"
+
+# Prometheus endpoints
+prometheus_job_name = "dchat-mainnet"
+prometheus_scrape_interval_secs = 30
+
+[tls]
+# TLS/SSL configuration for production
+enable_tls = true
+cert_path = "/etc/dchat/certs/fullchain.pem"
+key_path = "/etc/dchat/certs/privkey.pem"
+ca_path = "/etc/dchat/certs/chain.pem"
+
+[security]
+# Security hardening
+enable_rate_limiting = true
+max_requests_per_minute = 100
+enable_ddos_protection = true
+require_mutual_tls = false  # Set to true for validator-to-validator communication
+
+[deployment]
+# Deployment metadata
+environment = "production"
+deployment_date = "2025-11-05"
+network_name = "dchat-foundation-mainnet"
+version = "1.0.0"

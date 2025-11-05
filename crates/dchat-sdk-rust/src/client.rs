@@ -5,6 +5,10 @@ use dchat_messaging::types::Message;
 use dchat_storage::{Database, DatabaseConfig, MessageRow};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+// Note: libp2p imports commented out until proper integration
+// Real production would use libp2p 0.54+ API properly
+// use libp2p::{...};
+// use futures::StreamExt;
 
 /// High-level dchat client
 pub struct Client {
@@ -12,6 +16,8 @@ pub struct Client {
     database: Arc<RwLock<Database>>,
     config: ClientConfig,
     connected: Arc<RwLock<bool>>,
+    // swarm: Arc<RwLock<Option<Swarm<Kademlia<MemoryStore>>>>>,  // Commented until libp2p properly integrated
+    noise_keypair: Arc<snow::Keypair>,
 }
 
 impl Client {
@@ -37,11 +43,21 @@ impl Client {
             .await
             .map_err(|e| SdkError::Storage(e.to_string()))?;
 
+        // Generate Noise Protocol keypair for message encryption
+        // Note: Ed25519 keypair conversion to Noise keypair would be done properly in production
+        // For now, we'll initialize Noise keypair separately when building sessions
+        let noise_keypair = Arc::new(snow::Keypair {
+            private: vec![0u8; 32],  // Placeholder - would derive from ed25519 key
+            public: vec![0u8; 32],   // Placeholder - would derive from ed25519 key
+        });
+
         Ok(Self {
             identity,
             database: Arc::new(RwLock::new(database)),
             config,
             connected: Arc::new(RwLock::new(false)),
+            // swarm: Arc::new(RwLock::new(None)),  // Commented until libp2p integrated
+            noise_keypair,
         })
     }
 
@@ -54,23 +70,10 @@ impl Client {
 
         tracing::info!("Connecting to dchat network");
         
-        // 1. Initialize libp2p swarm with configured transport (TCP + Noise + Yamux)
-        tracing::info!("Initializing libp2p swarm with Noise Protocol and Yamux multiplexing");
-        
-        // 2. Connect to bootstrap nodes from config
-        for peer_addr in &self.config.network.bootstrap_peers {
-            tracing::info!("Connecting to bootstrap peer: {}", peer_addr);
-            // In production: swarm.dial(peer_addr.parse()?)
-        }
-        
-        // 3. Start DHT discovery (Kademlia)
-        tracing::info!("Starting Kademlia DHT discovery");
-        // In production: swarm.behaviour_mut().kademlia.bootstrap()
-        
-        // 4. Begin listening for incoming connections
-        let listen_addr = format!("/ip4/0.0.0.0/tcp/{}", self.config.network.listen_port);
-        tracing::info!("Listening for incoming connections on: {}", listen_addr);
-        // In production: swarm.listen_on(listen_addr.parse()?)
+        // TODO: Implement proper libp2p 0.54+ integration
+        // The libp2p API has changed significantly - needs proper NetworkBehaviour trait implementation
+        // For now, this is a placeholder to allow compilation
+        tracing::warn!("libp2p swarm initialization not yet implemented - needs API version alignment");
         
         tracing::info!("Successfully connected to dchat network");
 
@@ -87,17 +90,8 @@ impl Client {
 
         tracing::info!("Disconnecting from dchat network");
         
-        // 1. Close all peer connections gracefully
-        tracing::info!("Closing peer connections");
-        // In production: for peer_id in swarm.connected_peers() { swarm.disconnect_peer_id(peer_id) }
-        
-        // 2. Stop listening on network interfaces
-        tracing::info!("Stopping network listeners");
-        // In production: swarm.remove_listener(listener_id)
-        
-        // 3. Shutdown libp2p swarm
-        tracing::info!("Shutting down libp2p swarm");
-        // In production: drop(swarm) or explicit shutdown
+        // TODO: Implement proper swarm cleanup when libp2p is integrated
+        tracing::warn!("Swarm disconnection not yet implemented");
         
         tracing::info!("Disconnected from dchat network");
 
@@ -140,23 +134,37 @@ impl Client {
         // Send to network
         tracing::info!("Sending message to network");
         
-        // 1. Encrypt message using Noise Protocol (NNpsk0 handshake pattern)
+        // 1. Encrypt message using Noise Protocol
         tracing::debug!("Encrypting message payload with Noise Protocol");
-        // In production: noise_session.write_message(&payload, &mut encrypted_payload)
+        let payload = serde_json::to_vec(&message.content)
+            .map_err(|e| SdkError::Message(format!("Serialization error: {}", e)))?;
         
-        // 2. Route through relay nodes or direct to recipient (DHT lookup first)
+        // Build Noise session (simplified - production would maintain persistent sessions)
+        let builder = snow::Builder::new("Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
+        let mut noise = builder
+            .local_private_key(&self.noise_keypair.private)
+            .build_initiator()
+            .map_err(|e| SdkError::Crypto(format!("Noise init failed: {}", e)))?;
+        
+        let mut encrypted_payload = vec![0u8; payload.len() + 1024]; // Extra space for Noise overhead
+        let len = noise
+            .write_message(&payload, &mut encrypted_payload)
+            .map_err(|e| SdkError::Crypto(format!("Encryption failed: {}", e)))?;
+        encrypted_payload.truncate(len);
+        
+        // TODO: Implement DHT routing when libp2p is integrated
         tracing::debug!("Looking up recipient in DHT: {}", recipient);
-        // In production: swarm.behaviour_mut().kademlia.get_closest_peers(recipient)
-        // Then send via: swarm.behaviour_mut().request_response.send_request(&peer_id, request)
+        tracing::warn!("DHT lookup not yet implemented - needs libp2p integration");
         
-        // 3. Submit message hash to blockchain for ordering (chat chain)
-        let message_hash = blake3::hash(&content.as_bytes());
-        tracing::debug!("Submitting message hash to blockchain: {}", message_hash);
-        // In production: blockchain_client.submit_message_order(message_hash, sequence_num)
+        // 3. Submit message hash to blockchain for ordering
+        let message_hash = blake3::hash(&payload);
+        tracing::debug!("Message hash for blockchain: {}", message_hash);
+        // Production: blockchain_client.submit_message_order(message_hash, sequence_num).await?
+        tracing::warn!("Blockchain submission not yet connected - message stored locally only");
         
-        // 4. Wait for delivery confirmation (proof-of-delivery from relay)
-        tracing::debug!("Awaiting delivery confirmation");
-        // In production: await delivery_receipt from relay node
+        // 4. Delivery confirmation (simplified - production uses relay proof-of-delivery)
+        tracing::debug!("Message encrypted and prepared for delivery");
+        // Production: await relay delivery receipt with cryptographic proof
 
         // Store locally
         let db = self.database.read().await;
@@ -206,21 +214,37 @@ impl Client {
             return Err(SdkError::NotConnected);
         }
 
-        // Fetch from network
-        // In production: incoming messages would be handled by libp2p event loop
-        // For sync/fetch model:
+        // Fetch from network via libp2p event loop
+        // Production implementation would run this continuously in background task:
+        // tokio::spawn(async move {
+        //     loop {
+        //         if let Some(swarm) = self.swarm.write().await.as_mut() {
+        //             match swarm.select_next_some().await {
+        //                 SwarmEvent::Behaviour(KademliaEvent::InboundRequest { request }) => {
+        //                     // Handle incoming message request
+        //                     let encrypted_payload = request.payload();
+        //                     
+        //                     // Decrypt using Noise Protocol
+        //                     let builder = snow::Builder::new("Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
+        //                     let mut noise = builder.build_responder().unwrap();
+        //                     let mut plaintext = vec![0u8; encrypted_payload.len()];
+        //                     let len = noise.read_message(encrypted_payload, &mut plaintext).unwrap();
+        //                     plaintext.truncate(len);
+        //                     
+        //                     // Verify blockchain sequence
+        //                     // blockchain_client.verify_message_sequence(message_id, expected_seq).await?
+        //                     
+        //                     // Store in database
+        //                     // db.insert_message(&message_row).await?
+        //                 }
+        //                 _ => {}
+        //             }
+        //         }
+        //     }
+        // });
         
-        // 1. Listen for incoming messages from libp2p (handled by swarm event loop)
-        // In production: match swarm.next().await { SwarmEvent::Behaviour(event) => ... }
-        
-        // 2. Decrypt using Noise Protocol
-        // In production: noise_session.read_message(&encrypted, &mut plaintext)
-        
-        // 3. Verify message ordering from blockchain (query chat chain)
-        tracing::debug!("Verifying message ordering from blockchain");
-        // In production: blockchain_client.verify_message_sequence(message_id, expected_seq)
-        
-        // 4. Store in local database (already implemented below)
+        tracing::debug!("Checking for new messages (event loop integration pending)");
+        // For now, return locally stored messages only
 
         let db = self.database.read().await;
         let message_rows = db

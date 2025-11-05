@@ -4,6 +4,11 @@ use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
 use libp2p::PeerId;
 use std::collections::HashMap;
+use x25519_dalek::{EphemeralSecret, PublicKey};
+use hkdf::Hkdf;
+use sha2::Sha256;
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::Aead};
+use rand::rngs::OsRng;
 
 /// Routing table for peer-to-user mapping
 pub struct RoutingTable {
@@ -201,40 +206,62 @@ impl OnionRouter {
 
     /// Encrypt message in layers (Sphinx-like)
     pub fn onion_encrypt(&self, message: &[u8], circuit: &[PeerId]) -> Result<Vec<u8>> {
-        use sha2::{Digest, Sha256};
 
         // Sphinx protocol implementation
         // 1. Start with plaintext message
         let mut payload = message.to_vec();
 
-        // 2. Layer encrypt for each hop in reverse order
+        // 2. Layer encrypt for each hop in reverse order with ECDH + ChaCha20Poly1305
         for peer in circuit.iter().rev() {
-            // Production: derive shared secret using ECDH (Elliptic Curve Diffie-Hellman)
-            // 1. Generate ephemeral X25519 private key: ephemeral_sk
-            // 2. Compute shared secret: ECDH(ephemeral_sk, peer_public_key)
-            // 3. Derive layer key: HKDF-SHA256(shared_secret, "sphinx-layer-key")
-            // 
-            // use x25519_dalek::{EphemeralSecret, PublicKey};
-            // let ephemeral_secret = EphemeralSecret::random_from_rng(&mut OsRng);
-            // let peer_public = PublicKey::from(peer.public_key_bytes());
-            // let shared_secret = ephemeral_secret.diffie_hellman(&peer_public);
-            // let layer_key = hkdf_sha256(&shared_secret.as_bytes(), b"sphinx-layer-key", 32);
+            // Production: proper ECDH-based forward-secure key derivation
+            // 1. Generate ephemeral X25519 private key
+            let ephemeral_secret = EphemeralSecret::random_from_rng(&mut OsRng);
             
-            // Placeholder: hash-based key derivation (REPLACE IN PRODUCTION)
-            let mut hasher = Sha256::new();
-            hasher.update(peer.to_bytes());
-            hasher.update(&payload);
-            let layer_key = hasher.finalize();
-
-            // Encrypt this layer (simplified - production uses ChaCha20)
-            for (i, byte) in payload.iter_mut().enumerate() {
-                *byte ^= layer_key[i % 32];
+            // 2. Derive peer's public key from PeerId (simplified - production uses actual peer public keys)
+            let peer_bytes = peer.to_bytes();
+            let mut peer_public_bytes = [0u8; 32];
+            if peer_bytes.len() >= 32 {
+                peer_public_bytes.copy_from_slice(&peer_bytes[..32]);
+            } else {
+                peer_public_bytes[..peer_bytes.len()].copy_from_slice(&peer_bytes);
             }
+            let peer_public = PublicKey::from(peer_public_bytes);
+            
+            // 3. Get ephemeral public key before computing DH (which consumes the secret)
+            let ephemeral_public = PublicKey::from(&ephemeral_secret);
+            
+            // 4. Compute ECDH shared secret (consumes ephemeral_secret)
+            let shared_secret = ephemeral_secret.diffie_hellman(&peer_public);
+            
+            // 5. Derive layer key using HKDF-SHA256
+            let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+            let mut layer_key = [0u8; 32];
+            hkdf.expand(b"dchat-onion-layer-key-v1", &mut layer_key)
+                .map_err(|_| Error::crypto("HKDF expansion failed"))?;
 
-            // Add routing information header
+            // 6. Encrypt this layer with ChaCha20Poly1305 AEAD
+            let cipher = ChaCha20Poly1305::new_from_slice(&layer_key)
+                .map_err(|_| Error::crypto("Invalid layer key"))?;
+            
+            // Generate unique random nonce for this layer (CRITICAL: never reuse nonces)
+            let mut nonce_bytes = [0u8; 12];
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut nonce_bytes);
+            let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&nonce_bytes);
+            
+            let ciphertext = cipher
+                .encrypt(nonce, payload.as_ref())
+                .map_err(|_| Error::crypto("Layer encryption failed"))?;
+            
+            // Prepend nonce to ciphertext (needed for decryption)
+            let mut layer_with_nonce = nonce_bytes.to_vec();
+            layer_with_nonce.extend_from_slice(&ciphertext);
+
+            // 7. Add routing information header (next hop + ephemeral public key)
             let mut next_payload = Vec::new();
             next_payload.extend_from_slice(&peer.to_bytes());
-            next_payload.extend_from_slice(&payload);
+            next_payload.extend_from_slice(ephemeral_public.as_bytes()); // Include ephemeral public key
+            next_payload.extend_from_slice(&layer_with_nonce); // Use layer_with_nonce instead of ciphertext
             payload = next_payload;
         }
 
@@ -243,26 +270,54 @@ impl OnionRouter {
 
     /// Decrypt one layer
     pub fn peel_layer(&self, onion: &[u8]) -> Result<(Vec<u8>, Option<PeerId>)> {
-        use sha2::{Digest, Sha256};
-
-        if onion.len() < 32 {
-            return Err(Error::network("Onion packet too small"));
+        // Production: proper ECDH-based decryption with relay's private key
+        
+        if onion.len() < 64 {
+            return Err(Error::network("Onion packet too small (need header + ephemeral key)"));
         }
 
-        // Extract next hop from header (first 32 bytes)
+        // Extract next hop (32 bytes) and ephemeral public key (32 bytes) from header
         let next_hop_bytes = &onion[..32];
-        let encrypted_payload = &onion[32..];
+        let ephemeral_public_bytes = &onion[32..64];
+        let encrypted_payload = &onion[64..];
 
-        // Derive decryption key (in production, use ECDH with own private key)
-        let mut hasher = Sha256::new();
-        hasher.update(next_hop_bytes);
-        let layer_key = hasher.finalize();
+        // Derive decryption key using ECDH with relay's private key
+        // TODO CRITICAL: Load relay's persistent X25519 private key from secure storage
+        // For now using ephemeral key - THIS BREAKS ONION ROUTING IN PRODUCTION
+        // Proper implementation requires:
+        // 1. Generate persistent X25519 keypair on relay initialization
+        // 2. Store private key in encrypted keystore (e.g., using age encryption)
+        // 3. Load key on relay startup: let relay_private = load_relay_keypair()?;
+        // 4. Public key must be published in relay discovery (DHT or blockchain)
+        let relay_private = EphemeralSecret::random_from_rng(&mut OsRng);
+        tracing::warn!("Using ephemeral relay key - onion routing will not work in production");
+        
+        let mut ephemeral_public_fixed = [0u8; 32];
+        ephemeral_public_fixed.copy_from_slice(ephemeral_public_bytes);
+        let ephemeral_public = PublicKey::from(ephemeral_public_fixed);
+        
+        let shared_secret = relay_private.diffie_hellman(&ephemeral_public);
+        
+        // Derive layer key with HKDF
+        let hkdf = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+        let mut layer_key = [0u8; 32];
+        hkdf.expand(b"dchat-onion-layer-key-v1", &mut layer_key)
+            .map_err(|_| Error::crypto("HKDF expansion failed"))?;
 
-        // Decrypt this layer
-        let mut payload = encrypted_payload.to_vec();
-        for (i, byte) in payload.iter_mut().enumerate() {
-            *byte ^= layer_key[i % 32];
+        // Decrypt this layer with ChaCha20Poly1305 AEAD
+        let cipher = ChaCha20Poly1305::new_from_slice(&layer_key)
+            .map_err(|_| Error::crypto("Invalid layer key for decryption"))?;
+        
+        // Extract nonce from packet (first 12 bytes of encrypted payload)
+        if encrypted_payload.len() < 12 {
+            return Err(Error::crypto("Encrypted payload too short for nonce"));
         }
+        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from_slice(&encrypted_payload[..12]);
+        let ciphertext = &encrypted_payload[12..]; // Actual ciphertext after nonce
+        
+        let payload = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| Error::crypto("Layer decryption failed - authentication tag mismatch"))?;
 
         // Determine if this is final hop or has next hop
         let next_hop = if next_hop_bytes.iter().all(|&b| b == 0) {

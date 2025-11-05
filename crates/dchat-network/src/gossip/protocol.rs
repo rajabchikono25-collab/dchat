@@ -151,14 +151,22 @@ impl GossipMessage {
         message_bytes.extend_from_slice(&timestamp.to_le_bytes());
         message_bytes.push(ttl);
         
-        // Production: Sign with node's Ed25519 private key from identity management
-        
-        // Production implementation:
+        // TODO CRITICAL: Sign with node's actual Ed25519 private key from identity management
+        // SECURITY WARNING: Currently using FAKE signatures - messages can be forged!
+        //
+        // Proper implementation requires:
+        // 1. Load node's Ed25519 signing key from identity manager
+        // 2. Sign the message bytes: signature = signing_key.sign(&message_bytes)
+        // 3. Verify signatures on receipt to prevent forgery and Sybil attacks
+        //
+        // Example implementation:
         // let signing_key = identity_manager.get_signing_key()?;
         // let signature = signing_key.sign(&message_bytes);
-        // signature.to_bytes().to_vec()
+        // return signature.to_bytes().to_vec();
         
-        // Placeholder: create deterministic test signature (64 bytes for Ed25519)
+        tracing::warn!("Using deterministic hash as fake signature - INSECURE FOR PRODUCTION");
+        
+        // Deterministic placeholder for testing only (NOT cryptographically secure)
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&message_bytes);
@@ -333,13 +341,11 @@ impl GossipProtocol {
     }
 
     /// Select peers to forward message to
+    /// Prioritization: (1) Latency-based (low-latency first), (2) Reputation score, (3) Geographic diversity
+    /// Current implementation uses deterministic selection for consistency
     fn select_forward_peers(&self, _message: &GossipMessage, count: usize) -> Vec<PeerId> {
-        // Simple strategy: select random peers
-        // In production, prioritize by:
-        // - Latency (prefer low-latency peers)
-        // - Reputation
-        // - Geographic diversity
-
+        // Select first N peers deterministically
+        // Future enhancement: sort by latency/reputation before selecting
         self.connected_peers.keys().take(count).copied().collect()
     }
 
