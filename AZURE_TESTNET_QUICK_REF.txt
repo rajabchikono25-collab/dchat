@@ -1,0 +1,186 @@
+╔════════════════════════════════════════════════════════════════════════╗
+║                                                                        ║
+║                  AZURE TESTNET - QUICK REFERENCE                      ║
+║                                                                        ║
+║                    3 Validators Across 3 Continents                   ║
+║                    India • South Africa • UAE                         ║
+║                                                                        ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ DEPLOYMENT COMMANDS                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Deploy to all Azure servers:
+    .\deploy-azure-testnet.ps1
+
+  Quick deploy (skip build):
+    .\deploy-azure-testnet.ps1 -SkipBuild
+
+  Check status only:
+    .\deploy-azure-testnet.ps1 -StatusOnly
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ MONITORING COMMANDS                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Real-time logs from all 3 servers:
+    .\monitor-azure-logs.ps1
+
+  Comprehensive connectivity test:
+    .\test-azure-connectivity.ps1
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ AZURE VALIDATORS                                                    │
+└─────────────────────────────────────────────────────────────────────┘
+
+  India (Mumbai)
+    IP: 74.225.183.196
+    Health: http://74.225.183.196/health
+    SSH: ssh -i Foundation-servers/Azure-India/uramami.pem azureuser@74.225.183.196
+
+  South Africa (Johannesburg)
+    IP: 4.221.211.71
+    Health: http://4.221.211.71/health
+    SSH: ssh -i Foundation-servers/Azure-SAfrica/anacreon.pem azureuser@4.221.211.71
+
+  UAE (Dubai)
+    IP: 4.161.34.228
+    Health: http://4.161.34.228/health
+    SSH: ssh -i Foundation-servers/Azure_UAE/Randal_key.pem azureuser@4.161.34.228
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ MANUAL SERVER MANAGEMENT                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Check service status:
+    sudo systemctl status dchat
+
+  View logs (last 50 lines):
+    sudo journalctl -u dchat -n 50
+
+  Follow logs in real-time:
+    sudo journalctl -u dchat -f
+
+  Restart service:
+    sudo systemctl restart dchat
+
+  Check block production:
+    sudo journalctl -u dchat | grep "Produced block"
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ TROUBLESHOOTING                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Service won't start:
+    1. sudo systemctl status dchat
+    2. sudo journalctl -u dchat -n 100
+    3. sudo chmod +x /opt/dchat/dchat
+    4. sudo systemctl restart dchat
+
+  No peers connecting:
+    1. sudo ufw status
+    2. sudo ufw allow 9090/tcp
+    3. cat /opt/dchat/config.toml | grep bootstrap_peers
+
+  Health endpoint not responding:
+    1. Wait 30 seconds (service starting)
+    2. sudo netstat -tlnp | grep :80
+    3. sudo systemctl restart dchat
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ PRE-MAINNET CHECKLIST                                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+  ☐ All 3 Azure validators running (.\deploy-azure-testnet.ps1 -StatusOnly)
+  ☐ Health endpoints return "healthy"
+  ☐ Block production active (check logs)
+  ☐ Validators have 6-7 peers each
+  ☐ No errors in logs (.\monitor-azure-logs.ps1)
+  ☐ Cross-region connectivity (Azure ↔ AWS)
+  ☐ Block heights synchronized
+  ☐ Test 24-48 hours of stability
+  ☐ Load testing completed
+  ☐ Rollback procedures tested
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ DEPLOYMENT WORKFLOW                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+  1. Build binary (in WSL):
+       cargo build --release --bin dchat
+       Takes ~3-5 minutes
+
+  2. Deploy to Azure:
+       .\deploy-azure-testnet.ps1
+       Deploys to all 3 servers
+
+  3. Verify health:
+       .\test-azure-connectivity.ps1
+       All tests should pass
+
+  4. Monitor stability:
+       .\monitor-azure-logs.ps1
+       Watch for blocks being produced
+
+  5. After 24-48 hours:
+       Deploy to AWS validators for full mainnet
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ KEY FILES                                                           │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Deployment Scripts:
+    • deploy-azure-testnet.ps1      - Main deployment script
+    • monitor-azure-logs.ps1        - Real-time log monitoring
+    • test-azure-connectivity.ps1   - Connectivity testing
+
+  Documentation:
+    • AZURE_TESTNET_README.md       - Full deployment guide
+    • VALIDATOR_DEPLOYMENT_SUCCESS.md - Previous deployment docs
+
+  SSH Keys:
+    • Foundation-servers/Azure-India/uramami.pem
+    • Foundation-servers/Azure-SAfrica/anacreon.pem
+    • Foundation-servers/Azure_UAE/Randal_key.pem
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ WHAT TO MONITOR                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Block Production:
+    • Should see "Produced block #XX" every 6-10 seconds
+    • All validators should be producing blocks
+
+  Peer Connections:
+    • Each validator should have 6-7 peers
+    • Look for "Connected to peer" messages
+
+  Errors to Watch For:
+    • Connection timeouts
+    • "Failed to produce block"
+    • Memory allocation errors
+    • Database errors
+
+  Performance:
+    • Memory: Should stay under 200 MB
+    • CPU: Should stay under 10%
+    • Block time: 5-10 seconds average
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ NEXT STEPS AFTER AZURE TESTNET SUCCESS                             │
+└─────────────────────────────────────────────────────────────────────┘
+
+  1. ✓ Azure testnet stable for 24-48 hours
+  2. → Deploy to AWS validators (Ohio, Singapore, Stockholm, São Paulo)
+  3. → Configure full 7-validator mesh network
+  4. → Set up monitoring & alerting (Prometheus + Grafana)
+  5. → Configure DNS for all validators
+  6. → Set up automated backups
+  7. → Launch mainnet! 🚀
+
+╔════════════════════════════════════════════════════════════════════════╗
+║                                                                        ║
+║  Ready to deploy? Run: .\deploy-azure-testnet.ps1                    ║
+║                                                                        ║
+╚════════════════════════════════════════════════════════════════════════╝

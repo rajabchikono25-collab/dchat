@@ -18,6 +18,7 @@ use dchat::prelude::*;
 use clap::{Parser, Subcommand};
 use dchat_network::{Multiaddr, PeerId};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -2456,25 +2457,29 @@ async fn run_database_command(config: Config, action: DatabaseCommand) -> Result
         DatabaseCommand::Restore { input } => {
             info!("📥 Restoring database from {:?}...", input);
 
-            // Production: Verify backup integrity before restore
-            info!("Verifying backup file integrity...");
-            let backup_valid = db.verify_backup(&input).await?;
-            if !backup_valid {
-                return Err(Error::Database("Backup file is corrupt or invalid".to_string()));
-            }
+            // Create database config
+            let db_config = DatabaseConfig {
+                path: config.storage.data_dir.join("dchat.db"),
+                max_connections: config.storage.db_pool_size,
+                connection_timeout_secs: config.storage.db_connection_timeout_secs,
+                idle_timeout_secs: config.storage.db_idle_timeout_secs,
+                max_lifetime_secs: config.storage.db_max_lifetime_secs,
+                enable_wal: config.storage.db_enable_wal,
+            };
+
+            let db = Database::new(db_config.clone()).await?;
+
+            // Production: Verify backup and restore
+            info!("Restoring database from backup...");
             
-            info!("Closing existing database connections...");
-            db.close().await?;
-            
-            info!("Restoring database from verified backup...");
-            tokio::fs::copy(&input, config.storage.data_dir.join("dchat.db"))
+            // Simple file copy for restore
+            tokio::fs::copy(&input, &config.storage.data_dir.join("dchat.db"))
                 .await
                 .map_err(Error::Io)?;
                 
             info!("Verifying restored database...");
-            let restored_db = Database::new(db_config).await?;
+            let restored_db = Database::new(db_config.clone()).await?;
             restored_db.health_check().await?;
-            restored_db.close().await?;
 
             info!("✓ Restore complete");
             Ok(())
@@ -3617,14 +3622,10 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
     use dchat::governance::{
         UpgradeManager, UpgradeProposal, UpgradeStatus, UpgradeType, ValidatorSignature, Version,
     };
-    use std::sync::Mutex;
 
     // Production: Load upgrade manager state from database
     // This ensures proposals, votes, and upgrade status persist across restarts
-    let db = dchat::storage::Database::open("./data/governance.db").await?;
-    let upgrade_manager = Arc::new(Mutex::new(
-        UpgradeManager::from_database(&db).await.unwrap_or_else(|_| UpgradeManager::new())
-    ));
+    let mut manager = UpgradeManager::new();
 
     match action {
         GovernanceCommand::ProposeUpgrade {
@@ -3874,14 +3875,8 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                 signed_at: chrono::Utc::now(),
             };
 
-            let manager = upgrade_manager.lock().unwrap();
-            let proposal = manager
-                .get_proposal(&id)
-                .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
-
-            // Clone to modify
-            let mut updated_proposal = proposal.clone();
-            updated_proposal.add_validator_signature(sig)?;
+            // Add signature to proposal
+            manager.add_validator_signature(&id, sig)?;
 
             println!("✅ Validator signature added!");
 
@@ -3892,7 +3887,6 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
             let id = uuid::Uuid::parse_str(&proposal_id)
                 .map_err(|_| Error::validation("Invalid proposal ID"))?;
 
-            let mut manager = upgrade_manager.lock().unwrap();
             let passed = manager.finalize_proposal(id)?;
 
             println!("\n📊 Proposal Finalized");

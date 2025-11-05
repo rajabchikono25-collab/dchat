@@ -115,11 +115,23 @@ impl NetworkManager {
         // Bootstrap DHT with known peers
         let bootstrap_nodes = self.discovery.bootstrap_nodes();
         if !bootstrap_nodes.is_empty() {
+            tracing::info!(
+                "📡 Configuring {} bootstrap peers from config",
+                bootstrap_nodes.len()
+            );
+            
             for (peer_id, addr) in bootstrap_nodes {
+                tracing::info!("  → Bootstrap peer: {} at {}", peer_id, addr);
                 self.swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(peer_id, addr.clone());
+                    .add_address(*peer_id, addr.clone());
+                
+                // Actively dial each bootstrap peer
+                match self.swarm.dial(addr.clone()) {
+                    Ok(_) => tracing::debug!("Dialing bootstrap peer: {}", peer_id),
+                    Err(e) => tracing::warn!("Failed to dial bootstrap peer {}: {}", peer_id, e),
+                }
             }
 
             // Bootstrap the DHT with configured bootstrap nodes
@@ -129,7 +141,7 @@ impl NetworkManager {
                 .bootstrap()
                 .map_err(|e| Error::network(format!("DHT bootstrap failed: {}", e)))?;
             tracing::info!(
-                "DHT bootstrapped with {} bootstrap nodes",
+                "✓ DHT bootstrapped with {} bootstrap nodes",
                 bootstrap_nodes.len()
             );
         } else {
