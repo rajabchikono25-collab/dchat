@@ -148,6 +148,26 @@ impl Database {
         }
     }
 
+    /// List all users
+    pub async fn list_all_users(&self) -> Result<Vec<UserRow>> {
+        let rows = sqlx::query("SELECT * FROM users ORDER BY created_at DESC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to list users: {}", e)))?;
+
+        let users = rows
+            .iter()
+            .map(|row| UserRow {
+                id: row.get("id"),
+                username: row.get("username"),
+                public_key: row.get("public_key"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
+
+        Ok(users)
+    }
+
     /// Insert a message
     pub async fn insert_message(&self, message: &MessageRow) -> Result<()> {
         sqlx::query(

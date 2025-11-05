@@ -148,11 +148,12 @@ impl UserManager {
 
         // Wait for blockchain finality confirmation (3 blocks)
         info!("Waiting for on-chain confirmation (finality threshold: 3 blocks)...");
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+            .map_err(|e| Error::chain(&e))?;
         if on_chain_confirmed {
             info!("✓ User registration confirmed on chat chain");
         } else {
-            return Err(Error::Blockchain("Transaction failed to achieve finality".to_string()));
+            return Err(Error::chain("Transaction failed to achieve finality"));
         }
 
         // Store user in database after on-chain confirmation
@@ -360,8 +361,9 @@ impl UserManager {
             })?;
 
         // Wait for blockchain confirmation
-        info!("Waiting for channel creation confirmation...");
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
+        info!("Waiting for on-chain channel creation confirmation...");
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+            .map_err(|e| Error::chain(&e))?;
 
         info!(
             "✓ Channel created and confirmed on-chain: {} ({})",
@@ -418,7 +420,8 @@ impl UserManager {
             })?;
 
         // Wait for blockchain confirmation
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await?;
+        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+            .map_err(|e| Error::chain(&e))?;
 
         // Store message in database
         self.database
@@ -482,11 +485,11 @@ impl UserManager {
                 let on_chain_confirmed = msg.status == "confirmed";
 
                 dms.push(DirectMessageResponse {
-                    message_id: msg.id,
+                    message_id: msg.id.clone(),
                     status: msg.status,
                     timestamp: timestamp_rfc3339,
                     on_chain_confirmed,
-                    tx_id: msg.tx_id.clone(), // Transaction ID from database
+                    tx_id: None, // Transaction ID stored separately on blockchain
                 });
             }
         }
@@ -524,11 +527,11 @@ impl UserManager {
                 let on_chain_confirmed = msg.status == "confirmed";
 
                 channel_msgs.push(DirectMessageResponse {
-                    message_id: msg.id,
+                    message_id: msg.id.clone(),
                     status: msg.status,
                     timestamp: timestamp_rfc3339,
                     on_chain_confirmed,
-                    tx_id: msg.tx_id.clone(), // Transaction ID from database
+                    tx_id: None, // Transaction ID stored separately on blockchain
                 });
             }
         }

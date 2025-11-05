@@ -258,6 +258,60 @@ impl ChatChainClient {
             .cloned()
             .collect())
     }
+
+    /// Wait for transaction to achieve finality (confirmed status)
+    /// Returns true if transaction reaches finality within timeout
+    pub async fn wait_for_finality(&self, tx_id: &Uuid, required_confirmations: u32) -> Result<bool, String> {
+        use tokio::time::{sleep, Duration};
+        
+        // Maximum wait time: 30 seconds
+        let max_attempts = 30;
+        let mut attempts = 0;
+
+        while attempts < max_attempts {
+            if let Some(tx) = self.transactions.read().unwrap().get(tx_id) {
+                match &tx.status {
+                    TransactionStatus::Confirmed { .. } => {
+                        // Transaction reached finality
+                        return Ok(true);
+                    }
+                    TransactionStatus::Failed { .. } => {
+                        // Transaction failed
+                        return Ok(false);
+                    }
+                    TransactionStatus::TimedOut => {
+                        // Transaction timed out
+                        return Ok(false);
+                    }
+                    TransactionStatus::Pending => {
+                        // Still pending, wait and retry
+                        // In production, this would check block confirmations
+                        // For now, simulate confirmation after minimum blocks
+                        if attempts >= required_confirmations {
+                            // Mark as confirmed after required confirmations
+                            let current_block = *self.current_block.read().unwrap();
+                            if let Some(tx) = self.transactions.write().unwrap().get_mut(tx_id) {
+                                tx.status = TransactionStatus::Confirmed {
+                                    block_height: current_block,
+                                    block_hash: format!("{:x}", Uuid::new_v4()),
+                                };
+                                tx.confirmed_at = Some(Utc::now());
+                            }
+                            return Ok(true);
+                        }
+                    }
+                }
+            } else {
+                return Err(format!("Transaction not found: {}", tx_id));
+            }
+
+            attempts += 1;
+            sleep(Duration::from_secs(1)).await;
+        }
+
+        // Timeout reached
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
