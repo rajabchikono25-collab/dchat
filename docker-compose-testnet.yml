@@ -1175,6 +1175,283 @@ services:
       - dchat-testnet
     restart: unless-stopped
 
+  # ============================================================================
+  # STORAGE: MinIO Object Storage (S3-compatible)
+  # ============================================================================
+  minio:
+    image: quay.io/minio/aistor/minio:latest
+    container_name: dchat-minio
+    hostname: minio.dchat.local
+    environment:
+      - MINIO_ROOT_USER=dchat_admin
+      - MINIO_ROOT_PASSWORD=dchat_secure_password_change_me
+      - MINIO_DOMAIN=minio.dchat.local
+      - MINIO_SERVER_URL=http://minio:9000
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio_data:/data
+    networks:
+      - dchat-testnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # MinIO Client - Initialize buckets
+  minio-init:
+    image: quay.io/minio/aistor/mc:latest
+    container_name: dchat-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for MinIO to be ready...';
+      sleep 5;
+      mc alias set dchat http://minio:9000 dchat_admin dchat_secure_password_change_me;
+      mc mb dchat/dchat-testnet --ignore-existing;
+      mc mb dchat/dchat-media --ignore-existing;
+      mc mb dchat/dchat-attachments --ignore-existing;
+      mc mb dchat/dchat-backups --ignore-existing;
+      mc mb dchat/dchat-avatars --ignore-existing;
+      mc mb dchat/dchat-channels --ignore-existing;
+      mc anonymous set download dchat/dchat-media;
+      mc anonymous set download dchat/dchat-avatars;
+      echo 'MinIO buckets created successfully';
+      exit 0;
+      "
+    networks:
+      - dchat-testnet
+
+  # ============================================================================
+  # REDIS: In-Memory Cache and Session Store
+  # ============================================================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: dchat-redis
+    hostname: redis.dchat.local
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - redis_data:/data
+    networks:
+      - dchat-testnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # TIKV: Distributed Key-Value Storage
+  # ============================================================================
+  
+  # PD (Placement Driver) - Cluster 1
+  pd1:
+    image: pingcap/pd:latest
+    container_name: dchat-pd1
+    hostname: pd1.dchat.local
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    command:
+      - --name=pd1
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd1:2379
+      - --advertise-peer-urls=http://pd1:2380
+      - --initial-cluster=pd1=http://pd1:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --log-level=info
+    volumes:
+      - pd1_data:/data
+    networks:
+      - dchat-testnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:2379/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # PD Cluster 2
+  pd2:
+    image: pingcap/pd:latest
+    container_name: dchat-pd2
+    hostname: pd2.dchat.local
+    ports:
+      - "2381:2379"
+      - "2382:2380"
+    command:
+      - --name=pd2
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd2:2379
+      - --advertise-peer-urls=http://pd2:2380
+      - --initial-cluster=pd1=http://pd1:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --log-level=info
+    volumes:
+      - pd2_data:/data
+    networks:
+      - dchat-testnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:2379/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # PD Cluster 3
+  pd3:
+    image: pingcap/pd:latest
+    container_name: dchat-pd3
+    hostname: pd3.dchat.local
+    ports:
+      - "2383:2379"
+      - "2384:2380"
+    command:
+      - --name=pd3
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd3:2379
+      - --advertise-peer-urls=http://pd3:2380
+      - --initial-cluster=pd1=http://pd1:2380,pd2=http://pd2:2380,pd3=http://pd3:2380
+      - --log-level=info
+    volumes:
+      - pd3_data:/data
+    networks:
+      - dchat-testnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:2379/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # TiKV Node 1
+  tikv1:
+    image: pingcap/tikv:latest
+    container_name: dchat-tikv1
+    hostname: tikv1.dchat.local
+    ports:
+      - "20160:20160"
+      - "20180:20180"
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv1:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/data/tikv
+      - --pd=http://pd1:2379,http://pd2:2379,http://pd3:2379
+      - --log-level=info
+    volumes:
+      - tikv1_data:/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      pd1:
+        condition: service_healthy
+      pd2:
+        condition: service_healthy
+      pd3:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:20180/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # TiKV Node 2
+  tikv2:
+    image: pingcap/tikv:latest
+    container_name: dchat-tikv2
+    hostname: tikv2.dchat.local
+    ports:
+      - "20161:20160"
+      - "20181:20180"
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv2:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/data/tikv
+      - --pd=http://pd1:2379,http://pd2:2379,http://pd3:2379
+      - --log-level=info
+    volumes:
+      - tikv2_data:/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      pd1:
+        condition: service_healthy
+      pd2:
+        condition: service_healthy
+      pd3:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:20180/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # TiKV Node 3
+  tikv3:
+    image: pingcap/tikv:latest
+    container_name: dchat-tikv3
+    hostname: tikv3.dchat.local
+    ports:
+      - "20162:20160"
+      - "20182:20180"
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv3:20160
+      - --status-addr=0.0.0.0:20180
+      - --data-dir=/data/tikv
+      - --pd=http://pd1:2379,http://pd2:2379,http://pd3:2379
+      - --log-level=info
+    volumes:
+      - tikv3_data:/data
+    networks:
+      - dchat-testnet
+    depends_on:
+      pd1:
+        condition: service_healthy
+      pd2:
+        condition: service_healthy
+      pd3:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:20180/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   # Validators
   validator1_data:
@@ -1219,6 +1496,18 @@ volumes:
   # Monitoring
   prometheus_data:
   grafana_data:
+  
+  # Storage
+  minio_data:
+  redis_data:
+  
+  # TiKV Storage
+  pd1_data:
+  pd2_data:
+  pd3_data:
+  tikv1_data:
+  tikv2_data:
+  tikv3_data:
 
 networks:
   dchat-testnet:

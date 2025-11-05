@@ -1,0 +1,18 @@
+# Terraform Variables
+# Copy this to terraform.tfvars and fill in your values
+
+# SSH public key for server access
+# Generate with: ssh-keygen -t ed25519 -C "dchat-validator"
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx dchat-validator"
+
+# MinIO root password (change this!)
+minio_root_password = "CHANGE_ME_SECURE_PASSWORD_MIN_8_CHARS"
+
+# Redis password for production (optional, leave empty for no auth in dev)
+redis_password = ""
+
+# CockroachDB connection string (already configured)
+cockroachdb_connection_string = "postgresql://rajab:sLiaFpvhwzPSBEnvBoc2jg@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full"
+
+# Domain for validators
+domain = "schikuno.top"

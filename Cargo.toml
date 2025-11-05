@@ -137,6 +137,9 @@ quinn = "0.11"  # QUIC
 # Storage
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 rocksdb = "0.22"
+minio = "0.1"  # MinIO S3-compatible object storage
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }  # Redis in-memory cache
+tikv-client = "0.3"  # TiKV distributed key-value store
 
 # Blockchain
 substrate-primitives = "0.9"

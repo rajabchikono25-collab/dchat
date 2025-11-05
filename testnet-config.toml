@@ -17,6 +17,7 @@ enable_upnp = true
 
 [storage]
 data_dir = "./dchat_testnet_data"
+database_url = "postgresql://rajab:sLiaFpvhwzPSBEnvBoc2jg@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full"
 max_message_cache_size = 50000
 message_retention_days = 90
 enable_backup = true
@@ -28,6 +29,61 @@ db_connection_timeout_secs = 30
 db_idle_timeout_secs = 600
 db_max_lifetime_secs = 1800
 db_enable_wal = true
+
+# MinIO Object Storage (S3-compatible)
+[storage.minio]
+endpoint = "http://localhost:9000"  # Use "http://minio:9000" in Docker
+access_key = "dchat_admin"
+secret_key = "dchat_secure_password_change_me"
+region = "us-east-1"
+use_ssl = false  # Set to true for HTTPS in production
+
+# Bucket configuration for different content types
+[storage.buckets]
+default = "dchat-testnet"          # Default storage bucket
+media = "dchat-media"              # Images, videos, voice messages
+attachments = "dchat-attachments"  # File uploads and documents
+backups = "dchat-backups"          # Database and state backups
+avatars = "dchat-avatars"          # User profile pictures
+channels = "dchat-channels"        # Channel assets and media
+
+# Redis In-Memory Cache (On-Premises)
+[storage.redis]
+url = "redis://localhost:6379"  # Use "redis://redis:6379" in Docker
+pool_size = 20
+connection_timeout_secs = 5
+command_timeout_secs = 3
+max_retries = 3
+
+# Data usage patterns
+# - Channel metadata cache (frequently accessed)
+# - User online status (real-time presence)
+# - Rate limiting counters (API throttling)
+# - Session tokens (temporary authentication)
+# - Message delivery queues (pending messages)
+# - Relay node discovery cache (network topology)
+# - Recently active users list (activity feed)
+
+# TiKV Distributed Key-Value Store
+[storage.tikv]
+# PD (Placement Driver) endpoints - use multiple for high availability
+pd_endpoints = [
+    "http://localhost:2379",  # Use "http://pd1:2379" in Docker
+    "http://localhost:2381",  # Use "http://pd2:2379" in Docker
+    "http://localhost:2383"   # Use "http://pd3:2379" in Docker
+]
+
+# Connection settings
+timeout_secs = 10
+keepalive_secs = 30
+max_retries = 3
+
+# Data usage patterns
+# - User sessions and presence state (ephemeral, high-write)
+# - Message sequence numbers and ordering (consistent reads)
+# - Channel membership cache (low-latency reads)
+# - Distributed locks for consensus operations
+# - Relay node reputation scores (frequent updates)
 
 [crypto]
 key_rotation_interval_hours = 168  # 1 week

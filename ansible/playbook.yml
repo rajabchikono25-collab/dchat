@@ -1,0 +1,261 @@
+# dchat Ansible Playbook
+# Deploys dchat validators and storage services to 7 regional servers
+
+---
+- name: Deploy dchat Foundation Infrastructure
+  hosts: validators
+  become: yes
+  vars:
+    dchat_user: dchat
+    minio_root_user: dchat_admin
+    minio_root_password: "{{ lookup('env', 'MINIO_ROOT_PASSWORD') | default('CHANGE_ME_SECURE_PASSWORD', true) }}"
+    redis_password: "{{ lookup('env', 'REDIS_PASSWORD') | default('', true) }}"
+    cockroachdb_connection: "{{ lookup('env', 'COCKROACHDB_CONNECTION') | default('postgresql://rajab:sLiaFpvhwzPSBEnvBoc2jg@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full', true) }}"
+    docker_compose_version: "2.23.0"
+    
+  tasks:
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Update /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ inventory_hostname }}"
+        state: present
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - git
+          - vim
+          - htop
+          - net-tools
+          - jq
+          - ufw
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Install Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-{{ ansible_system }}-{{ ansible_architecture }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Create symlink for docker-compose
+      file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+
+    - name: Create dchat user
+      user:
+        name: "{{ dchat_user }}"
+        shell: /bin/bash
+        create_home: yes
+        groups: docker
+        append: yes
+
+    - name: Create data directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ dchat_user }}"
+        group: "{{ dchat_user }}"
+        mode: '0755'
+      loop:
+        - /opt/redis/data
+        - /opt/minio/data
+        - /opt/tikv/data
+        - /opt/tikv/pd
+        - /opt/dchat/data
+        - /home/{{ dchat_user }}/dchat
+
+    - name: Deploy Redis container
+      docker_container:
+        name: redis
+        image: redis:7-alpine
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "6379:6379"
+        volumes:
+          - /opt/redis/data:/data
+        command: >
+          redis-server
+          --appendonly yes
+          --maxmemory 2gb
+          --maxmemory-policy allkeys-lru
+          {% if redis_password %}--requirepass {{ redis_password }}{% endif %}
+
+    - name: Deploy MinIO container
+      docker_container:
+        name: minio
+        image: quay.io/minio/aistor/minio:latest
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "9000:9000"
+          - "9001:9001"
+        volumes:
+          - /opt/minio/data:/data
+        env:
+          MINIO_ROOT_USER: "{{ minio_root_user }}"
+          MINIO_ROOT_PASSWORD: "{{ minio_root_password }}"
+        command: server /data --console-address ":9001"
+
+    - name: Wait for MinIO to start
+      wait_for:
+        port: 9000
+        delay: 5
+        timeout: 60
+
+    - name: Create MinIO buckets
+      docker_container:
+        name: minio-bucket-setup
+        image: quay.io/minio/mc:latest
+        state: started
+        detach: no
+        cleanup: yes
+        network_mode: host
+        env:
+          MINIO_ROOT_USER: "{{ minio_root_user }}"
+          MINIO_ROOT_PASSWORD: "{{ minio_root_password }}"
+        command: >
+          /bin/sh -c "
+          mc alias set dchat http://localhost:9000 {{ minio_root_user }} {{ minio_root_password }} &&
+          mc mb --ignore-existing dchat/dchat-testnet &&
+          mc mb --ignore-existing dchat/dchat-media &&
+          mc mb --ignore-existing dchat/dchat-attachments &&
+          mc mb --ignore-existing dchat/dchat-backups &&
+          mc mb --ignore-existing dchat/dchat-avatars &&
+          mc mb --ignore-existing dchat/dchat-channels
+          "
+
+    - name: Create dchat configuration file
+      template:
+        src: templates/config.toml.j2
+        dest: /home/{{ dchat_user }}/dchat/config.toml
+        owner: "{{ dchat_user }}"
+        group: "{{ dchat_user }}"
+        mode: '0600'
+
+    - name: Configure UFW firewall
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        comment: "{{ item.comment }}"
+      loop:
+        - { port: '22', proto: 'tcp', comment: 'SSH' }
+        - { port: '7070', proto: 'tcp', comment: 'dchat P2P TCP' }
+        - { port: '7070', proto: 'udp', comment: 'dchat P2P UDP/QUIC' }
+        - { port: '8080', proto: 'tcp', comment: 'Health Check' }
+        - { port: '9090', proto: 'tcp', comment: 'Prometheus Metrics' }
+        - { port: '26656', proto: 'tcp', comment: 'Tendermint P2P' }
+        - { port: '9001', proto: 'tcp', comment: 'MinIO Console' }
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    - name: Allow outgoing traffic
+      ufw:
+        state: enabled
+        policy: allow
+        direction: outgoing
+
+    - name: Create status script
+      copy:
+        dest: /home/{{ dchat_user }}/status.sh
+        owner: "{{ dchat_user }}"
+        group: "{{ dchat_user }}"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          echo "=== dchat Validator Status ==="
+          echo ""
+          echo "Hostname: $(hostname)"
+          echo "Region: {{ region }}"
+          echo ""
+          echo "=== Docker Containers ==="
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo ""
+          echo "=== Storage Services ==="
+          echo -n "Redis: "
+          if docker exec redis redis-cli ping 2>/dev/null | grep -q PONG; then
+              echo "✅ Running"
+          else
+              echo "❌ Not responding"
+          fi
+          echo -n "MinIO: "
+          if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "✅ Running"
+          else
+              echo "❌ Not responding"
+          fi
+          echo ""
+          echo "=== System Resources ==="
+          echo "CPU Load: $(uptime | awk -F'load average:' '{print $2}')"
+          echo "Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+          echo "Disk: $(df -h / | tail -1 | awk '{print $3 "/" $2 " (" $5 " used)"}')"
+          echo ""
+          echo "=== Network ==="
+          ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1
+
+    - name: Display completion message
+      debug:
+        msg:
+          - "================================================"
+          - "dchat Validator Deployment Complete!"
+          - "================================================"
+          - "Hostname: {{ inventory_hostname }}"
+          - "Region: {{ region }}"
+          - ""
+          - "Services Deployed:"
+          - "  - Redis (port 6379)"
+          - "  - MinIO (ports 9000, 9001)"
+          - ""
+          - "Run './status.sh' to check system status"
+          - "================================================"

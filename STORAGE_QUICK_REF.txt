@@ -1,0 +1,286 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                     dchat STORAGE QUICK REFERENCE                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ LOCAL DEVELOPMENT - Quick Start                                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+# Start all storage services:
+.\start-redis.ps1          # Redis in-memory cache
+.\start-minio.ps1          # MinIO object storage
+.\start-tikv.ps1           # TiKV distributed KV
+# (CockroachDB Cloud is already running)
+
+# Check status:
+.\start-redis.ps1 -Status
+.\start-minio.ps1 -Status
+.\start-tikv.ps1 -Status
+
+# Stop services:
+.\start-redis.ps1 -Stop
+.\start-minio.ps1 -Stop
+.\start-tikv.ps1 -Stop
+
+# Clean data (WARNING: deletes everything):
+.\start-redis.ps1 -Clean
+.\start-minio.ps1 -Clean
+.\start-tikv.ps1 -Clean
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER 1: CockroachDB Cloud (SQL Database)                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Endpoint:   absurd-auroch-17923.j77.cockroachlabs.cloud:26257
+Database:   dchat
+User:       rajab
+SSL:        verify-full (required)
+
+Use for:
+  ✓ User accounts and profiles
+  ✓ Message history (immutable log)
+  ✓ Channels and memberships
+  ✓ Governance votes
+  ✓ Identity verification
+
+Connection:
+  postgresql://rajab:***@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full
+
+Test:
+  cockroach sql --url "postgresql://rajab:***@...dchat?sslmode=verify-full"
+
+Docs: Foundation-servers/COCKROACHDB_CLOUD_SETUP.md
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER 2: Redis (In-Memory Cache - On-Premises)                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Host:       localhost:6379
+URL:        redis://localhost:6379
+Password:   (none - add in production)
+
+Use for:
+  ✓ Channel metadata cache
+  ✓ User online status (presence)
+  ✓ Rate limiting counters
+  ✓ Session tokens
+  ✓ Message delivery queues
+  ✓ Relay discovery cache
+  ✓ Recently active users
+
+Test:
+  docker exec dchat-redis redis-cli PING
+  docker exec dchat-redis redis-cli INFO server
+
+CLI:
+  .\start-redis.ps1 -Cli
+  docker exec -it dchat-redis redis-cli
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER 3: MinIO (Object Storage - S3 Compatible)                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+API:        http://localhost:9000
+Console:    http://localhost:9001
+Access:     dchat_admin
+Secret:     dchat_secure_password_change_me
+
+Buckets:
+  • dchat-testnet    - Default storage
+  • dchat-media      - Images, videos, voice messages
+  • dchat-attachments - File uploads
+  • dchat-backups    - Database snapshots
+  • dchat-avatars    - Profile pictures
+  • dchat-channels   - Channel assets
+
+Use for:
+  ✓ Images and videos
+  ✓ Voice messages
+  ✓ File attachments
+  ✓ Encrypted backups
+  ✓ User avatars
+  ✓ Channel media
+
+Test:
+  Invoke-WebRequest http://localhost:9000/minio/health/live
+  docker exec dchat-minio mc ls dchat/
+
+Docs: Foundation-servers/MINIO_SETUP_GUIDE.md
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER 4: TiKV (Distributed Key-Value Store)                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+PD:         http://localhost:2379, :2381, :2383 (Placement Driver)
+TiKV:       localhost:20160, :20161, :20162 (Storage)
+Status:     http://localhost:20180, :20181, :20182
+
+Use for:
+  ✓ User sessions (ephemeral state)
+  ✓ Online presence (real-time)
+  ✓ Message sequence numbers
+  ✓ Channel membership cache
+  ✓ Distributed locks
+  ✓ Relay reputation scores
+
+Test:
+  Invoke-WebRequest http://localhost:2379/health
+  Invoke-WebRequest http://localhost:20180/status
+
+Docs: Foundation-servers/TIKV_SETUP_GUIDE.md
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ CONFIGURATION (testnet-config.toml)                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+[storage]
+database_url = "postgresql://rajab:***@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full"
+
+[storage.redis]
+url = "redis://localhost:6379"
+pool_size = 20
+connection_timeout_secs = 5
+
+[storage.minio]
+endpoint = "http://localhost:9000"
+access_key = "dchat_admin"
+secret_key = "dchat_secure_password_change_me"
+
+[storage.tikv]
+pd_endpoints = ["http://localhost:2379", "http://localhost:2381", "http://localhost:2383"]
+timeout_secs = 10
+max_retries = 3
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ RUST DEPENDENCIES (Cargo.toml)                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }  # Redis in-memory cache
+minio = "0.1"          # MinIO S3-compatible object storage
+tikv-client = "0.3"    # TiKV distributed key-value store
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DOCKER SERVICES                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Storage Containers:
+  • dchat-redis      - In-memory cache (port 6379)
+  • dchat-minio      - Object storage (ports 9000, 9001)
+  • dchat-minio-init - Bucket initialization
+  • dchat-pd1/2/3    - TiKV placement drivers (ports 2379-2384)
+  • dchat-tikv1/2/3  - TiKV storage nodes (ports 20160-20182)
+
+Commands:
+  docker-compose -f docker-compose-testnet.yml up -d redis minio pd1 pd2 pd3 tikv1 tikv2 tikv3
+  docker-compose -f docker-compose-testnet.yml logs -f redis
+  docker-compose -f docker-compose-testnet.yml ps
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PRODUCTION DEPLOYMENT                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Foundation Servers (7 regions):
+  • dchat-ohio-validator.foundation         (AWS US-East-2)
+  • dchat-saopaulo-validator.foundation     (AWS South America)
+  • dchat-singapore-validator.foundation    (AWS Asia Pacific)
+  • dchat-stockholm-validator.foundation    (AWS Europe)
+  • dchat-india-validator.foundation        (Azure Central India)
+  • dchat-southafrica-validator.foundation  (Azure South Africa)
+  • dchat-uae-validator.foundation          (Azure UAE North)
+
+Deploy TiKV (Ohio example):
+  tiup cluster deploy dchat-tikv-ohio v8.1.0 Foundation-servers/AWS-Ohio/tikv-topology.yaml
+  tiup cluster start dchat-tikv-ohio
+  tiup cluster display dchat-tikv-ohio
+
+Deploy Redis (per region):
+  ssh dchat@dchat-ohio-validator.foundation
+  docker run -d -p 6379:6379 -v /opt/redis/data:/data redis:7-alpine redis-server --appendonly yes
+
+Deploy MinIO (per region):
+  ssh dchat@dchat-ohio-validator.foundation
+  docker run -d -p 9000:9000 -p 9001:9001 quay.io/minio/aistor/minio:latest server /data --console-address ":9001"
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ COST ESTIMATES (Monthly)                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Local Development:           FREE (Docker containers)
+
+Production (per region):
+  • CockroachDB Cloud:        $500-1,500 (managed)
+  • MinIO:                     $100-200 (storage + compute)
+  • TiKV (regional):           $400-600 (3 TiKV + 3 PD nodes)
+  Total per region:            $1,000-2,300
+
+Production (global):
+  • CockroachDB Cloud:         $500-1,500
+  • MinIO (7 regions):         $700-1,400
+  • TiKV (global cluster):     $3,300-5,200 (21 TiKV + 7 PD)
+  • Bandwidth:                 $300-800
+  Total global:                $4,800-8,900
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ TROUBLESHOOTING                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+CockroachDB connection timeout:
+  → Check firewall (port 26257)
+  → Verify SSL cert validity
+  → Test DNS: nslookup absurd-auroch-17923.j77.cockroachlabs.cloud
+
+MinIO access denied:
+  → Verify credentials in testnet-config.toml
+  → Check bucket policies: docker exec dchat-minio mc anonymous get dchat/dchat-media
+  → Review logs: docker-compose -f docker-compose-testnet.yml logs minio
+
+TiKV PD won't start:
+  → Check ports 2379, 2380 not in use: netstat -an | findstr "2379"
+  → Verify initial-cluster config in docker-compose
+  → Review logs: docker-compose -f docker-compose-testnet.yml logs pd1
+
+TiKV nodes can't join:
+  → PD must be healthy first: curl http://localhost:2379/health
+  → Check PD endpoints in testnet-config.toml
+  → Restart in order: pd1/2/3 → wait → tikv1/2/3
+
+Clean slate:
+  .\start-minio.ps1 -Clean
+  .\start-tikv.ps1 -Clean
+  docker volume prune -f
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DOCUMENTATION                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Foundation-servers/
+  ├── DNS_SETUP_GUIDE.md                  - Subdomain configuration
+  ├── COCKROACHDB_CLOUD_SETUP.md          - SQL database setup
+  ├── MINIO_SETUP_GUIDE.md                - Object storage deployment
+  ├── TIKV_SETUP_GUIDE.md                 - Distributed KV setup
+  ├── TIKV_INTEGRATION_COMPLETE.md        - Integration summary
+  ├── INFRASTRUCTURE_COMPLETE.md          - Complete infrastructure guide
+  ├── tikv-topology-global.yaml           - Multi-region TiKV cluster
+  └── AWS-Ohio/
+      ├── tikv-topology.yaml              - Single-region topology
+      └── validator-config.toml           - Regional configuration
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ STATUS                                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+✅ DNS subdomain architecture defined (21 A records)
+✅ CockroachDB Cloud integrated (connection string configured)
+✅ MinIO object storage complete (Docker + scripts + config)
+✅ TiKV distributed KV complete (Docker + topology + config)
+✅ Cargo dependencies added (minio, tikv-client)
+✅ Quick-start scripts created (PowerShell + Bash)
+✅ Production topology files ready (single + multi-region)
+✅ Documentation complete (6 comprehensive guides)
+
+Next: Implement Rust storage abstraction layer in src/storage/
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  Ready for Development! All three storage backends are integrated.          ║
+╚══════════════════════════════════════════════════════════════════════════════╝

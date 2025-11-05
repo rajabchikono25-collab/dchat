@@ -1852,7 +1852,7 @@ async fn run_testnet(
 
 /// Run as validator node
 async fn run_validator_node(
-    _config: Config,
+    config: Config,
     key_path: String,
     chain_rpc: String,
     use_hsm: bool,
@@ -1892,8 +1892,55 @@ async fn run_validator_node(
     let validator_id = validator_key.public_key();
     info!("✓ Validator key loaded: {:?}", validator_id);
 
-    // Initialize network for validator
-    let network_config = NetworkConfig::default();
+    // Initialize network for validator - convert config types
+    let mut bootstrap_nodes = Vec::new();
+    for peer_str in &config.network.bootstrap_peers {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            // Extract peer ID from multiaddr like /ip4/1.2.3.4/tcp/9090/p2p/12D3Koo...
+            let peer_id_str = multiaddr.to_string();
+            if let Some(p2p_part) = peer_id_str.split("/p2p/").nth(1) {
+                if let Ok(peer_id) = p2p_part.parse::<PeerId>() {
+                    bootstrap_nodes.push((peer_id, multiaddr.clone()));
+                }
+            }
+        }
+    }
+    
+    info!("📡 Loading {} bootstrap peers from config", bootstrap_nodes.len());
+    for (peer_id, addr) in &bootstrap_nodes {
+        info!("  Bootstrap peer: {} at {}", peer_id, addr);
+    }
+    
+    let mut listen_addrs = Vec::new();
+    for addr_str in &config.network.listen_addresses {
+        if let Ok(addr) = addr_str.parse() {
+            listen_addrs.push(addr);
+        }
+    }
+    
+    let network_config = dchat_network::NetworkConfig {
+        listen_addrs,
+        discovery: dchat_network::DiscoveryConfig {
+            local_peer_id: PeerId::random(),
+            bootstrap_nodes,
+            enable_mdns: config.network.enable_mdns,
+            min_peers: 3,
+            max_peers: config.network.max_connections as usize,
+            query_timeout: std::time::Duration::from_millis(config.network.connection_timeout_ms),
+            k_bucket_size: 20,
+            alpha: 3,
+        },
+        nat: dchat_network::NatConfig {
+            enable_upnp: config.network.enable_upnp,
+            stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],  // Public STUN server
+            enable_hole_punching: false,
+            turn_servers: vec![],
+            discovery_timeout: std::time::Duration::from_secs(5),
+            lease_duration: std::time::Duration::from_secs(3600),
+            port_range: (49152, 65535),
+        },
+    };
+    
     let mut network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
 
