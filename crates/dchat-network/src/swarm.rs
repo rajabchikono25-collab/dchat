@@ -125,7 +125,7 @@ impl NetworkManager {
                 self.swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(*peer_id, addr.clone());
+                    .add_address(peer_id, addr.clone());
                 
                 // Actively dial each bootstrap peer
                 match self.swarm.dial(addr.clone()) {
