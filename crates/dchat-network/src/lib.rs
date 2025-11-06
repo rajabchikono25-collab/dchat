@@ -11,6 +11,7 @@
 pub mod behavior;
 pub mod connection; // Sprint 9: Connection lifecycle management
 pub mod discovery;
+pub mod dns_discovery; // Mainnet: DNS-based peer discovery via subdomains
 pub mod eclipse_prevention; // Phase 3: Eclipse attack prevention
 pub mod gossip; // Sprint 9: Gossip protocol for message propagation
 pub mod gossip_sync; // Phase 3: Gossip-based synchronization
@@ -29,6 +30,7 @@ pub use connection::{
     ConnectionConfig, ConnectionInfo, ConnectionManager, ConnectionState, ConnectionStats,
 };
 pub use discovery::{Discovery, DiscoveryConfig};
+pub use dns_discovery::{DiscoveredPeer, DnsDiscoveryConfig, DnsDiscoveryManager, NodeType};
 pub use eclipse_prevention::{
     DiversityStats, EclipseIndicator, EclipsePreventionManager, PeerInfo, RelayPath,
 };

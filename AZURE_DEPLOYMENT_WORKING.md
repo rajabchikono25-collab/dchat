@@ -176,14 +176,14 @@ journalctl -u dchat -f
 ## Deployment Log
 
 ### Build Phase
-- **Start Time:** $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-- **Duration:** In progress
-- **Status:** 🔄 Using deploy-azure-testnet.ps1 script
+- **Start Time:** 2025-11-06 03:56:00
+- **Duration:** Complete
+- **Status:** ✅ Binary built successfully (16MB)
 
 ### Upload Phase
-- **Start Time:** TBD
-- **Duration:** TBD
-- **Status:** ❌ Not started
+- **Start Time:** 2025-11-06 11:14:00
+- **Duration:** In progress
+- **Status:** 🔄 Uploading binary to 3 servers via WSL
 
 ### Configuration Phase
 - **Start Time:** TBD
@@ -204,10 +204,33 @@ journalctl -u dchat -f
 
 ## Final Status
 
-**Overall Deployment Status:** ❌ Not started  
-**Servers Connected:** 0/3  
+**Overall Deployment Status:** 🟡 In Progress  
+**Servers Running:** 3/3  
+**Servers Connected:** 0/3 (peers not discovering each other yet)  
 **Handshakes Successful:** 0/3  
-**Network Health:** Unknown
+**Network Health:** Services running, but not yet forming P2P mesh
+
+## Current Issue: Azure Network Security Group (NSG) Blocking Inbound Traffic
+
+**Root Cause Identified:**
+All 3 servers are running dchat correctly and listening on the proper addresses:
+- India: Listening on `/ip4/172.18.0.4/tcp/9090` (private IP)
+- South Africa: Listening on `/ip4/172.17.0.4/tcp/9090` (private IP)  
+- UAE: Listening on `/ip4/172.19.0.4/tcp/9090` (private IP)
+
+However, **Azure Network Security Group rules are blocking inbound traffic** on ports 8080 and 9090 from external sources. The local UFW firewall allows these ports, but Azure NSG is denying them.
+
+**Required Fix:**
+Update Azure NSG rules for all 3 VMs to allow:
+1. Inbound TCP on port 9090 (P2P relay traffic)
+2. Inbound TCP on port 8080 (health checks) - optional but useful
+
+**Server Details:**
+| Server | Public IP | Private IP | Peer ID | Status |
+|--------|-----------|------------|---------|--------|
+| India | 74.225.183.196 | 172.18.0.4 | 12D3KooWJHck83CAWL6uuMfUCY7spM3Rx7pvpBoiGWs89c9i6Zej | ✅ Running |
+| South Africa | 4.221.211.71 | 172.17.0.4 | 12D3KooWFaR53Hf6NfB6N8h8QxU5BFnnrgd9zQLVfses4ZznULYN | ✅ Running |
+| UAE | 4.161.34.228 | 172.19.0.4 | 12D3KooWAT61CBm8dKwYisr6NYMVhzrAByoK8iNDhzAssj7jChmC | ✅ Running |
 
 ---
 

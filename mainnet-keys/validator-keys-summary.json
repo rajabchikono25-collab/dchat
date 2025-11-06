@@ -1,0 +1,71 @@
+{
+  "network": "mainnet",
+  "keys_generated": 7,
+  "validators": [
+    {
+      "region": "ohio",
+      "provider": "AWS",
+      "public_key": "e26a3592fbffe18419e083e5728935cd17d4b68b67f36dd1bc16d6c60baccf2a",
+      "public_key_file": "validator-ohio.pub",
+      "subdomain": "validator1-ohio.schikuno.top",
+      "private_key_file": "validator-ohio.key"
+    },
+    {
+      "region": "singapore",
+      "provider": "AWS",
+      "public_key": "14b66a5114968f83f8496340f13dbc64a1f1ad68b8a17f911610cb422e25ec30",
+      "public_key_file": "validator-singapore.pub",
+      "subdomain": "validator1-singapore.schikuno.top",
+      "private_key_file": "validator-singapore.key"
+    },
+    {
+      "region": "stockholm",
+      "provider": "AWS",
+      "public_key": "8438736db20a2a800780680c3cb7823bd217d1a53873cab275d1dd54c20e8185",
+      "public_key_file": "validator-stockholm.pub",
+      "subdomain": "validator1-stockholm.schikuno.top",
+      "private_key_file": "validator-stockholm.key"
+    },
+    {
+      "region": "saopaulo",
+      "provider": "AWS",
+      "public_key": "0fc82f04eaec83cca7dea8a732e1aa711e5587e5a5be1bb09acc428fe44e8411",
+      "public_key_file": "validator-saopaulo.pub",
+      "subdomain": "validator1-saopaulo.schikuno.top",
+      "private_key_file": "validator-saopaulo.key"
+    },
+    {
+      "region": "india",
+      "provider": "Azure",
+      "public_key": "1e3e684e97aa00bc5d22084d2ca75cfe911ee6fb90e1277589d40b8ab8799579",
+      "public_key_file": "validator-india.pub",
+      "subdomain": "validator1-india.schikuno.top",
+      "private_key_file": "validator-india.key"
+    },
+    {
+      "region": "southafrica",
+      "provider": "Azure",
+      "public_key": "b709ae1e971d1d9b77a092c09f9718065a23c72bc83c7077c49686d17570c62c",
+      "public_key_file": "validator-southafrica.pub",
+      "subdomain": "validator1-southafrica.schikuno.top",
+      "private_key_file": "validator-southafrica.key"
+    },
+    {
+      "region": "uae",
+      "provider": "Azure",
+      "public_key": "b8b88bdca8c84479c0bb1f872c8a62890d87bed2b21b76c0b160c9812dcc1494",
+      "public_key_file": "validator-uae.pub",
+      "subdomain": "validator1-uae.schikuno.top",
+      "private_key_file": "validator-uae.key"
+    }
+  ],
+  "security_notes": [
+    "NEVER commit private keys to version control",
+    "BACKUP all private keys to encrypted storage",
+    "Restrict file permissions on private key files",
+    "Distribute private keys securely to each validator server",
+    "Store public keys in blockchain genesis configuration"
+  ],
+  "total_validators": 7,
+  "generated_at": "2025-11-06T11:51:53.0366909Z"
+}

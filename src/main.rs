@@ -1362,14 +1362,140 @@ async fn run_relay_node(
     let metrics_handle = start_metrics_server(&metrics_addr, shutdown_tx.subscribe())?;
     info!("✓ Metrics server listening on {}", metrics_addr);
 
-    // Initialize network
-    let network_config = NetworkConfig::default();
+    // MAINNET: Initialize DNS-based discovery for relay nodes
+    info!("🌍 Initializing DNS discovery for relay network...");
+    
+    let dns_config = dchat_network::DnsDiscoveryConfig::default();
+    let dns_discovery = dchat_network::DnsDiscoveryManager::new(dns_config.clone())
+        .map_err(|e| Error::network(format!("Failed to create DNS discovery: {}", e)))?;
+    
+    // Discover all validators and relays via DNS
+    info!("🔍 Discovering validators via DNS...");
+    let discovered_validators = dns_discovery
+        .discover_validators()
+        .await
+        .map_err(|e| Error::network(format!("Failed to discover validators: {}", e)))?;
+    
+    info!("🔍 Discovering other relays via DNS...");
+    let discovered_relays = dns_discovery
+        .discover_relays()
+        .await
+        .map_err(|e| Error::network(format!("Failed to discover relays: {}", e)))?;
+    
+    info!("✓ Discovered {} validators and {} relays", 
+          discovered_validators.len(), discovered_relays.len());
+    
+    // Build bootstrap peer list from discovered nodes
+    let mut bootstrap_nodes = Vec::new();
+    
+    // Add discovered validators
+    for validator in &discovered_validators {
+        let peer_id = PeerId::random(); // Placeholder
+        bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
+        info!("  + Validator: {} at {}", validator.identifier, validator.multiaddr);
+    }
+    
+    // Add discovered relays
+    for relay in &discovered_relays {
+        let peer_id = PeerId::random(); // Placeholder
+        bootstrap_nodes.push((peer_id, relay.multiaddr.clone()));
+        info!("  + Relay: {} at {}", relay.identifier, relay.multiaddr);
+    }
+    
+    // Add manually specified bootstrap peers
+    for peer_str in &bootstrap_peers {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            let peer_id = PeerId::random();
+            bootstrap_nodes.push((peer_id, multiaddr.clone()));
+            info!("  + Manual peer: {}", multiaddr);
+        }
+    }
+    
+    info!("📡 Total bootstrap peers for relay: {}", bootstrap_nodes.len());
+    
+    // Parse listen address into multiaddr
+    let listen_multiaddr = if listen_addr.starts_with("/ip") {
+        // Already a multiaddr
+        listen_addr.parse::<Multiaddr>()
+            .map_err(|e| Error::network(format!("Invalid multiaddr: {}", e)))?
+    } else {
+        // Convert host:port to multiaddr
+        let parts: Vec<&str> = listen_addr.split(':').collect();
+        if parts.len() != 2 {
+            return Err(Error::network(format!("Invalid listen address format. Expected host:port or multiaddr, got: {}", listen_addr)));
+        }
+        let host = parts[0];
+        let port = parts[1].parse::<u16>()
+            .map_err(|e| Error::network(format!("Invalid port: {}", e)))?;
+        
+        format!("/ip4/{}/tcp/{}", host, port).parse::<Multiaddr>()
+            .map_err(|e| Error::network(format!("Failed to create multiaddr: {}", e)))?
+    };
+    
+    // Create network config with DNS-discovered peers
+    let network_config = NetworkConfig {
+        listen_addrs: vec![listen_multiaddr.clone()],
+        discovery: dchat_network::DiscoveryConfig {
+            local_peer_id: PeerId::random(),
+            bootstrap_nodes,
+            enable_mdns: false, // Disabled for production
+            min_peers: 5, // Connect to at least 5 peers (validators + other relays)
+            max_peers: config.network.max_connections as usize,
+            query_timeout: std::time::Duration::from_millis(config.network.connection_timeout_ms),
+            k_bucket_size: 20,
+            alpha: 3,
+        },
+        nat: dchat_network::NatConfig {
+            enable_upnp: config.network.enable_upnp,
+            stun_servers: vec![
+                "stun:stun.l.google.com:19302".to_string(),
+                "stun:stun1.l.google.com:19302".to_string(),
+            ],
+            enable_hole_punching: true,
+            turn_servers: vec![],
+            discovery_timeout: std::time::Duration::from_secs(10),
+            lease_duration: std::time::Duration::from_secs(3600),
+            port_range: (49152, 65535),
+        },
+    };
+    
+    info!("Network will listen on: {:?}", network_config.listen_addrs);
+    
     let mut network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
 
     // Start network manager
     network.start().await?;
-    info!("✓ Network manager initialized (peer_id: {})", peer_id);
+    info!("✓ Relay network initialized (peer_id: {})", peer_id);
+    
+    // Start DNS refresh background task
+    let _dns_refresh_handle = dns_discovery.start_refresh_task();
+    
+    // Wait for initial peer connections
+    info!("⏳ Waiting for peer connections...");
+    let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
+    let mut connected_peers = 0;
+    
+    while tokio::time::Instant::now() < connection_deadline {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(2),
+            network.next_event()
+        ).await {
+            Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
+                connected_peers += 1;
+                info!("✓ Peer connected: {} (total: {})", connected_peer_id, connected_peers);
+                
+                if connected_peers >= 5 {
+                    info!("✓ Minimum peer threshold reached");
+                    break;
+                }
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {}
+        }
+    }
+    
+    info!("✓ Relay connected to {} peers", connected_peers);
 
     // Auto-discover other Docker relay nodes (if running in Docker)
     if let Ok(relay_id) = std::env::var("DCHAT_RELAY_ID") {
@@ -1898,25 +2024,56 @@ async fn run_validator_node(
     let validator_id = validator_key.public_key();
     info!("✓ Validator key loaded: {:?}", validator_id);
 
-    // Initialize network for validator - convert config types
+    // MAINNET: Initialize DNS-based peer discovery
+    info!("🌍 Initializing DNS-based peer discovery for mainnet...");
+    
+    let dns_config = dchat_network::DnsDiscoveryConfig::default();
+    let dns_discovery = dchat_network::DnsDiscoveryManager::new(dns_config.clone())
+        .map_err(|e| Error::network(format!("Failed to create DNS discovery: {}", e)))?;
+    
+    // Start DNS refresh background task
+    let _dns_refresh_handle = dns_discovery.start_refresh_task();
+    info!("✓ DNS refresh task started (interval: {:?})", dns_config.refresh_interval);
+    
+    // Discover all validators via DNS
+    info!("🔍 Discovering validators via subdomains...");
+    let discovered_validators = dns_discovery
+        .discover_validators()
+        .await
+        .map_err(|e| Error::network(format!("Failed to discover validators: {}", e)))?;
+    
+    info!("✓ Discovered {} validators:", discovered_validators.len());
+    for validator in &discovered_validators {
+        info!(
+            "  - {} at {}:{} ({})",
+            validator.identifier, validator.ip, validator.port, validator.multiaddr
+        );
+    }
+    
+    // Convert discovered validators to bootstrap nodes
+    // Note: PeerID will be learned during handshake
     let mut bootstrap_nodes = Vec::new();
+    for validator in &discovered_validators {
+        let peer_id = PeerId::random(); // Placeholder, will be replaced during connection
+        bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
+    }
+    
+    // Also add any manually configured bootstrap peers from config
     for peer_str in &config.network.bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
-            // Extract peer ID from multiaddr like /ip4/1.2.3.4/tcp/9090/p2p/12D3Koo...
             let peer_id_str = multiaddr.to_string();
             if let Some(p2p_part) = peer_id_str.split("/p2p/").nth(1) {
                 if let Ok(peer_id) = p2p_part.parse::<PeerId>() {
                     bootstrap_nodes.push((peer_id, multiaddr.clone()));
+                    info!("  + Manual bootstrap peer: {} at {}", peer_id, multiaddr);
                 }
             }
         }
     }
     
-    info!("📡 Loading {} bootstrap peers from config", bootstrap_nodes.len());
-    for (peer_id, addr) in &bootstrap_nodes {
-        info!("  Bootstrap peer: {} at {}", peer_id, addr);
-    }
+    info!("📡 Total bootstrap peers: {}", bootstrap_nodes.len());
     
+    // Parse listen addresses
     let mut listen_addrs = Vec::new();
     for addr_str in &config.network.listen_addresses {
         if let Ok(addr) = addr_str.parse() {
@@ -1924,13 +2081,14 @@ async fn run_validator_node(
         }
     }
     
+    // Create network config with discovered peers
     let network_config = dchat_network::NetworkConfig {
         listen_addrs,
         discovery: dchat_network::DiscoveryConfig {
             local_peer_id: PeerId::random(),
             bootstrap_nodes,
             enable_mdns: config.network.enable_mdns,
-            min_peers: 3,
+            min_peers: 6, // Expect 6 other validators
             max_peers: config.network.max_connections as usize,
             query_timeout: std::time::Duration::from_millis(config.network.connection_timeout_ms),
             k_bucket_size: 20,
@@ -1938,20 +2096,78 @@ async fn run_validator_node(
         },
         nat: dchat_network::NatConfig {
             enable_upnp: config.network.enable_upnp,
-            stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],  // Public STUN server
-            enable_hole_punching: false,
+            stun_servers: vec![
+                "stun:stun.l.google.com:19302".to_string(),
+                "stun:stun1.l.google.com:19302".to_string(),
+            ],
+            enable_hole_punching: true, // Enable for NAT traversal
             turn_servers: vec![],
-            discovery_timeout: std::time::Duration::from_secs(5),
+            discovery_timeout: std::time::Duration::from_secs(10),
             lease_duration: std::time::Duration::from_secs(3600),
             port_range: (49152, 65535),
         },
     };
     
+    // Initialize network manager
     let mut network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
 
     network.start().await?;
     info!("✓ Validator network initialized (peer_id: {})", peer_id);
+    
+    // Wait for initial peer connections (critical for consensus)
+    info!("⏳ Waiting for validator peer connections...");
+    let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
+    let mut connected_validators = 0;
+    
+    while tokio::time::Instant::now() < connection_deadline {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            network.next_event()
+        ).await {
+            Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
+                connected_validators += 1;
+                info!(
+                    "✓ Validator peer connected: {} ({}/6 required)",
+                    connected_peer_id, connected_validators
+                );
+                
+                // Update DNS discovery with actual peer ID
+                for validator in &discovered_validators {
+                    let multiaddr_str = validator.multiaddr.to_string();
+                    if multiaddr_str.contains(&validator.ip.to_string()) {
+                        let _ = dns_discovery
+                            .update_peer_id(&validator.identifier, connected_peer_id)
+                            .await;
+                    }
+                }
+                
+                // Need at least 4 validators for BFT consensus (n=7, f=2)
+                if connected_validators >= 4 {
+                    info!("✓ Minimum consensus threshold reached (4/7 validators)");
+                    break;
+                }
+            }
+            Ok(Some(_)) => {
+                // Other events, continue waiting
+            }
+            Ok(None) | Err(_) => {
+                // Timeout, continue waiting
+            }
+        }
+    }
+    
+    if connected_validators < 4 {
+        error!(
+            "❌ Failed to connect to minimum validators: {}/4 required",
+            connected_validators
+        );
+        return Err(Error::network(
+            "Insufficient validator connections for consensus".to_string(),
+        ));
+    }
+    
+    info!("✓ Validator network ready with {} peers", connected_validators);
 
     // Initialize storage
     let db_config = DatabaseConfig::default();

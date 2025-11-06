@@ -4,8 +4,15 @@
 pub mod backup_system;
 pub mod distributed_storage;
 pub mod health_monitor;
+pub mod mainnet_config;
 pub mod multi_region_config;
 pub mod relay_network;
+
+pub use mainnet_config::{
+    CockroachDbConfig, MainnetServerConfig, MinioClusterConfig, MonitoringConfig, NodeRole,
+    RedisClusterConfig, RelayConfig as MainnetRelayConfig, StorageClusterConfig, TikvClusterConfig,
+    TlsConfig, ValidatorConfig as MainnetValidatorConfig,
+};
 
 pub use multi_region_config::{
     ConfigError, ConsensusConfig, GeographicRegion, MultiRegionConfig, StorageBackend,

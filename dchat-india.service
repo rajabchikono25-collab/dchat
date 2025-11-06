@@ -1,0 +1,16 @@
+[Unit]
+Description=dchat Relay Node (India Bootstrap)
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/opt/dchat
+ExecStart=/opt/dchat/dchat --metrics-addr 127.0.0.1:9091 --health-addr 0.0.0.0:8080 relay --listen 0.0.0.0:9090 --stake 1000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

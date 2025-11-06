@@ -1,0 +1,9 @@
+{
+  "algorithm": "Ed25519",
+  "validator": {
+    "region": "uae",
+    "subdomain": "validator1-uae.schikuno.top",
+    "provider": "Azure"
+  },
+  "public_key": "b8b88bdca8c84479c0bb1f872c8a62890d87bed2b21b76c0b160c9812dcc1494"
+}

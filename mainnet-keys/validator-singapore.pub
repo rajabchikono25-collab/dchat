@@ -1,0 +1,9 @@
+{
+  "algorithm": "Ed25519",
+  "validator": {
+    "region": "singapore",
+    "subdomain": "validator1-singapore.schikuno.top",
+    "provider": "AWS"
+  },
+  "public_key": "14b66a5114968f83f8496340f13dbc64a1f1ad68b8a17f911610cb422e25ec30"
+}

@@ -1,0 +1,9 @@
+{
+  "algorithm": "Ed25519",
+  "validator": {
+    "region": "india",
+    "subdomain": "validator1-india.schikuno.top",
+    "provider": "Azure"
+  },
+  "public_key": "1e3e684e97aa00bc5d22084d2ca75cfe911ee6fb90e1277589d40b8ab8799579"
+}
