@@ -1276,6 +1276,7 @@ dependencies = [
  "dchat-core",
  "dchat-crypto",
  "ed25519-dalek",
+ "hex",
  "rand 0.8.5",
  "serde",
  "serde_json",

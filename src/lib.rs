@@ -92,12 +92,10 @@
 //! ```
 
 // Core modules (remaining in src/)
-pub mod chain;
 pub mod discovery;
 pub mod network;
 pub mod observability;
 pub mod relay;
-pub mod validator;
 
 // User management module
 pub mod user_management;
@@ -107,11 +105,11 @@ pub use dchat_accessibility as accessibility;
 pub use dchat_blockchain as blockchain;
 pub use dchat_bots as bots;
 pub use dchat_bridge as bridge;
-pub use dchat_chain; // Don't rename, keep as dchat_chain
+pub use dchat_chain as chain; // Now fully in crate
 pub use dchat_core as core;
-pub use dchat_crypto as crypto; // Now we can re-export since src/crypto is moved
+pub use dchat_crypto as crypto;
 pub use dchat_governance as governance;
-pub use dchat_identity as identity; // Now we can re-export since src/identity is moved
+pub use dchat_identity as identity;
 pub use dchat_marketplace as marketplace;
 pub use dchat_messaging as messaging;
 // Don't re-export dchat_network, we have our own network module
@@ -120,6 +118,7 @@ pub use dchat_privacy as privacy;
 pub use dchat_sdk_rust as sdk;
 pub use dchat_storage as storage;
 pub use dchat_testing as testing;
+pub use dchat_validator as validator; // Now fully in crate
 
 // Re-export config from dchat-core
 pub use dchat_core::config;

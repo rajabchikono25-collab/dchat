@@ -5,6 +5,10 @@
 
 pub mod multi_region;
 pub mod health;
+pub mod validator; // Validator thresholds and core logic
+
+// Re-export validator submodule
+pub use validator::thresholds;
 
 pub use multi_region::{
     BftConfig, GeographicRegion, HardwareRequirements, HealthStatus, MultiRegionCoordinator,
