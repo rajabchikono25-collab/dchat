@@ -1069,6 +1069,7 @@ dependencies = [
  "dchat-sdk-rust",
  "dchat-storage",
  "dchat-testing",
+ "dchat-validator",
  "dirs",
  "ed25519-dalek",
  "hex",
@@ -1175,6 +1176,7 @@ dependencies = [
  "dchat-core",
  "dchat-crypto",
  "ed25519-dalek",
+ "hex",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -1217,6 +1219,7 @@ dependencies = [
  "getrandom 0.2.16",
  "hex",
  "hkdf",
+ "libp2p",
  "pqcrypto-falcon",
  "pqcrypto-mlkem",
  "pqcrypto-traits",
@@ -1225,6 +1228,8 @@ dependencies = [
  "serde",
  "sha2",
  "snow",
+ "thiserror 1.0.69",
+ "tokio",
  "toml 0.8.23",
  "tracing",
  "x25519-dalek",
@@ -1239,6 +1244,7 @@ dependencies = [
  "bs58",
  "chrono",
  "clap",
+ "dchat-core",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -1323,6 +1329,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "jni",
+ "libp2p",
  "rand 0.8.5",
  "security-framework",
  "serde",
@@ -1368,18 +1375,21 @@ dependencies = [
 name = "dchat-network"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "async-trait",
  "bincode",
  "blake3",
  "chacha20poly1305",
  "dchat-core",
  "dchat-crypto",
+ "dchat-identity",
  "ed25519-dalek",
  "futures",
  "hex",
  "hkdf",
  "hmac",
  "libp2p",
+ "once_cell",
  "quick-xml 0.31.0",
  "rand 0.8.5",
  "reqwest 0.11.27",
@@ -1400,9 +1410,17 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dchat-core",
+ "dchat-identity",
+ "dchat-network",
+ "dchat-validator",
+ "ed25519-dalek",
+ "once_cell",
+ "prometheus",
+ "rand 0.8.5",
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -1490,6 +1508,21 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "dchat-validator"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "rand 0.8.5",
+ "reqwest 0.11.27",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

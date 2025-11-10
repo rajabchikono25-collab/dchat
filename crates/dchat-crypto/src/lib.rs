@@ -7,6 +7,7 @@
 //! - Post-quantum cryptography support
 //! - Zero-knowledge proofs
 
+pub mod crypto; // Additional crypto modules (handshake, versioning)
 mod encryption;
 pub mod handshake;
 pub mod kdf;
@@ -15,6 +16,10 @@ pub mod noise;
 pub mod post_quantum;
 pub mod rotation;
 pub mod signatures;
+
+// Re-export crypto submodule contents
+pub use crypto::handshake as crypto_handshake;
+pub use crypto::versioning as crypto_versioning;
 
 pub use encryption::{decrypt_with_password, encrypt_with_password};
 pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};

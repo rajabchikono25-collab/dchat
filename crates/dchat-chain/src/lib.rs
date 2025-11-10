@@ -8,11 +8,16 @@
 //! - Message consensus pruning with Merkle checkpoints
 //! - Insurance fund for economic security
 
+pub mod chain; // Currency chain and slashing modules
 pub mod dispute_resolution;
 pub mod insurance_fund;
 pub mod pruning;
 pub mod sharding;
 pub mod transactions;
+
+// Re-export chain submodules
+pub use chain::currency_chain;
+pub use chain::slashing;
 
 pub use dispute_resolution::{DisputeClaim, DisputeResolver, DisputeStatus};
 pub use insurance_fund::{

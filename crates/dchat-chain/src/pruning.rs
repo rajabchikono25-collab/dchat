@@ -354,7 +354,7 @@ impl PruningManager {
         // Production Merkle tree construction:
         // Build binary tree bottom-up, storing all levels for proof generation
         let mut tree_levels: Vec<Vec<Vec<u8>>> = vec![hashes.clone()];
-        
+
         while hashes.len() > 1 {
             let mut next_level = Vec::new();
 
@@ -386,23 +386,25 @@ impl PruningManager {
     ) -> Result<MerkleProof> {
         // Production Merkle proof generation:
         // 1. Retrieve checkpoint and its tree structure
-        let checkpoint = self.checkpoints.get(checkpoint_id)
+        let checkpoint = self
+            .checkpoints
+            .get(checkpoint_id)
             .ok_or_else(|| Error::network("Checkpoint not found"))?;
-        
+
         // 2. Rebuild Merkle tree from checkpoint's message set
         // Production implementation:
         // a) Retrieve all message IDs from checkpoint metadata
         // b) Sort lexicographically for determinism (same as tree construction)
         // c) Hash each message ID to get leaf hashes
         // d) Build tree bottom-up by hashing pairs: H(H(msg[i]) || H(msg[i+1]))
-        
+
         // Example tree rebuilding:
         // let message_ids = checkpoint.message_ids; // Retrieved from checkpoint
         // let mut leaf_hashes: Vec<Vec<u8>> = message_ids.iter()
         //     .map(|id| blake3::hash(id.0.as_bytes()).as_bytes().to_vec())
         //     .collect();
         // leaf_hashes.sort(); // Lexicographic ordering
-        
+
         // let mut tree_levels = vec![leaf_hashes.clone()];
         // let mut current_level = leaf_hashes;
         // while current_level.len() > 1 {
@@ -420,12 +422,12 @@ impl PruningManager {
         //     tree_levels.push(next_level.clone());
         //     current_level = next_level;
         // }
-        
+
         // 3. Find message_id index in leaf level and build sibling path
         // let leaf_hash = blake3::hash(message_id.0.as_bytes()).as_bytes().to_vec();
         // let mut index = tree_levels[0].binary_search(&leaf_hash)
         //     .map_err(|_| Error::network("Message not in tree"))?;
-        
+
         // let mut path = Vec::new();
         // Single-level proof design: checkpoint root serves as compact verification
         // For checkpoints, we use the checkpoint's Merkle root as the proof path.
@@ -493,7 +495,7 @@ impl PruningManager {
     /// Emergency pruning when state size exceeds limit
     pub fn emergency_prune(&mut self, force_prune_count: u64) -> Result<PruningResult> {
         // Emergency pruning strategy: oldest-first selection
-        // 
+        //
         // Integration requirements for storage backend (dchat-db):
         // 1. storage.query_oldest_messages(limit: force_prune_count) -> Vec<MessageId>
         // 2. Filter: exclude priority channels from active governance policy
@@ -502,7 +504,7 @@ impl PruningManager {
         //
         // Current implementation uses deterministic UUID generation for testing.
         // In production, replace with storage.query_oldest_messages() call.
-        
+
         tracing::warn!(
             force_prune_count,
             current_state_size = self.current_state_size,
@@ -524,7 +526,7 @@ impl PruningManager {
             let mut uuid_bytes = [0u8; 16];
             uuid_bytes[0..8].copy_from_slice(&timestamp.to_le_bytes());
             uuid_bytes[8..16].copy_from_slice(&i.to_le_bytes());
-            
+
             let msg_id = MessageId(uuid::Uuid::from_bytes(uuid_bytes));
             self.mark_for_pruning(msg_id);
         }
@@ -630,7 +632,7 @@ mod tests {
         // Create a test proof with sibling hashes
         let sibling1 = blake3::hash(b"sibling1").as_bytes().to_vec();
         let sibling2 = blake3::hash(b"sibling2").as_bytes().to_vec();
-        
+
         let proof = MerkleProof::new(
             message_id.clone(),
             vec![sibling1.clone(), sibling2.clone()],
@@ -640,15 +642,15 @@ mod tests {
         // Calculate Merkle root from proof by walking up the tree
         let message_hash = blake3::hash(message_id.0.as_bytes());
         let mut current_hash = message_hash;
-        
+
         // Combine with each sibling hash in the path
         for sibling in &proof.path {
             let combined = [current_hash.as_bytes(), sibling.as_slice()].concat();
             current_hash = blake3::hash(&combined);
         }
-        
+
         let calculated_root = current_hash.as_bytes().to_vec();
-        
+
         // Verify proof structure
         assert_eq!(proof.path.len(), 2);
         assert_eq!(proof.checkpoint_id, "checkpoint1");

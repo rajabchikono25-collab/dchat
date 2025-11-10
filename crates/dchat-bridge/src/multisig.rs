@@ -163,8 +163,11 @@ impl MultiSigState {
 
         // 4. Check timestamp freshness (prevent replay attacks)
         // Signature should be recent (within last 5 minutes)
-        
-        tracing::debug!("Verified signature from validator {:?}", signature.validator_id.id);
+
+        tracing::debug!(
+            "Verified signature from validator {:?}",
+            signature.validator_id.id
+        );
         Ok(())
     }
 }
@@ -277,7 +280,7 @@ impl SignatureAggregator {
         //    - Single signature replaces N signatures
         //    - On-chain verification is O(1) instead of O(N)
         //    - Reduces cross-chain transaction size by ~96 bytes per validator
-        // 
+        //
         // Example with blst:
         // use blst::min_sig::{Signature, AggregateSignature};
         // let mut agg = AggregateSignature::new();
@@ -287,7 +290,7 @@ impl SignatureAggregator {
         //     agg.add_signature(&bls_sig, true)?;
         // }
         // agg.to_signature().to_bytes().to_vec()
-        
+
         // BLS signature aggregation using blst (BLS12-381 curve)
         use blst::min_pk::{AggregateSignature, Signature};
 
@@ -359,7 +362,7 @@ impl SignatureAggregator {
         // 2. Parse each public key as G2 point
         // 3. Compute pairing check: e(aggregated, G2_generator) == e(H(message), sum(public_keys))
         // 4. This proves all validators signed the same message
-        // 
+        //
         // Example with blst:
         // use blst::min_sig::{Signature, PublicKey, AggregatePublicKey};
         // let agg_sig = Signature::from_bytes(aggregated)
@@ -390,11 +393,12 @@ impl SignatureAggregator {
             return Err(BridgeError::InvalidSignature);
         }
 
-        let agg_sig = Signature::from_bytes(aggregated)
-            .map_err(|_| BridgeError::InvalidSignature)?;
+        let agg_sig =
+            Signature::from_bytes(aggregated).map_err(|_| BridgeError::InvalidSignature)?;
 
         // Validate signature format
-        agg_sig.validate(true)
+        agg_sig
+            .validate(true)
             .map_err(|_| BridgeError::InvalidSignature)?;
 
         // Parse all public keys (48 bytes compressed each for min_pk)
@@ -404,12 +408,10 @@ impl SignatureAggregator {
                 return Err(BridgeError::InvalidSignature);
             }
 
-            let pk = PublicKey::from_bytes(pk_bytes)
-                .map_err(|_| BridgeError::InvalidSignature)?;
+            let pk = PublicKey::from_bytes(pk_bytes).map_err(|_| BridgeError::InvalidSignature)?;
 
             // Validate public key
-            pk.validate()
-                .map_err(|_| BridgeError::InvalidSignature)?;
+            pk.validate().map_err(|_| BridgeError::InvalidSignature)?;
 
             pks.push(pk);
         }
@@ -423,11 +425,14 @@ impl SignatureAggregator {
             b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_",
             &[],
             &pks[0],
-            true
+            true,
         );
-        
+
         if result == BLST_ERROR::BLST_SUCCESS {
-            tracing::debug!("Verified aggregated BLS signature for {} validators", public_keys.len());
+            tracing::debug!(
+                "Verified aggregated BLS signature for {} validators",
+                public_keys.len()
+            );
             Ok(())
         } else {
             Err(BridgeError::InvalidSignature)

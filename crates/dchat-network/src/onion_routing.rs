@@ -213,7 +213,7 @@ impl OnionRoutingManager {
             tracing::debug!("Sending CREATE cell to hop: {}", hop.address);
             // libp2p_stream.write_all(&create_cell).await?
             // let created_response = libp2p_stream.read_exact(50).await?
-            
+
             match self.send_create_cell(&hop.address, create_cell).await {
                 Ok(_) => {
                     // Successfully established this hop
@@ -342,8 +342,6 @@ impl OnionRoutingManager {
 
     /// Create encrypted routing header with proper node addressing
     fn create_routing_header(&self, circuit: &Circuit) -> Result<Vec<u8>> {
-        
-
         // Encode routing information: [hop_count, (node_id_len, node_id, port)*]
         let mut header = Vec::new();
         header.push(circuit.hops.len() as u8);
@@ -393,18 +391,21 @@ impl OnionRoutingManager {
 
         // Send packet to entry node (first hop) via libp2p
         let entry_node = &circuit.hops[0];
-        tracing::debug!("Sending Sphinx packet via entry node: {}", entry_node.node_id);
-        
+        tracing::debug!(
+            "Sending Sphinx packet via entry node: {}",
+            entry_node.node_id
+        );
+
         // In production: open libp2p stream and send RELAY cell
         // let mut stream = swarm.open_stream(&entry_node.peer_id).await?;
         // stream.write_all(&packet.serialize()).await?;
-        
+
         // Each hop will:
         // 1. Decrypt one layer using its shared secret
         // 2. Extract next hop address from header
         // 3. Forward remaining packet to next hop
         // Final (exit) hop decrypts last layer and delivers payload
-        
+
         Ok(())
     }
 
@@ -414,19 +415,23 @@ impl OnionRoutingManager {
             circuit.status = CircuitStatus::TearingDown;
 
             // Send DESTROY cells to all hops in circuit
-            tracing::info!("Tearing down circuit {}: sending DESTROY cells to {} hops", circuit_id.0, circuit.hops.len());
-            
+            tracing::info!(
+                "Tearing down circuit {}: sending DESTROY cells to {} hops",
+                circuit_id.0,
+                circuit.hops.len()
+            );
+
             for hop in &circuit.hops {
                 // DESTROY cell format: circuit_id(16) || command(1=DESTROY)
                 let mut destroy_cell = Vec::new();
                 destroy_cell.extend_from_slice(circuit_id.0.as_bytes());
                 destroy_cell.push(0x04); // DESTROY command
-                
+
                 tracing::debug!("Sending DESTROY to hop: {}", hop.node_id);
                 // In production: send via libp2p
                 // swarm.send_message(&hop.peer_id, destroy_cell).await?;
             }
-            
+
             circuit.status = CircuitStatus::Closed;
         }
 
@@ -500,7 +505,7 @@ impl OnionRoutingManager {
     }
 
     /// Build CREATE cell for circuit handshake
-    /// 
+    ///
     /// Reserved for future implementation of Tor-style circuit creation protocol.
     /// Currently using simplified onion routing without explicit CREATE cells.
     #[allow(dead_code)]
@@ -509,8 +514,6 @@ impl OnionRoutingManager {
         circuit_id: &CircuitId,
         public_key: &x25519_dalek::PublicKey,
     ) -> Vec<u8> {
-        
-
         let mut cell = Vec::new();
 
         // Version (1 byte)

@@ -113,11 +113,12 @@ impl StealthGenerator {
         let encryption_key = blake3::hash(&shared_secret);
 
         // Production: ChaCha20Poly1305 AEAD encryption
-        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
         use chacha20poly1305::aead::Aead;
-        
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+
         let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
-        let nonce_array: [u8; 12] = encryption_key.as_bytes()[0..12].try_into()
+        let nonce_array: [u8; 12] = encryption_key.as_bytes()[0..12]
+            .try_into()
             .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
         let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
         let ciphertext = cipher
@@ -225,11 +226,12 @@ impl StealthScanner {
         let decryption_key = blake3::hash(&shared_secret);
 
         // Production: ChaCha20Poly1305 AEAD decryption
-        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
         use chacha20poly1305::aead::Aead;
-        
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+
         let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
-        let nonce_array: [u8; 12] = decryption_key.as_bytes()[0..12].try_into()
+        let nonce_array: [u8; 12] = decryption_key.as_bytes()[0..12]
+            .try_into()
             .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
         let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
         let mut plaintext = cipher

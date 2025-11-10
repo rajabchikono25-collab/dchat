@@ -81,7 +81,7 @@ impl Bootstrap {
             // swarm.dial(node.clone()).map_err(|e| {
             //     Error::network(format!("Failed to dial bootstrap node {}: {}", node, e))
             // })?;
-            // 
+            //
             // Wait for connection with timeout:
             // tokio::time::timeout(
             //     self.connection_timeout,

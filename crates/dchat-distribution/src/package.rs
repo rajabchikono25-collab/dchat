@@ -192,10 +192,10 @@ impl PackageManager {
         //    for version in discovered_versions {
         //        if !self.package_cache.contains_key(&version) {
         //            let metadata = network.request_package_metadata(version).await?;
-        //            
+        //
         // 3. Verify Ed25519 signatures on package metadata
         //            if self.verify_signature(&metadata, &metadata.package_hash)? {
-        //                
+        //
         // 4. Cache valid package metadata
         //                self.package_cache.insert(version.clone(), metadata);
         //            }

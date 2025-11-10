@@ -8,8 +8,6 @@
 //! - Graceful shutdown
 //! - Observability integration
 
-mod deployment;
-
 use dchat::blockchain::{
     ChatChainClient, ChatChainConfig, CrossChainBridge, CurrencyChainClient, CurrencyChainConfig,
 };
@@ -1364,44 +1362,50 @@ async fn run_relay_node(
 
     // MAINNET: Initialize DNS-based discovery for relay nodes
     info!("🌍 Initializing DNS discovery for relay network...");
-    
+
     let dns_config = dchat_network::DnsDiscoveryConfig::default();
     let dns_discovery = dchat_network::DnsDiscoveryManager::new(dns_config.clone())
         .map_err(|e| Error::network(format!("Failed to create DNS discovery: {}", e)))?;
-    
+
     // Discover all validators and relays via DNS
     info!("🔍 Discovering validators via DNS...");
     let discovered_validators = dns_discovery
         .discover_validators()
         .await
         .map_err(|e| Error::network(format!("Failed to discover validators: {}", e)))?;
-    
+
     info!("🔍 Discovering other relays via DNS...");
     let discovered_relays = dns_discovery
         .discover_relays()
         .await
         .map_err(|e| Error::network(format!("Failed to discover relays: {}", e)))?;
-    
-    info!("✓ Discovered {} validators and {} relays", 
-          discovered_validators.len(), discovered_relays.len());
-    
+
+    info!(
+        "✓ Discovered {} validators and {} relays",
+        discovered_validators.len(),
+        discovered_relays.len()
+    );
+
     // Build bootstrap peer list from discovered nodes
     let mut bootstrap_nodes = Vec::new();
-    
+
     // Add discovered validators
     for validator in &discovered_validators {
         let peer_id = PeerId::random(); // Placeholder
         bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
-        info!("  + Validator: {} at {}", validator.identifier, validator.multiaddr);
+        info!(
+            "  + Validator: {} at {}",
+            validator.identifier, validator.multiaddr
+        );
     }
-    
+
     // Add discovered relays
     for relay in &discovered_relays {
         let peer_id = PeerId::random(); // Placeholder
         bootstrap_nodes.push((peer_id, relay.multiaddr.clone()));
         info!("  + Relay: {} at {}", relay.identifier, relay.multiaddr);
     }
-    
+
     // Add manually specified bootstrap peers
     for peer_str in &bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
@@ -1410,28 +1414,37 @@ async fn run_relay_node(
             info!("  + Manual peer: {}", multiaddr);
         }
     }
-    
-    info!("📡 Total bootstrap peers for relay: {}", bootstrap_nodes.len());
-    
+
+    info!(
+        "📡 Total bootstrap peers for relay: {}",
+        bootstrap_nodes.len()
+    );
+
     // Parse listen address into multiaddr
     let listen_multiaddr = if listen_addr.starts_with("/ip") {
         // Already a multiaddr
-        listen_addr.parse::<Multiaddr>()
+        listen_addr
+            .parse::<Multiaddr>()
             .map_err(|e| Error::network(format!("Invalid multiaddr: {}", e)))?
     } else {
         // Convert host:port to multiaddr
         let parts: Vec<&str> = listen_addr.split(':').collect();
         if parts.len() != 2 {
-            return Err(Error::network(format!("Invalid listen address format. Expected host:port or multiaddr, got: {}", listen_addr)));
+            return Err(Error::network(format!(
+                "Invalid listen address format. Expected host:port or multiaddr, got: {}",
+                listen_addr
+            )));
         }
         let host = parts[0];
-        let port = parts[1].parse::<u16>()
+        let port = parts[1]
+            .parse::<u16>()
             .map_err(|e| Error::network(format!("Invalid port: {}", e)))?;
-        
-        format!("/ip4/{}/tcp/{}", host, port).parse::<Multiaddr>()
+
+        format!("/ip4/{}/tcp/{}", host, port)
+            .parse::<Multiaddr>()
             .map_err(|e| Error::network(format!("Failed to create multiaddr: {}", e)))?
     };
-    
+
     // Create network config with DNS-discovered peers
     let network_config = NetworkConfig {
         listen_addrs: vec![listen_multiaddr.clone()],
@@ -1439,7 +1452,7 @@ async fn run_relay_node(
             local_peer_id: PeerId::random(),
             bootstrap_nodes,
             enable_mdns: false, // Disabled for production
-            min_peers: 5, // Connect to at least 5 peers (validators + other relays)
+            min_peers: 5,       // Connect to at least 5 peers (validators + other relays)
             max_peers: config.network.max_connections as usize,
             query_timeout: std::time::Duration::from_millis(config.network.connection_timeout_ms),
             k_bucket_size: 20,
@@ -1458,33 +1471,34 @@ async fn run_relay_node(
             port_range: (49152, 65535),
         },
     };
-    
+
     info!("Network will listen on: {:?}", network_config.listen_addrs);
-    
+
     let mut network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
 
     // Start network manager
     network.start().await?;
     info!("✓ Relay network initialized (peer_id: {})", peer_id);
-    
+
     // Start DNS refresh background task
     let _dns_refresh_handle = dns_discovery.start_refresh_task();
-    
+
     // Wait for initial peer connections
     info!("⏳ Waiting for peer connections...");
     let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
     let mut connected_peers = 0;
-    
+
     while tokio::time::Instant::now() < connection_deadline {
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(2),
-            network.next_event()
-        ).await {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(2), network.next_event()).await
+        {
             Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
                 connected_peers += 1;
-                info!("✓ Peer connected: {} (total: {})", connected_peer_id, connected_peers);
-                
+                info!(
+                    "✓ Peer connected: {} (total: {})",
+                    connected_peer_id, connected_peers
+                );
+
                 if connected_peers >= 5 {
                     info!("✓ Minimum peer threshold reached");
                     break;
@@ -1494,7 +1508,7 @@ async fn run_relay_node(
             Ok(None) | Err(_) => {}
         }
     }
-    
+
     info!("✓ Relay connected to {} peers", connected_peers);
 
     // Auto-discover other Docker relay nodes (if running in Docker)
@@ -1528,31 +1542,12 @@ async fn run_relay_node(
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    // Configure relay with staking
-    let relay_config = RelayConfig {
-        enabled: true,
-        max_connections: config.network.max_connections as usize,
-        bandwidth_limit: 10_000_000u64, // 10 MB/s
-        min_stake: stake_amount,
-        reward_per_message: 1u64,
-    };
-
-    // Initialize relay with network manager
-    let mut relay = RelayNode::new(relay_config, peer_id, network);
-    info!(
-        "✓ Relay node initialized with stake: {} tokens",
-        stake_amount
-    );
-
-    // Start relay
-    let relay_handle = tokio::spawn(async move {
-        if let Err(e) = relay.run().await {
-            error!("Relay node error: {}", e);
-        }
-    });
-    info!("✓ Relay node started");
-
-    // Initialize storage
+    // TODO: Relay node functionality was migrated to dchat-network crate in Phase 3
+    // The old RelayConfig/RelayNode from relay.rs were removed
+    // Relay functionality now uses relay::proof and relay::reputation modules
+    // Need to refactor this section to use new relay architecture
+    info!("⚠ Relay node functionality temporarily disabled during crate migration");
+    info!("✓ Network initialized with stake: {} tokens", stake_amount); // Initialize storage
     let db_config = DatabaseConfig::default();
     let _database = Database::new(db_config).await?;
     info!("✓ Database initialized");
@@ -1574,9 +1569,9 @@ async fn run_relay_node(
     info!("Shutting down gracefully...");
     let _ = shutdown_tx.send(());
 
-    // Wait for tasks to complete
+    // Wait for tasks to complete (relay temporarily disabled during migration)
     tokio::time::timeout(tokio::time::Duration::from_secs(30), async {
-        let _ = tokio::join!(health_handle, metrics_handle, relay_handle);
+        let _ = tokio::join!(health_handle, metrics_handle);
     })
     .await
     .map_err(|_| Error::network("Shutdown timeout".to_string()))?;
@@ -2010,11 +2005,16 @@ async fn run_validator_node(
         info!("Loading validator key from AWS KMS: {}", key_path);
         // Production: Use AWS KMS for secure key storage
         // For now, load from encrypted validator_keys directory
-        let key_file = PathBuf::from("./validator_keys").join(&key_path).with_extension("key");
+        let key_file = PathBuf::from("./validator_keys")
+            .join(&key_path)
+            .with_extension("key");
         if key_file.exists() {
             load_validator_key(&key_file).await?
         } else {
-            return Err(Error::Crypto(format!("Validator key not found: {:?}", key_file)));
+            return Err(Error::Crypto(format!(
+                "Validator key not found: {:?}",
+                key_file
+            )));
         }
     } else {
         info!("Loading validator key from file: {}", key_path);
@@ -2026,22 +2026,25 @@ async fn run_validator_node(
 
     // MAINNET: Initialize DNS-based peer discovery
     info!("🌍 Initializing DNS-based peer discovery for mainnet...");
-    
+
     let dns_config = dchat_network::DnsDiscoveryConfig::default();
     let dns_discovery = dchat_network::DnsDiscoveryManager::new(dns_config.clone())
         .map_err(|e| Error::network(format!("Failed to create DNS discovery: {}", e)))?;
-    
+
     // Start DNS refresh background task
     let _dns_refresh_handle = dns_discovery.start_refresh_task();
-    info!("✓ DNS refresh task started (interval: {:?})", dns_config.refresh_interval);
-    
+    info!(
+        "✓ DNS refresh task started (interval: {:?})",
+        dns_config.refresh_interval
+    );
+
     // Discover all validators via DNS
     info!("🔍 Discovering validators via subdomains...");
     let discovered_validators = dns_discovery
         .discover_validators()
         .await
         .map_err(|e| Error::network(format!("Failed to discover validators: {}", e)))?;
-    
+
     info!("✓ Discovered {} validators:", discovered_validators.len());
     for validator in &discovered_validators {
         info!(
@@ -2049,7 +2052,7 @@ async fn run_validator_node(
             validator.identifier, validator.ip, validator.port, validator.multiaddr
         );
     }
-    
+
     // Convert discovered validators to bootstrap nodes
     // Note: PeerID will be learned during handshake
     let mut bootstrap_nodes = Vec::new();
@@ -2057,7 +2060,7 @@ async fn run_validator_node(
         let peer_id = PeerId::random(); // Placeholder, will be replaced during connection
         bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
     }
-    
+
     // Also add any manually configured bootstrap peers from config
     for peer_str in &config.network.bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
@@ -2070,9 +2073,9 @@ async fn run_validator_node(
             }
         }
     }
-    
+
     info!("📡 Total bootstrap peers: {}", bootstrap_nodes.len());
-    
+
     // Parse listen addresses
     let mut listen_addrs = Vec::new();
     for addr_str in &config.network.listen_addresses {
@@ -2080,7 +2083,7 @@ async fn run_validator_node(
             listen_addrs.push(addr);
         }
     }
-    
+
     // Create network config with discovered peers
     let network_config = dchat_network::NetworkConfig {
         listen_addrs,
@@ -2107,21 +2110,21 @@ async fn run_validator_node(
             port_range: (49152, 65535),
         },
     };
-    
+
     // Initialize network manager
     let mut network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
 
     network.start().await?;
     info!("✓ Validator network initialized (peer_id: {})", peer_id);
-    
+
     // Compute dynamic BFT thresholds based on discovered validators
     let total_validators = discovered_validators.len() + 1; // +1 for this node
     use dchat_validator::BftConfig;
     let bft_config = BftConfig::from_validator_count(total_validators, 3, 0.40);
     let f = bft_config.byzantine_tolerance();
     let required_signatures = bft_config.required_signatures;
-    
+
     info!(
         "🔐 BFT Configuration: N={}, f={}, required_signatures={}",
         total_validators, f, required_signatures
@@ -2130,28 +2133,28 @@ async fn run_validator_node(
         "   Byzantine tolerance: can tolerate {} faulty validators",
         f
     );
-    
+
     // Wait for initial peer connections (critical for consensus)
     // Need at least 2f+1 validators connected for consensus
     info!("⏳ Waiting for validator peer connections...");
     let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
     let mut connected_validators = 0;
-    
+
     // Minimum peers needed (don't count self, need required_signatures - 1 peers)
     let min_peers_needed = required_signatures.saturating_sub(1);
-    
+
     while tokio::time::Instant::now() < connection_deadline {
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            network.next_event()
-        ).await {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(5), network.next_event()).await
+        {
             Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
                 connected_validators += 1;
                 info!(
                     "✓ Validator peer connected: {} ({}/{} required for consensus)",
-                    connected_peer_id, connected_validators + 1, required_signatures
+                    connected_peer_id,
+                    connected_validators + 1,
+                    required_signatures
                 );
-                
+
                 // Update DNS discovery with actual peer ID
                 for validator in &discovered_validators {
                     let multiaddr_str = validator.multiaddr.to_string();
@@ -2161,12 +2164,14 @@ async fn run_validator_node(
                             .await;
                     }
                 }
-                
+
                 // Check if we've reached consensus threshold
                 if connected_validators >= min_peers_needed {
                     info!(
                         "✓ Consensus threshold reached ({}/{} validators connected, need {})",
-                        connected_validators + 1, total_validators, required_signatures
+                        connected_validators + 1,
+                        total_validators,
+                        required_signatures
                     );
                     break;
                 }
@@ -2179,19 +2184,25 @@ async fn run_validator_node(
             }
         }
     }
-    
+
     if connected_validators < min_peers_needed {
         error!(
             "❌ Failed to connect to minimum validators: {}/{} connected (need {} for consensus)",
-            connected_validators + 1, total_validators, required_signatures
+            connected_validators + 1,
+            total_validators,
+            required_signatures
         );
-        return Err(Error::network(
-            format!("Insufficient validator connections for consensus: got {}, need {}", 
-                connected_validators + 1, required_signatures)
-        ));
+        return Err(Error::network(format!(
+            "Insufficient validator connections for consensus: got {}, need {}",
+            connected_validators + 1,
+            required_signatures
+        )));
     }
-    
-    info!("✓ Validator network ready with {} peers", connected_validators);
+
+    info!(
+        "✓ Validator network ready with {} peers",
+        connected_validators
+    );
 
     // Initialize storage
     let db_config = DatabaseConfig::default();
@@ -2200,36 +2211,42 @@ async fn run_validator_node(
 
     // Connect to chain RPC
     info!("Connecting to chain at {}...", chain_rpc);
-    
+
     // Production: Initialize actual chain client
     let chat_chain_config = ChatChainConfig {
         rpc_url: chain_rpc.clone(),
         ..Default::default()
     };
     let chat_chain = ChatChainClient::new(chat_chain_config);
-    
+
     // Stake tokens on-chain
     info!("Submitting validator stake of {} tokens...", stake_amount);
-    
+
     use dchat::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
-    
+    use ed25519_dalek::VerifyingKey;
+
+    // Extract public key bytes and create VerifyingKey for staking
+    let public_key_bytes = validator_key.public_key().as_bytes();
+    let verifying_key = VerifyingKey::from_bytes(public_key_bytes)
+        .map_err(|e| dchat_core::Error::crypto(format!("Invalid public key: {}", e)))?;
+
     let stake_request = StakeRequest {
-        validator_key: validator_key.clone(),
+        validator_key: verifying_key,
         amount: stake_amount,
         lockup_period_days: 7,
     };
-    
+
     match submit_validator_stake(&stake_request).await {
         Ok(receipt) => {
             info!("✅ Stake submitted successfully!");
             info!("   Transaction ID: {}", receipt.transaction_id);
             info!("   Stake Amount: {} tokens", receipt.stake_amount);
             info!("   Unlock Date: {:?}", receipt.unlock_timestamp);
-        },
+        }
         Err(e) => {
             error!("❌ Failed to submit stake: {}", e);
             error!("   Cannot proceed without stake");
-            return Err(e.into());
+            return Err(dchat_core::Error::chain(format!("Staking error: {}", e)));
         }
     }
 
@@ -2541,10 +2558,10 @@ fn start_metrics_server(
     let metrics_route = warp::path("metrics").map(|| {
         // Production: Export Prometheus metrics from observability crate
         use dchat_observability::MetricsCollector;
-        
+
         // TODO: Implement export_prometheus method on MetricsCollector
         let metrics_text = String::from("# Metrics not yet implemented\n");
-        
+
         warp::reply::with_header(
             metrics_text,
             "Content-Type",
@@ -2729,12 +2746,12 @@ async fn run_database_command(config: Config, action: DatabaseCommand) -> Result
 
             // Production: Verify backup and restore
             info!("Restoring database from backup...");
-            
+
             // Simple file copy for restore
             tokio::fs::copy(&input, &config.storage.data_dir.join("dchat.db"))
                 .await
                 .map_err(Error::Io)?;
-                
+
             info!("Verifying restored database...");
             let restored_db = Database::new(db_config.clone()).await?;
             restored_db.health_check().await?;
@@ -3265,29 +3282,27 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                 .map_err(|_| Error::validation("Invalid listing ID"))?;
 
             // Production: Verify payment on currency chain before completing purchase
-            let listing = marketplace.get_listing(listing_uuid)
+            let listing = marketplace
+                .get_listing(listing_uuid)
                 .ok_or_else(|| Error::NotFound("Listing not found".to_string()))?;
-            
+
             let price = match listing.pricing {
                 PricingModel::OneTime { price } => price,
                 PricingModel::Free => 0,
                 _ => return Err(Error::validation("Unsupported pricing model")),
             };
-            
+
             // Initialize currency chain client
             let currency_chain = CurrencyChainClient::new(CurrencyChainConfig::default());
-            
+
             // Execute and verify payment transaction
-            let tx_hash = currency_chain.transfer(
-                &buyer,
-                &listing.creator,
-                price
-            )?;
-            
+            let tx_hash = currency_chain.transfer(&buyer, &listing.creator, price)?;
+
             info!("✓ Payment verified on-chain (tx: {})", tx_hash);
-            
+
             // Complete purchase with verified transaction
-            let purchase_id = marketplace.purchase(buyer, listing_uuid, price, tx_hash.to_string())?;
+            let purchase_id =
+                marketplace.purchase(buyer, listing_uuid, price, tx_hash.to_string())?;
 
             println!("\n✅ Purchase successful!");
             println!("Purchase ID: {}", purchase_id);
@@ -4114,15 +4129,15 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
 
             // Production: Load validator key and sign proposal commitment
             let validator_keypair = load_validator_key(&key_file).await?;
-            
+
             let proposal = manager
                 .get_proposal(&id)
                 .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
-            
+
             // Create proposal commitment hash for signing
             // TODO: Implement create_commitment on UpgradeProposal
             let commitment = format!("{:?}", proposal).into_bytes();
-            
+
             // Sign with validator key
             // TODO: Implement sign method on KeyPair
             let signature = vec![0u8; 64]; // placeholder
@@ -4342,12 +4357,13 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
     let config = TokenSupplyConfig::default();
     let tokenomics_inner = Arc::new(TokenomicsManager::new(config));
     let tokenomics = Arc::new(Mutex::new(tokenomics_inner.clone()));
-    
+
     // Initialize currency chain client with persistent tokenomics
     let currency_config = CurrencyChainConfig::default();
-    let currency_client = Arc::new(Mutex::new(
-        CurrencyChainClient::with_tokenomics(currency_config, tokenomics_inner)
-    ));
+    let currency_client = Arc::new(Mutex::new(CurrencyChainClient::with_tokenomics(
+        currency_config,
+        tokenomics_inner,
+    )));
 
     match action {
         TokenCommand::Stats => {
@@ -5057,9 +5073,11 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 "🛠 Generating deployment plan for {} ({}) with {} relays",
                 network, domain, relays
             );
-            let summary =
-                deployment::generate_full_plan(&network, &domain, relays, &output).await?;
-            deployment::log_plan_summary(&summary);
+            let summary = dchat_deployment::orchestrator::generate_full_plan(
+                &network, &domain, relays, &output,
+            )
+            .await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
         DeployCommand::Validate { input } => {
@@ -5067,8 +5085,8 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 "🔍 Validating deployment plan artifacts in {}",
                 input.display()
             );
-            let summary = deployment::validate_plan(&input).await?;
-            deployment::log_plan_summary(&summary);
+            let summary = dchat_deployment::orchestrator::validate_plan(&input).await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
         DeployCommand::Summary { input } => {
@@ -5076,10 +5094,9 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 "📄 Reading deployment plan summary from {}",
                 input.display()
             );
-            let summary = deployment::read_plan_summary(&input).await?;
-            deployment::log_plan_summary(&summary);
+            let summary = dchat_deployment::orchestrator::read_plan_summary(&input).await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
     }
 }
-

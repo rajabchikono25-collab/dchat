@@ -47,8 +47,8 @@ impl Client {
         // Note: Ed25519 keypair conversion to Noise keypair would be done properly in production
         // For now, we'll initialize Noise keypair separately when building sessions
         let noise_keypair = Arc::new(snow::Keypair {
-            private: vec![0u8; 32],  // Placeholder - would derive from ed25519 key
-            public: vec![0u8; 32],   // Placeholder - would derive from ed25519 key
+            private: vec![0u8; 32], // Placeholder - would derive from ed25519 key
+            public: vec![0u8; 32],  // Placeholder - would derive from ed25519 key
         });
 
         Ok(Self {
@@ -69,12 +69,14 @@ impl Client {
         }
 
         tracing::info!("Connecting to dchat network");
-        
+
         // TODO: Implement proper libp2p 0.54+ integration
         // The libp2p API has changed significantly - needs proper NetworkBehaviour trait implementation
         // For now, this is a placeholder to allow compilation
-        tracing::warn!("libp2p swarm initialization not yet implemented - needs API version alignment");
-        
+        tracing::warn!(
+            "libp2p swarm initialization not yet implemented - needs API version alignment"
+        );
+
         tracing::info!("Successfully connected to dchat network");
 
         *connected = true;
@@ -89,10 +91,10 @@ impl Client {
         }
 
         tracing::info!("Disconnecting from dchat network");
-        
+
         // TODO: Implement proper swarm cleanup when libp2p is integrated
         tracing::warn!("Swarm disconnection not yet implemented");
-        
+
         tracing::info!("Disconnected from dchat network");
 
         *connected = false;
@@ -133,35 +135,35 @@ impl Client {
 
         // Send to network
         tracing::info!("Sending message to network");
-        
+
         // 1. Encrypt message using Noise Protocol
         tracing::debug!("Encrypting message payload with Noise Protocol");
         let payload = serde_json::to_vec(&message.content)
             .map_err(|e| SdkError::Message(format!("Serialization error: {}", e)))?;
-        
+
         // Build Noise session (simplified - production would maintain persistent sessions)
         let builder = snow::Builder::new("Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
         let mut noise = builder
             .local_private_key(&self.noise_keypair.private)
             .build_initiator()
             .map_err(|e| SdkError::Crypto(format!("Noise init failed: {}", e)))?;
-        
+
         let mut encrypted_payload = vec![0u8; payload.len() + 1024]; // Extra space for Noise overhead
         let len = noise
             .write_message(&payload, &mut encrypted_payload)
             .map_err(|e| SdkError::Crypto(format!("Encryption failed: {}", e)))?;
         encrypted_payload.truncate(len);
-        
+
         // TODO: Implement DHT routing when libp2p is integrated
         tracing::debug!("Looking up recipient in DHT: {}", recipient);
         tracing::warn!("DHT lookup not yet implemented - needs libp2p integration");
-        
+
         // 3. Submit message hash to blockchain for ordering
         let message_hash = blake3::hash(&payload);
         tracing::debug!("Message hash for blockchain: {}", message_hash);
         // Production: blockchain_client.submit_message_order(message_hash, sequence_num).await?
         tracing::warn!("Blockchain submission not yet connected - message stored locally only");
-        
+
         // 4. Delivery confirmation (simplified - production uses relay proof-of-delivery)
         tracing::debug!("Message encrypted and prepared for delivery");
         // Production: await relay delivery receipt with cryptographic proof
@@ -223,17 +225,17 @@ impl Client {
         //                 SwarmEvent::Behaviour(KademliaEvent::InboundRequest { request }) => {
         //                     // Handle incoming message request
         //                     let encrypted_payload = request.payload();
-        //                     
+        //
         //                     // Decrypt using Noise Protocol
         //                     let builder = snow::Builder::new("Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
         //                     let mut noise = builder.build_responder().unwrap();
         //                     let mut plaintext = vec![0u8; encrypted_payload.len()];
         //                     let len = noise.read_message(encrypted_payload, &mut plaintext).unwrap();
         //                     plaintext.truncate(len);
-        //                     
+        //
         //                     // Verify blockchain sequence
         //                     // blockchain_client.verify_message_sequence(message_id, expected_seq).await?
-        //                     
+        //
         //                     // Store in database
         //                     // db.insert_message(&message_row).await?
         //                 }
@@ -242,7 +244,7 @@ impl Client {
         //         }
         //     }
         // });
-        
+
         tracing::debug!("Checking for new messages (event loop integration pending)");
         // For now, return locally stored messages only
 

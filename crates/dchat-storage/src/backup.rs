@@ -116,7 +116,9 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = Nonce::from(*<&[u8; 12]>::try_from(nonce).map_err(|_| Error::crypto("Invalid nonce length"))?);
+        let nonce = Nonce::from(
+            *<&[u8; 12]>::try_from(nonce).map_err(|_| Error::crypto("Invalid nonce length"))?,
+        );
 
         let mut buffer = ciphertext.to_vec();
         cipher

@@ -148,7 +148,10 @@ impl UserManager {
 
         // Wait for blockchain finality confirmation (3 blocks)
         info!("Waiting for on-chain confirmation (finality threshold: 3 blocks)...");
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+        let on_chain_confirmed = self
+            .chat_chain
+            .wait_for_finality(&tx_id, 3)
+            .await
             .map_err(|e| Error::chain(&e))?;
         if on_chain_confirmed {
             info!("✓ User registration confirmed on chat chain");
@@ -216,20 +219,21 @@ impl UserManager {
     /// List all users from database
     pub async fn list_users(&self) -> Result<Vec<UserProfile>> {
         info!("Listing all users");
-        
+
         // Fetch all users from database
         let users = self.database.list_all_users().await?;
-        
+
         // Convert to UserProfile format
         let mut profiles = Vec::new();
         for user in users {
             let public_key_hex = hex::encode(&user.public_key);
-            let created_at_rfc3339 = if let Some(dt) = chrono::DateTime::from_timestamp(user.created_at, 0) {
-                dt.to_rfc3339()
-            } else {
-                return Err(Error::internal("Invalid timestamp in user data"));
-            };
-            
+            let created_at_rfc3339 =
+                if let Some(dt) = chrono::DateTime::from_timestamp(user.created_at, 0) {
+                    dt.to_rfc3339()
+                } else {
+                    return Err(Error::internal("Invalid timestamp in user data"));
+                };
+
             profiles.push(UserProfile {
                 user_id: user.id,
                 username: user.username.clone(),
@@ -241,7 +245,7 @@ impl UserManager {
                 badges: vec![],
             });
         }
-        
+
         Ok(profiles)
     }
 
@@ -362,7 +366,10 @@ impl UserManager {
 
         // Wait for blockchain confirmation
         info!("Waiting for on-chain channel creation confirmation...");
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+        let on_chain_confirmed = self
+            .chat_chain
+            .wait_for_finality(&tx_id, 3)
+            .await
             .map_err(|e| Error::chain(&e))?;
 
         info!(
@@ -420,7 +427,10 @@ impl UserManager {
             })?;
 
         // Wait for blockchain confirmation
-        let on_chain_confirmed = self.chat_chain.wait_for_finality(&tx_id, 3).await
+        let on_chain_confirmed = self
+            .chat_chain
+            .wait_for_finality(&tx_id, 3)
+            .await
             .map_err(|e| Error::chain(&e))?;
 
         // Store message in database

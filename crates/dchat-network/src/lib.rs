@@ -17,14 +17,25 @@ pub mod gossip; // Sprint 9: Gossip protocol for message propagation
 pub mod gossip_sync; // Phase 3: Gossip-based synchronization
 pub mod nat;
 pub mod nat_traversal; // Phase 2: Enhanced NAT traversal (UPnP/TURN)
+pub mod network; // Network modules: nat_telemetry, onion routing
 pub mod onion_routing; // Phase 2: Metadata-resistant routing
 pub mod rate_limit; // Sprint 5: Token bucket rate limiting
 pub mod rate_limiting; // Phase 2: Reputation-based rate limiting
-pub mod relay;
+pub mod relay; // Relay modules: proof, reputation
 pub mod relay_network; // Phase 3: Full relay network coordination
 pub mod routing;
 pub mod swarm;
 pub mod transport;
+
+// Re-export network submodules
+pub use network::nat_telemetry;
+pub use network::onion;
+
+// Re-export relay submodules
+pub use relay::proof;
+pub use relay::reputation;
+
+// Re-export commonly used types from relay modules
 pub use behavior::{DchatBehavior, DchatBehaviorEvent, DchatMessage};
 pub use connection::{
     ConnectionConfig, ConnectionInfo, ConnectionManager, ConnectionState, ConnectionStats,
@@ -41,7 +52,14 @@ pub use nat_traversal::{NatStrategy, NatTraversalManager, NatType};
 pub use onion_routing::{CircuitId, CircuitStatus, OnionRoutingManager};
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use rate_limiting::{RateLimitManager, ReputationScore};
-pub use relay::{RelayClient, RelayConfig, RelayNode};
+pub use relay::proof::{
+    BatchAccumulator, BatchId, DeliveryProof, MessageId as RelayMessageId,
+    ProofBatch as RelayProofBatch,
+};
+pub use relay::reputation::{
+    RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier,
+};
+// Note: RelayClient, RelayConfig, RelayNode were in old relay.rs (removed in Phase 3 migration)
 pub use relay_network::{
     Continent, LoadStrategy, NetworkStats, ProofBatch, RelayInfo, RelayNetworkManager,
 };

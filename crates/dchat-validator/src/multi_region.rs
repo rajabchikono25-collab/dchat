@@ -179,7 +179,7 @@ pub struct BftConfig {
 
 impl BftConfig {
     /// Compute dynamic BFT thresholds from active validator count
-    /// 
+    ///
     /// Uses standard BFT formula:
     /// - f = floor((N - 1) / 3)  -- Maximum Byzantine nodes tolerated
     /// - Required signatures = 2f + 1
@@ -196,13 +196,13 @@ impl BftConfig {
                 max_region_percentage,
             };
         }
-        
+
         // Standard BFT formula: f = floor((N - 1) / 3)
         let f = (total_validators.saturating_sub(1)) / 3;
-        
+
         // Required signatures for finality: 2f + 1
         let required_signatures = 2 * f + 1;
-        
+
         Self {
             total_validators,
             required_signatures,
@@ -210,7 +210,7 @@ impl BftConfig {
             max_region_percentage,
         }
     }
-    
+
     /// Get Byzantine tolerance (f)
     pub fn byzantine_tolerance(&self) -> usize {
         (self.total_validators.saturating_sub(1)) / 3
@@ -425,20 +425,19 @@ impl MultiRegionCoordinator {
         block_hash: &[u8; 32],
         block_height: u64,
     ) -> Result<ValidatorSignature> {
-        let signing_key = self
-            .signing_key
-            .as_ref()
-            .ok_or_else(|| {
-                // Get actual region from validator config or use default
-                let region = self.validators.get(validator_id)
-                    .map(|v| v.region)
-                    .unwrap_or(GeographicRegion::NorthAmerica);
-                
-                MultiRegionError::ValidatorNotFound {
-                    validator_id: validator_id.to_string(),
-                    region,
-                }
-            })?;
+        let signing_key = self.signing_key.as_ref().ok_or_else(|| {
+            // Get actual region from validator config or use default
+            let region = self
+                .validators
+                .get(validator_id)
+                .map(|v| v.region)
+                .unwrap_or(GeographicRegion::NorthAmerica);
+
+            MultiRegionError::ValidatorNotFound {
+                validator_id: validator_id.to_string(),
+                region,
+            }
+        })?;
 
         let signature = signing_key.sign(block_hash);
 

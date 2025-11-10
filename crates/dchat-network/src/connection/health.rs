@@ -111,20 +111,22 @@ impl HealthMonitor {
     async fn perform_health_check_static(peer_id: &PeerId) -> Result<Duration> {
         // Production: Use actual libp2p ping protocol for health checks
         // This provides real network latency measurement and failure detection
-        
+
         use std::time::Instant;
-        
+
         let start = Instant::now();
-        
+
         // TCP connection test validates network connectivity and measures latency
         // This provides real health status unlike simulated checks
         // Future enhancement: integrate with libp2p::ping::Ping for protocol-level checks
         let peer_addr = format!("{}:7070", peer_id); // Standard P2P port
-        
+
         match tokio::time::timeout(
             Duration::from_secs(5),
-            tokio::net::TcpStream::connect(&peer_addr)
-        ).await {
+            tokio::net::TcpStream::connect(&peer_addr),
+        )
+        .await
+        {
             Ok(Ok(_stream)) => {
                 let latency = start.elapsed();
                 // Connection successful, return actual RTT

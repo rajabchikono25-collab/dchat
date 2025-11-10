@@ -11,9 +11,9 @@ use dchat_core::{Error, Result};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use num_bigint::BigUint;
 use num_traits::One;
-use std::ops::Rem;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use std::ops::Rem;
 
 /// A blind token that can be redeemed anonymously
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,14 +74,14 @@ impl TokenIssuer {
         // 2. Verify payment amount >= token value
         // 3. Verify payment is to token issuer address
         // 4. Check transaction hasn't been used before (prevent double-spend)
-        
+
         if amount == 0 {
             return Ok(false);
         }
-        
+
         tracing::info!("Verifying blockchain payment of {} tokens", amount);
         // In production: blockchain_client.verify_payment_tx(tx_hash, amount, issuer_address)
-        
+
         Ok(true)
     }
 }
@@ -111,14 +111,14 @@ impl BlindSigner {
         // Production: RSA-BSSA blind signature blinding
         // blinded_message = message * (blinding_factor^e) mod N
         use num_traits::One;
-        
+
         // RSA-2048 public exponent (standard value)
         let public_exponent = BigUint::from(65537u32);
-        
+
         // Use SHA-256 hash of nonce as message representative
         let message_hash = blake3::hash(&nonce);
         let message_int = BigUint::from_bytes_be(message_hash.as_bytes());
-        
+
         // Create a 2048-bit modulus (in production, use issuer's actual RSA public key)
         // For now, use a deterministic but cryptographically large modulus
         let modulus_hash = blake3::hash(b"dchat-blind-token-modulus-v1");
@@ -126,15 +126,16 @@ impl BlindSigner {
         let mut modulus_vec = vec![0xFF; 256]; // 2048 bits
         modulus_vec[..32].copy_from_slice(modulus_bytes);
         let modulus = BigUint::from_bytes_be(&modulus_vec) | BigUint::one();
-        
+
         let blinding_factor_int = BigUint::from_bytes_be(&self.blinding_factor.to_bytes());
-        let blinded_int = (message_int * blinding_factor_int.modpow(&public_exponent, &modulus))
-            .rem(&modulus);
-        
+        let blinded_int =
+            (message_int * blinding_factor_int.modpow(&public_exponent, &modulus)).rem(&modulus);
+
         let blinded_bytes = blinded_int.to_bytes_be();
         let mut blinded_value = [0u8; 32];
         let copy_len = blinded_bytes.len().min(32);
-        blinded_value[32 - copy_len..].copy_from_slice(&blinded_bytes[blinded_bytes.len() - copy_len..]);
+        blinded_value[32 - copy_len..]
+            .copy_from_slice(&blinded_bytes[blinded_bytes.len() - copy_len..]);
 
         Ok(BlindToken {
             blinded_value,
@@ -156,27 +157,29 @@ impl BlindSigner {
         // unblinded_signature = blinded_signature * blinding_factor^(-1) mod N
         use num_bigint::BigUint;
         use num_integer::Integer;
-        
+
         let blind_sig_int = BigUint::from_bytes_be(&blind_signature);
         let blinding_factor_int = BigUint::from_bytes_be(&self.blinding_factor.to_bytes());
-        
+
         // Create same modulus as in blinding (must match issuer's RSA modulus)
         let modulus_hash = blake3::hash(b"dchat-blind-token-modulus-v1");
         let modulus_bytes = modulus_hash.as_bytes();
         let mut modulus_vec = vec![0xFF; 256];
         modulus_vec[..32].copy_from_slice(modulus_bytes);
         let modulus = BigUint::from_bytes_be(&modulus_vec) | BigUint::one();
-        
+
         // Compute modular inverse: blinding_factor^(-1) mod N
         let extended_gcd_result = blinding_factor_int.extended_gcd(&modulus);
         if !extended_gcd_result.gcd.is_one() {
-            return Err(Error::Crypto("Failed to compute modular inverse".to_string()));
+            return Err(Error::Crypto(
+                "Failed to compute modular inverse".to_string(),
+            ));
         }
-        
+
         // Extended GCD on BigUint returns BigUint, already positive
         // For RSA, we need the multiplicative inverse which is always positive modulo N
         let blinding_inverse = extended_gcd_result.x;
-        
+
         let unblinded_int = (blind_sig_int * blinding_inverse).rem(&modulus);
         let unblinded_sig = unblinded_int.to_bytes_be();
 
@@ -205,22 +208,25 @@ impl TokenVerifier {
         if signature.len() != 64 {
             return Ok(false);
         }
-        
+
         // Parse signature bytes
         let sig_bytes: [u8; 64] = signature
             .as_slice()
             .try_into()
             .map_err(|_| Error::validation("Invalid signature length"))?;
-        
+
         use ed25519_dalek::Signature;
         let sig = Signature::from_bytes(&sig_bytes);
-        
+
         // In production: verify using issuer's public key
         // verifying_key.verify_strict(&token.blinded_value, &sig).is_ok()
-        
+
         // For now, verify signature format is valid
         tracing::debug!("Verifying Ed25519 signature on blind token");
-        Ok(self.public_key.verify_strict(&token.blinded_value, &sig).is_ok())
+        Ok(self
+            .public_key
+            .verify_strict(&token.blinded_value, &sig)
+            .is_ok())
     }
 
     /// Check if token has sufficient value for operation
