@@ -53,6 +53,7 @@ dchat-network = { path = "crates/dchat-network" }
 dchat-messaging = { path = "crates/dchat-messaging" }
 dchat-storage = { path = "crates/dchat-storage" }
 dchat-chain = { path = "crates/dchat-chain" }
+dchat-validator = { path = "crates/dchat-validator" }
 dchat-blockchain = { path = "crates/dchat-blockchain" }
 dchat-privacy = { path = "crates/dchat-privacy" }
 dchat-governance = { path = "crates/dchat-governance" }

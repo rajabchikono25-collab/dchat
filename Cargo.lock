@@ -1167,6 +1167,7 @@ dependencies = [
  "dchat-sdk-rust",
  "dchat-storage",
  "dchat-testing",
+ "dchat-validator",
  "dirs 5.0.1",
  "ed25519-dalek",
  "hex",

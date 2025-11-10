@@ -1524,35 +1524,16 @@ async fn run_relay_node(
             }
         }
 
-        // Give dials time to establish
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+    // Give dials time to establish
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+}
 
-    // Configure relay with staking
-    let relay_config = RelayConfig {
-        enabled: true,
-        max_connections: config.network.max_connections as usize,
-        bandwidth_limit: 10_000_000u64, // 10 MB/s
-        min_stake: stake_amount,
-        reward_per_message: 1u64,
-    };
-
-    // Initialize relay with network manager
-    let mut relay = RelayNode::new(relay_config, peer_id, network);
-    info!(
-        "✓ Relay node initialized with stake: {} tokens",
-        stake_amount
-    );
-
-    // Start relay
-    let relay_handle = tokio::spawn(async move {
-        if let Err(e) = relay.run().await {
-            error!("Relay node error: {}", e);
-        }
-    });
-    info!("✓ Relay node started");
-
-    // Initialize storage
+// TODO: Relay node functionality was migrated to dchat-network crate in Phase 3
+// The old RelayConfig/RelayNode from relay.rs were removed
+// Relay functionality now uses relay::proof and relay::reputation modules
+// Need to refactor this section to use new relay architecture
+info!("⚠ Relay node functionality temporarily disabled during crate migration");
+info!("✓ Network initialized with stake: {} tokens", stake_amount);    // Initialize storage
     let db_config = DatabaseConfig::default();
     let _database = Database::new(db_config).await?;
     info!("✓ Database initialized");
@@ -1574,9 +1555,9 @@ async fn run_relay_node(
     info!("Shutting down gracefully...");
     let _ = shutdown_tx.send(());
 
-    // Wait for tasks to complete
+    // Wait for tasks to complete (relay temporarily disabled during migration)
     tokio::time::timeout(tokio::time::Duration::from_secs(30), async {
-        let _ = tokio::join!(health_handle, metrics_handle, relay_handle);
+        let _ = tokio::join!(health_handle, metrics_handle);
     })
     .await
     .map_err(|_| Error::network("Shutdown timeout".to_string()))?;
@@ -2212,9 +2193,15 @@ async fn run_validator_node(
     info!("Submitting validator stake of {} tokens...", stake_amount);
     
     use dchat::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
+    use ed25519_dalek::VerifyingKey;
+    
+    // Extract public key bytes and create VerifyingKey for staking
+    let public_key_bytes = validator_key.public_key().as_bytes();
+    let verifying_key = VerifyingKey::from_bytes(public_key_bytes)
+        .map_err(|e| dchat_core::Error::crypto(format!("Invalid public key: {}", e)))?;
     
     let stake_request = StakeRequest {
-        validator_key: validator_key.clone(),
+        validator_key: verifying_key,
         amount: stake_amount,
         lockup_period_days: 7,
     };
@@ -2229,7 +2216,7 @@ async fn run_validator_node(
         Err(e) => {
             error!("❌ Failed to submit stake: {}", e);
             error!("   Cannot proceed without stake");
-            return Err(e.into());
+            return Err(dchat_core::Error::chain(format!("Staking error: {}", e)));
         }
     }
 

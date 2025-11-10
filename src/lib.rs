@@ -119,7 +119,6 @@ pub use dchat_validator as validator; // Now fully in crate
 
 // Re-export config from dchat-core
 pub use dchat_core::config;
-pub use dchat_core::config;
 
 // Re-export user management types
 pub use user_management::{
@@ -175,7 +174,8 @@ pub mod prelude {
         behavior::{DchatBehavior, DchatMessage},
         discovery::{Discovery, DiscoveryConfig},
         nat::{NatConfig, NatTraversal},
-        relay::{RelayClient, RelayConfig, RelayNode},
+        // Note: RelayClient, RelayConfig, RelayNode were in old relay.rs (removed in Phase 3)
+        // For relay functionality, use the relay::proof and relay::reputation modules
         routing::{Router, RoutingTable},
         swarm::{NetworkConfig, NetworkEvent, NetworkManager},
     };

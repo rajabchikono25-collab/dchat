@@ -1069,6 +1069,7 @@ dependencies = [
  "dchat-sdk-rust",
  "dchat-storage",
  "dchat-testing",
+ "dchat-validator",
  "dirs",
  "ed25519-dalek",
  "hex",
@@ -1498,6 +1499,21 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "dchat-validator"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "rand 0.8.5",
+ "reqwest 0.11.27",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
