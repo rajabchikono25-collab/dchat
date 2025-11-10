@@ -1,4 +1,9 @@
-//! Configuration management for dchat
+// Configuration module
+pub mod constants;
+
+pub use constants::*;
+
+/// Configuration management for dchat
 
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};

@@ -8,6 +8,9 @@ pub mod error;
 pub mod events;
 pub mod types;
 
+// Re-export config submodule contents
+pub use config::constants;
+
 pub use config::Config;
 pub use error::{Error, Result};
 pub use events::{Event, EventBus};

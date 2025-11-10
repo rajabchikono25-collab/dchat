@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, Instant};
 use thiserror::Error;
 
-use crate::config::constants::{
+use dchat_core::config::constants::{
     SLASH_RATE_DOUBLE_SIGN,
     SLASH_RATE_INVALID_PROOF,
     SLASH_RATE_CENSORSHIP,

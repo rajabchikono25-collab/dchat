@@ -40,6 +40,9 @@ getrandom = "0.2"
 toml = "0.8"
 chrono = { workspace = true }
 tracing = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+libp2p = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use thiserror::Error;
 
-use crate::identity::peer_registry::PeerRole;
+use dchat_identity::peer_registry::PeerRole;
 
 /// Reputation scoring constants
 pub const UPTIME_WEIGHT: f64 = 0.30;

@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
+dchat-network = { path = "../dchat-network" }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }

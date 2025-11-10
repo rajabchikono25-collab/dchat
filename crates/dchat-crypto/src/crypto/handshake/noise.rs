@@ -35,9 +35,9 @@
 /// Handshakes are enforced with 30-second timeout (HANDSHAKE_TIMEOUT).
 /// Timed-out handshakes are cleaned up automatically via periodic task.
 
-use dchat_crypto::handshake::{HandshakeManager as CryptoHandshakeManager, HandshakeState};
-use dchat_crypto::keys::{PrivateKey, PublicKey};
-use dchat_crypto::noise::NoisePattern;
+use crate::handshake::{HandshakeManager as CryptoHandshakeManager, HandshakeState};
+use crate::keys::{PrivateKey, PublicKey};
+use crate::noise::NoisePattern;
 use ed25519_dalek::VerifyingKey;
 use libp2p::PeerId;
 use std::collections::HashMap;
@@ -436,7 +436,7 @@ pub fn spawn_timeout_cleanup_task(manager: Arc<NoiseHandshakeManager>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dchat_crypto::keys::KeyPair;
+    use crate::keys::KeyPair;
 
     fn random_peer_id() -> PeerId {
         PeerId::random()

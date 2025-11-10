@@ -212,7 +212,7 @@ impl PeerRegistry {
         for peer in peers.values() {
             if peer.role == PeerRole::Validator {
                 if let Some(ref region) = peer.region {
-                    *distribution.entry(region.clone()).or_insert(0) += 1;
+                    *distribution.entry(region.clone()).or_insert(0usize) += 1;
                 }
             }
         }

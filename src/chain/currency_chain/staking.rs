@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::config::constants::{
+use dchat_core::config::constants::{
     MIN_VALIDATOR_STAKE, 
     MIN_RELAY_STAKE,
 };

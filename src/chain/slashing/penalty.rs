@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use super::detector::SlashableOffense;
 use super::evidence::SlashingEvidence;
-use crate::config::constants::{
+use dchat_core::config::constants::{
     SLASH_RATE_DOUBLE_SIGN,
     SLASH_RATE_INVALID_PROOF,
     SLASH_RATE_CENSORSHIP,
