@@ -8,7 +8,9 @@ license.workspace = true
 [dependencies]
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
-dchat-network = { path = "../dchat-network" }
+
+# Only need libp2p PeerId type, not full dchat-network dependency
+libp2p = { version = "0.54", default-features = false }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }

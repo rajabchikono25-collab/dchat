@@ -92,10 +92,7 @@
 //! ```
 
 // Core modules (remaining in src/)
-pub mod discovery;
-pub mod network;
 pub mod observability;
-pub mod relay;
 
 // User management module
 pub mod user_management;
@@ -112,7 +109,7 @@ pub use dchat_governance as governance;
 pub use dchat_identity as identity;
 pub use dchat_marketplace as marketplace;
 pub use dchat_messaging as messaging;
-// Don't re-export dchat_network, we have our own network module
+pub use dchat_network as network; // Now fully in crate
 // Don't re-export dchat_observability, we have our own observability module
 pub use dchat_privacy as privacy;
 pub use dchat_sdk_rust as sdk;
@@ -121,6 +118,7 @@ pub use dchat_testing as testing;
 pub use dchat_validator as validator; // Now fully in crate
 
 // Re-export config from dchat-core
+pub use dchat_core::config;
 pub use dchat_core::config;
 
 // Re-export user management types

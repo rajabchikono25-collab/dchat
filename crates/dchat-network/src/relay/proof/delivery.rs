@@ -57,15 +57,18 @@ pub struct DeliveryProof {
     /// ID of the delivered message
     pub message_id: MessageId,
 
-    /// Relay node's public key (identity)
+    /// Relay node's public key (identity) - stored as bytes for serialization
+    #[serde(with = "serde_verifying_key")]
     pub relay_key: VerifyingKey,
 
-    /// Recipient's public key (who received the message)
+    /// Recipient's public key (who received the message) - stored as bytes for serialization
+    #[serde(with = "serde_verifying_key")]
     pub recipient_key: VerifyingKey,
 
     /// Recipient's signature acknowledging delivery
     ///
     /// Signature is over: message_id || relay_key || timestamp
+    #[serde(with = "serde_signature")]
     pub recipient_signature: Signature,
 
     /// Unix timestamp when delivery occurred
@@ -74,7 +77,57 @@ pub struct DeliveryProof {
     /// Relay's signature over the entire proof
     ///
     /// Signature is over: message_id || recipient_key || recipient_signature || timestamp
+    #[serde(with = "serde_signature")]
     pub relay_signature: Signature,
+}
+
+// Custom serialization for VerifyingKey
+mod serde_verifying_key {
+    use ed25519_dalek::VerifyingKey;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(key: &VerifyingKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(key.as_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<VerifyingKey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let byte_array: [u8; 32] = bytes.try_into().map_err(|_| {
+            serde::de::Error::custom("Invalid public key length")
+        })?;
+        VerifyingKey::from_bytes(&byte_array)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+// Custom serialization for Signature
+mod serde_signature {
+    use ed25519_dalek::Signature;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(sig: &Signature, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&sig.to_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let byte_array: [u8; 64] = bytes.try_into().map_err(|_| {
+            serde::de::Error::custom("Invalid signature length")
+        })?;
+        Ok(Signature::from_bytes(&byte_array))
+    }
 }
 
 impl DeliveryProof {

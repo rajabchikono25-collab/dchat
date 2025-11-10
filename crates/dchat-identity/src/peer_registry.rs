@@ -4,7 +4,7 @@
 // Replaces placeholder PeerIds with actual authenticated identities for reputation tracking,
 // slashing correlation, and operational diagnostics.
 
-use dchat_network::PeerId;
+use libp2p::PeerId;
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

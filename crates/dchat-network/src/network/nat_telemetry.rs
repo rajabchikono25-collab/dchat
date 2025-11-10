@@ -167,16 +167,16 @@ impl NatTelemetry {
             *total += 1;
         }
 
-        // Update Prometheus metrics if available
-        if let Some(prometheus) = crate::observability::get_prometheus() {
-            prometheus.record_nat_attempt(method.as_str(), result.as_str());
-            
-            // Update success rate gauge
-            let stats = self.method_stats.read().await;
-            if let Some(method_stats) = stats.get(&method) {
-                prometheus.set_nat_success_rate(method.as_str(), method_stats.success_rate);
-            }
-        }
+        // TODO: Update Prometheus metrics when observability is migrated
+        // if let Some(prometheus) = crate::observability::get_prometheus() {
+        //     prometheus.record_nat_attempt(method.as_str(), result.as_str());
+        //     
+        //     // Update success rate gauge
+        //     let stats = self.method_stats.read().await;
+        //     if let Some(method_stats) = stats.get(&method) {
+        //         prometheus.set_nat_success_rate(method.as_str(), method_stats.success_rate);
+        //     }
+        // }
 
         // Periodically recompute method preference based on success rates
         self.recompute_preference().await;
