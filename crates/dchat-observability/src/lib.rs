@@ -8,6 +8,7 @@
 //! - Alert rule evaluation and routing
 
 pub mod alerting;
+pub mod observability;
 
 use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};

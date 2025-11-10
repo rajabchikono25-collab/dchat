@@ -1409,9 +1409,17 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dchat-core",
+ "dchat-identity",
+ "dchat-network",
+ "dchat-validator",
+ "ed25519-dalek",
+ "once_cell",
+ "prometheus",
+ "rand 0.8.5",
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

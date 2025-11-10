@@ -6,10 +6,18 @@ edition = "2021"
 license.workspace = true
 [dependencies]
 dchat-core = { path = "../dchat-core" }
+dchat-identity = { path = "../dchat-identity" }
+dchat-validator = { path = "../dchat-validator" }
+dchat-network = { path = "../dchat-network" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+prometheus = "0.13"
+tracing = "0.1"
+once_cell = "1.19"
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]

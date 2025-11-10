@@ -92,7 +92,6 @@
 //! ```
 
 // Core modules (remaining in src/)
-pub mod observability;
 
 // User management module
 pub mod user_management;
@@ -110,7 +109,7 @@ pub use dchat_identity as identity;
 pub use dchat_marketplace as marketplace;
 pub use dchat_messaging as messaging;
 pub use dchat_network as network; // Now fully in crate
-// Don't re-export dchat_observability, we have our own observability module
+pub use dchat_observability as observability; // Now fully in crate
 pub use dchat_privacy as privacy;
 pub use dchat_sdk_rust as sdk;
 pub use dchat_storage as storage;
