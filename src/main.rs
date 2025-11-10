@@ -2115,10 +2115,30 @@ async fn run_validator_node(
     network.start().await?;
     info!("✓ Validator network initialized (peer_id: {})", peer_id);
     
+    // Compute dynamic BFT thresholds based on discovered validators
+    let total_validators = discovered_validators.len() + 1; // +1 for this node
+    use dchat_validator::BftConfig;
+    let bft_config = BftConfig::from_validator_count(total_validators, 3, 0.40);
+    let f = bft_config.byzantine_tolerance();
+    let required_signatures = bft_config.required_signatures;
+    
+    info!(
+        "🔐 BFT Configuration: N={}, f={}, required_signatures={}",
+        total_validators, f, required_signatures
+    );
+    info!(
+        "   Byzantine tolerance: can tolerate {} faulty validators",
+        f
+    );
+    
     // Wait for initial peer connections (critical for consensus)
+    // Need at least 2f+1 validators connected for consensus
     info!("⏳ Waiting for validator peer connections...");
     let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
     let mut connected_validators = 0;
+    
+    // Minimum peers needed (don't count self, need required_signatures - 1 peers)
+    let min_peers_needed = required_signatures.saturating_sub(1);
     
     while tokio::time::Instant::now() < connection_deadline {
         match tokio::time::timeout(
@@ -2128,8 +2148,8 @@ async fn run_validator_node(
             Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
                 connected_validators += 1;
                 info!(
-                    "✓ Validator peer connected: {} ({}/6 required)",
-                    connected_peer_id, connected_validators
+                    "✓ Validator peer connected: {} ({}/{} required for consensus)",
+                    connected_peer_id, connected_validators + 1, required_signatures
                 );
                 
                 // Update DNS discovery with actual peer ID
@@ -2142,9 +2162,12 @@ async fn run_validator_node(
                     }
                 }
                 
-                // Need at least 4 validators for BFT consensus (n=7, f=2)
-                if connected_validators >= 4 {
-                    info!("✓ Minimum consensus threshold reached (4/7 validators)");
+                // Check if we've reached consensus threshold
+                if connected_validators >= min_peers_needed {
+                    info!(
+                        "✓ Consensus threshold reached ({}/{} validators connected, need {})",
+                        connected_validators + 1, total_validators, required_signatures
+                    );
                     break;
                 }
             }
@@ -2157,13 +2180,14 @@ async fn run_validator_node(
         }
     }
     
-    if connected_validators < 4 {
+    if connected_validators < min_peers_needed {
         error!(
-            "❌ Failed to connect to minimum validators: {}/4 required",
-            connected_validators
+            "❌ Failed to connect to minimum validators: {}/{} connected (need {} for consensus)",
+            connected_validators + 1, total_validators, required_signatures
         );
         return Err(Error::network(
-            "Insufficient validator connections for consensus".to_string(),
+            format!("Insufficient validator connections for consensus: got {}, need {}", 
+                connected_validators + 1, required_signatures)
         ));
     }
     
@@ -2186,17 +2210,28 @@ async fn run_validator_node(
     
     // Stake tokens on-chain
     info!("Submitting validator stake of {} tokens...", stake_amount);
-    // TODO: Implement submit_validator_stake method in ChatChainClient
-    // match chat_chain.submit_validator_stake(&validator_key, stake_amount).await {
-    //     Ok(tx_hash) => {
-    //         info!("✓ Stake submitted successfully (tx: {})", tx_hash);
-    //     }
-    //     Err(e) => {
-    //         error!("Failed to submit stake: {}", e);
-    //         return Err(e.into());
-    //     }
-    // }
-    info!("✓ Validator stake registered (method not yet implemented)");
+    
+    use dchat::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
+    
+    let stake_request = StakeRequest {
+        validator_key: validator_key.clone(),
+        amount: stake_amount,
+        lockup_period_days: 7,
+    };
+    
+    match submit_validator_stake(&stake_request).await {
+        Ok(receipt) => {
+            info!("✅ Stake submitted successfully!");
+            info!("   Transaction ID: {}", receipt.transaction_id);
+            info!("   Stake Amount: {} tokens", receipt.stake_amount);
+            info!("   Unlock Date: {:?}", receipt.unlock_timestamp);
+        },
+        Err(e) => {
+            error!("❌ Failed to submit stake: {}", e);
+            error!("   Cannot proceed without stake");
+            return Err(e.into());
+        }
+    }
 
     // Start consensus participation
     let consensus_handle = tokio::spawn(async move {
