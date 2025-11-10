@@ -36,8 +36,6 @@ pub use relay::proof;
 pub use relay::reputation;
 
 // Re-export commonly used types from relay modules
-pub use relay::proof::{BatchAccumulator, BatchId, DeliveryProof, MessageId as RelayMessageId, ProofBatch as RelayProofBatch};
-pub use relay::reputation::{RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier};
 pub use behavior::{DchatBehavior, DchatBehaviorEvent, DchatMessage};
 pub use connection::{
     ConnectionConfig, ConnectionInfo, ConnectionManager, ConnectionState, ConnectionStats,
@@ -54,6 +52,13 @@ pub use nat_traversal::{NatStrategy, NatTraversalManager, NatType};
 pub use onion_routing::{CircuitId, CircuitStatus, OnionRoutingManager};
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use rate_limiting::{RateLimitManager, ReputationScore};
+pub use relay::proof::{
+    BatchAccumulator, BatchId, DeliveryProof, MessageId as RelayMessageId,
+    ProofBatch as RelayProofBatch,
+};
+pub use relay::reputation::{
+    RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier,
+};
 // Note: RelayClient, RelayConfig, RelayNode were in old relay.rs (removed in Phase 3 migration)
 pub use relay_network::{
     Continent, LoadStrategy, NetworkStats, ProofBatch, RelayInfo, RelayNetworkManager,

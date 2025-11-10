@@ -119,15 +119,15 @@ impl SphinxHeader {
     /// Serialize header to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        
+
         // Routing info length (2 bytes)
         bytes.extend_from_slice(&(self.routing_info.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&self.routing_info);
-        
+
         // MAC length (2 bytes)
         bytes.extend_from_slice(&(self.mac.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&self.mac);
-        
+
         bytes
     }
 
@@ -144,26 +144,26 @@ impl SphinxHeader {
         // Read routing info
         let routing_info_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]) as usize;
         offset += 2;
-        
+
         if bytes.len() < offset + routing_info_len + 2 {
             return Err(SphinxError::InvalidPacketFormat(
                 "Incomplete routing info".to_string(),
             ));
         }
-        
+
         let routing_info = bytes[offset..offset + routing_info_len].to_vec();
         offset += routing_info_len;
 
         // Read MAC
         let mac_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]) as usize;
         offset += 2;
-        
+
         if bytes.len() < offset + mac_len {
             return Err(SphinxError::InvalidPacketFormat(
                 "Incomplete MAC".to_string(),
             ));
         }
-        
+
         let mac = bytes[offset..offset + mac_len].to_vec();
         offset += mac_len;
 
@@ -280,7 +280,13 @@ impl SphinxPacket {
             .map_err(|e| SphinxError::EncryptionFailed(e.to_string()))?;
 
         let ciphertext = cipher
-            .encrypt(nonce, Payload { msg: data, aad: b"" })
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: data,
+                    aad: b"",
+                },
+            )
             .map_err(|e| SphinxError::EncryptionFailed(e.to_string()))?;
 
         Ok(ciphertext)
@@ -308,7 +314,13 @@ impl SphinxPacket {
             .map_err(|e| SphinxError::DecryptionFailed(e.to_string()))?;
 
         let plaintext = cipher
-            .decrypt(nonce, Payload { msg: data, aad: b"" })
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: data,
+                    aad: b"",
+                },
+            )
             .map_err(|e| SphinxError::DecryptionFailed(e.to_string()))?;
 
         Ok(plaintext)
@@ -317,11 +329,11 @@ impl SphinxPacket {
     /// Serialize packet to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = self.header.to_bytes();
-        
+
         // Payload length (2 bytes)
         bytes.extend_from_slice(&(self.payload.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&self.payload);
-        
+
         bytes
     }
 
@@ -405,7 +417,10 @@ mod tests {
 
         let result = SphinxPacket::new(header, oversized_payload);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SphinxError::PayloadTooLarge { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            SphinxError::PayloadTooLarge { .. }
+        ));
     }
 
     #[test]
@@ -446,7 +461,12 @@ mod tests {
         let payload = b"Secret message".to_vec();
 
         // Build the packet
-        let packet = SphinxPacket::build(routing_infos.clone(), shared_secrets.clone(), payload.clone()).unwrap();
+        let packet = SphinxPacket::build(
+            routing_infos.clone(),
+            shared_secrets.clone(),
+            payload.clone(),
+        )
+        .unwrap();
 
         // Peel first layer
         let (routing1, packet1) = packet.peel_layer(&shared_secrets[0]).unwrap();
@@ -481,10 +501,7 @@ mod tests {
             },
         ];
 
-        let shared_secrets = vec![
-            create_test_shared_secret(1),
-            create_test_shared_secret(2),
-        ];
+        let shared_secrets = vec![create_test_shared_secret(1), create_test_shared_secret(2)];
 
         let payload = b"Test payload".to_vec();
 
@@ -503,7 +520,10 @@ mod tests {
 
         let result = SphinxPacket::encrypt_layer(&bad_secret, data);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SphinxError::InvalidKeySize { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            SphinxError::InvalidKeySize { .. }
+        ));
     }
 
     #[test]

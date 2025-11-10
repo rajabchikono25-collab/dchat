@@ -2,7 +2,6 @@
 ///
 /// This module provides higher-level cryptographic functionality that
 /// integrates dchat-crypto primitives with networking and identity systems.
-
 pub mod handshake;
 pub mod versioning;
 

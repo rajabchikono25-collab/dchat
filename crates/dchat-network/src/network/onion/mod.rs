@@ -4,9 +4,9 @@
 //! Implements Sphinx-style packet format for unlinkability and forward secrecy.
 
 pub mod circuits;
-pub mod sphinx;
 pub mod path_selection;
+pub mod sphinx;
 
-pub use circuits::{Circuit, CircuitId, CircuitManager, CircuitError};
-pub use sphinx::{SphinxPacket, SphinxHeader, SphinxError};
-pub use path_selection::{PathSelector, PathSelectionError};
+pub use circuits::{Circuit, CircuitError, CircuitId, CircuitManager};
+pub use path_selection::{PathSelectionError, PathSelector};
+pub use sphinx::{SphinxError, SphinxHeader, SphinxPacket};

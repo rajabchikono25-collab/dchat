@@ -2,4 +2,4 @@
 
 pub mod staking;
 
-pub use staking::{submit_validator_stake, submit_validator_unstake, StakeRequest, StakeReceipt};
+pub use staking::{submit_validator_stake, submit_validator_unstake, StakeReceipt, StakeRequest};

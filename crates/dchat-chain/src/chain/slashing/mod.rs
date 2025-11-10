@@ -4,6 +4,8 @@ pub mod detector;
 pub mod evidence;
 pub mod penalty;
 
-pub use detector::{SlashingDetector, SlashableOffense, SlashingError, SlashingStats};
-pub use evidence::{SlashingEvidence, EvidenceType, EvidenceError, EvidenceBundle};
-pub use penalty::{SlashingPenalty, PenaltyApplicator, PenaltyError, PenaltyRecord, PenaltyStats, simulate_penalty};
+pub use detector::{SlashableOffense, SlashingDetector, SlashingError, SlashingStats};
+pub use evidence::{EvidenceBundle, EvidenceError, EvidenceType, SlashingEvidence};
+pub use penalty::{
+    simulate_penalty, PenaltyApplicator, PenaltyError, PenaltyRecord, PenaltyStats, SlashingPenalty,
+};

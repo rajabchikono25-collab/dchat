@@ -351,7 +351,7 @@ impl UpnpClient {
         //         return Ok(iface.ip());
         //     }
         // }
-        // 
+        //
         // Fallback method below (UDP trick):
 
         // Attempt UDP connection to determine local IP

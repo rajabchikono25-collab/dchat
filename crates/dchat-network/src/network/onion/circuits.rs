@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use thiserror::Error;
 
 /// Minimum number of hops in a circuit
 pub const MIN_CIRCUIT_HOPS: usize = 3;
@@ -352,10 +352,7 @@ impl CircuitManager {
             .values()
             .filter(|c| c.status == CircuitStatus::Failed)
             .count();
-        let expired = circuits
-            .values()
-            .filter(|c| c.is_expired())
-            .count();
+        let expired = circuits.values().filter(|c| c.is_expired()).count();
 
         CircuitStats {
             total,

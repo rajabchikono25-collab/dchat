@@ -3,7 +3,6 @@
 /// This module implements cryptographic proofs that enable relays to claim rewards
 /// for successfully delivering messages. Proofs are batched for efficiency and
 /// submitted on-chain for transparent reward distribution.
-
 pub mod batching;
 pub mod delivery;
 

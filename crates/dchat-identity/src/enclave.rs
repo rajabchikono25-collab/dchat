@@ -472,7 +472,7 @@ impl SecureEnclave {
     async fn is_available_android(&self) -> Result<bool, EnclaveError> {
         // Check for StrongBox or TEE availability via Android Keystore
         // Reference: https://source.android.com/docs/security/features/keystore
-        
+
         #[cfg(not(target_os = "android"))]
         return Err(EnclaveError::PlatformError(
             "Android Keystore only available on Android devices".to_string(),
@@ -484,16 +484,16 @@ impl SecureEnclave {
             extern "C" {
                 fn dchat_android_has_strongbox() -> i32; // Returns 1 if available, 0 otherwise
             }
-            
+
             unsafe {
                 let has_strongbox = dchat_android_has_strongbox() == 1;
-                
+
                 if has_strongbox {
                     tracing::info!("Android StrongBox Keystore available");
                 } else {
                     tracing::info!("StrongBox not available, falling back to TEE");
                 }
-                
+
                 Ok(has_strongbox)
             }
         }

@@ -34,7 +34,6 @@
 ///
 /// Handshakes are enforced with 30-second timeout (HANDSHAKE_TIMEOUT).
 /// Timed-out handshakes are cleaned up automatically via periodic task.
-
 use crate::handshake::{HandshakeManager as CryptoHandshakeManager, HandshakeState};
 use crate::keys::{PrivateKey, PublicKey};
 use crate::noise::NoisePattern;
@@ -248,7 +247,10 @@ impl NoiseHandshakeManager {
             .map_err(|e| HandshakeError::CryptoError(e.to_string()))?;
 
         // If handshake is complete, update metrics and extract remote key
-        if self.is_handshake_complete(&peer_str, &crypto_manager).await? {
+        if self
+            .is_handshake_complete(&peer_str, &crypto_manager)
+            .await?
+        {
             self.finalize_handshake(&peer_id, &peer_str, &crypto_manager)
                 .await?;
         }
@@ -306,8 +308,7 @@ impl NoiseHandshakeManager {
                 if metrics.completed_count == 1 {
                     metrics.avg_duration_ms = duration_ms;
                 } else {
-                    metrics.avg_duration_ms =
-                        0.7 * metrics.avg_duration_ms + 0.3 * duration_ms;
+                    metrics.avg_duration_ms = 0.7 * metrics.avg_duration_ms + 0.3 * duration_ms;
                 }
             }
         }

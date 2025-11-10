@@ -470,15 +470,15 @@ impl DeltaEncoder {
     fn calculate_delta(&self, base: &[u8], new: &[u8]) -> Vec<u8> {
         // Use Myers diff algorithm (O(ND) complexity where D is edit distance)
         // This is the same algorithm used by git diff
-        
+
         let mut delta = Vec::new();
-        
+
         // Format: [op_code, position (4 bytes), length (4 bytes), data...]
         // op_code: 0 = copy from base, 1 = insert new data, 2 = delete
-        
+
         // Build edit script using Myers algorithm
         let edit_script = self.myers_diff(base, new);
-        
+
         // Convert edit script to delta encoding
         for edit in edit_script {
             match edit {
@@ -503,87 +503,100 @@ impl DeltaEncoder {
 
         delta
     }
-    
+
     /// Myers diff algorithm for computing shortest edit script
     fn myers_diff(&self, base: &[u8], new: &[u8]) -> Vec<Edit> {
         let n = base.len();
         let m = new.len();
         let max_d = n + m;
-        
+
         // V array: for each diagonal k, V[k] contains x coordinate of furthest reaching path
         let mut v: Vec<isize> = vec![0; 2 * max_d + 1];
         let offset = max_d as isize;
-        
+
         // Trace for backtracking
         let mut trace: Vec<Vec<isize>> = Vec::new();
-        
+
         // Forward search
         for d in 0..=max_d {
             trace.push(v.clone());
-            
+
             for k in (-(d as isize)..=(d as isize)).step_by(2) {
                 let k_offset = (k + offset) as usize;
-                
+
                 // Determine x coordinate
-                let mut x = if k == -(d as isize) || (k != d as isize && v[k_offset - 1] < v[k_offset + 1]) {
+                let mut x = if k == -(d as isize)
+                    || (k != d as isize && v[k_offset - 1] < v[k_offset + 1])
+                {
                     v[k_offset + 1]
                 } else {
                     v[k_offset - 1] + 1
                 };
-                
+
                 let mut y = x - k;
-                
+
                 // Extend diagonal as far as possible
                 while x < n as isize && y < m as isize && base[x as usize] == new[y as usize] {
                     x += 1;
                     y += 1;
                 }
-                
+
                 v[k_offset] = x;
-                
+
                 // Check if we reached the end
                 if x >= n as isize && y >= m as isize {
                     return self.backtrack_myers(&trace, base, new, d);
                 }
             }
         }
-        
+
         // Fallback if no path found (shouldn't happen)
-        vec![Edit::Insert { pos: 0, data: new.to_vec() }]
+        vec![Edit::Insert {
+            pos: 0,
+            data: new.to_vec(),
+        }]
     }
-    
+
     /// Backtrack through Myers diff trace to construct edit script
-    fn backtrack_myers(&self, trace: &[Vec<isize>], base: &[u8], new: &[u8], d: usize) -> Vec<Edit> {
+    fn backtrack_myers(
+        &self,
+        trace: &[Vec<isize>],
+        base: &[u8],
+        new: &[u8],
+        d: usize,
+    ) -> Vec<Edit> {
         let mut edits = Vec::new();
         let mut x = base.len() as isize;
         let mut y = new.len() as isize;
-        
+
         for depth in (0..=d).rev() {
             let v = &trace[depth];
             let offset = (base.len() + new.len()) as isize;
             let k = x - y;
             let k_offset = (k + offset) as usize;
-            
-            let prev_k = if k == -(depth as isize) || (k != depth as isize && v[k_offset - 1] < v[k_offset + 1]) {
+
+            let prev_k = if k == -(depth as isize)
+                || (k != depth as isize && v[k_offset - 1] < v[k_offset + 1])
+            {
                 k + 1
             } else {
                 k - 1
             };
-            
+
             let prev_x = if prev_k + offset < 0 || prev_k + offset >= v.len() as isize {
                 0
             } else {
                 v[(prev_k + offset) as usize]
             };
             let prev_y = prev_x - prev_k;
-            
+
             // Diagonal moves (copies)
             while x > prev_x && y > prev_y {
                 x -= 1;
                 y -= 1;
                 // This is a copy operation, but we'll consolidate them later
             }
-            
+
             if d > 0 {
                 if x == prev_x {
                     // Insertion
@@ -602,26 +615,29 @@ impl DeltaEncoder {
                 }
             }
         }
-        
+
         // Consolidate consecutive operations and add copy operations
         self.consolidate_edits(edits, base, new)
     }
-    
+
     /// Consolidate consecutive edits and infer copy operations
     fn consolidate_edits(&self, mut edits: Vec<Edit>, base: &[u8], new: &[u8]) -> Vec<Edit> {
         edits.reverse(); // We built them backwards
-        
+
         let mut result = Vec::new();
         let mut base_pos = 0;
         let mut new_pos = 0;
-        
+
         for edit in edits {
             match edit {
                 Edit::Insert { pos, data } => {
                     // Add copy before insert if there's a gap
                     if base_pos < pos {
                         let copy_len = pos - base_pos;
-                        result.push(Edit::Copy { base_pos, len: copy_len });
+                        result.push(Edit::Copy {
+                            base_pos,
+                            len: copy_len,
+                        });
                         base_pos += copy_len;
                         new_pos += copy_len;
                     }
@@ -632,7 +648,10 @@ impl DeltaEncoder {
                     // Add copy before delete if there's a gap
                     if base_pos < pos {
                         let copy_len = pos - base_pos;
-                        result.push(Edit::Copy { base_pos, len: copy_len });
+                        result.push(Edit::Copy {
+                            base_pos,
+                            len: copy_len,
+                        });
                         base_pos += copy_len;
                         new_pos += copy_len;
                     }
@@ -643,13 +662,16 @@ impl DeltaEncoder {
                 }
             }
         }
-        
+
         // Add final copy if needed
         if base_pos < base.len() && new_pos < new.len() {
             let remaining = std::cmp::min(base.len() - base_pos, new.len() - new_pos);
-            result.push(Edit::Copy { base_pos, len: remaining });
+            result.push(Edit::Copy {
+                base_pos,
+                len: remaining,
+            });
         }
-        
+
         result
     }
 
@@ -702,7 +724,7 @@ impl DeltaEncoder {
     }
 
     /// Find longest matching substring
-    /// 
+    ///
     /// Reserved for future implementation of advanced delta compression algorithm.
     /// Currently using basic content-addressable deduplication.
     #[allow(dead_code)]

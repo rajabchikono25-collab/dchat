@@ -116,28 +116,28 @@ impl GossipMessage {
         if self.signature.is_empty() || self.signature.len() != 64 {
             return false;
         }
-        
+
         // Reconstruct message bytes for verification
         let mut message_bytes = Vec::new();
         message_bytes.extend_from_slice(self.id.as_bytes());
         message_bytes.extend_from_slice(&self.payload);
         message_bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         message_bytes.push(self.ttl);
-        
+
         // Production Ed25519 verification using sender's public key
         // Note: sender_public_key should be retrieved from network identity/libp2p PeerId
         // For now, verify signature format and structure
-        
+
         if self.signature.len() != 64 {
             tracing::warn!("Invalid signature length: {}", self.signature.len());
             return false;
         }
-        
+
         // Production: Extract public key from sender's network identity
         // let public_key = VerifyingKey::from_bytes(&sender_public_key_bytes)?;
         // let signature = Signature::from_bytes(&self.signature[..64].try_into().unwrap());
         // public_key.verify_strict(&message_bytes, &signature).is_ok()
-        
+
         tracing::trace!("Gossip message signature format valid");
         true // Signature format verified; full verification requires sender's public key from libp2p
     }
@@ -150,7 +150,7 @@ impl GossipMessage {
         message_bytes.extend_from_slice(payload);
         message_bytes.extend_from_slice(&timestamp.to_le_bytes());
         message_bytes.push(ttl);
-        
+
         // TODO CRITICAL: Sign with node's actual Ed25519 private key from identity management
         // SECURITY WARNING: Currently using FAKE signatures - messages can be forged!
         //
@@ -163,15 +163,15 @@ impl GossipMessage {
         // let signing_key = identity_manager.get_signing_key()?;
         // let signature = signing_key.sign(&message_bytes);
         // return signature.to_bytes().to_vec();
-        
+
         tracing::warn!("Using deterministic hash as fake signature - INSECURE FOR PRODUCTION");
-        
+
         // Deterministic placeholder for testing only (NOT cryptographically secure)
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&message_bytes);
         let hash = hasher.finalize();
-        
+
         // Pad to 64 bytes (Ed25519 signature length)
         let mut sig = hash.to_vec();
         sig.extend_from_slice(&hash[..32]);

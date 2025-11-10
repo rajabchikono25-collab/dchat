@@ -208,12 +208,30 @@ pub fn generate_mainnet_configs() -> Vec<MainnetServerConfig> {
         ("singapore", "validator1-singapore.schikuno.top", None, true),
         ("stockholm", "validator1-stockholm.schikuno.top", None, true),
         ("saopaulo", "validator1-saopaulo.schikuno.top", None, false),
-        ("india", "validator1-india.schikuno.top", Some("74.225.183.196"), false),
-        ("southafrica", "validator1-southafrica.schikuno.top", Some("4.221.211.71"), false),
-        ("uae", "validator1-uae.schikuno.top", Some("4.161.34.228"), false),
+        (
+            "india",
+            "validator1-india.schikuno.top",
+            Some("74.225.183.196"),
+            false,
+        ),
+        (
+            "southafrica",
+            "validator1-southafrica.schikuno.top",
+            Some("4.221.211.71"),
+            false,
+        ),
+        (
+            "uae",
+            "validator1-uae.schikuno.top",
+            Some("4.161.34.228"),
+            false,
+        ),
     ];
 
-    let all_subdomains: Vec<String> = validators.iter().map(|(_, s, _, _)| s.to_string()).collect();
+    let all_subdomains: Vec<String> = validators
+        .iter()
+        .map(|(_, s, _, _)| s.to_string())
+        .collect();
 
     validators
         .into_iter()
@@ -299,7 +317,9 @@ pub fn generate_mainnet_configs() -> Vec<MainnetServerConfig> {
                 monitoring: MonitoringConfig {
                     prometheus_enabled: true,
                     prometheus_port: 9090,
-                    jaeger_endpoint: Some("http://monitoring.schikuno.top:14268/api/traces".to_string()),
+                    jaeger_endpoint: Some(
+                        "http://monitoring.schikuno.top:14268/api/traces".to_string(),
+                    ),
                     log_level: "info".to_string(),
                 },
             }
@@ -365,8 +385,14 @@ subdomain = "{}"
 
     toml.push_str("\n[storage.redis]\n");
     toml.push_str(&format!("port = {}\n", config.storage.redis.port));
-    toml.push_str(&format!("cluster_mode = {}\n", config.storage.redis.cluster_mode));
-    toml.push_str(&format!("password_env = \"{}\"\n", config.storage.redis.password_env));
+    toml.push_str(&format!(
+        "cluster_mode = {}\n",
+        config.storage.redis.cluster_mode
+    ));
+    toml.push_str(&format!(
+        "password_env = \"{}\"\n",
+        config.storage.redis.password_env
+    ));
     toml.push_str("cluster_nodes = [\n");
     for node in &config.storage.redis.cluster_nodes {
         toml.push_str(&format!("  \"{}\",\n", node));
@@ -375,10 +401,22 @@ subdomain = "{}"
 
     toml.push_str("\n[storage.minio]\n");
     toml.push_str(&format!("port = {}\n", config.storage.minio.port));
-    toml.push_str(&format!("console_port = {}\n", config.storage.minio.console_port));
-    toml.push_str(&format!("access_key_env = \"{}\"\n", config.storage.minio.access_key_env));
-    toml.push_str(&format!("secret_key_env = \"{}\"\n", config.storage.minio.secret_key_env));
-    toml.push_str(&format!("data_dir = \"{}\"\n", config.storage.minio.data_dir));
+    toml.push_str(&format!(
+        "console_port = {}\n",
+        config.storage.minio.console_port
+    ));
+    toml.push_str(&format!(
+        "access_key_env = \"{}\"\n",
+        config.storage.minio.access_key_env
+    ));
+    toml.push_str(&format!(
+        "secret_key_env = \"{}\"\n",
+        config.storage.minio.secret_key_env
+    ));
+    toml.push_str(&format!(
+        "data_dir = \"{}\"\n",
+        config.storage.minio.data_dir
+    ));
     toml.push_str("endpoints = [\n");
     for endpoint in &config.storage.minio.endpoints {
         toml.push_str(&format!("  \"{}\",\n", endpoint));
@@ -398,9 +436,18 @@ subdomain = "{}"
     }
 
     toml.push_str("\n[storage.cockroachdb]\n");
-    toml.push_str(&format!("connection_url_env = \"{}\"\n", config.storage.cockroachdb.connection_url_env));
-    toml.push_str(&format!("max_connections = {}\n", config.storage.cockroachdb.max_connections));
-    toml.push_str(&format!("tls_mode = \"{}\"\n", config.storage.cockroachdb.tls_mode));
+    toml.push_str(&format!(
+        "connection_url_env = \"{}\"\n",
+        config.storage.cockroachdb.connection_url_env
+    ));
+    toml.push_str(&format!(
+        "max_connections = {}\n",
+        config.storage.cockroachdb.max_connections
+    ));
+    toml.push_str(&format!(
+        "tls_mode = \"{}\"\n",
+        config.storage.cockroachdb.tls_mode
+    ));
 
     toml.push_str("\n[tls]\n");
     toml.push_str(&format!("enabled = {}\n", config.tls.enabled));
@@ -409,12 +456,21 @@ subdomain = "{}"
     toml.push_str(&format!("ca_path = \"{}\"\n", config.tls.ca_path));
 
     toml.push_str("\n[monitoring]\n");
-    toml.push_str(&format!("prometheus_enabled = {}\n", config.monitoring.prometheus_enabled));
-    toml.push_str(&format!("prometheus_port = {}\n", config.monitoring.prometheus_port));
+    toml.push_str(&format!(
+        "prometheus_enabled = {}\n",
+        config.monitoring.prometheus_enabled
+    ));
+    toml.push_str(&format!(
+        "prometheus_port = {}\n",
+        config.monitoring.prometheus_port
+    ));
     if let Some(jaeger) = &config.monitoring.jaeger_endpoint {
         toml.push_str(&format!("jaeger_endpoint = \"{}\"\n", jaeger));
     }
-    toml.push_str(&format!("log_level = \"{}\"\n", config.monitoring.log_level));
+    toml.push_str(&format!(
+        "log_level = \"{}\"\n",
+        config.monitoring.log_level
+    ));
 
     toml
 }
@@ -428,10 +484,10 @@ pub async fn write_mainnet_configs(output_dir: &Path) -> std::io::Result<()> {
     for config in &configs {
         let filename = format!("config-mainnet-{}.toml", config.region);
         let filepath = output_dir.join(&filename);
-        
+
         let toml_content = generate_server_toml(&config);
         tokio::fs::write(&filepath, toml_content).await?;
-        
+
         println!("✓ Generated: {}", filepath.display());
     }
 
@@ -454,7 +510,10 @@ mod tests {
         assert_eq!(configs.len(), 7, "Should generate 7 server configs");
 
         for config in configs {
-            assert!(config.validator.is_some(), "All servers should have validators");
+            assert!(
+                config.validator.is_some(),
+                "All servers should have validators"
+            );
             assert_eq!(config.relays.len(), 2, "Each server should have 2 relays");
         }
     }
@@ -463,7 +522,7 @@ mod tests {
     fn test_toml_generation() {
         let configs = generate_mainnet_configs();
         let toml = generate_server_toml(&configs[0]);
-        
+
         assert!(toml.contains("[validator]"));
         assert!(toml.contains("[storage.redis]"));
         assert!(toml.contains("[storage.minio]"));

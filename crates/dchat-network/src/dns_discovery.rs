@@ -131,8 +131,7 @@ impl DnsDiscoveryManager {
         resolver_opts.timeout = config.query_timeout;
         resolver_opts.attempts = 3;
 
-        let resolver =
-            TokioAsyncResolver::tokio(resolver_config, resolver_opts);
+        let resolver = TokioAsyncResolver::tokio(resolver_config, resolver_opts);
 
         Ok(Self {
             config,
@@ -204,9 +203,7 @@ impl DnsDiscoveryManager {
                 Ok(ip) => {
                     let multiaddr = format!("/ip4/{}/tcp/{}", ip, self.config.validator_port)
                         .parse()
-                        .map_err(|e| {
-                            format!("Invalid multiaddr: {}", e)
-                        })?;
+                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let peer = DiscoveredPeer {
                         identifier: subdomain.clone(),
@@ -254,9 +251,7 @@ impl DnsDiscoveryManager {
                     // Relay 1
                     let multiaddr1 = format!("/ip4/{}/tcp/{}", ip, self.config.relay_ports.0)
                         .parse()
-                        .map_err(|e| {
-                            format!("Invalid multiaddr: {}", e)
-                        })?;
+                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let relay1 = DiscoveredPeer {
                         identifier: format!("{}-relay1", subdomain),
@@ -270,9 +265,7 @@ impl DnsDiscoveryManager {
                     // Relay 2
                     let multiaddr2 = format!("/ip4/{}/tcp/{}", ip, self.config.relay_ports.1)
                         .parse()
-                        .map_err(|e| {
-                            format!("Invalid multiaddr: {}", e)
-                        })?;
+                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let relay2 = DiscoveredPeer {
                         identifier: format!("{}-relay2", subdomain),
@@ -320,12 +313,9 @@ impl DnsDiscoveryManager {
         }
 
         // Resolve via DNS
-        let ip = Self::resolve_subdomain_static(
-            subdomain,
-            &self.resolver,
-            self.config.query_timeout,
-        )
-        .await?;
+        let ip =
+            Self::resolve_subdomain_static(subdomain, &self.resolver, self.config.query_timeout)
+                .await?;
 
         // Update cache
         {
@@ -352,21 +342,15 @@ impl DnsDiscoveryManager {
         // Resolve A record (IPv4)
         let response = tokio::time::timeout(timeout, resolver.lookup_ip(subdomain))
             .await
-            .map_err(|_| {
-                format!("DNS query timeout for {}", subdomain)
-            })?
-            .map_err(|e| {
-                format!("DNS resolution failed for {}: {}", subdomain, e)
-            })?;
+            .map_err(|_| format!("DNS query timeout for {}", subdomain))?
+            .map_err(|e| format!("DNS resolution failed for {}: {}", subdomain, e))?;
 
         // Get first IP (prefer IPv4)
         response
             .iter()
             .find(|ip| ip.is_ipv4())
             .or_else(|| response.iter().next())
-            .ok_or_else(|| {
-                format!("No IP address found for {}", subdomain).into()
-            })
+            .ok_or_else(|| format!("No IP address found for {}", subdomain).into())
     }
 
     /// Update known peers after DNS refresh (static helper)
@@ -426,10 +410,7 @@ impl DnsDiscoveryManager {
             info!("✓ Updated peer ID for {}: {}", identifier, peer_id);
             Ok(())
         } else {
-            Err(format!(
-                "Unknown peer identifier: {}",
-                identifier
-            ).into())
+            Err(format!("Unknown peer identifier: {}", identifier).into())
         }
     }
 
@@ -456,7 +437,10 @@ mod tests {
 
         // Test resolving a validator (may fail in CI without network)
         if let Ok(validators) = manager.discover_validators().await {
-            assert!(!validators.is_empty(), "Should discover at least one validator");
+            assert!(
+                !validators.is_empty(),
+                "Should discover at least one validator"
+            );
         }
     }
 

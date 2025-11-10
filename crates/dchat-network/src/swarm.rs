@@ -119,14 +119,14 @@ impl NetworkManager {
                 "📡 Configuring {} bootstrap peers from config",
                 bootstrap_nodes.len()
             );
-            
+
             for (peer_id, addr) in bootstrap_nodes {
                 tracing::info!("  → Bootstrap peer: {} at {}", peer_id, addr);
                 self.swarm
                     .behaviour_mut()
                     .kademlia
                     .add_address(peer_id, addr.clone());
-                
+
                 // Actively dial each bootstrap peer
                 match self.swarm.dial(addr.clone()) {
                     Ok(_) => tracing::debug!("Dialing bootstrap peer: {}", peer_id),

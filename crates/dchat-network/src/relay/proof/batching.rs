@@ -14,7 +14,6 @@
 ///
 /// Batching reduces per-proof submission cost from ~100k gas to ~1k gas,
 /// making micropayments economically viable for relay rewards.
-
 use super::delivery::{DeliveryProof, MessageId};
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};

@@ -17,7 +17,6 @@
 /// - **Replay-resistant**: Message IDs and timestamps prevent proof reuse
 /// - **Sybil-resistant**: Relay reputation scoring prevents spam attacks
 /// - **Auditable**: All proofs stored on-chain for dispute resolution
-
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -98,11 +97,10 @@ mod serde_verifying_key {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        let byte_array: [u8; 32] = bytes.try_into().map_err(|_| {
-            serde::de::Error::custom("Invalid public key length")
-        })?;
-        VerifyingKey::from_bytes(&byte_array)
-            .map_err(serde::de::Error::custom)
+        let byte_array: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("Invalid public key length"))?;
+        VerifyingKey::from_bytes(&byte_array).map_err(serde::de::Error::custom)
     }
 }
 
@@ -123,9 +121,9 @@ mod serde_signature {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        let byte_array: [u8; 64] = bytes.try_into().map_err(|_| {
-            serde::de::Error::custom("Invalid signature length")
-        })?;
+        let byte_array: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("Invalid signature length"))?;
         Ok(Signature::from_bytes(&byte_array))
     }
 }

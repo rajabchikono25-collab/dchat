@@ -261,9 +261,13 @@ impl ChatChainClient {
 
     /// Wait for transaction to achieve finality (confirmed status)
     /// Returns true if transaction reaches finality within timeout
-    pub async fn wait_for_finality(&self, tx_id: &Uuid, required_confirmations: u32) -> Result<bool, String> {
+    pub async fn wait_for_finality(
+        &self,
+        tx_id: &Uuid,
+        required_confirmations: u32,
+    ) -> Result<bool, String> {
         use tokio::time::{sleep, Duration};
-        
+
         // Maximum wait time: 30 seconds
         let max_attempts = 30;
         let mut attempts = 0;

@@ -3,8 +3,8 @@
 // This crate provides validator node functionality for the dchat blockchain network,
 // including multi-region deployment, BFT consensus coordination, and health monitoring.
 
-pub mod multi_region;
 pub mod health;
+pub mod multi_region;
 pub mod validator; // Validator thresholds and core logic
 
 // Re-export validator submodule
@@ -16,8 +16,7 @@ pub use multi_region::{
 };
 
 pub use health::{
-    EnhancedHealthChecker, EnhancedHealthCheck, HealthProbe,
-    BlockHeightCheck, SignatureFreshnessCheck, HealthCheckError,
-    MAX_CONSECUTIVE_FAILURES, MAX_ACCEPTABLE_LATENCY_MS, MAX_BLOCK_HEIGHT_LAG,
-    SIGNATURE_FRESHNESS_SECS, HEALTH_CHECK_TIMEOUT_SECS,
+    BlockHeightCheck, EnhancedHealthCheck, EnhancedHealthChecker, HealthCheckError, HealthProbe,
+    SignatureFreshnessCheck, HEALTH_CHECK_TIMEOUT_SECS, MAX_ACCEPTABLE_LATENCY_MS,
+    MAX_BLOCK_HEIGHT_LAG, MAX_CONSECUTIVE_FAILURES, SIGNATURE_FRESHNESS_SECS,
 };

@@ -19,7 +19,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-
 #[derive(Debug, Error)]
 pub enum VotePersistenceError {
     #[error("Database error: {0}")]

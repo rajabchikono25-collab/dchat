@@ -88,7 +88,7 @@ mod merkle {
     }
 
     /// Get root hash from Merkle tree
-    /// 
+    ///
     /// Reserved for future use in advanced Merkle proof verification.
     /// Currently, root verification is performed inline during proof validation.
     #[allow(dead_code)]
@@ -285,7 +285,7 @@ impl ShardManager {
         if let Some(from_shard) = self.channel_assignments.get(from_channel) {
             if let Some(state) = self.shard_states.get_mut(from_shard) {
                 state.message_count += 1;
-                
+
                 // Update timestamp as Unix epoch seconds
                 state.last_updated = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -790,7 +790,7 @@ mod tests {
         // Valid BLS signatures must be 96 bytes (compressed BLS12-381 points)
         let result = manager.aggregate_signatures(&signatures);
         assert!(result.is_err());
-        
+
         // The error should indicate invalid signature length
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Invalid BLS signature length"));

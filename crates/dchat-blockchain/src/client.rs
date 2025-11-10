@@ -224,14 +224,14 @@ impl BlockchainClient {
         //             "id": 1
         //         }))
         //         .send().await?;
-        //     
+        //
         //     if let Some(receipt) = rpc_response.json::<Option<TransactionReceipt>>().await? {
         //         return Ok(receipt);
         //     }
-        //     
+        //
         //     tokio::time::sleep(Duration::from_secs(2)).await;
         // }
-        
+
         // Placeholder: simulate confirmation after delay
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -277,12 +277,12 @@ impl BlockchainClient {
     /// Submit transaction to blockchain (internal)
     async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
         // Production blockchain submission:
-        // 
+        //
         // 1. Sign transaction with user's Ed25519 private key:
         //    let signing_key = SigningKey::from_bytes(&self.private_key)?;
         //    let signature = signing_key.sign(&transaction.to_bytes());
         //    let signed_tx = SignedTransaction { transaction, signature };
-        // 
+        //
         // 2. Serialize and submit to blockchain node via JSON-RPC:
         //    let rpc_client = reqwest::Client::new();
         //    let response = rpc_client.post(&self.rpc_url)
@@ -293,16 +293,16 @@ impl BlockchainClient {
         //            "id": 1
         //        }))
         //        .send().await?;
-        // 
+        //
         // 3. Extract transaction hash from response:
         //    let result: JsonRpcResponse = response.json().await?;
         //    let tx_hash = result.result.tx_hash;
-        // 
+        //
         // 4. Start monitoring for confirmation in background:
         //    tokio::spawn(async move {
         //        self.monitor_confirmation(tx_hash).await
         //    });
-        
+
         // Placeholder: simulate successful submission
         tracing::debug!("Submitting transaction {} to blockchain", transaction.tx_id);
         Ok(())

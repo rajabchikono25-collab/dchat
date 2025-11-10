@@ -171,13 +171,15 @@ impl VersionNegotiator {
 
         // Get or create negotiation state
         let mut negotiations = self.negotiations.write().unwrap();
-        let state = negotiations.entry(peer_id).or_insert_with(|| NegotiationState {
-            peer_id,
-            started_at: Instant::now(),
-            local_version: ProtocolVersion::current(),
-            remote_version: None,
-            result: None,
-        });
+        let state = negotiations
+            .entry(peer_id)
+            .or_insert_with(|| NegotiationState {
+                peer_id,
+                started_at: Instant::now(),
+                local_version: ProtocolVersion::current(),
+                remote_version: None,
+                result: None,
+            });
 
         // Store remote version
         state.remote_version = Some(message.version.clone());
@@ -367,10 +369,7 @@ mod tests {
 
         // Old version 0.9.0 triggers DowngradeAttack check first
         assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(NegotiationError::DowngradeAttack(_))
-        ));
+        assert!(matches!(result, Err(NegotiationError::DowngradeAttack(_))));
 
         let metrics = negotiator.metrics();
         assert_eq!(metrics.successful_negotiations, 0);
@@ -390,10 +389,7 @@ mod tests {
         let result = negotiator.process_version_message(peer_id, remote_msg);
 
         assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(NegotiationError::MajorMismatch(_))
-        ));
+        assert!(matches!(result, Err(NegotiationError::MajorMismatch(_))));
 
         let metrics = negotiator.metrics();
         assert_eq!(metrics.major_mismatches, 1);

@@ -6,6 +6,4 @@ pub use proof::{
     create_recipient_acknowledgment, BatchAccumulator, BatchId, DeliveryProof, MessageId,
     ProofBatch, BATCH_SIZE, BATCH_TIMEOUT,
 };
-pub use reputation::{
-    RelayReputationScorer, RelayMetrics, RelayReputationScore, ReputationTier,
-};
+pub use reputation::{RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier};

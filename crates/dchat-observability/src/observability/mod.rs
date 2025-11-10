@@ -1,6 +1,6 @@
 // Observability module
-pub mod region_metrics;
 pub mod metrics;
+pub mod region_metrics;
 
-pub use region_metrics::*;
 pub use metrics::*;
+pub use region_metrics::*;

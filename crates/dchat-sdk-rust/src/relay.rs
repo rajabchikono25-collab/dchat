@@ -84,17 +84,20 @@ impl RelayNode {
 
         // 1. Initialize libp2p swarm with relay capabilities
         tracing::info!("Initializing libp2p swarm for relay node");
-        
+
         // 2. Start listening on configured network interfaces
-        let listen_addr = format!("/ip4/{}/tcp/{}", self.config.listen_addr, self.config.listen_port);
+        let listen_addr = format!(
+            "/ip4/{}/tcp/{}",
+            self.config.listen_addr, self.config.listen_port
+        );
         tracing::info!("Relay listening on: {}", listen_addr);
-        
+
         // 3. Register relay with DHT for discovery
         tracing::info!("Registering relay with DHT as provider");
-        
+
         // 4. Begin accepting relay requests
         tracing::info!("Ready to accept relay requests");
-        
+
         // 5. Start uptime monitoring and proof-of-delivery tracking
         let state = self.state.clone();
         let running_flag = self.running.clone();
@@ -108,19 +111,23 @@ impl RelayNode {
                 }
                 // Track uptime and relay metrics
                 let st = state.write().await;
-                
+
                 // Submit periodic uptime proofs to blockchain
                 let uptime = std::time::SystemTime::now()
                     .duration_since(st.start_time)
                     .unwrap_or(std::time::Duration::from_secs(0));
-                
+
                 // Production: Submit uptime attestation to blockchain
                 // blockchain_client.submit_uptime_proof(relay_id, uptime.as_secs(), st.messages_relayed).await
-                tracing::trace!("Relay uptime: {} peers, {} messages, {}s uptime", 
-                    st.connected_peers, st.messages_relayed, uptime.as_secs());
+                tracing::trace!(
+                    "Relay uptime: {} peers, {} messages, {}s uptime",
+                    st.connected_peers,
+                    st.messages_relayed,
+                    uptime.as_secs()
+                );
             }
         });
-        
+
         tracing::info!("Relay node started successfully");
 
         *running = true;
@@ -135,18 +142,21 @@ impl RelayNode {
         }
 
         tracing::info!("Stopping relay node");
-        
+
         // 1. Stop accepting new relay requests
         tracing::info!("Stopping relay request acceptance");
-        
+
         // 2. Complete in-flight message deliveries (grace period)
         tracing::info!("Waiting for in-flight messages to complete");
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        
+
         // 3. Submit final proof-of-delivery to blockchain
         let state = self.state.read().await;
-        tracing::info!("Submitting final proof-of-delivery: {} messages relayed", state.messages_relayed);
-        
+        tracing::info!(
+            "Submitting final proof-of-delivery: {} messages relayed",
+            state.messages_relayed
+        );
+
         // Production: Batch submit all pending delivery proofs to currency chain
         // let delivery_proofs = state.pending_delivery_proofs.clone();
         // for proof in delivery_proofs {
@@ -158,13 +168,13 @@ impl RelayNode {
         //     ).await?;
         // }
         tracing::info!("Delivery proofs submitted to blockchain");
-        
+
         // 4. Gracefully close all peer connections
         tracing::info!("Closing {} peer connections", state.connected_peers);
-        
+
         // 5. Shutdown libp2p swarm
         tracing::info!("Shutting down libp2p swarm");
-        
+
         tracing::info!("Relay node stopped successfully");
 
         *running = false;
@@ -186,11 +196,11 @@ impl RelayNode {
 
         // Calculate uptime percentage from tracked downtime events
         let total_time = uptime.as_secs() as f64;
-        
+
         // Production: Query downtime events from database
         // let downtime_secs = database.query_total_downtime(relay_id).await?.as_secs() as f64;
         let downtime_secs = 0.0; // Placeholder: 0 downtime for new relay
-        
+
         let uptime_percent = if total_time > 0.0 {
             ((total_time - downtime_secs) / total_time * 100.0).min(100.0)
         } else {

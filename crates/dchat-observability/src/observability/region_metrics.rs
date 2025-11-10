@@ -49,44 +49,43 @@ impl RegionMonitor {
             check_interval,
         }
     }
-    
+
     /// Start the monitoring task
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(self.check_interval);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 if let Err(e) = self.check_diversity().await {
                     error!("Region diversity check failed: {}", e);
                 }
             }
         })
     }
-    
+
     /// Perform a diversity check
     pub async fn check_diversity(&self) -> Result<(), MonitorError> {
         // Update metrics from peer registry
-        let validators = self.peer_registry.get_validators()
+        let validators = self
+            .peer_registry
+            .get_validators()
             .map_err(|e| MonitorError::RegistryError(e.to_string()))?;
-        
+
         let mut metrics = self.metrics.write().await;
         *metrics = RegionDiversityMetrics::new();
-        
+
         for validator in &validators {
             if let Some(ref region) = validator.region {
                 metrics.add_validator(region.clone());
             }
         }
-        
+
         // Check warning level
-        let warning_level = metrics.get_warning_level(
-            MIN_REGIONS,
-            MAX_REGION_PERCENTAGE,
-            REGION_WARNING_THRESHOLD,
-        );
-        
+        let warning_level =
+            metrics.get_warning_level(MIN_REGIONS, MAX_REGION_PERCENTAGE, REGION_WARNING_THRESHOLD);
+
         // Generate alerts based on warning level
         match warning_level {
             DiversityWarningLevel::Critical => {
@@ -101,23 +100,24 @@ impl RegionMonitor {
                         ),
                         Some(region.clone()),
                         Some(percentage),
-                    ).await;
+                    )
+                    .await;
                 }
-                
+
                 if metrics.regions_represented < MIN_REGIONS {
                     self.emit_alert(
                         AlertLevel::Critical,
                         format!(
                             "CRITICAL: Only {} regions represented (minimum: {})",
-                            metrics.regions_represented,
-                            MIN_REGIONS
+                            metrics.regions_represented, MIN_REGIONS
                         ),
                         None,
                         None,
-                    ).await;
+                    )
+                    .await;
                 }
             }
-            
+
             DiversityWarningLevel::Warning => {
                 if let Some((region, percentage)) = metrics.max_region_concentration() {
                     if percentage >= REGION_WARNING_THRESHOLD {
@@ -135,22 +135,21 @@ impl RegionMonitor {
                     }
                 }
             }
-            
+
             DiversityWarningLevel::Healthy => {
                 // Log info-level status
                 info!(
                     "Region diversity healthy: {} validators across {} regions",
-                    metrics.total_validators,
-                    metrics.regions_represented
+                    metrics.total_validators, metrics.regions_represented
                 );
             }
         }
-        
+
         *self.last_check.write().await = Instant::now();
-        
+
         Ok(())
     }
-    
+
     /// Emit an alert
     async fn emit_alert(
         &self,
@@ -166,44 +165,44 @@ impl RegionMonitor {
             region,
             percentage,
         };
-        
+
         // Log the alert
         match level {
             AlertLevel::Critical => error!("🚨 {}", message),
             AlertLevel::Warning => warn!("⚠️  {}", message),
             AlertLevel::Info => info!("ℹ️  {}", message),
         }
-        
+
         // Store in history
         let mut history = self.alert_history.write().await;
         history.push(alert);
-        
+
         // Keep only last 1000 alerts
         if history.len() > 1000 {
             let excess = history.len() - 1000;
             history.drain(0..excess);
         }
     }
-    
+
     /// Get current metrics
     pub async fn get_metrics(&self) -> RegionDiversityMetrics {
         self.metrics.read().await.clone()
     }
-    
+
     /// Get recent alerts
     pub async fn get_recent_alerts(&self, limit: usize) -> Vec<DiversityAlert> {
         let history = self.alert_history.read().await;
         let start = history.len().saturating_sub(limit);
         history[start..].to_vec()
     }
-    
+
     /// Get region distribution report
     pub async fn get_distribution_report(&self) -> RegionDistributionReport {
         let metrics = self.metrics.read().await;
         let validators = self.peer_registry.get_validators().unwrap_or_default();
-        
+
         let mut region_details = HashMap::new();
-        
+
         for (region, count) in &metrics.region_distribution {
             let percentage = metrics.region_percentage(region);
             let validator_ids: Vec<String> = validators
@@ -211,7 +210,7 @@ impl RegionMonitor {
                 .filter(|v| v.region.as_ref() == Some(region))
                 .map(|v| format!("{:?}", v.peer_id))
                 .collect();
-            
+
             region_details.insert(
                 region.clone(),
                 RegionDetail {
@@ -223,12 +222,14 @@ impl RegionMonitor {
                 },
             );
         }
-        
+
         RegionDistributionReport {
             total_validators: metrics.total_validators,
             regions_represented: metrics.regions_represented,
             region_details,
-            meets_requirements: metrics.check_diversity(MIN_REGIONS, MAX_REGION_PERCENTAGE).is_ok(),
+            meets_requirements: metrics
+                .check_diversity(MIN_REGIONS, MAX_REGION_PERCENTAGE)
+                .is_ok(),
             warning_level: metrics.get_warning_level(
                 MIN_REGIONS,
                 MAX_REGION_PERCENTAGE,
@@ -268,17 +269,18 @@ mod tests {
     use dchat_identity::peer_registry::{AuthenticatedPeer, DiscoveryMethod};
     use dchat_network::PeerId;
     use std::time::SystemTime;
-    
+
     #[tokio::test]
     async fn test_region_monitoring() {
         let registry = Arc::new(PeerRegistry::new());
-        
+
         // Add exactly 2 validators per region across 4 regions for healthy balance (2/8 = 25%)
         // 4 regions > MIN_REGIONS(3) and 25% < WARNING(35%)
         for i in 0..8 {
             let peer_id = PeerId::random();
-            let public_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng()).verifying_key();
-            
+            let public_key =
+                ed25519_dalek::SigningKey::generate(&mut rand::thread_rng()).verifying_key();
+
             let region = if i < 2 {
                 "us-east"
             } else if i < 4 {
@@ -288,7 +290,7 @@ mod tests {
             } else {
                 "af-south"
             };
-            
+
             let peer = AuthenticatedPeer {
                 peer_id,
                 public_key,
@@ -300,15 +302,15 @@ mod tests {
                 role: PeerRole::Validator,
                 reputation: 1.0,
             };
-            
+
             registry.register_peer(peer).unwrap();
         }
-        
+
         let monitor = Arc::new(RegionMonitor::new(registry, Duration::from_secs(5)));
-        
+
         // Check diversity
         monitor.check_diversity().await.unwrap();
-        
+
         let report = monitor.get_distribution_report().await;
         assert_eq!(report.regions_represented, 4);
         // With 2 validators per region across 4 regions (25% each), should be healthy

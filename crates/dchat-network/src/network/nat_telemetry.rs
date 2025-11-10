@@ -112,10 +112,10 @@ impl NatMethodStats {
 pub struct NatTelemetry {
     /// Per-method statistics
     method_stats: Arc<RwLock<HashMap<NatMethod, NatMethodStats>>>,
-    
+
     /// Global counters
     total_connections: Arc<RwLock<u64>>,
-    
+
     /// Method preference order (most successful first)
     method_preference: Arc<RwLock<Vec<NatMethod>>>,
 }
@@ -170,7 +170,7 @@ impl NatTelemetry {
         // TODO: Update Prometheus metrics when observability is migrated
         // if let Some(prometheus) = crate::observability::get_prometheus() {
         //     prometheus.record_nat_attempt(method.as_str(), result.as_str());
-        //     
+        //
         //     // Update success rate gauge
         //     let stats = self.method_stats.read().await;
         //     if let Some(method_stats) = stats.get(&method) {
@@ -210,15 +210,15 @@ impl NatTelemetry {
     /// Methods with higher success rates are preferred
     async fn recompute_preference(&self) {
         let stats = self.method_stats.read().await;
-        
+
         // Sort methods by success rate (descending)
         let mut methods: Vec<(NatMethod, f64)> = stats
             .iter()
             .map(|(method, stats)| (*method, stats.success_rate))
             .collect();
-        
+
         methods.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         let mut preference = self.method_preference.write().await;
         *preference = methods.into_iter().map(|(method, _)| method).collect();
     }
@@ -247,7 +247,10 @@ impl NatTelemetry {
         ] {
             if let Some(method_stats) = stats.get(method) {
                 report.push_str(&format!("{:?} Statistics:\n", method));
-                report.push_str(&format!("  Total attempts: {}\n", method_stats.total_attempts));
+                report.push_str(&format!(
+                    "  Total attempts: {}\n",
+                    method_stats.total_attempts
+                ));
                 report.push_str(&format!(
                     "  Successful: {} ({:.2}%)\n",
                     method_stats.successful_attempts,
@@ -273,16 +276,15 @@ impl Default for NatTelemetry {
 }
 
 /// Global NAT telemetry singleton
-static NAT_TELEMETRY: once_cell::sync::OnceCell<Arc<NatTelemetry>> = once_cell::sync::OnceCell::new();
+static NAT_TELEMETRY: once_cell::sync::OnceCell<Arc<NatTelemetry>> =
+    once_cell::sync::OnceCell::new();
 
 /// Initialize the global NAT telemetry collector
 pub fn initialize_nat_telemetry() -> Result<(), NatTelemetryError> {
     let telemetry = NatTelemetry::new();
-    NAT_TELEMETRY
-        .set(Arc::new(telemetry))
-        .map_err(|_| {
-            NatTelemetryError::MetricsError("NAT telemetry already initialized".to_string())
-        })?;
+    NAT_TELEMETRY.set(Arc::new(telemetry)).map_err(|_| {
+        NatTelemetryError::MetricsError("NAT telemetry already initialized".to_string())
+    })?;
     Ok(())
 }
 
@@ -307,7 +309,11 @@ mod tests {
         let telemetry = NatTelemetry::new();
 
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Success, Duration::from_millis(100))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Success,
+                Duration::from_millis(100),
+            )
             .await
             .unwrap();
 
@@ -326,7 +332,11 @@ mod tests {
         let telemetry = NatTelemetry::new();
 
         telemetry
-            .record_attempt(NatMethod::HolePunch, NatResult::Failure, Duration::from_millis(50))
+            .record_attempt(
+                NatMethod::HolePunch,
+                NatResult::Failure,
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
 
@@ -363,19 +373,35 @@ mod tests {
 
         // Record 3 successes and 1 failure
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(10))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(10),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(15))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(15),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(12))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(12),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Failure, Duration::from_millis(20))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Failure,
+                Duration::from_millis(20),
+            )
             .await
             .unwrap();
 
@@ -392,7 +418,11 @@ mod tests {
 
         // First attempt: avg should be exactly 100ms
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Success, Duration::from_millis(100))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Success,
+                Duration::from_millis(100),
+            )
             .await
             .unwrap();
 
@@ -401,7 +431,11 @@ mod tests {
 
         // Second attempt: EMA should apply (70% old + 30% new)
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Success, Duration::from_millis(200))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Success,
+                Duration::from_millis(200),
+            )
             .await
             .unwrap();
 
@@ -417,17 +451,29 @@ mod tests {
         // Record different success rates for each method
         // Direct: 100% (1/1)
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(10))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(10),
+            )
             .await
             .unwrap();
 
         // UPnP: 50% (1/2)
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Success, Duration::from_millis(50))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Success,
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Failure, Duration::from_millis(100))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Failure,
+                Duration::from_millis(100),
+            )
             .await
             .unwrap();
 
@@ -455,11 +501,19 @@ mod tests {
         let telemetry = NatTelemetry::new();
 
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(10))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(10),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Failure, Duration::from_millis(50))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Failure,
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
 
@@ -478,15 +532,27 @@ mod tests {
         let telemetry = NatTelemetry::new();
 
         telemetry
-            .record_attempt(NatMethod::Direct, NatResult::Success, Duration::from_millis(10))
+            .record_attempt(
+                NatMethod::Direct,
+                NatResult::Success,
+                Duration::from_millis(10),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Success, Duration::from_millis(50))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Success,
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
         telemetry
-            .record_attempt(NatMethod::Upnp, NatResult::Failure, Duration::from_millis(100))
+            .record_attempt(
+                NatMethod::Upnp,
+                NatResult::Failure,
+                Duration::from_millis(100),
+            )
             .await
             .unwrap();
 

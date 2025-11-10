@@ -276,7 +276,7 @@ impl DisputeResolver {
         // 4. Check both messages have same sequence number
         // 5. Check messages have different content (fork proof)
         // Use ed25519_dalek crate: VerifyingKey::from_bytes() and verify_strict()
-        
+
         // For fork to be valid:
         // - Both signatures must be valid
         // - Messages must differ
@@ -329,14 +329,22 @@ impl DisputeResolver {
             // 4. Distribute 50% to claimant as reward, 50% to DAO treasury
             // 5. Emit SlashEvent with (accused, claim_id, amount, reason)
             // 6. Update accused's reputation score (penalty)
-            tracing::info!("Slashing {}'s stake for dispute {}", claim.accused, claim.id.0);
+            tracing::info!(
+                "Slashing {}'s stake for dispute {}",
+                claim.accused,
+                claim.id.0
+            );
         } else if vote_for_claimant <= (1.0 - self.slash_threshold) {
             claim.status = DisputeStatus::ResolvedForAccused;
             // Production: slash claimant's stake for false claim
             // Same process as above but targeting claimant
             // Prevents frivolous claims (skin in the game)
             // Slash percentage may be higher for false accusers (deterrent)
-            tracing::info!("Slashing {}'s stake for false claim {}", claim.claimant, claim.id.0);
+            tracing::info!(
+                "Slashing {}'s stake for false claim {}",
+                claim.claimant,
+                claim.id.0
+            );
         } else {
             claim.status = DisputeStatus::Dismissed;
             // Inconclusive: no slashing

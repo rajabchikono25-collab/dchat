@@ -2,10 +2,10 @@
 //!
 //! Selects relay nodes for circuits with geographic diversity and reputation filtering.
 
-use std::collections::{HashMap, HashSet};
-use thiserror::Error;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use std::collections::{HashMap, HashSet};
+use thiserror::Error;
 
 /// Minimum reputation score for relay selection
 pub const MIN_REPUTATION_SCORE: f64 = 0.6;
@@ -168,13 +168,11 @@ impl PathSelector {
         // Get available regions
         let available_regions = self.available_regions();
         if available_regions.len() < num_hops {
-            return Err(PathSelectionError::GeographicDiversityFailed(
-                format!(
-                    "Need {} different regions, only {} available",
-                    num_hops,
-                    available_regions.len()
-                ),
-            ));
+            return Err(PathSelectionError::GeographicDiversityFailed(format!(
+                "Need {} different regions, only {} available",
+                num_hops,
+                available_regions.len()
+            )));
         }
 
         // Select regions (ensuring diversity)
@@ -193,17 +191,18 @@ impl PathSelector {
     }
 
     /// Select diverse regions for a circuit
-    fn select_diverse_regions(&self, num_regions: usize) -> Result<Vec<String>, PathSelectionError> {
+    fn select_diverse_regions(
+        &self,
+        num_regions: usize,
+    ) -> Result<Vec<String>, PathSelectionError> {
         let available_regions = self.available_regions();
 
         if available_regions.len() < num_regions {
-            return Err(PathSelectionError::GeographicDiversityFailed(
-                format!(
-                    "Need {} regions, only {} available",
-                    num_regions,
-                    available_regions.len()
-                ),
-            ));
+            return Err(PathSelectionError::GeographicDiversityFailed(format!(
+                "Need {} regions, only {} available",
+                num_regions,
+                available_regions.len()
+            )));
         }
 
         // Randomly select regions ensuring no duplicates
@@ -462,7 +461,9 @@ mod tests {
 
         for _ in 0..iterations {
             let mut rng = rand::thread_rng();
-            let relay = selector.select_best_relay_in_region("us-west", &mut rng).unwrap();
+            let relay = selector
+                .select_best_relay_in_region("us-west", &mut rng)
+                .unwrap();
             if relay.peer_id == "high" {
                 high_count += 1;
             }
@@ -470,7 +471,12 @@ mod tests {
 
         // High score relay should be chosen significantly more often
         // With the score difference, expect at least 55% selection rate (weighted random)
-        assert!(high_count > 550, "High score relay selected {} out of {} times", high_count, iterations);
+        assert!(
+            high_count > 550,
+            "High score relay selected {} out of {} times",
+            high_count,
+            iterations
+        );
     }
 
     #[test]
