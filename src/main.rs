@@ -8,8 +8,6 @@
 //! - Graceful shutdown
 //! - Observability integration
 
-mod deployment;
-
 use dchat::blockchain::{
     ChatChainClient, ChatChainConfig, CrossChainBridge, CurrencyChainClient, CurrencyChainConfig,
 };
@@ -5045,8 +5043,8 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 network, domain, relays
             );
             let summary =
-                deployment::generate_full_plan(&network, &domain, relays, &output).await?;
-            deployment::log_plan_summary(&summary);
+                dchat_deployment::orchestrator::generate_full_plan(&network, &domain, relays, &output).await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
         DeployCommand::Validate { input } => {
@@ -5054,8 +5052,8 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 "🔍 Validating deployment plan artifacts in {}",
                 input.display()
             );
-            let summary = deployment::validate_plan(&input).await?;
-            deployment::log_plan_summary(&summary);
+            let summary = dchat_deployment::orchestrator::validate_plan(&input).await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
         DeployCommand::Summary { input } => {
@@ -5063,8 +5061,8 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
                 "📄 Reading deployment plan summary from {}",
                 input.display()
             );
-            let summary = deployment::read_plan_summary(&input).await?;
-            deployment::log_plan_summary(&summary);
+            let summary = dchat_deployment::orchestrator::read_plan_summary(&input).await?;
+            dchat_deployment::orchestrator::log_plan_summary(&summary);
             Ok(())
         }
     }

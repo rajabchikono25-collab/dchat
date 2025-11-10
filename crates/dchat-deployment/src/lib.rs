@@ -6,6 +6,7 @@ pub mod distributed_storage;
 pub mod health_monitor;
 pub mod mainnet_config;
 pub mod multi_region_config;
+pub mod orchestrator;
 pub mod relay_network;
 
 pub use mainnet_config::{

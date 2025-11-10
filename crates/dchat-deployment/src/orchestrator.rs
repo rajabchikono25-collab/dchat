@@ -1,5 +1,5 @@
-use dchat::prelude::*;
-use dchat_deployment::{
+use dchat_core::{Error, Result};
+use crate::{
     BackupTier, DisasterRecoveryConfig, DistributedStorageConfig, HealthMonitorConfig,
     MultiRegionConfig, RelayNetworkConfig, StorageBackendType, StorageTier,
 };
