@@ -91,11 +91,6 @@ impl ProtocolVersion {
         // Both must be within acceptable range
         self.is_compatible() && other.is_compatible()
     }
-
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
-        format!("{}.{}.{}", self.major, self.minor, self.patch)
-    }
 }
 
 impl fmt::Display for ProtocolVersion {
