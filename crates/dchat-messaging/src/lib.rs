@@ -29,9 +29,8 @@ pub use media::{
 pub use ordering::{MessageOrder, SequenceNumber};
 pub use queue::{MessageQueue, OfflineQueue};
 pub use rate_limit::{DropPolicy, RateLimitConfig, RateLimitMetrics, RateLimitResult, RateLimiter};
-pub use staking_verifier::{
-    ChainStakingVerifier, StakeStatus, StakingVerifier,
-    #[cfg(any(test, feature = "test-mocks"))]
-    MockStakingVerifier,
-};
+pub use staking_verifier::{ChainStakingVerifier, StakeStatus, StakingVerifier};
+
+#[cfg(any(test, feature = "test-mocks"))]
+pub use staking_verifier::MockStakingVerifier;
 pub use types::{Message, MessageBuilder, MessageStatus, MessageType};

@@ -25,15 +25,14 @@ use uuid::Uuid;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CONFIG_PATH: &str = "config.toml";
-const PUBLIC_TLS_PORT: u16 = 443;
-const PUBLIC_HTTP_PORT: u16 = 80;
 
+// MAINNET-SAFE: Development defaults only - production must use config values
 fn default_relay_listen() -> String {
-    format!("0.0.0.0:{}", PUBLIC_TLS_PORT)
+    "0.0.0.0:7070".to_string()
 }
 
 fn default_health_addr() -> String {
-    format!("0.0.0.0:{}", PUBLIC_HTTP_PORT)
+    "127.0.0.1:8080".to_string()
 }
 
 #[derive(Parser)]
@@ -1389,29 +1388,78 @@ async fn run_relay_node(
     // Build bootstrap peer list from discovered nodes
     let mut bootstrap_nodes = Vec::new();
 
-    // Add discovered validators
+    // Add discovered validators - MAINNET-SAFE: Extract PeerID from multiaddr
     for validator in &discovered_validators {
-        let peer_id = PeerId::random(); // Placeholder
-        bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
-        info!(
-            "  + Validator: {} at {}",
-            validator.identifier, validator.multiaddr
-        );
+        let multiaddr_str = validator.multiaddr.to_string();
+        
+        // Extract PeerID from multiaddr (format: /ip4/x.x.x.x/tcp/port/p2p/<PeerId>)
+        if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+            match peer_id_part.parse::<PeerId>() {
+                Ok(peer_id) => {
+                    bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
+                    info!(
+                        "  + Validator: {} at {} (peer_id: {})",
+                        validator.identifier, validator.multiaddr, peer_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to parse PeerID from validator {}: {} - SKIPPING",
+                        validator.identifier, e
+                    );
+                }
+            }
+        } else {
+            warn!(
+                "Validator {} multiaddr missing /p2p/<PeerId> component: {} - SKIPPING",
+                validator.identifier, validator.multiaddr
+            );
+        }
     }
 
-    // Add discovered relays
+    // Add discovered relays - MAINNET-SAFE: Extract PeerID from multiaddr
     for relay in &discovered_relays {
-        let peer_id = PeerId::random(); // Placeholder
-        bootstrap_nodes.push((peer_id, relay.multiaddr.clone()));
-        info!("  + Relay: {} at {}", relay.identifier, relay.multiaddr);
+        let multiaddr_str = relay.multiaddr.to_string();
+        
+        if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+            match peer_id_part.parse::<PeerId>() {
+                Ok(peer_id) => {
+                    bootstrap_nodes.push((peer_id, relay.multiaddr.clone()));
+                    info!("  + Relay: {} at {} (peer_id: {})", relay.identifier, relay.multiaddr, peer_id);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to parse PeerID from relay {}: {} - SKIPPING",
+                        relay.identifier, e
+                    );
+                }
+            }
+        } else {
+            warn!(
+                "Relay {} multiaddr missing /p2p/<PeerId> component: {} - SKIPPING",
+                relay.identifier, relay.multiaddr
+            );
+        }
     }
 
-    // Add manually specified bootstrap peers
+    // Add manually specified bootstrap peers - MAINNET-SAFE: Require proper format
     for peer_str in &bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
-            let peer_id = PeerId::random();
-            bootstrap_nodes.push((peer_id, multiaddr.clone()));
-            info!("  + Manual peer: {}", multiaddr);
+            let multiaddr_str = multiaddr.to_string();
+            
+            if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+                match peer_id_part.parse::<PeerId>() {
+                    Ok(peer_id) => {
+                        bootstrap_nodes.push((peer_id, multiaddr.clone()));
+                        info!("  + Manual peer: {} (peer_id: {})", multiaddr, peer_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse PeerID from manual peer {}: {} - SKIPPING", multiaddr, e);
+                    }
+                }
+            } else {
+                warn!("Manual peer multiaddr missing /p2p/<PeerId> component: {} - SKIPPING", multiaddr);
+            }
         }
     }
 
@@ -1515,7 +1563,7 @@ async fn run_relay_node(
     if let Ok(relay_id) = std::env::var("DCHAT_RELAY_ID") {
         info!("📡 Attempting to connect to other relay nodes in Docker network...");
         let relay_hosts = ["dchat-relay1", "dchat-relay2", "dchat-relay3"];
-        let relay_ports = [PUBLIC_TLS_PORT; 3];
+        let relay_ports = [7070; 3]; // MAINNET-SAFE: Docker dev environment port
 
         for (host, port) in relay_hosts.iter().zip(relay_ports.iter()) {
             // Don't dial ourselves
@@ -2823,14 +2871,14 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    // Initialize database
+    // Initialize database - MAINNET-SAFE: Use config.storage.data_dir
     let db_config = DatabaseConfig {
-        path: PathBuf::from("./dchat_accounts.db"),
-        max_connections: 5,
-        connection_timeout_secs: 30,
-        idle_timeout_secs: 300,
-        max_lifetime_secs: 600,
-        enable_wal: true,
+        path: _config.storage.data_dir.join("dchat_accounts.db"),
+        max_connections: _config.storage.db_pool_size,
+        connection_timeout_secs: _config.storage.db_connection_timeout_secs,
+        idle_timeout_secs: _config.storage.db_idle_timeout_secs,
+        max_lifetime_secs: _config.storage.db_max_lifetime_secs,
+        enable_wal: _config.storage.db_enable_wal,
     };
     let database = dchat_storage::Database::new(db_config).await?;
 
