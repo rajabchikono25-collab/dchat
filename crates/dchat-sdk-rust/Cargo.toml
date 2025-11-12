@@ -23,6 +23,10 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 blake3 = { workspace = true }
+hex = { workspace = true }
+
+# X25519 key derivation from Ed25519
+x25519-dalek = { workspace = true }
 
 # Networking for libp2p swarm
 libp2p = { version = "0.54", features = ["kad", "noise", "tcp", "yamux", "dns"] }

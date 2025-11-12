@@ -268,8 +268,12 @@ impl OnionRouter {
     }
 
     /// Decrypt one layer
-    pub fn peel_layer(&self, onion: &[u8]) -> Result<(Vec<u8>, Option<PeerId>)> {
-        // Production: proper ECDH-based decryption with relay's private key
+    pub fn peel_layer(
+        &self,
+        onion: &[u8],
+        relay_keystore: &crate::keystore::RelayKeystore,
+    ) -> Result<(Vec<u8>, Option<PeerId>)> {
+        // Production: proper ECDH-based decryption with relay's persistent private key
 
         if onion.len() < 64 {
             return Err(Error::network(
@@ -282,16 +286,9 @@ impl OnionRouter {
         let ephemeral_public_bytes = &onion[32..64];
         let encrypted_payload = &onion[64..];
 
-        // Derive decryption key using ECDH with relay's private key
-        // TODO CRITICAL: Load relay's persistent X25519 private key from secure storage
-        // For now using ephemeral key - THIS BREAKS ONION ROUTING IN PRODUCTION
-        // Proper implementation requires:
-        // 1. Generate persistent X25519 keypair on relay initialization
-        // 2. Store private key in encrypted keystore (e.g., using age encryption)
-        // 3. Load key on relay startup: let relay_private = load_relay_keypair()?;
-        // 4. Public key must be published in relay discovery (DHT or blockchain)
-        let relay_private = EphemeralSecret::random_from_rng(&mut OsRng);
-        tracing::warn!("Using ephemeral relay key - onion routing will not work in production");
+        // Load relay's persistent X25519 private key from keystore
+        let relay_private = relay_keystore.x25519_static_secret()?;
+        tracing::debug!("Using persistent relay X25519 key for onion decryption");
 
         let mut ephemeral_public_fixed = [0u8; 32];
         ephemeral_public_fixed.copy_from_slice(ephemeral_public_bytes);

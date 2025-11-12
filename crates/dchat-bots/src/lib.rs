@@ -19,6 +19,7 @@ pub mod music_api;
 pub mod permissions;
 pub mod search;
 pub mod storage;
+pub mod token_security;
 pub mod webhook;
 
 pub use api::BotHttpClient;
@@ -43,6 +44,7 @@ pub use permissions::{BotPermissions, BotScope};
 pub use search::{
     BotMetadata, BotSearchResult, SearchFilters, SearchManager, SearchResult, SearchType,
 };
+pub use token_security::{BotToken, TokenError, TokenManager, WebhookVerifier};
 pub use webhook::{WebhookConfig, WebhookManager};
 
 use chrono::{DateTime, Utc};

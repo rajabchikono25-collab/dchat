@@ -29,15 +29,18 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 tracing = "0.1"
 blake3 = { workspace = true }
+rand = "0.8"
 
-# Webhooks
+# Webhooks and encryption
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.21"
 hex = "0.4"
+age = "0.10"
 
 # URL encoding for API calls
 urlencoding = "2.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
+tempfile = "3.8"

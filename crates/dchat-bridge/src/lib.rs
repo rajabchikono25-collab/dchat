@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
+pub mod finality;
 pub mod multisig;
 pub mod slashing;
 
@@ -139,6 +140,7 @@ pub struct BridgeManager {
     required_confirmations: HashMap<ChainId, u32>,
     pub multisig: multisig::MultiSigManager,
     pub slashing: slashing::SlashingManager,
+    pub finality_tracker: finality::FinalityTracker,
 }
 
 impl BridgeManager {
@@ -157,6 +159,10 @@ impl BridgeManager {
             multisig::MultiSigConfig::new(2, vec![validator1, validator2, validator3])
                 .expect("Failed to create multi-sig config");
 
+        // Create finality tracker with 5-of-7 consensus
+        let finality_tracker =
+            finality::FinalityTracker::new(5, 7).expect("Failed to create finality tracker");
+
         Self {
             transactions: HashMap::new(),
             validators: HashMap::new(),
@@ -165,6 +171,7 @@ impl BridgeManager {
             required_confirmations,
             multisig: multisig::MultiSigManager::new(multisig_config),
             slashing: slashing::SlashingManager::new(),
+            finality_tracker,
         }
     }
 
@@ -234,10 +241,67 @@ impl BridgeManager {
 
     /// Check if transaction has reached finality
     pub fn check_finality(&self, tx_hash: &str) -> bool {
+        // Check both old finality proofs and new BLS-based tracker
         self.finality_proofs
             .get(tx_hash)
             .map(|p| p.is_final)
-            .unwrap_or(false)
+            .unwrap_or_else(|| self.finality_tracker.is_finalized(tx_hash))
+    }
+
+    /// Initiate BLS-aggregated finality proof
+    pub fn initiate_bls_finality(
+        &mut self,
+        tx_hash: String,
+        block_number: u64,
+        block_hash: String,
+        confirmations: u32,
+    ) -> Result<()> {
+        let required = self
+            .required_confirmations
+            .get(&ChainId::ChatChain)
+            .copied()
+            .unwrap_or(12);
+
+        self.finality_tracker
+            .initiate_proof(tx_hash, block_number, block_hash, confirmations, required)
+            .map_err(|e| Error::validation(format!("Failed to initiate finality proof: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Submit validator BLS signature for finality
+    pub fn submit_finality_signature(
+        &mut self,
+        tx_hash: &str,
+        validator_id: UserId,
+        signature: Vec<u8>,
+    ) -> Result<bool> {
+        let is_finalized = self
+            .finality_tracker
+            .submit_signature(tx_hash, validator_id, signature)
+            .map_err(|e| Error::validation(format!("Failed to submit signature: {}", e)))?;
+
+        Ok(is_finalized)
+    }
+
+    /// Register validator for BLS finality consensus
+    pub fn register_bls_validator(
+        &mut self,
+        validator_id: UserId,
+        bls_pubkey: Vec<u8>,
+    ) -> Result<()> {
+        self.finality_tracker
+            .register_validator(validator_id, bls_pubkey)
+            .map_err(|e| Error::validation(format!("Failed to register validator: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Verify BLS finality proof
+    pub fn verify_bls_finality(&self, tx_hash: &str, message: &[u8]) -> Result<bool> {
+        self.finality_tracker
+            .verify_proof(tx_hash, message)
+            .map_err(|e| Error::validation(format!("Finality verification failed: {}", e)))
     }
 
     /// Update transaction status to pending finality

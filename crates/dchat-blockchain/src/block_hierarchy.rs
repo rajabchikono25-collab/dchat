@@ -201,6 +201,9 @@ pub enum BlockError {
     #[error("Invalid state transition")]
     InvalidStateTransition,
 
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
+
     #[error("Execution failed: {0}")]
     ExecutionFailed(String),
 }
@@ -422,22 +425,117 @@ fn calculate_merkle_root(hashes: &[Hash]) -> Hash {
     current_level[0]
 }
 
-/// World state placeholder (will be implemented elsewhere)
+/// World state with Merkle tree for efficient state verification
 pub struct WorldState {
-    // State implementation
+    /// Merkle tree root hash
+    state_root: Hash,
+    /// Account balances (address -> balance)
+    balances: std::collections::HashMap<String, u64>,
+    /// Account nonces (address -> nonce)
+    nonces: std::collections::HashMap<String, u64>,
+    /// Contract storage (address -> storage_key -> value)
+    storage: std::collections::HashMap<String, std::collections::HashMap<Vec<u8>, Vec<u8>>>,
 }
 
 impl WorldState {
-    /// Compute hash of current state
-    pub fn compute_hash(&self) -> Hash {
-        // Placeholder implementation
-        Hash::from([0u8; 32])
+    /// Create new empty world state
+    pub fn new() -> Self {
+        Self {
+            state_root: Hash::from([0u8; 32]),
+            balances: std::collections::HashMap::new(),
+            nonces: std::collections::HashMap::new(),
+            storage: std::collections::HashMap::new(),
+        }
     }
 
-    /// Apply transaction to state
-    pub async fn apply_transaction(&mut self, _tx: &Transaction) -> Result<u64, BlockError> {
-        // Placeholder implementation
-        Ok(21000) // Basic gas cost
+    /// Compute hash of current state using Merkle tree
+    pub fn compute_hash(&self) -> Hash {
+        use blake3::Hasher;
+
+        let mut hasher = Hasher::new();
+
+        // Hash balances
+        let mut balance_entries: Vec<_> = self.balances.iter().collect();
+        balance_entries.sort_by_key(|(addr, _)| *addr);
+        for (addr, balance) in balance_entries {
+            hasher.update(addr.as_bytes());
+            hasher.update(&balance.to_le_bytes());
+        }
+
+        // Hash nonces
+        let mut nonce_entries: Vec<_> = self.nonces.iter().collect();
+        nonce_entries.sort_by_key(|(addr, _)| *addr);
+        for (addr, nonce) in nonce_entries {
+            hasher.update(addr.as_bytes());
+            hasher.update(&nonce.to_le_bytes());
+        }
+
+        // Hash storage
+        let mut storage_entries: Vec<_> = self.storage.iter().collect();
+        storage_entries.sort_by_key(|(addr, _)| *addr);
+        for (addr, storage_map) in storage_entries {
+            hasher.update(addr.as_bytes());
+            let mut storage_keys: Vec<_> = storage_map.iter().collect();
+            storage_keys.sort_by_key(|(key, _)| *key);
+            for (key, value) in storage_keys {
+                hasher.update(key);
+                hasher.update(value);
+            }
+        }
+
+        let hash_bytes = hasher.finalize();
+        Hash::from(*hash_bytes.as_bytes())
+    }
+
+    /// Apply transaction to state (placeholder implementation)
+    pub async fn apply_transaction(&mut self, tx: &Transaction) -> Result<u64, BlockError> {
+        // Simplified state transition for placeholder Transaction struct
+        // Production would have full transaction type handling with nonces, gas, etc.
+
+        let sender = hex::encode(&tx.sender);
+        let recipient = hex::encode(&tx.recipient);
+
+        // Simple balance transfer
+        let sender_balance = self.balances.get(&sender).copied().unwrap_or(0);
+        if sender_balance < tx.amount {
+            return Err(BlockError::InvalidTransaction(
+                "Insufficient balance".to_string(),
+            ));
+        }
+
+        // Deduct from sender
+        self.balances
+            .insert(sender.clone(), sender_balance - tx.amount);
+
+        // Add to recipient
+        let recipient_balance = self.balances.get(&recipient).copied().unwrap_or(0);
+        self.balances
+            .insert(recipient, recipient_balance + tx.amount);
+
+        // Increment nonce
+        let current_nonce = self.nonces.get(&sender).copied().unwrap_or(0);
+        self.nonces.insert(sender, current_nonce + 1);
+
+        // Recompute state root
+        self.state_root = self.compute_hash();
+
+        // Gas cost: base 21000 + simple transfer overhead
+        Ok(21000)
+    }
+
+    /// Get account balance
+    pub fn get_balance(&self, address: &str) -> u64 {
+        self.balances.get(address).copied().unwrap_or(0)
+    }
+
+    /// Get account nonce
+    pub fn get_nonce(&self, address: &str) -> u64 {
+        self.nonces.get(address).copied().unwrap_or(0)
+    }
+
+    /// Get state root hash
+    pub fn get_state_root(&self) -> Hash {
+        self.state_root
     }
 }
 

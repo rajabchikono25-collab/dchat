@@ -151,10 +151,33 @@ impl TurnClient {
         // Add USERNAME attribute
         self.add_attribute(&mut msg, 0x0006, server.username.as_bytes());
 
-        // Update message length
+        // Add LIFETIME attribute (600 seconds = 10 minutes)
+        let lifetime: u32 = 600;
+        self.add_attribute(&mut msg, 0x000D, &lifetime.to_be_bytes());
+
+        // Compute MESSAGE-INTEGRITY using HMAC-SHA1
+        use hmac::{Hmac, Mac};
+        use sha1::Sha1;
+        type HmacSha1 = Hmac<Sha1>;
+
+        // Update length before computing HMAC
         let attr_len = (msg.len() - 20) as u16;
         msg[2] = (attr_len >> 8) as u8;
         msg[3] = (attr_len & 0xFF) as u8;
+
+        // Compute HMAC-SHA1 over message
+        let mut mac = HmacSha1::new_from_slice(server.credential.as_bytes())
+            .expect("HMAC-SHA1 initialization");
+        mac.update(&msg);
+        let integrity = mac.finalize().into_bytes();
+
+        // Add MESSAGE-INTEGRITY attribute (0x0008)
+        self.add_attribute(&mut msg, 0x0008, &integrity);
+
+        // Update final message length
+        let final_len = (msg.len() - 20) as u16;
+        msg[2] = (final_len >> 8) as u8;
+        msg[3] = (final_len & 0xFF) as u8;
 
         Ok(msg)
     }
@@ -310,19 +333,112 @@ impl TurnClient {
     }
 
     /// Refresh TURN allocation to prevent expiration
-    pub async fn refresh_allocation(&self, _relay_id: &str) -> Result<()> {
-        // Build Refresh Request
-        // ... (implementation similar to allocate)
-        Ok(())
+    pub async fn refresh_allocation(&self, relay_id: &str) -> Result<()> {
+        let relays = self.active_relays.lock().await;
+        let allocation = relays
+            .get(relay_id)
+            .ok_or_else(|| dchat_core::Error::network("Relay allocation not found"))?;
+
+        // Build Refresh Request (Message Type 0x0004)
+        let mut msg = Vec::new();
+
+        // Message Type: Refresh Request
+        msg.extend_from_slice(&[0x00, 0x04]);
+
+        // Placeholder for length
+        msg.extend_from_slice(&[0x00, 0x00]);
+
+        // Magic cookie + transaction ID
+        msg.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+        let txid: [u8; 12] = rand::random();
+        msg.extend_from_slice(&txid);
+
+        // Add LIFETIME attribute (600 seconds)
+        let lifetime: u32 = 600;
+        self.add_attribute(&mut msg, 0x000D, &lifetime.to_be_bytes());
+
+        // Add USERNAME attribute
+        self.add_attribute(&mut msg, 0x0006, allocation.username.as_bytes());
+
+        // Update length
+        let attr_len = (msg.len() - 20) as u16;
+        msg[2] = (attr_len >> 8) as u8;
+        msg[3] = (attr_len & 0xFF) as u8;
+
+        // Send to TURN server
+        let socket = UdpSocket::bind("0.0.0.0:0").await.map_err(|e| {
+            dchat_core::Error::network(format!("TURN refresh socket bind failed: {}", e))
+        })?;
+
+        socket
+            .send_to(&msg, allocation.server_addr)
+            .await
+            .map_err(|e| dchat_core::Error::network(format!("TURN refresh send failed: {}", e)))?;
+
+        // Wait for success response
+        let mut buf = vec![0u8; 1024];
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            socket.recv_from(&mut buf),
+        )
+        .await
+        {
+            Ok(Ok((len, _))) => {
+                // Verify response type: Refresh Success (0x0104)
+                if len >= 20 && buf[0] == 0x01 && buf[1] == 0x04 {
+                    tracing::info!("TURN allocation refreshed for relay: {}", relay_id);
+                    Ok(())
+                } else {
+                    Err(dchat_core::Error::network("Invalid TURN refresh response"))
+                }
+            }
+            Ok(Err(e)) => Err(dchat_core::Error::network(format!(
+                "TURN refresh recv failed: {}",
+                e
+            ))),
+            Err(_) => Err(dchat_core::Error::network("TURN refresh timeout")),
+        }
     }
 
     /// Close all relay allocations
     pub async fn close_all_relays(&self) -> Result<()> {
         let mut relays = self.active_relays.lock().await;
 
-        for (relay_id, _) in relays.iter() {
-            // Send Close Request to TURN server
-            eprintln!("Closing TURN relay: {}", relay_id);
+        for (relay_id, allocation) in relays.iter() {
+            // Build Refresh Request with LIFETIME=0 to close allocation
+            let mut msg = Vec::new();
+
+            // Message Type: Refresh Request (0x0004)
+            msg.extend_from_slice(&[0x00, 0x04]);
+
+            // Placeholder for length
+            msg.extend_from_slice(&[0x00, 0x00]);
+
+            // Magic cookie + transaction ID
+            msg.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+            let txid: [u8; 12] = rand::random();
+            msg.extend_from_slice(&txid);
+
+            // Add LIFETIME attribute with 0 to close
+            let lifetime: u32 = 0;
+            self.add_attribute(&mut msg, 0x000D, &lifetime.to_be_bytes());
+
+            // Add USERNAME attribute
+            self.add_attribute(&mut msg, 0x0006, allocation.username.as_bytes());
+
+            // Update length
+            let attr_len = (msg.len() - 20) as u16;
+            msg[2] = (attr_len >> 8) as u8;
+            msg[3] = (attr_len & 0xFF) as u8;
+
+            // Send close request
+            if let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await {
+                if let Err(e) = socket.send_to(&msg, allocation.server_addr).await {
+                    tracing::warn!("Failed to send TURN close for {}: {}", relay_id, e);
+                } else {
+                    tracing::info!("Closed TURN relay allocation: {}", relay_id);
+                }
+            }
         }
 
         relays.clear();

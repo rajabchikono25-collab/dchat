@@ -135,9 +135,10 @@ impl MultiSigState {
     pub fn verify_signature(
         &self,
         signature: &ValidatorSignature,
-        _message: &[u8],
+        message: &[u8],
     ) -> Result<(), BridgeError> {
-        // Production Ed25519 verification:
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
         // 1. Check signature length (Ed25519 signatures are exactly 64 bytes)
         if signature.signature.len() != 64 {
             return Err(BridgeError::InvalidSignature);
@@ -148,21 +149,37 @@ impl MultiSigState {
             return Err(BridgeError::InvalidSignature);
         }
 
-        // 3. Perform Ed25519 verification using ed25519_dalek:
-        // use ed25519_dalek::{Signature, VerifyingKey, Verifier};
-        // let verifying_key = VerifyingKey::from_bytes(
-        //     signature.validator_id.public_key.as_slice().try_into()
-        //         .map_err(|_| BridgeError::InvalidSignature)?
-        // ).map_err(|_| BridgeError::InvalidSignature)?;
-        // let sig = Signature::from_bytes(
-        //     signature.signature.as_slice().try_into()
-        //         .map_err(|_| BridgeError::InvalidSignature)?
-        // );
-        // verifying_key.verify_strict(message, &sig)
-        //     .map_err(|_| BridgeError::InvalidSignature)?;
+        // 3. Perform Ed25519 verification
+        let verifying_key = VerifyingKey::from_bytes(
+            signature
+                .validator_id
+                .public_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| BridgeError::InvalidSignature)?,
+        )
+        .map_err(|_| BridgeError::InvalidSignature)?;
+
+        let sig = Signature::from_bytes(
+            signature
+                .signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| BridgeError::InvalidSignature)?,
+        );
+
+        verifying_key
+            .verify_strict(message, &sig)
+            .map_err(|_| BridgeError::InvalidSignature)?;
 
         // 4. Check timestamp freshness (prevent replay attacks)
-        // Signature should be recent (within last 5 minutes)
+        let now = chrono::Utc::now();
+        let age = now.signed_duration_since(signature.signed_at);
+
+        if age.num_seconds().abs() > 300 {
+            // More than 5 minutes old/future
+            return Err(BridgeError::InvalidSignature);
+        }
 
         tracing::debug!(
             "Verified signature from validator {:?}",

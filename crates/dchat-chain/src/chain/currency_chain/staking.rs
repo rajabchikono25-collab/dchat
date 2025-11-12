@@ -92,30 +92,70 @@ pub async fn submit_validator_stake(request: &StakeRequest) -> Result<StakeRecei
         ));
     }
 
-    // TODO: Get actual chain client instance
-    // For now, simulate the transaction
+    // Production implementation with chain client integration
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
+
     let now = SystemTime::now();
     let unlock_time = now + Duration::from_secs(request.lockup_period_days * 24 * 3600);
 
-    // Generate mock transaction ID (in production, this comes from chain)
-    let tx_id = format!("0x{}", hex::encode(&request.validator_key.as_bytes()[..16]));
+    // Get chain RPC endpoint from environment or config
+    let rpc_url =
+        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
 
-    // In production:
-    // let client = get_currency_chain_client()?;
-    // let tx = StakeTransaction {
-    //     validator_key: request.validator_key,
-    //     amount: request.amount,
-    //     lockup_seconds: request.lockup_period_days * 24 * 3600,
-    // };
-    // let receipt = client.submit_stake_transaction(tx).await?;
+    // Build stake transaction
+    let tx_payload = json!({
+        "method": "currency.stake_validator",
+        "params": {
+            "validator_key": hex::encode(request.validator_key.as_bytes()),
+            "amount": request.amount.to_string(),
+            "lockup_seconds": request.lockup_period_days * 24 * 3600,
+        },
+        "jsonrpc": "2.0",
+        "id": 1,
+    });
 
-    tracing::info!("✅ Validator stake transaction submitted");
+    // Submit transaction to chain
+    let client = HttpClient::new();
+    let response = client
+        .post(&rpc_url)
+        .json(&tx_payload)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("RPC request failed: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(StakingError::ChainError(format!(
+            "Chain RPC error: status {}",
+            response.status()
+        )));
+    }
+
+    let response_body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Failed to parse response: {}", e)))?;
+
+    // Extract transaction ID and block height
+    let tx_id = response_body["result"]["tx_id"]
+        .as_str()
+        .unwrap_or("pending")
+        .to_string();
+
+    let block_height = response_body["result"]["block_height"]
+        .as_u64()
+        .unwrap_or(0);
+
+    tracing::info!("✅ Validator stake transaction submitted to chain");
+    tracing::info!("   TX ID: {}", tx_id);
     tracing::info!(
         "   Validator: {:?}",
         hex::encode(request.validator_key.as_bytes())
     );
     tracing::info!("   Amount: {} tokens", request.amount);
     tracing::info!("   Lockup: {} days", request.lockup_period_days);
+    tracing::info!("   Block: {}", block_height);
 
     Ok(StakeReceipt {
         transaction_id: tx_id,
@@ -123,7 +163,7 @@ pub async fn submit_validator_stake(request: &StakeRequest) -> Result<StakeRecei
         stake_amount: request.amount,
         activation_timestamp: now,
         unlock_timestamp: unlock_time,
-        block_height: 0, // TODO: Get from chain
+        block_height,
     })
 }
 
@@ -138,60 +178,163 @@ pub async fn submit_validator_stake(request: &StakeRequest) -> Result<StakeRecei
 pub async fn submit_validator_unstake(
     validator_key: &VerifyingKey,
 ) -> Result<StakeReceipt, StakingError> {
-    // TODO: Query chain for active stake
-    // let client = get_currency_chain_client()?;
-    // let stake_info = client.get_validator_stake(validator_key).await?;
-
-    // For now, simulate checking lockup
-    // In production, this check happens on-chain
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
 
     // Verify lockup period has expired
-    // if stake_info.unlock_timestamp > SystemTime::now() {
-    //     let remaining = stake_info.unlock_timestamp
-    //         .duration_since(SystemTime::now())
-    //         .unwrap_or_default();
-    //     return Err(StakingError::LockupActive(remaining));
-    // }
+    let is_unlocked = is_stake_unlocked(validator_key).await?;
+    if !is_unlocked {
+        return Err(StakingError::ChainError(
+            "Lockup period not yet expired. Cannot unstake yet.".to_string(),
+        ));
+    }
 
-    // Submit unstake transaction
-    // let tx = UnstakeTransaction {
-    //     validator_key: *validator_key,
-    // };
-    // let receipt = client.submit_unstake_transaction(tx).await?;
+    let rpc_url =
+        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
 
-    tracing::info!("✅ Validator unstake transaction submitted");
-    tracing::info!("   Validator: {:?}", hex::encode(validator_key.as_bytes()));
+    let payload = json!({
+        "method": "currency.unstake_validator",
+        "params": {
+            "validator_key": hex::encode(validator_key.as_bytes()),
+        },
+        "jsonrpc": "2.0",
+        "id": 1,
+    });
 
-    // Mock receipt
+    tracing::info!("📤 Submitting validator unstake transaction...");
+    tracing::info!("   RPC endpoint: {}", rpc_url);
+    tracing::info!("   Validator: {}", hex::encode(validator_key.as_bytes()));
+
+    let client = HttpClient::new();
+    let response = client
+        .post(&rpc_url)
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Unstake RPC failed: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(StakingError::ChainError(format!(
+            "Unstake RPC error: status {}",
+            response.status()
+        )));
+    }
+
+    let response_body: serde_json::Value = response.json().await.map_err(|e| {
+        StakingError::ChainError(format!("Failed to parse unstake response: {}", e))
+    })?;
+
+    let tx_id = response_body["result"]["tx_id"]
+        .as_str()
+        .ok_or_else(|| StakingError::ChainError("Missing tx_id in unstake response".to_string()))?
+        .to_string();
+
+    let block_height = response_body["result"]["block_height"]
+        .as_u64()
+        .unwrap_or(0);
+
+    let returned_amount = response_body["result"]["returned_amount"]
+        .as_u64()
+        .unwrap_or(0);
+
+    tracing::info!("✅ Validator unstake transaction confirmed!");
+    tracing::info!("   TX ID: {}", tx_id);
+    tracing::info!("   Block height: {}", block_height);
+    tracing::info!("   Returned amount: {} tokens", returned_amount);
+
     Ok(StakeReceipt {
-        transaction_id: format!("0x{}", hex::encode(&validator_key.as_bytes()[..16])),
+        transaction_id: tx_id,
         validator_key: *validator_key,
         stake_amount: 0, // Unstaked
         activation_timestamp: SystemTime::now(),
         unlock_timestamp: SystemTime::now(),
-        block_height: 0,
+        block_height,
     })
 }
 
 /// Query validator's current stake amount
-pub async fn get_validator_stake(_validator_key: &VerifyingKey) -> Result<u64, StakingError> {
-    // TODO: Query currency chain
-    // let client = get_currency_chain_client()?;
-    // client.query_validator_stake(validator_key).await
+pub async fn get_validator_stake(validator_key: &VerifyingKey) -> Result<u64, StakingError> {
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
 
-    // Mock response
-    Ok(MIN_VALIDATOR_STAKE)
+    let rpc_url =
+        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+
+    let query = json!({
+        "method": "currency.query_validator_stake",
+        "params": {
+            "validator_key": hex::encode(validator_key.as_bytes()),
+        },
+        "jsonrpc": "2.0",
+        "id": 1,
+    });
+
+    let client = HttpClient::new();
+    let response = client
+        .post(&rpc_url)
+        .json(&query)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("RPC query failed: {}", e)))?;
+
+    let response_body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Failed to parse response: {}", e)))?;
+
+    let stake_amount = response_body["result"]["stake_amount"]
+        .as_u64()
+        .unwrap_or(0);
+
+    Ok(stake_amount)
 }
 
 /// Check if validator's lockup period has expired
-pub async fn is_stake_unlocked(_validator_key: &VerifyingKey) -> Result<bool, StakingError> {
-    // TODO: Query currency chain
-    // let client = get_currency_chain_client()?;
-    // let stake_info = client.get_validator_stake(validator_key).await?;
-    // Ok(stake_info.unlock_timestamp <= SystemTime::now())
+pub async fn is_stake_unlocked(validator_key: &VerifyingKey) -> Result<bool, StakingError> {
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Mock response
-    Ok(false)
+    let rpc_url =
+        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+
+    let query = json!({
+        "method": "currency.query_stake_lockup",
+        "params": {
+            "validator_key": hex::encode(validator_key.as_bytes()),
+        },
+        "jsonrpc": "2.0",
+        "id": 1,
+    });
+
+    let client = HttpClient::new();
+    let response = client
+        .post(&rpc_url)
+        .json(&query)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("RPC lockup query failed: {}", e)))?;
+
+    let response_body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Failed to parse lockup response: {}", e)))?;
+
+    let unlock_timestamp = response_body["result"]["unlock_timestamp"]
+        .as_u64()
+        .ok_or_else(|| {
+            StakingError::ChainError("Missing unlock_timestamp in response".to_string())
+        })?;
+
+    let current_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| StakingError::ChainError(format!("System time error: {}", e)))?
+        .as_secs();
+
+    Ok(current_timestamp >= unlock_timestamp)
 }
 
 /// Submit relay stake to currency chain
@@ -201,26 +344,82 @@ pub async fn submit_relay_stake(
     relay_key: &VerifyingKey,
     amount: u64,
 ) -> Result<StakeReceipt, StakingError> {
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     if amount < MIN_RELAY_STAKE {
         return Err(StakingError::InsufficientStake(amount, MIN_RELAY_STAKE));
     }
 
     // Relay lockup is 3 days (shorter than validator)
-    let lockup_days = 3u64;
-    let now = SystemTime::now();
-    let unlock_time = now + Duration::from_secs(lockup_days * 24 * 3600);
+    let lockup_seconds = 3 * 24 * 3600u64;
 
-    tracing::info!("✅ Relay stake transaction submitted");
-    tracing::info!("   Relay: {:?}", hex::encode(relay_key.as_bytes()));
+    let rpc_url =
+        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+
+    let payload = json!({
+        "method": "currency.stake_relay",
+        "params": {
+            "relay_key": hex::encode(relay_key.as_bytes()),
+            "amount": amount,
+            "lockup_seconds": lockup_seconds,
+        },
+        "jsonrpc": "2.0",
+        "id": 1,
+    });
+
+    tracing::info!("📤 Submitting relay stake transaction to currency chain...");
+    tracing::info!("   RPC endpoint: {}", rpc_url);
+    tracing::info!("   Relay: {}", hex::encode(relay_key.as_bytes()));
     tracing::info!("   Amount: {} tokens", amount);
+    tracing::info!("   Lockup: {} seconds (3 days)", lockup_seconds);
+
+    let client = HttpClient::new();
+    let response = client
+        .post(&rpc_url)
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Failed to submit relay stake tx: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(StakingError::ChainError(format!(
+            "RPC returned error status: {}",
+            response.status()
+        )));
+    }
+
+    let response_body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| StakingError::ChainError(format!("Failed to parse RPC response: {}", e)))?;
+
+    let tx_id = response_body["result"]["tx_id"]
+        .as_str()
+        .ok_or_else(|| StakingError::ChainError("Missing tx_id in response".to_string()))?
+        .to_string();
+
+    let block_height = response_body["result"]["block_height"]
+        .as_u64()
+        .ok_or_else(|| StakingError::ChainError("Missing block_height in response".to_string()))?;
+
+    let now = SystemTime::now();
+    let unlock_time = now + Duration::from_secs(lockup_seconds);
+
+    tracing::info!("✅ Relay stake transaction confirmed!");
+    tracing::info!("   Transaction ID: {}", tx_id);
+    tracing::info!("   Block height: {}", block_height);
+    tracing::info!("   Unlock time: {:?}", unlock_time);
 
     Ok(StakeReceipt {
-        transaction_id: format!("0x{}", hex::encode(&relay_key.as_bytes()[..16])),
+        transaction_id: tx_id,
         validator_key: *relay_key,
         stake_amount: amount,
         activation_timestamp: now,
         unlock_timestamp: unlock_time,
-        block_height: 0,
+        block_height,
     })
 }
 

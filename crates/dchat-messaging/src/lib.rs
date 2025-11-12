@@ -14,6 +14,8 @@ pub mod expiration;
 pub mod media;
 pub mod ordering;
 pub mod queue;
+pub mod rate_limit;
+pub mod staking_verifier;
 pub mod types;
 
 pub use channel_access::{AccessPolicy, ChannelAccessManager};
@@ -26,4 +28,10 @@ pub use media::{
 };
 pub use ordering::{MessageOrder, SequenceNumber};
 pub use queue::{MessageQueue, OfflineQueue};
+pub use rate_limit::{DropPolicy, RateLimitConfig, RateLimitMetrics, RateLimitResult, RateLimiter};
+pub use staking_verifier::{
+    ChainStakingVerifier, StakeStatus, StakingVerifier,
+    #[cfg(any(test, feature = "test-mocks"))]
+    MockStakingVerifier,
+};
 pub use types::{Message, MessageBuilder, MessageStatus, MessageType};

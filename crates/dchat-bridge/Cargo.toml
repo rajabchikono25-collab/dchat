@@ -12,8 +12,10 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tracing = { workspace = true }
 thiserror = "1.0"
+ed25519-dalek = { workspace = true }
 
 # BLS signature aggregation for cross-chain multisig
 blst = "0.3"
 
 [dev-dependencies]
+getrandom = "0.2"

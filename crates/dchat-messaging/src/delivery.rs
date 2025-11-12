@@ -27,13 +27,74 @@ pub struct DeliveryProof {
 
 impl DeliveryProof {
     /// Verify the proof is valid
-    pub fn verify(&self, _recipient_pubkey: &[u8]) -> Result<bool> {
-        // In a real implementation, verify:
-        // 1. Recipient signature is valid
-        // 2. Chain transaction exists and is confirmed
-        // 3. Timestamp is reasonable
+    pub fn verify(&self, recipient_pubkey: &[u8]) -> Result<bool> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-        Ok(self.recipient_signature.is_some())
+        // 1. Verify recipient signature if present
+        if let Some(sig) = &self.recipient_signature {
+            // Parse public key (32 bytes for Ed25519)
+            if recipient_pubkey.len() != 32 {
+                return Err(Error::validation("Invalid recipient public key length"));
+            }
+
+            let verifying_key = VerifyingKey::from_bytes(
+                recipient_pubkey
+                    .try_into()
+                    .map_err(|_| Error::validation("Failed to parse public key"))?,
+            )
+            .map_err(|e| Error::validation(format!("Invalid public key: {}", e)))?;
+
+            // Parse signature (64 bytes for Ed25519)
+            if sig.0.len() != 64 {
+                return Err(Error::validation("Invalid signature length"));
+            }
+
+            let signature = Signature::from_bytes(
+                &sig.0[..]
+                    .try_into()
+                    .map_err(|_| Error::validation("Failed to parse signature"))?,
+            );
+
+            // Construct message to verify: message_id || relay_peer_id || timestamp
+            let mut message_bytes = Vec::new();
+            message_bytes.extend_from_slice(self.message_id.0.as_bytes());
+            message_bytes.extend_from_slice(self.relay_peer_id.as_bytes());
+            if let Ok(duration) = self.timestamp.duration_since(std::time::UNIX_EPOCH) {
+                message_bytes.extend_from_slice(&duration.as_secs().to_le_bytes());
+            }
+
+            // Verify signature
+            verifying_key
+                .verify_strict(&message_bytes, &signature)
+                .map_err(|e| Error::validation(format!("Signature verification failed: {}", e)))?;
+        } else {
+            return Ok(false); // No signature present
+        }
+
+        // 2. Verify chain transaction exists and is confirmed (if on-chain)
+        if let Some(tx_hash) = &self.chain_tx_hash {
+            // TODO: Query chain for transaction confirmation
+            // Requires chain client integration:
+            // let chain_client = get_chat_chain_client();
+            // let tx_confirmed = chain_client.verify_tx_confirmed(tx_hash).await?;
+            // if !tx_confirmed {
+            //     return Ok(false);
+            // }
+
+            tracing::debug!(
+                "Chain TX {} present (confirmation pending chain client integration)",
+                tx_hash
+            );
+        }
+
+        // 3. Verify timestamp is reasonable (within last 24 hours)
+        if let Ok(elapsed) = self.timestamp.elapsed() {
+            if elapsed > std::time::Duration::from_secs(86400) {
+                return Err(Error::validation("Delivery proof timestamp too old"));
+            }
+        }
+
+        Ok(true)
     }
 
     /// Check if proof is on-chain

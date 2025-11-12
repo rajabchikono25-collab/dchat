@@ -10,6 +10,9 @@ use dchat_core::types::{ChannelId, UserId};
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use crate::staking_verifier::{StakeStatus, StakingVerifier};
 
 /// Channel access control policy
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,12 +79,12 @@ pub struct ChannelAccessManager {
     /// Map of user ID to their reputation scores
     user_reputation: HashMap<UserId, u8>,
 
-    /// Map of user ID to their staked amounts per channel
-    user_stakes: HashMap<(UserId, ChannelId), u64>,
+    /// Blockchain staking verifier (dependency injected)
+    staking_verifier: Option<Arc<dyn StakingVerifier>>,
 }
 
 impl ChannelAccessManager {
-    /// Create a new channel access manager
+    /// Create a new channel access manager without staking verifier
     pub fn new() -> Self {
         Self {
             policies: HashMap::new(),
@@ -89,8 +92,25 @@ impl ChannelAccessManager {
             user_tokens: HashMap::new(),
             user_nfts: HashMap::new(),
             user_reputation: HashMap::new(),
-            user_stakes: HashMap::new(),
+            staking_verifier: None,
         }
+    }
+
+    /// Create channel access manager with injected staking verifier
+    pub fn with_staking_verifier(verifier: Arc<dyn StakingVerifier>) -> Self {
+        Self {
+            policies: HashMap::new(),
+            members: HashMap::new(),
+            user_tokens: HashMap::new(),
+            user_nfts: HashMap::new(),
+            user_reputation: HashMap::new(),
+            staking_verifier: Some(verifier),
+        }
+    }
+
+    /// Set staking verifier after construction
+    pub fn set_staking_verifier(&mut self, verifier: Arc<dyn StakingVerifier>) {
+        self.staking_verifier = Some(verifier);
     }
 
     /// Set access policy for a channel
@@ -131,13 +151,8 @@ impl ChannelAccessManager {
         self.user_reputation.insert(user_id, score.min(100));
     }
 
-    /// Record user stake for a channel
-    pub fn record_stake(&mut self, user_id: UserId, channel_id: ChannelId, amount: u64) {
-        self.user_stakes.insert((user_id, channel_id), amount);
-    }
-
     /// Check if user can access channel
-    pub fn can_access(&self, user_id: &UserId, channel_id: &ChannelId) -> Result<bool> {
+    pub async fn can_access(&self, user_id: &UserId, channel_id: &ChannelId) -> Result<bool> {
         // Check if already a member
         if let Some(members) = self.members.get(channel_id) {
             if members.contains(user_id) {
@@ -151,127 +166,124 @@ impl ChannelAccessManager {
             .get(channel_id)
             .ok_or_else(|| Error::validation("Channel not found"))?;
 
-        self.check_policy(user_id, policy)
+        self.check_policy(user_id, channel_id, policy).await
     }
 
     /// Check if user meets policy requirements
-    fn check_policy(&self, user_id: &UserId, policy: &AccessPolicy) -> Result<bool> {
-        match policy {
-            AccessPolicy::Public => Ok(true),
+    fn check_policy<'a>(
+        &'a self,
+        user_id: &'a UserId,
+        channel_id: &'a ChannelId,
+        policy: &'a AccessPolicy,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            match policy {
+                AccessPolicy::Public => Ok(true),
 
-            AccessPolicy::Private { invited_users } => Ok(invited_users.contains(user_id)),
+                AccessPolicy::Private { invited_users } => Ok(invited_users.contains(user_id)),
 
-            AccessPolicy::TokenGated {
-                token_id,
-                minimum_amount,
-                requires_bonding: _,
-            } => {
-                let user_tokens = self.user_tokens.get(user_id);
-                if let Some(tokens) = user_tokens {
-                    if let Some(amount) = tokens.get(token_id) {
-                        return Ok(amount >= minimum_amount);
+                AccessPolicy::TokenGated {
+                    token_id,
+                    minimum_amount,
+                    requires_bonding: _,
+                } => {
+                    let user_tokens = self.user_tokens.get(user_id);
+                    if let Some(tokens) = user_tokens {
+                        if let Some(amount) = tokens.get(token_id) {
+                            return Ok(amount >= minimum_amount);
+                        }
                     }
+                    Ok(false)
                 }
-                Ok(false)
-            }
 
-            AccessPolicy::NftGated {
-                collection_id: _,
-                required_token_ids,
-            } => {
-                let user_nfts = self.user_nfts.get(user_id);
-                if let Some(nfts) = user_nfts {
-                    if required_token_ids.is_empty() {
-                        // Any NFT from collection
-                        return Ok(!nfts.is_empty());
+                AccessPolicy::NftGated {
+                    collection_id: _,
+                    required_token_ids,
+                } => {
+                    let user_nfts = self.user_nfts.get(user_id);
+                    if let Some(nfts) = user_nfts {
+                        if required_token_ids.is_empty() {
+                            // Any NFT from collection
+                            return Ok(!nfts.is_empty());
+                        } else {
+                            // Specific NFT required
+                            return Ok(required_token_ids.iter().any(|id| nfts.contains(id)));
+                        }
+                    }
+                    Ok(false)
+                }
+
+                AccessPolicy::ReputationGated { minimum_score } => {
+                    let score = self.user_reputation.get(user_id).copied().unwrap_or(0);
+                    Ok(score >= *minimum_score)
+                }
+
+                AccessPolicy::StakeGated {
+                    minimum_stake,
+                    stake_duration_secs,
+                } => {
+                    // Use injected StakingVerifier for blockchain-backed verification
+                    if let Some(verifier) = &self.staking_verifier {
+                        // 1. Verify stake commitment meets requirements
+                        let is_valid = verifier
+                            .verify_stake_commitment(user_id, *minimum_stake, *stake_duration_secs)
+                            .await?;
+
+                        if !is_valid {
+                            tracing::debug!(
+                                "Stake verification failed: user={:?}, required={}, duration={}s",
+                                user_id,
+                                minimum_stake,
+                                stake_duration_secs
+                            );
+                            return Ok(false);
+                        }
+
+                        // 2. Check stake status (must be active, not slashed/withdrawn)
+                        let stake_status = verifier.check_stake_status(user_id, channel_id).await?;
+
+                        if stake_status != StakeStatus::Active {
+                            tracing::warn!(
+                                "Stake status is not active: user={:?}, channel={:?}, status={:?}",
+                                user_id,
+                                channel_id,
+                                stake_status
+                            );
+                            return Ok(false);
+                        }
+
+                        tracing::info!(
+                            "✅ Stake verification passed: user={:?}, channel={:?}",
+                            user_id,
+                            channel_id
+                        );
+                        Ok(true)
                     } else {
-                        // Specific NFT required
-                        return Ok(required_token_ids.iter().any(|id| nfts.contains(id)));
+                        tracing::error!(
+                        "StakeGated policy requires StakingVerifier - none injected. Denying access."
+                    );
+                        Err(Error::validation(
+                            "Stake verification unavailable - StakingVerifier not configured",
+                        ))
                     }
                 }
-                Ok(false)
-            }
 
-            AccessPolicy::ReputationGated { minimum_score } => {
-                let score = self.user_reputation.get(user_id).copied().unwrap_or(0);
-                Ok(score >= *minimum_score)
-            }
-
-            AccessPolicy::StakeGated {
-                minimum_stake,
-                stake_duration_secs,
-            } => {
-                // Blockchain integration required for stake verification
-                //
-                // Integration API (dchat-chain currency chain interface):
-                //
-                // trait StakingVerifier {
-                //     async fn verify_stake_commitment(
-                //         &self,
-                //         user_id: &UserId,
-                //         minimum_stake: u64,
-                //         duration_secs: u64,
-                //     ) -> Result<bool>;
-                //
-                //     async fn check_stake_status(
-                //         &self,
-                //         user_id: &UserId,
-                //         channel_id: &ChannelId,
-                //     ) -> Result<StakeStatus>; // Active, Slashed, Withdrawn
-                // }
-                //
-                // TODO: Inject StakingVerifier via dependency injection when initializing ChannelAccessControl
-                // Current: Uses local stake map for testing/development
-
-                // 1. Check if user has stake recorded for any channel
-                let user_total_stake: u64 = self
-                    .user_stakes
-                    .iter()
-                    .filter(|((uid, _), _)| uid == user_id)
-                    .map(|(_, amount)| amount)
-                    .sum();
-
-                if user_total_stake < *minimum_stake {
-                    return Ok(false);
-                }
-
-                // 2. Verify stake duration on-chain (requires blockchain client)
-                tracing::debug!(
-                    "Verifying stake commitment: user={:?}, required={}, duration={}s (local map check)",
-                    user_id, minimum_stake, stake_duration_secs
-                );
-
-                // When blockchain client integrated:
-                // let is_valid = self.blockchain_client
-                //     .verify_stake_commitment(user_id, minimum_stake, stake_duration_secs)
-                //     .await?;
-                //
-                // let stake_status = self.blockchain_client
-                //     .check_stake_status(user_id, channel_id)
-                //     .await?;
-                //
-                // if stake_status != StakeStatus::Active {
-                //     return Ok(false);
-                // }
-
-                Ok(true)
-            }
-
-            AccessPolicy::Combined { policies } => {
-                // All policies must pass
-                for sub_policy in policies {
-                    if !self.check_policy(user_id, sub_policy)? {
-                        return Ok(false);
+                AccessPolicy::Combined { policies } => {
+                    // All policies must pass
+                    for sub_policy in policies {
+                        if !self.check_policy(user_id, channel_id, sub_policy).await? {
+                            return Ok(false);
+                        }
                     }
+                    Ok(true)
                 }
-                Ok(true)
             }
-        }
+        })
     }
 
     /// Grant channel access to user (after policy check)
-    pub fn grant_access(&mut self, user_id: UserId, channel_id: ChannelId) -> Result<()> {
-        if !self.can_access(&user_id, &channel_id)? {
+    pub async fn grant_access(&mut self, user_id: UserId, channel_id: ChannelId) -> Result<()> {
+        if !self.can_access(&user_id, &channel_id).await? {
             return Err(Error::validation("Access denied: requirements not met"));
         }
 

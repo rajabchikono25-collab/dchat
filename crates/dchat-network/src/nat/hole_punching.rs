@@ -50,44 +50,69 @@ impl HolePuncher {
             .await
             .map_err(|e| dchat_core::Error::network(format!("Hole punch bind failed: {}", e)))?;
 
-        // Send punch packets
+        // Set socket to non-blocking for simultaneous send/receive
+        socket.set_ttl(64).ok();
+
+        // Spawn concurrent send and receive tasks for bidirectional punching
+        let socket_send = std::sync::Arc::new(socket);
+        let socket_recv = socket_send.clone();
+
+        let send_handle = {
+            let socket = socket_send.clone();
+            tokio::spawn(async move {
+                for attempt in 0..10 {
+                    let punch_msg = format!("PUNCH:{}", attempt);
+                    if let Err(e) = socket.send_to(punch_msg.as_bytes(), peer_external).await {
+                        tracing::warn!("Hole punch send failed (attempt {}): {}", attempt, e);
+                    }
+                    sleep(Duration::from_millis(200)).await;
+                }
+            })
+        };
+
+        // Receive loop
         for attempt in 0..self.punch_attempts {
-            // Send punch packet to peer's external address
-            let punch_msg = format!("PUNCH:{}", attempt);
+            let mut buf = vec![0u8; 1024];
 
-            match socket.send_to(punch_msg.as_bytes(), peer_external).await {
-                Ok(_) => {
-                    // Wait for response
-                    let mut buf = vec![0u8; 1024];
+            match tokio::time::timeout(self.punch_interval, socket_recv.recv_from(&mut buf)).await {
+                Ok(Ok((len, addr))) => {
+                    let msg = String::from_utf8_lossy(&buf[..len]);
 
-                    // Use short timeout for each attempt
-                    match tokio::time::timeout(self.punch_interval, socket.recv_from(&mut buf))
-                        .await
-                    {
-                        Ok(Ok((len, addr))) => {
-                            let msg = String::from_utf8_lossy(&buf[..len]);
+                    // Check if this is a valid punch response
+                    if msg.starts_with("PUNCH:") {
+                        // Send ACK back
+                        let ack_msg = format!("ACK:{}", attempt);
+                        let _ = socket_recv.send_to(ack_msg.as_bytes(), addr).await;
 
-                            // Check if this is a valid punch response
-                            if msg.starts_with("PUNCH:") || msg.starts_with("ACK:") {
-                                // Hole punch successful!
-                                return Ok(addr);
-                            }
-                        }
-                        _ => {
-                            // Timeout or error, continue trying
-                            sleep(self.punch_interval).await;
-                        }
+                        tracing::info!("UDP hole punch successful with peer at {}", addr);
+
+                        // Cancel send task
+                        send_handle.abort();
+
+                        return Ok(addr);
+                    } else if msg.starts_with("ACK:") {
+                        // Peer acknowledged our punch
+                        tracing::info!("Received ACK from peer at {}", addr);
+
+                        send_handle.abort();
+
+                        return Ok(addr);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Hole punch send failed (attempt {}): {}", attempt, e);
-                    sleep(self.punch_interval).await;
+                Ok(Err(e)) => {
+                    tracing::warn!("Hole punch recv error (attempt {}): {}", attempt, e);
+                }
+                Err(_) => {
+                    // Timeout, continue
+                    tracing::trace!("Hole punch timeout (attempt {})", attempt);
                 }
             }
         }
 
+        send_handle.abort();
+
         Err(dchat_core::Error::network(
-            "Hole punch failed after all attempts",
+            "UDP hole punch failed: no response from peer after all attempts",
         ))
     }
 
