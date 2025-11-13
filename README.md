@@ -48,28 +48,38 @@ Unlike traditional chat applications, dchat:
 </tr>
 <tr>
 <td><b>Cryptography</b></td>
-<td>snow (Noise Protocol), Ed25519, Kyber768</td>
-<td>Encryption, signatures, post-quantum</td>
+<td>Noise Protocol, Ed25519, Kyber768+Falcon, Hybrid PQ</td>
+<td>Encryption, signatures, post-quantum ready</td>
+</tr>
+<tr>
+<td><b>Biometrics</b></td>
+<td>iOS DeviceCheck, Android Play Integrity</td>
+<td>Device attestation, secure enclave integration</td>
 </tr>
 <tr>
 <td><b>Networking</b></td>
 <td>libp2p, Kademlia DHT, QUIC</td>
-<td>Peer discovery, routing, NAT traversal</td>
+<td>P2P messaging, peer discovery, reliable transport</td>
 </tr>
 <tr>
 <td><b>Blockchain</b></td>
-<td>Substrate-based custom chains</td>
-<td>Message ordering, governance, economics</td>
+<td>Substrate, PoS consensus, PoRW/PoT/TSC</td>
+<td>Dual-chain (chat + currency), gas-based execution</td>
 </tr>
 <tr>
 <td><b>Storage</b></td>
-<td>SQLite, RocksDB, Redis, TiKV</td>
-<td>Local caching, distributed state</td>
+<td>SQLite, RocksDB, Redis, TiKV, IPFS</td>
+<td>Message storage, storage bonds, marketplace content</td>
+</tr>
+<tr>
+<td><b>Marketplace</b></td>
+<td>On-chain + IPFS hybrid</td>
+<td>NFTs, emojis, stickers, digital goods (90/10 fee split)</td>
 </tr>
 <tr>
 <td><b>Observability</b></td>
 <td>Prometheus, OpenTelemetry, Grafana</td>
-<td>Metrics, tracing, health monitoring</td>
+<td>Metrics, tracing, fee tracking, uptime scoring</td>
 </tr>
 </table>
 
@@ -138,20 +148,55 @@ docker-compose down
 ### Production Readiness: **75%** ✅
 
 ```
-Phase 1: Security & Crypto          ████████████████████ 100% ✅
-Phase 2: Network Connectivity       ████████████████████ 100% ✅
-Phase 3: Blockchain Consensus       ████████████████████ 100% ✅
-  ├─ PoRW (Proof-of-Relay-Work)     ████████████████████ 100% ✅
-  ├─ PoT (Proof-of-Transit)         ████████████████████ 100% ✅
-  ├─ TSC (Temporal Stake Consensus) ████████████████████ 100% ✅
-  └─ Block Hierarchy                ████████████████████ 100% ✅
-Phase 4: Infrastructure             ██████████░░░░░░░░░░  50% ⏳
-Phase 5: Platform & SDKs            ████░░░░░░░░░░░░░░░░  20% ⏸️
+Phase 1: Core Infrastructure              ████████████████████ 100% ✅
+Phase 2: Privacy & Governance              ████████████████████ 100% ✅
+Phase 3: Blockchain Consensus & Messaging  ████████████████████ 100% ✅
+  ├─ PoRW (Proof-of-Relay-Work)            ████████████████████ 100% ✅
+  ├─ PoT (Proof-of-Transit)                ████████████████████ 100% ✅
+  ├─ TSC (Temporal Stake Consensus)        ████████████████████ 100% ✅
+  ├─ Block Hierarchy (3-level)             ████████████████████ 100% ✅
+  ├─ Message Types & Ordering              ████████████████████ 100% ✅
+  ├─ Gas Model & Fees                      ████████████████████ 100% ✅
+  ├─ Post-Quantum Cryptography             ████████████████████ 100% ✅
+  ├─ Device Attestation & Biometrics       ████████████████████ 100% ✅
+  └─ Storage Staking & Bonds               ████████████████████ 100% ✅
+Phase 4: Marketplace & Economics          ██████████░░░░░░░░░░  50% ⏳
+  ├─ Emoji Packs & Stickers                ██████████░░░░░░░░░░  50% ⏳
+  ├─ NFTs & Digital Goods                  ████████░░░░░░░░░░░░  40% ⏳
+  ├─ Channel Monetization                  ██████░░░░░░░░░░░░░░  30% ⏳
+  └─ Marketplace Trading                   ████░░░░░░░░░░░░░░░░  20% ⏳
+Phase 5: Production Hardening              ██░░░░░░░░░░░░░░░░░░  10% ⏸️
 ```
 
 **Latest Build**: [Passing ✅](./BUILD_STATUS_FINAL.txt)  
 **Test Coverage**: 82%  
 **Documentation**: Comprehensive (34 architectural components)
+
+**Phase 3 Completed** ✅:
+- ✅ Dual-chain consensus (Chat Chain + Currency Chain)
+- ✅ Noise Protocol E2E encryption with rotating keys
+- ✅ Identity management & hierarchical key derivation
+- ✅ Message ordering & proof-of-delivery
+- ✅ Governance & DAO voting with ethical constraints
+- ✅ Relay incentive structure (uptime + message fees)
+- ✅ Storage economics & staking bonds (5% APY)
+- ✅ Post-quantum cryptography (Kyber768 KEM + Falcon signatures)
+- ✅ Device attestation & biometric authentication
+- ✅ Gas-based fee model (21k base + dynamic)
+- ✅ 3-level block hierarchy (Block→Subblock→Miniblock)
+
+**Phase 4 In Progress** ⏳:
+- ⏳ Emoji packs & custom stickers (IPFS storage)
+- ⏳ NFTs & digital goods marketplace
+- ⏳ Token-gated channels (public/private/tokenized)
+- ⏳ Cross-chain marketplace transactions
+- ⏳ Advanced fee mechanisms & trading
+
+**Phase 5 Scheduled** ⏸️:
+- 📅 Testnet stress testing (50k+ TPS target)
+- 📅 Security audits & formal verification
+- 📅 Performance optimization & pipelining
+- 📅 Mainnet launch readiness---
 
 ---
 
@@ -341,6 +386,200 @@ Block (2 seconds) - Main consensus unit, BFT finality
 - ⏳ Consensus pipelining (validate block N+1 while finalizing N)
 - ⏳ Cross-shard consensus coordination
 - ⏳ Foundation checkpoint system (7-of-10 multisig long-range attack prevention)
+
+---
+
+## ⚙️ Implementation Details
+
+### Message Types & Architecture
+```rust
+enum MessageType {
+    Direct { sender: UserId, recipient: UserId },    // 1-to-1 encrypted
+    Channel { sender: UserId, channel_id: ChannelId }, // Broadcast
+    System { content: String },                        // Protocol messages
+}
+
+enum MessageContent {
+    Text(String),                              // Plain text
+    Image { data, mime_type },                 // Media
+    File { data, filename, mime_type },        // Attachments  
+    Audio { data, duration_ms },               // Voice/audio
+    Video { data, duration_ms, w, h },         // Video
+    Sticker { pack_id, sticker_id },          // Emoji/stickers
+    System(String),                            // Control messages
+}
+```
+
+### Gas & Fee Model
+**Base Gas**: 21,000 units per transaction  
+**Dynamic Fees**:
+- User registration: BASE_GAS + 10,000
+- Direct message: BASE_GAS + (payload_size / 100) units  
+- Channel creation: BASE_GAS + 50,000 units
+- Channel post: BASE_GAS + (payload_size / 100) units
+- Delivery proof: BASE_GAS + 8,000 units
+- Staking operations: BASE_GAS + 3,000-5,000 units
+
+**Fee Structure**:
+- 10% allocation to insurance fund
+- 0.001 DCHAT per relayed message
+- Dynamic transaction fees based on network congestion
+
+### Channel Types
+```rust
+pub enum ChannelType {
+    Public,                    // Open to all users
+    Private,                   // Invite-only, encrypted
+    TokenGated {               // Requires token balance
+        required_tokens: u64,
+        token_contract: String,
+    },
+}
+```
+**Channel Features**:
+- Token-gated access control
+- Creator economics and staking moderation
+- On-chain creation and governance
+- Channel-scoped message ordering
+
+### Marketplace & Digital Goods
+**Supported Item Types**:
+- 🎨 **Emoji Packs**: Custom emoji collections (IPFS storage)
+- 🎭 **Sticker Packs**: Stickers with categories/masks (IPFS)
+- 🤖 **Bots**: Tradeable bot instances with API tokens
+- 🖼️ **NFTs**: On-chain digital assets (hybrid storage)
+- 🎨 **Themes**: UI customization packs
+- 📦 **Subscriptions**: Premium features/access
+- 🏅 **Badges**: User achievement/role badges
+- 📸 **Images**: Digital art and media
+- 💬 **Membership**: Channel membership tokens
+
+**Storage Types**:
+- **On-Chain**: Metadata + ownership (fast access)
+- **IPFS**: Content addressing for media (immutable)
+- **Hybrid**: Metadata on-chain, content on IPFS (optimal)
+
+### Storage Staking & Economics
+**Storage Bond System**:
+- 5% APY on bonded storage bytes
+- User-controlled micropayment streams
+- Tiered storage pricing (hot/cold/archive)
+- Delta encoding deduplication
+- Automatic TTL-based expiration
+
+**Fees**:
+```
+Storage Bond Cost = (bytes_bonded × apy_rate) / blocks_per_year
+Micropayment Rate = 0.0001 DCHAT per KB per day
+Expired Message Cleanup = 0.001 DCHAT per 1000 messages
+```
+
+### Emoji & Marketplace Items
+**Emoji Packs**:
+- Custom emoji collections with metadata
+- Preview emojis (3-5 representative samples)
+- IPFS-hosted media content
+- Tradeable as marketplace items
+- Integration with sticker system
+
+**Item Registration**:
+```
+marketplace.register_emoji_pack(
+    creator: UserId,
+    pack_name: String,
+    emoji_count: u32,
+    preview_emojis: Vec<String>,
+    storage_type: OnChainStorageType::Ipfs,
+)
+```
+
+### Currency & Tokenomics
+**DCHAT Token**:
+- **Decimals**: 18 (1 token = 10^18 units)
+- **Supply**: Capped with scheduled minting
+- **Distribution**:
+  - Validators: Staking rewards (proportional)
+  - Relays: Uptime + message fee rewards
+  - Marketplace: Creator fees (90% to creator, 10% to treasury)
+  - Insurance Fund: Automatic fee allocation (10%)
+  - Dev Fund: Community governance allocation
+
+**Token Mechanics**:
+```
+// Relay rewards calculation
+rewards = (
+    base_reward * uptime_multiplier +
+    (messages_relayed × fee_per_message) +
+    geographic_bonus
+)
+
+// Marketplace fee split
+creator_earnings = sale_price × 0.90
+treasury_share = sale_price × 0.10
+```
+
+### Dual-Chain Architecture
+**Chat Chain** (Messaging & Identity):
+- User registration & identity management
+- Channel creation & governance
+- Message sequence ordering
+- Delivery proof verification
+- Reputation tracking
+- Access control lists
+
+**Currency Chain** (Economics):
+- Token transfers & staking
+- Validator selection
+- Reward distribution
+- Marketplace transactions
+- Storage bond management
+- Cross-chain atomic operations
+
+**Cross-Chain Bridge**:
+- Atomic swaps between chains
+- Dual-chain state synchronization
+- Finality tracking per chain
+- Fork resolution and arbitration
+
+### Post-Quantum Cryptography
+**Implemented**:
+- **ML-KEM-768** (Kyber): Key encapsulation
+- **Falcon-512**: Digital signatures
+- **Hybrid Mode**: Curve25519 + ML-KEM-768 simultaneous encryption
+
+**Readiness**:
+- ✅ Hybrid infrastructure deployed
+- ✅ Backward compatible with classical crypto
+- ✅ Harvest-now-decrypt-later defense
+- ✅ Planned full PQ migration: 2030
+
+### Device Integrity & Attestation
+**Device Attestation**:
+- iOS: DeviceCheck App Attest API
+- Android: Play Integrity / SafetyNet API
+- Proves key material is in secure hardware
+- Challenge-response protocol
+- Certificate chain validation
+
+**Integrity Checks**:
+- Device tampering detection
+- Platform signature verification
+- Hardware-backed key storage
+- Uptime attestation for relays
+
+### Biometric Authentication
+**Supported Methods**:
+- 🔒 **Face ID / Facial Recognition** (iOS/Android)
+- 👆 **Fingerprint** (Touch ID / Android)
+- 👁️ **Iris Scanning** (supported on eligible hardware)
+- 📱 **Platform Biometrics** (via native APIs)
+
+**Integration**:
+- Biometric unlock for signing operations
+- Secure enclave key storage
+- Access control flags (biometric required)
+- Fallback MPC threshold signing
+- No passwords required (keyless UX)
 
 ---
 
