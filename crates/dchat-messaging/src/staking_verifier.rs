@@ -70,7 +70,7 @@ pub trait StakingVerifier: Send + Sync {
 }
 
 /// Mock implementation for testing and development
-/// 
+///
 /// # Safety
 /// This mock implementation is ONLY for testing and should NEVER be used in production.
 /// It bypasses all blockchain verification and is feature-gated to test builds only.
@@ -90,13 +90,13 @@ impl MockStakingVerifier {
                 This is a security vulnerability. Use ChainStakingVerifier instead."
             );
         }
-        
+
         #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
         tracing::warn!(
             "⚠️  MockStakingVerifier in use - FOR TESTING ONLY. \
             Do not deploy to production!"
         );
-        
+
         Self {
             stakes: std::collections::HashMap::new(),
         }

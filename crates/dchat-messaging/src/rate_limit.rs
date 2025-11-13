@@ -36,7 +36,7 @@ impl Default for RateLimitConfig {
 
 impl RateLimitConfig {
     /// Production-safe defaults with conservative limits
-    /// 
+    ///
     /// These values are designed for a production relay node serving
     /// typical user traffic. Adjust based on your deployment scale:
     /// - For high-traffic relays: increase global_limit to 50k+
@@ -53,7 +53,7 @@ impl RateLimitConfig {
             max_queue_size: 100000,                // 100k messages max in queue (~100MB memory)
         }
     }
-    
+
     /// Test configuration with relaxed limits
     #[cfg(any(test, feature = "test-mocks"))]
     pub fn test() -> Self {
@@ -239,7 +239,7 @@ pub enum RateLimitResult {
 }
 
 /// Rate limit metrics
-/// 
+///
 /// These metrics should be exported to Prometheus for monitoring:
 /// - `rate_limit_total_checks`: Counter of all rate limit checks
 /// - `rate_limit_allowed_total`: Counter of allowed requests
@@ -269,7 +269,7 @@ pub struct RateLimitMetrics {
 
 impl RateLimitMetrics {
     /// Export metrics in Prometheus format
-    /// 
+    ///
     /// Call this from your metrics endpoint to expose rate limiting stats
     pub fn to_prometheus_text(&self) -> String {
         format!(
