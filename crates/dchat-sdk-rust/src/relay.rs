@@ -1,6 +1,9 @@
 use crate::{Result, SdkError};
+use dchat_blockchain::chat_chain::ChatChainClient;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 /// Relay node configuration
@@ -30,11 +33,20 @@ impl Default for RelayConfig {
     }
 }
 
+/// Reputation cache entry
+#[derive(Debug, Clone)]
+struct ReputationCacheEntry {
+    score: u32,
+    cached_at: SystemTime,
+}
+
 /// Internal relay state
 struct RelayState {
     connected_peers: usize,
     messages_relayed: u64,
     start_time: std::time::SystemTime,
+    /// Cache of relay reputation scores with timestamps
+    reputation_cache: HashMap<Vec<u8>, ReputationCacheEntry>,
 }
 
 impl RelayState {
@@ -43,6 +55,7 @@ impl RelayState {
             connected_peers: 0,
             messages_relayed: 0,
             start_time: std::time::SystemTime::now(),
+            reputation_cache: HashMap::new(),
         }
     }
 
@@ -56,6 +69,8 @@ pub struct RelayNode {
     config: RelayConfig,
     state: Arc<RwLock<RelayState>>,
     running: Arc<RwLock<bool>>,
+    /// Optional blockchain client for reputation queries
+    blockchain_client: Option<Arc<ChatChainClient>>,
 }
 
 impl RelayNode {
@@ -66,13 +81,27 @@ impl RelayNode {
 
     /// Create a relay node with custom configuration
     pub fn with_config(config: RelayConfig) -> Self {
+        Self::with_config_and_blockchain(config, None)
+    }
+
+    /// Create a relay node with custom configuration and blockchain client
+    pub fn with_config_and_blockchain(
+        config: RelayConfig,
+        blockchain_client: Option<Arc<ChatChainClient>>,
+    ) -> Self {
         let state = RelayState::new();
 
         Self {
             config,
             state: Arc::new(RwLock::new(state)),
             running: Arc::new(RwLock::new(false)),
+            blockchain_client,
         }
+    }
+
+    /// Set blockchain client for reputation queries
+    pub fn set_blockchain_client(&mut self, client: Arc<ChatChainClient>) {
+        self.blockchain_client = Some(client);
     }
 
     /// Start the relay node
@@ -188,7 +217,12 @@ impl RelayNode {
 
     /// Get relay statistics
     pub async fn get_stats(&self) -> RelayStats {
-        let state = self.state.read().await;
+        self.get_stats_for_relay(None).await
+    }
+
+    /// Get relay statistics for a specific relay ID
+    pub async fn get_stats_for_relay(&self, relay_id: Option<&[u8]>) -> RelayStats {
+        let mut state = self.state.write().await;
 
         let uptime = std::time::SystemTime::now()
             .duration_since(state.start_time)
@@ -207,10 +241,14 @@ impl RelayNode {
             100.0
         };
 
-        // Production: Query reputation from blockchain
-        // let reputation = blockchain_client.get_relay_reputation(relay_id).await?;
-        // let reputation_score = ((reputation.successful_deliveries as f64 / reputation.total_deliveries.max(1) as f64) * 100.0) as u32;
-        let reputation_score = 100; // Placeholder: perfect reputation for new relay
+        // Query reputation from blockchain with caching
+        let reputation_score = if let Some(relay_id_bytes) = relay_id {
+            self.get_relay_reputation_cached(&mut state, relay_id_bytes)
+                .await
+        } else {
+            // No relay ID provided, use default
+            100
+        };
 
         RelayStats {
             connected_peers: state.peer_count(),
@@ -218,6 +256,88 @@ impl RelayNode {
             uptime_percent: uptime_percent as f32,
             reputation_score,
         }
+    }
+
+    /// Get relay reputation from blockchain with 5-minute cache
+    async fn get_relay_reputation_cached(
+        &self,
+        state: &mut RelayState,
+        relay_id: &[u8],
+    ) -> u32 {
+        const CACHE_TTL: Duration = Duration::from_secs(5 * 60); // 5 minutes
+
+        // Check cache first
+        if let Some(entry) = state.reputation_cache.get(relay_id) {
+            if let Ok(elapsed) = SystemTime::now().duration_since(entry.cached_at) {
+                if elapsed < CACHE_TTL {
+                    tracing::debug!("Using cached reputation score for relay");
+                    return entry.score;
+                }
+            }
+        }
+
+        // Cache miss or expired - query blockchain
+        let score = if let Some(client) = &self.blockchain_client {
+            match self.query_blockchain_reputation(client, relay_id).await {
+                Ok(score) => {
+                    tracing::info!("Retrieved reputation score {} from blockchain", score);
+                    score
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to query blockchain reputation: {}", e);
+                    // Return cached value if available, otherwise default
+                    state
+                        .reputation_cache
+                        .get(relay_id)
+                        .map(|e| e.score)
+                        .unwrap_or(50) // Default neutral score
+                }
+            }
+        } else {
+            tracing::debug!("No blockchain client configured, using default reputation");
+            100 // Perfect score if no blockchain client
+        };
+
+        // Update cache
+        state.reputation_cache.insert(
+            relay_id.to_vec(),
+            ReputationCacheEntry {
+                score,
+                cached_at: SystemTime::now(),
+            },
+        );
+
+        score
+    }
+
+    /// Query blockchain for relay reputation score
+    async fn query_blockchain_reputation(
+        &self,
+        client: &ChatChainClient,
+        relay_id: &[u8],
+    ) -> Result<u32> {
+        // Query reputation from blockchain
+        // The chat chain stores reputation scores for users
+        // For relays, we use the same mechanism but with relay IDs
+        let reputation = client
+            .get_reputation(&relay_id.to_vec())
+            .map_err(|e| SdkError::Blockchain(format!("Failed to query reputation: {}", e)))?;
+
+        // Convert i64 reputation to u32 score (0-100)
+        // Reputation can be negative (bad behavior) or positive (good behavior)
+        // We normalize to 0-100 scale:
+        // - reputation <= 0: score = 0
+        // - reputation 1-100: score = reputation
+        // - reputation > 100: score = 100
+        let score = if reputation <= 0 {
+            0
+        } else if reputation > 100 {
+            100
+        } else {
+            reputation as u32
+        };
+
+        Ok(score)
     }
 
     /// Get the relay configuration
@@ -305,5 +425,191 @@ mod tests {
         assert_eq!(relay.config().name, "my-relay");
         assert_eq!(relay.config().listen_port, 8080);
         assert!(relay.config().staking_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_relay_with_blockchain_client() {
+        // Create a blockchain client
+        let blockchain_client = Arc::new(ChatChainClient::new());
+
+        // Register a relay with initial reputation
+        let relay_id = vec![1, 2, 3, 4, 5];
+        blockchain_client
+            .register_user(relay_id.clone(), vec![1; 32], 75) // 75 initial reputation
+            .unwrap();
+
+        // Create relay node with blockchain client
+        let relay = RelayNode::with_config_and_blockchain(
+            RelayConfig::default(),
+            Some(blockchain_client.clone()),
+        );
+
+        relay.start().await.unwrap();
+
+        // Get stats for specific relay ID - should query blockchain
+        let stats = relay.get_stats_for_relay(Some(&relay_id)).await;
+        assert_eq!(stats.reputation_score, 75);
+
+        relay.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_relay_reputation_caching() {
+        // Create blockchain client
+        let blockchain_client = Arc::new(ChatChainClient::new());
+
+        // Register relay with reputation score
+        let relay_id = vec![10, 20, 30];
+        blockchain_client
+            .register_user(relay_id.clone(), vec![1; 32], 85)
+            .unwrap();
+
+        let relay = RelayNode::with_config_and_blockchain(
+            RelayConfig::default(),
+            Some(blockchain_client.clone()),
+        );
+
+        relay.start().await.unwrap();
+
+        // First call - should query blockchain
+        let stats1 = relay.get_stats_for_relay(Some(&relay_id)).await;
+        assert_eq!(stats1.reputation_score, 85);
+
+        // Update reputation on blockchain
+        blockchain_client.update_reputation(&relay_id, 10).unwrap(); // Now 95
+
+        // Second call immediately - should use cache (still 85)
+        let stats2 = relay.get_stats_for_relay(Some(&relay_id)).await;
+        assert_eq!(stats2.reputation_score, 85); // Cached value
+
+        relay.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_relay_reputation_normalization() {
+        // Test reputation score normalization (i64 -> u32 0-100)
+        let blockchain_client = Arc::new(ChatChainClient::new());
+
+        // Test negative reputation -> 0
+        let relay_id_bad = vec![1, 1, 1];
+        blockchain_client
+            .register_user(relay_id_bad.clone(), vec![1; 32], -10)
+            .unwrap();
+
+        // Test high reputation -> capped at 100
+        let relay_id_excellent = vec![2, 2, 2];
+        blockchain_client
+            .register_user(relay_id_excellent.clone(), vec![1; 32], 150)
+            .unwrap();
+
+        // Test normal reputation
+        let relay_id_normal = vec![3, 3, 3];
+        blockchain_client
+            .register_user(relay_id_normal.clone(), vec![1; 32], 50)
+            .unwrap();
+
+        let relay = RelayNode::with_config_and_blockchain(
+            RelayConfig::default(),
+            Some(blockchain_client),
+        );
+
+        relay.start().await.unwrap();
+
+        // Verify normalization
+        let stats_bad = relay.get_stats_for_relay(Some(&relay_id_bad)).await;
+        assert_eq!(stats_bad.reputation_score, 0); // Negative normalized to 0
+
+        let stats_excellent = relay.get_stats_for_relay(Some(&relay_id_excellent)).await;
+        assert_eq!(stats_excellent.reputation_score, 100); // >100 capped at 100
+
+        let stats_normal = relay.get_stats_for_relay(Some(&relay_id_normal)).await;
+        assert_eq!(stats_normal.reputation_score, 50); // Within range, unchanged
+
+        relay.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_relay_reputation_without_blockchain() {
+        // Relay without blockchain client should use default score
+        let relay = RelayNode::new(); // No blockchain client
+
+        relay.start().await.unwrap();
+
+        let relay_id = vec![99, 99, 99];
+        let stats = relay.get_stats_for_relay(Some(&relay_id)).await;
+
+        // Should return default perfect score when no blockchain client
+        assert_eq!(stats.reputation_score, 100);
+
+        relay.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_relay_reputation_fallback_on_error() {
+        // Test fallback behavior when blockchain query fails
+        let blockchain_client = Arc::new(ChatChainClient::new());
+
+        // Don't register the relay - this will cause an error
+        let unregistered_relay_id = vec![255, 255, 255];
+
+        let relay = RelayNode::with_config_and_blockchain(
+            RelayConfig::default(),
+            Some(blockchain_client),
+        );
+
+        relay.start().await.unwrap();
+
+        // Should return default neutral score (50) on error
+        let stats = relay.get_stats_for_relay(Some(&unregistered_relay_id)).await;
+        assert_eq!(stats.reputation_score, 50); // Neutral default
+
+        relay.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_relay_set_blockchain_client() {
+        // Test setting blockchain client after creation
+        let mut relay = RelayNode::new();
+
+        relay.start().await.unwrap();
+
+        // Initially no blockchain client - should use default
+        let relay_id = vec![7, 7, 7];
+        let stats_before = relay.get_stats_for_relay(Some(&relay_id)).await;
+        assert_eq!(stats_before.reputation_score, 100);
+
+        relay.stop().await.unwrap();
+
+        // Set blockchain client
+        let blockchain_client = Arc::new(ChatChainClient::new());
+        blockchain_client
+            .register_user(relay_id.clone(), vec![1; 32], 60)
+            .unwrap();
+
+        relay.set_blockchain_client(blockchain_client);
+        relay.start().await.unwrap();
+
+        // Now should query blockchain
+        let stats_after = relay.get_stats_for_relay(Some(&relay_id)).await;
+        assert_eq!(stats_after.reputation_score, 60);
+
+        relay.stop().await.unwrap();
+    }
+
+    #[test]
+    fn test_reputation_cache_entry() {
+        // Test reputation cache entry creation
+        let entry = ReputationCacheEntry {
+            score: 80,
+            cached_at: SystemTime::now(),
+        };
+
+        assert_eq!(entry.score, 80);
+
+        // Verify timestamp is recent
+        let elapsed = SystemTime::now()
+            .duration_since(entry.cached_at)
+            .unwrap();
+        assert!(elapsed.as_secs() < 1); // Less than 1 second old
     }
 }

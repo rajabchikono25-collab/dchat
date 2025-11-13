@@ -360,19 +360,100 @@ impl EnhancedHealthChecker {
         Ok(check)
     }
 
-    /// Execute a health probe (actual network call simulation)
+    /// Execute a health probe (actual network call)
     async fn execute_probe(&self, probe: &mut HealthProbe) -> Result<(), HealthCheckError> {
-        // In test mode, fail if endpoint contains "invalid"
+        // In test mode, fail if endpoint contains "invalid" for testing
         if self.test_mode && probe.endpoint.contains("invalid") {
             return Err(HealthCheckError::Unreachable(
-                "Invalid endpoint".to_string(),
+                "Invalid endpoint (test mode)".to_string(),
             ));
         }
 
-        // TODO: In production, this would make an actual HTTP/gRPC call to the validator
-        // For now, simulate success
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        Ok(())
+        // In test mode, simulate success quickly
+        if self.test_mode {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            return Ok(());
+        }
+
+        // Production: Make actual HTTP health check call to validator
+        self.execute_http_health_check(probe).await
+    }
+
+    /// Execute HTTP health check against validator endpoint
+    async fn execute_http_health_check(
+        &self,
+        probe: &HealthProbe,
+    ) -> Result<(), HealthCheckError> {
+        use reqwest::Client;
+        use serde_json::Value;
+
+        // Create HTTP client with timeout
+        let client = Client::builder()
+            .timeout(Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| {
+                HealthCheckError::Unreachable(format!("Failed to create HTTP client: {}", e))
+            })?;
+
+        // Try both common health check endpoints
+        let health_endpoints = vec![
+            format!("{}/health", probe.endpoint),
+            format!("{}/api/health", probe.endpoint),
+            format!("{}/status", probe.endpoint),
+        ];
+
+        let mut last_error = String::new();
+
+        for endpoint in &health_endpoints {
+            tracing::debug!("Probing validator health at {}", endpoint);
+
+            match timeout(
+                Duration::from_secs(HEALTH_CHECK_TIMEOUT_SECS),
+                client.get(endpoint).send(),
+            )
+            .await
+            {
+                Ok(Ok(response)) => {
+                    if response.status().is_success() {
+                        // Try to parse JSON response for additional health info
+                        if let Ok(body) = response.json::<Value>().await {
+                            tracing::debug!("Health check response: {:?}", body);
+
+                            // Check for unhealthy status in response
+                            if let Some(status) = body.get("status").and_then(|v| v.as_str()) {
+                                if status == "unhealthy" || status == "degraded" {
+                                    return Err(HealthCheckError::Unreachable(format!(
+                                        "Validator reports status: {}",
+                                        status
+                                    )));
+                                }
+                            }
+                        }
+
+                        tracing::info!("✅ Validator {} health check passed", probe.validator_id);
+                        return Ok(());
+                    } else {
+                        last_error = format!("HTTP {}: {}", response.status(), endpoint);
+                        tracing::debug!("Health check failed with status: {}", response.status());
+                    }
+                }
+                Ok(Err(e)) => {
+                    last_error = format!("Request failed: {}", e);
+                    tracing::debug!("Health check request error: {}", e);
+                }
+                Err(_) => {
+                    last_error = format!("Timeout after {}s", HEALTH_CHECK_TIMEOUT_SECS);
+                    tracing::debug!("Health check timeout for {}", endpoint);
+                }
+            }
+        }
+
+        // All endpoints failed
+        Err(HealthCheckError::Unreachable(format!(
+            "All health check endpoints failed. Last error: {}",
+            last_error
+        )))
     }
 
     /// Get check history for a validator

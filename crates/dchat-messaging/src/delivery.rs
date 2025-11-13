@@ -1,10 +1,13 @@
 //! Proof-of-delivery tracking
 
+use dchat_blockchain::BlockchainClient;
+use dchat_chain::TransactionStatus;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{MessageId, Signature};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 /// Proof that a message was delivered
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +29,8 @@ pub struct DeliveryProof {
 }
 
 impl DeliveryProof {
-    /// Verify the proof is valid
+    /// Verify the proof is valid (without chain verification)
+    /// Use verify_with_chain_client for full verification including on-chain confirmation
     pub fn verify(&self, recipient_pubkey: &[u8]) -> Result<bool> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
@@ -71,26 +75,47 @@ impl DeliveryProof {
             return Ok(false); // No signature present
         }
 
-        // 2. Verify chain transaction exists and is confirmed (if on-chain)
-        if let Some(tx_hash) = &self.chain_tx_hash {
-            // TODO: Query chain for transaction confirmation
-            // Requires chain client integration:
-            // let chain_client = get_chat_chain_client();
-            // let tx_confirmed = chain_client.verify_tx_confirmed(tx_hash).await?;
-            // if !tx_confirmed {
-            //     return Ok(false);
-            // }
-
-            tracing::debug!(
-                "Chain TX {} present (confirmation pending chain client integration)",
-                tx_hash
-            );
-        }
-
-        // 3. Verify timestamp is reasonable (within last 24 hours)
+        // 2. Verify timestamp is reasonable (within last 24 hours)
         if let Ok(elapsed) = self.timestamp.elapsed() {
             if elapsed > std::time::Duration::from_secs(86400) {
                 return Err(Error::validation("Delivery proof timestamp too old"));
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Verify the proof with full on-chain transaction confirmation
+    pub async fn verify_with_chain_client(
+        &self,
+        recipient_pubkey: &[u8],
+        chain_client: Option<&ChainVerifier>,
+    ) -> Result<bool> {
+        // First verify the basic proof (signature and timestamp)
+        if !self.verify(recipient_pubkey)? {
+            return Ok(false);
+        }
+
+        // Then verify chain transaction if present and client provided
+        if let Some(tx_hash) = &self.chain_tx_hash {
+            if let Some(verifier) = chain_client {
+                let confirmed = verifier.verify_transaction_confirmed(tx_hash).await?;
+                if !confirmed {
+                    tracing::warn!(
+                        "Transaction {} not yet confirmed on chain",
+                        tx_hash
+                    );
+                    return Ok(false);
+                }
+                tracing::info!(
+                    "✅ Transaction {} confirmed on chain",
+                    tx_hash
+                );
+            } else {
+                tracing::debug!(
+                    "Chain TX {} present but no verifier provided (skipping chain verification)",
+                    tx_hash
+                );
             }
         }
 
@@ -270,5 +295,136 @@ mod tests {
         let result = tracker.record_attempt(msg_id.clone());
         assert!(result.is_err());
         assert_eq!(tracker.get_status(&msg_id), Some(DeliveryStatus::Failed));
+    }
+}
+
+/// Chain verification interface for delivery proofs
+#[async_trait::async_trait]
+pub trait ChainVerifier: Send + Sync {
+    /// Verify that a transaction is confirmed on-chain
+    /// Returns true if transaction exists and has sufficient confirmations
+    async fn verify_transaction_confirmed(&self, tx_hash: &str) -> Result<bool>;
+
+    /// Get transaction confirmation depth
+    async fn get_confirmation_depth(&self, tx_hash: &str) -> Result<u64>;
+}
+
+/// Production implementation using BlockchainClient
+pub struct ProductionChainVerifier {
+    client: Arc<BlockchainClient>,
+    required_confirmations: u32,
+    /// Cache of recently verified transactions (tx_hash -> confirmed)
+    confirmation_cache: Arc<tokio::sync::RwLock<HashMap<String, (bool, SystemTime)>>>,
+    /// Cache TTL (default 5 minutes)
+    cache_ttl: Duration,
+}
+
+impl ProductionChainVerifier {
+    /// Create new verifier with blockchain client
+    pub fn new(client: Arc<BlockchainClient>, required_confirmations: u32) -> Self {
+        Self {
+            client,
+            required_confirmations,
+            confirmation_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            cache_ttl: Duration::from_secs(300), // 5 minutes
+        }
+    }
+
+    /// Check if cached value is still valid
+    async fn check_cache(&self, tx_hash: &str) -> Option<bool> {
+        let cache = self.confirmation_cache.read().await;
+        if let Some((confirmed, timestamp)) = cache.get(tx_hash) {
+            if let Ok(elapsed) = timestamp.elapsed() {
+                if elapsed < self.cache_ttl {
+                    tracing::debug!("Using cached confirmation for {}", tx_hash);
+                    return Some(*confirmed);
+                }
+            }
+        }
+        None
+    }
+
+    /// Update cache with new confirmation status
+    async fn update_cache(&self, tx_hash: String, confirmed: bool) {
+        let mut cache = self.confirmation_cache.write().await;
+        cache.insert(tx_hash, (confirmed, SystemTime::now()));
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainVerifier for ProductionChainVerifier {
+    async fn verify_transaction_confirmed(&self, tx_hash: &str) -> Result<bool> {
+        // Check cache first
+        if let Some(cached) = self.check_cache(tx_hash).await {
+            return Ok(cached);
+        }
+
+        // Parse tx_hash as UUID (dchat transactions use UUIDs)
+        let tx_id = uuid::Uuid::parse_str(tx_hash)
+            .map_err(|e| Error::validation(format!("Invalid transaction hash: {}", e)))?;
+
+        // Query blockchain for confirmation
+        let confirmed = self.client.is_transaction_confirmed(tx_id).await?;
+
+        // If confirmed, verify confirmation depth
+        if confirmed {
+            if let Some(status) = self.client.get_transaction_status(tx_id) {
+                match status {
+                    TransactionStatus::Confirmed {
+                        block_height,
+                        block_hash: _,
+                    } => {
+                        let current_block = self.client.get_current_block();
+                        let confirmations = current_block.saturating_sub(block_height);
+
+                        if confirmations < self.required_confirmations as u64 {
+                            tracing::debug!(
+                                "Transaction {} has {} confirmations (need {})",
+                                tx_hash,
+                                confirmations,
+                                self.required_confirmations
+                            );
+                            self.update_cache(tx_hash.to_string(), false).await;
+                            return Ok(false);
+                        }
+
+                        tracing::info!(
+                            "✅ Transaction {} confirmed with {} confirmations",
+                            tx_hash,
+                            confirmations
+                        );
+                        self.update_cache(tx_hash.to_string(), true).await;
+                        return Ok(true);
+                    }
+                    _ => {
+                        self.update_cache(tx_hash.to_string(), false).await;
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        self.update_cache(tx_hash.to_string(), false).await;
+        Ok(false)
+    }
+
+    async fn get_confirmation_depth(&self, tx_hash: &str) -> Result<u64> {
+        let tx_id = uuid::Uuid::parse_str(tx_hash)
+            .map_err(|e| Error::validation(format!("Invalid transaction hash: {}", e)))?;
+
+        if let Some(status) = self.client.get_transaction_status(tx_id) {
+            match status {
+                TransactionStatus::Confirmed {
+                    block_height,
+                    block_hash: _,
+                } => {
+                    let current_block = self.client.get_current_block();
+                    Ok(current_block.saturating_sub(block_height))
+                }
+                _ => Ok(0),
+            }
+        } else {
+            Ok(0)
+        }
     }
 }

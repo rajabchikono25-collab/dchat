@@ -1542,6 +1542,7 @@ dependencies = [
  "bincode",
  "blake3",
  "chrono",
+ "dchat-blockchain",
  "dchat-core",
  "dchat-crypto",
  "dchat-network",
@@ -1640,6 +1641,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "dchat-blockchain",
  "dchat-core",
  "dchat-crypto",
  "dchat-identity",

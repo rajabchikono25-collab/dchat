@@ -9,6 +9,7 @@ license.workspace = true
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
 dchat-network = { path = "../dchat-network" }
+dchat-blockchain = { path = "../dchat-blockchain" }
 
 # Async runtime
 tokio = { workspace = true }
