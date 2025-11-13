@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 license.workspace = true
+
+[features]
+default = []
+# Enable integration with dchat-network NAT telemetry (requires dchat-network dependency)
+nat-telemetry-integration = []
+
 [dependencies]
 dchat-core = { path = "../dchat-core" }
 dchat-identity = { path = "../dchat-identity" }

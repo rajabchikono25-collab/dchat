@@ -7,11 +7,15 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
+use trust_dns_resolver::TokioAsyncResolver;
+use trust_dns_resolver::config::*;
 
 /// DNS refresh interval - how often to try DNS before falling back to DHT
 pub const DNS_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
@@ -218,17 +222,27 @@ impl DhtBootstrap {
         let start = Instant::now();
         let mut discovered = Vec::new();
 
-        // Simulate DNS query (in real implementation, use DNS resolver)
-        // For now, return empty to simulate DNS failure and test DHT fallback
         debug!("Attempting DNS discovery from {} seeds", self.dns_seeds.len());
 
-        // In production, this would call:
-        // for seed in &self.dns_seeds {
-        //     let addrs = dns_lookup(seed).await?;
-        //     for addr in addrs {
-        //         discovered.push(DiscoveredPeer::new(peer_id, vec![addr], DiscoveryMethod::Dns));
-        //     }
-        // }
+        // Create DNS resolver with default configuration
+        let resolver = TokioAsyncResolver::tokio(
+            ResolverConfig::default(),
+            ResolverOpts::default(),
+        );
+
+        // Query each DNS seed
+        for seed in &self.dns_seeds {
+            match self.resolve_dns_seed(&resolver, seed).await {
+                Ok(peers) => {
+                    info!("DNS seed '{}' returned {} peers", seed, peers.len());
+                    discovered.extend(peers);
+                }
+                Err(e) => {
+                    warn!("DNS seed '{}' lookup failed: {}", seed, e);
+                    // Continue to next seed
+                }
+            }
+        }
 
         let duration = start.elapsed();
         let mut metrics = self.metrics.write().unwrap();
@@ -244,7 +258,118 @@ impl DhtBootstrap {
                 "No peers found via DNS".to_string(),
             ))
         } else {
+            info!("DNS discovery found {} total peers", discovered.len());
             Ok(discovered)
+        }
+    }
+
+    /// Resolve a single DNS seed to peer addresses
+    async fn resolve_dns_seed(
+        &self,
+        resolver: &TokioAsyncResolver,
+        seed: &str,
+    ) -> Result<Vec<DiscoveredPeer>, DiscoveryError> {
+        let mut peers = Vec::new();
+
+        // Parse seed format: "hostname" or "hostname:port" or "_dnsaddr.hostname"
+        // Standard format: seed.dchat.example.com returns A/AAAA records
+        // Advanced format: _dnsaddr.dchat.example.com returns TXT records with peer info
+
+        // Try TXT record lookup for dnsaddr format
+        if seed.starts_with("_dnsaddr.") {
+            match resolver.txt_lookup(seed).await {
+                Ok(txt_records) => {
+                    for record in txt_records.iter() {
+                        for txt_data in record.iter() {
+                            let txt_str = String::from_utf8_lossy(txt_data);
+                            // Parse dnsaddr format: "dnsaddr=/ip4/1.2.3.4/tcp/9000/p2p/QmPeerID"
+                            if let Some(multiaddr_str) = txt_str.strip_prefix("dnsaddr=") {
+                                if let Ok(multiaddr) = Multiaddr::from_str(multiaddr_str) {
+                                    // Extract PeerId from multiaddr if present
+                                    if let Some(peer_id) = extract_peer_id_from_multiaddr(&multiaddr) {
+                                        peers.push(DiscoveredPeer::new(
+                                            peer_id,
+                                            vec![multiaddr],
+                                            DiscoveryMethod::Dns,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !peers.is_empty() {
+                        return Ok(peers);
+                    }
+                }
+                Err(e) => {
+                    debug!("TXT lookup failed for {}: {}", seed, e);
+                }
+            }
+        }
+
+        // Fall back to A/AAAA record lookup for standard hostname
+        let hostname = seed.trim_start_matches("_dnsaddr.");
+        let (host, port) = if let Some(colon_pos) = hostname.rfind(':') {
+            let (h, p) = hostname.split_at(colon_pos);
+            let port = p[1..].parse::<u16>().unwrap_or(9000);
+            (h, port)
+        } else {
+            (hostname, 9000u16)
+        };
+
+        // Lookup IPv4 addresses
+        match resolver.ipv4_lookup(host).await {
+            Ok(ipv4_records) => {
+                for ip in ipv4_records.iter() {
+                    let addr = IpAddr::V4(*ip);
+                    // Create a multiaddr: /ip4/1.2.3.4/tcp/9000
+                    let multiaddr_str = format!("/ip4/{}/tcp/{}", addr, port);
+                    if let Ok(multiaddr) = Multiaddr::from_str(&multiaddr_str) {
+                        // Use a placeholder PeerId (will be updated on connection)
+                        // In production, this would be resolved via a registry or handshake
+                        let placeholder_peer_id = PeerId::random();
+                        peers.push(DiscoveredPeer::new(
+                            placeholder_peer_id,
+                            vec![multiaddr],
+                            DiscoveryMethod::Dns,
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("IPv4 lookup failed for {}: {}", host, e);
+            }
+        }
+
+        // Lookup IPv6 addresses
+        match resolver.ipv6_lookup(host).await {
+            Ok(ipv6_records) => {
+                for ip in ipv6_records.iter() {
+                    let addr = IpAddr::V6(*ip);
+                    // Create a multiaddr: /ip6/::1/tcp/9000
+                    let multiaddr_str = format!("/ip6/{}/tcp/{}", addr, port);
+                    if let Ok(multiaddr) = Multiaddr::from_str(&multiaddr_str) {
+                        let placeholder_peer_id = PeerId::random();
+                        peers.push(DiscoveredPeer::new(
+                            placeholder_peer_id,
+                            vec![multiaddr],
+                            DiscoveryMethod::Dns,
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("IPv6 lookup failed for {}: {}", host, e);
+            }
+        }
+
+        if peers.is_empty() {
+            Err(DiscoveryError::DnsFailed(format!(
+                "No valid addresses found for seed: {}",
+                seed
+            )))
+        } else {
+            Ok(peers)
         }
     }
 
@@ -358,6 +483,18 @@ impl DhtBootstrap {
             }
         });
     }
+}
+
+/// Extract PeerId from multiaddr if present
+fn extract_peer_id_from_multiaddr(multiaddr: &Multiaddr) -> Option<PeerId> {
+    use libp2p::multiaddr::Protocol;
+    
+    for protocol in multiaddr.iter() {
+        if let Protocol::P2p(peer_id) = protocol {
+            return Some(peer_id);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

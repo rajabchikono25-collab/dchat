@@ -18,6 +18,12 @@ pub struct DeliveryProof {
     /// Relay node that delivered
     pub relay_peer_id: String,
 
+    /// Recipient user ID
+    pub recipient_id: dchat_core::types::UserId,
+
+    /// Message content hash (SHA-256)
+    pub content_hash: String,
+
     /// Recipient signature acknowledging receipt
     pub recipient_signature: Option<Signature>,
 
@@ -26,6 +32,9 @@ pub struct DeliveryProof {
 
     /// On-chain transaction hash (if submitted)
     pub chain_tx_hash: Option<String>,
+
+    /// Reward amount for relay (in tokens)
+    pub reward_amount: u64,
 }
 
 impl DeliveryProof {
@@ -101,16 +110,10 @@ impl DeliveryProof {
             if let Some(verifier) = chain_client {
                 let confirmed = verifier.verify_transaction_confirmed(tx_hash).await?;
                 if !confirmed {
-                    tracing::warn!(
-                        "Transaction {} not yet confirmed on chain",
-                        tx_hash
-                    );
+                    tracing::warn!("Transaction {} not yet confirmed on chain", tx_hash);
                     return Ok(false);
                 }
-                tracing::info!(
-                    "✅ Transaction {} confirmed on chain",
-                    tx_hash
-                );
+                tracing::info!("✅ Transaction {} confirmed on chain", tx_hash);
             } else {
                 tracing::debug!(
                     "Chain TX {} present but no verifier provided (skipping chain verification)",
@@ -125,6 +128,95 @@ impl DeliveryProof {
     /// Check if proof is on-chain
     pub fn is_on_chain(&self) -> bool {
         self.chain_tx_hash.is_some()
+    }
+
+    /// Submit this delivery proof to the blockchain
+    /// Returns the transaction ID if successful
+    pub async fn submit_to_chain(
+        &mut self,
+        blockchain_client: &BlockchainClient,
+    ) -> Result<uuid::Uuid> {
+        use chrono::{DateTime, Utc};
+
+        // Ensure we have a recipient signature
+        let signature = self
+            .recipient_signature
+            .as_ref()
+            .ok_or_else(|| Error::validation("Cannot submit proof without recipient signature"))?;
+
+        // Convert SystemTime to DateTime<Utc>
+        let timestamp = self
+            .timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| Error::internal(format!("Invalid timestamp: {}", e)))?;
+        let datetime = DateTime::<Utc>::from_timestamp(timestamp.as_secs() as i64, 0)
+            .ok_or_else(|| Error::internal("Failed to convert timestamp"))?;
+
+        // Submit to blockchain
+        let tx_id = blockchain_client
+            .submit_delivery_proof(
+                self.message_id,
+                self.relay_peer_id.clone(),
+                self.recipient_id,
+                &signature.0,
+                datetime,
+                self.content_hash.clone(),
+                self.reward_amount,
+            )
+            .await?;
+
+        // Store transaction hash (use tx_id as hash for now)
+        self.chain_tx_hash = Some(tx_id.to_string());
+
+        tracing::info!(
+            "✅ Delivery proof submitted to chain: message={}, tx={}",
+            self.message_id.0,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Wait for the blockchain transaction to be confirmed
+    pub async fn wait_for_confirmation(
+        &self,
+        blockchain_client: &BlockchainClient,
+        timeout_secs: u64,
+    ) -> Result<bool> {
+        let tx_hash = self
+            .chain_tx_hash
+            .as_ref()
+            .ok_or_else(|| Error::validation("No chain transaction to wait for"))?;
+
+        let tx_id = uuid::Uuid::parse_str(tx_hash)
+            .map_err(|e| Error::validation(format!("Invalid transaction ID: {}", e)))?;
+
+        // Poll with timeout
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        while start.elapsed() < timeout {
+            match blockchain_client.is_transaction_confirmed(tx_id).await {
+                Ok(confirmed) => {
+                    if confirmed {
+                        tracing::info!("✅ Delivery proof confirmed on-chain: {}", tx_id);
+                        return Ok(true);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Error checking confirmation status: {}", e);
+                }
+            }
+
+            // Wait before next poll (exponential backoff)
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        tracing::warn!(
+            "⏱️ Timeout waiting for delivery proof confirmation: {}",
+            tx_id
+        );
+        Ok(false)
     }
 }
 
@@ -260,6 +352,7 @@ mod tests {
     fn test_delivery_tracking() {
         let mut tracker = DeliveryTracker::new(3);
         let msg_id = MessageId(uuid::Uuid::new_v4());
+        let recipient_id = dchat_core::types::UserId(uuid::Uuid::new_v4());
 
         tracker.mark_sent(msg_id.clone());
         assert_eq!(tracker.get_status(&msg_id), Some(DeliveryStatus::Sent));
@@ -273,9 +366,12 @@ mod tests {
         let proof = DeliveryProof {
             message_id: msg_id.clone(),
             relay_peer_id: "relay1".to_string(),
+            recipient_id,
+            content_hash: "test_hash".to_string(),
             recipient_signature: Some(Signature(vec![1, 2, 3])),
             timestamp: SystemTime::now(),
             chain_tx_hash: None,
+            reward_amount: 100,
         };
 
         tracker.store_proof(proof);
@@ -295,6 +391,169 @@ mod tests {
         let result = tracker.record_attempt(msg_id.clone());
         assert!(result.is_err());
         assert_eq!(tracker.get_status(&msg_id), Some(DeliveryStatus::Failed));
+    }
+
+    #[tokio::test]
+    async fn test_delivery_proof_blockchain_submission() {
+        use ed25519_dalek::{SigningKey, Signer};
+        use rand::rngs::OsRng;
+
+        // Generate test keys
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create message to sign
+        let msg_id = MessageId(uuid::Uuid::new_v4());
+        let relay_peer_id = "relay_test_123";
+        let recipient_id = dchat_core::types::UserId(uuid::Uuid::new_v4());
+        let timestamp = SystemTime::now();
+
+        let mut message_bytes = Vec::new();
+        message_bytes.extend_from_slice(msg_id.0.as_bytes());
+        message_bytes.extend_from_slice(relay_peer_id.as_bytes());
+        if let Ok(duration) = timestamp.duration_since(std::time::UNIX_EPOCH) {
+            message_bytes.extend_from_slice(&duration.as_secs().to_le_bytes());
+        }
+
+        // Sign message
+        let signature = signing_key.sign(&message_bytes);
+
+        // Create delivery proof
+        let mut proof = DeliveryProof {
+            message_id: msg_id,
+            relay_peer_id: relay_peer_id.to_string(),
+            recipient_id,
+            content_hash: "test_hash_12345".to_string(),
+            recipient_signature: Some(Signature(signature.to_bytes().to_vec())),
+            timestamp,
+            chain_tx_hash: None,
+            reward_amount: 100,
+        };
+
+        // Verify proof before submission
+        assert!(proof.verify(verifying_key.as_bytes()).unwrap());
+
+        // Submit to blockchain
+        let blockchain_client = BlockchainClient::default();
+        let tx_id = proof
+            .submit_to_chain(&blockchain_client)
+            .await
+            .expect("Failed to submit proof");
+
+        // Verify transaction was stored
+        assert!(proof.is_on_chain());
+        assert_eq!(proof.chain_tx_hash, Some(tx_id.to_string()));
+
+        // Verify transaction exists in blockchain
+        let tx = blockchain_client.get_transaction(tx_id);
+        assert!(tx.is_some());
+        let tx = tx.unwrap();
+        assert_eq!(
+            tx.tx_type,
+            dchat_chain::TransactionType::SubmitDeliveryProof
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delivery_proof_submission_without_signature() {
+        let msg_id = MessageId(uuid::Uuid::new_v4());
+        let recipient_id = dchat_core::types::UserId(uuid::Uuid::new_v4());
+
+        // Create proof without signature
+        let mut proof = DeliveryProof {
+            message_id: msg_id,
+            relay_peer_id: "relay_test".to_string(),
+            recipient_id,
+            content_hash: "test_hash".to_string(),
+            recipient_signature: None,
+            timestamp: SystemTime::now(),
+            chain_tx_hash: None,
+            reward_amount: 100,
+        };
+
+        let blockchain_client = BlockchainClient::default();
+        let result = proof.submit_to_chain(&blockchain_client).await;
+
+        // Should fail without signature
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("recipient signature"));
+    }
+
+    #[tokio::test]
+    async fn test_delivery_proof_confirmation_timeout() {
+        use ed25519_dalek::{SigningKey, Signer};
+        use rand::rngs::OsRng;
+
+        // Generate test keys
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+
+        // Create message and sign it
+        let msg_id = MessageId(uuid::Uuid::new_v4());
+        let relay_peer_id = "relay_timeout_test";
+        let recipient_id = dchat_core::types::UserId(uuid::Uuid::new_v4());
+        let timestamp = SystemTime::now();
+
+        let mut message_bytes = Vec::new();
+        message_bytes.extend_from_slice(msg_id.0.as_bytes());
+        message_bytes.extend_from_slice(relay_peer_id.as_bytes());
+        if let Ok(duration) = timestamp.duration_since(std::time::UNIX_EPOCH) {
+            message_bytes.extend_from_slice(&duration.as_secs().to_le_bytes());
+        }
+
+        let signature = signing_key.sign(&message_bytes);
+
+        // Create and submit proof
+        let mut proof = DeliveryProof {
+            message_id: msg_id,
+            relay_peer_id: relay_peer_id.to_string(),
+            recipient_id,
+            content_hash: "test_hash".to_string(),
+            recipient_signature: Some(Signature(signature.to_bytes().to_vec())),
+            timestamp,
+            chain_tx_hash: None,
+            reward_amount: 100,
+        };
+
+        let blockchain_client = BlockchainClient::default();
+        proof
+            .submit_to_chain(&blockchain_client)
+            .await
+            .expect("Failed to submit");
+
+        // Wait with short timeout (should timeout since we don't confirm blocks)
+        let confirmed = proof
+            .wait_for_confirmation(&blockchain_client, 2)
+            .await
+            .expect("Wait failed");
+
+        // Should timeout without manual confirmation
+        assert!(!confirmed);
+    }
+
+    #[test]
+    fn test_delivery_proof_with_new_fields() {
+        let msg_id = MessageId(uuid::Uuid::new_v4());
+        let recipient_id = dchat_core::types::UserId(uuid::Uuid::new_v4());
+
+        let proof = DeliveryProof {
+            message_id: msg_id,
+            relay_peer_id: "relay123".to_string(),
+            recipient_id,
+            content_hash: "sha256_hash_here".to_string(),
+            recipient_signature: None,
+            timestamp: SystemTime::now(),
+            chain_tx_hash: None,
+            reward_amount: 250,
+        };
+
+        assert_eq!(proof.relay_peer_id, "relay123");
+        assert_eq!(proof.recipient_id, recipient_id);
+        assert_eq!(proof.content_hash, "sha256_hash_here");
+        assert_eq!(proof.reward_amount, 250);
+        assert!(!proof.is_on_chain());
     }
 }
 

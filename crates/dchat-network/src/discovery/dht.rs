@@ -3,6 +3,7 @@
 use super::peer_info::PeerInfo;
 use super::routing_table::RoutingTable;
 use dchat_core::Result;
+use libp2p::multiaddr::Protocol;
 use libp2p::{Multiaddr, PeerId};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -192,26 +193,40 @@ impl Dht {
     }
 
     /// Helper to create deterministic peer ID from address for bootstrap
-    fn peer_id_from_addr(&self, _addr: &Multiaddr, index: usize) -> PeerId {
-        // Production: extract peer ID from multiaddr
+    fn peer_id_from_addr(&self, addr: &Multiaddr, index: usize) -> PeerId {
+        // First, try to extract peer ID from multiaddr
         // Multiaddrs with peer IDs look like: /ip4/1.2.3.4/tcp/1234/p2p/QmPeerId...
-        //
-        // use libp2p::multiaddr::Protocol;
-        // for proto in addr.iter() {
-        //     if let Protocol::P2p(peer_id) = proto {
-        //         return peer_id;
-        //     }
-        // }
-        //
-        // If no peer ID in multiaddr, derive deterministically from address:
-        // let addr_bytes = addr.to_string().as_bytes();
-        // let hash = blake3::hash(addr_bytes);
-        // PeerId::from_bytes(hash.as_bytes()).unwrap()
+        for proto in addr.iter() {
+            if let Protocol::P2p(peer_id) = proto {
+                return peer_id;
+            }
+        }
 
-        // Placeholder: generate deterministic ID from index
-        let mut bytes = [0u8; 32];
-        bytes[0] = index as u8;
-        PeerId::random()
+        // If no peer ID in multiaddr, derive deterministically from address
+        // This ensures consistent peer IDs for the same address across restarts
+        
+        // Create input: address + index for deterministic but unique IDs
+        let mut input = addr.to_string().into_bytes();
+        input.extend_from_slice(&index.to_le_bytes());
+        
+        // Hash the input to create a deterministic byte sequence
+        let hash = blake3::hash(&input);
+        
+        // Use the hash bytes directly as the peer ID
+        // PeerId::from_bytes expects the full multihash encoding
+        // For a deterministic approach, we create it from the hash
+        let hash_bytes = hash.as_bytes();
+        
+        // Try to create PeerId from the hash bytes
+        // If that fails (due to multihash format requirements), fall back to random
+        // but log a warning since this indicates the peer ID format needs adjustment
+        PeerId::from_bytes(hash_bytes).unwrap_or_else(|_| {
+            tracing::warn!(
+                "Failed to create deterministic PeerId from address {}, falling back to random",
+                addr
+            );
+            PeerId::random()
+        })
     }
 }
 

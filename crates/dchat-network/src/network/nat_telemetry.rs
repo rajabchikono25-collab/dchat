@@ -21,6 +21,36 @@ pub enum NatTelemetryError {
     InvalidMethod(String),
 }
 
+/// Trait for exporting NAT telemetry metrics to external systems (e.g., Prometheus)
+/// 
+/// This trait provides a dependency-injection pattern that allows NAT telemetry
+/// to export metrics without creating circular dependencies on dchat-observability.
+/// 
+/// To integrate with Prometheus:
+/// 1. Implement this trait for PrometheusExporter in dchat-observability
+/// 2. Call `set_metrics_exporter()` with your implementation at application startup
+pub trait NatMetricsExporter: Send + Sync {
+    /// Record a NAT traversal attempt with the given method and result
+    fn record_nat_attempt(&self, method: &str, result: &str);
+
+    /// Update the success rate gauge for a specific NAT method (0.0 to 1.0)
+    fn set_nat_success_rate(&self, method: &str, rate: f64);
+}
+
+/// Global metrics exporter (set by application layer to avoid circular dependencies)
+static NAT_METRICS_EXPORTER: once_cell::sync::OnceCell<Arc<dyn NatMetricsExporter>> =
+    once_cell::sync::OnceCell::new();
+
+/// Set the global NAT metrics exporter (typically called at application startup)
+pub fn set_metrics_exporter(exporter: Arc<dyn NatMetricsExporter>) {
+    let _ = NAT_METRICS_EXPORTER.set(exporter);
+}
+
+/// Get the global NAT metrics exporter if one has been configured
+fn get_metrics_exporter() -> Option<&'static Arc<dyn NatMetricsExporter>> {
+    NAT_METRICS_EXPORTER.get()
+}
+
 /// NAT traversal method
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NatMethod {
@@ -167,16 +197,16 @@ impl NatTelemetry {
             *total += 1;
         }
 
-        // TODO: Update Prometheus metrics when observability is migrated
-        // if let Some(prometheus) = crate::observability::get_prometheus() {
-        //     prometheus.record_nat_attempt(method.as_str(), result.as_str());
-        //
-        //     // Update success rate gauge
-        //     let stats = self.method_stats.read().await;
-        //     if let Some(method_stats) = stats.get(&method) {
-        //         prometheus.set_nat_success_rate(method.as_str(), method_stats.success_rate);
-        //     }
-        // }
+        // Export metrics to external system (e.g., Prometheus) if configured
+        if let Some(exporter) = get_metrics_exporter() {
+            exporter.record_nat_attempt(method.as_str(), result.as_str());
+
+            // Update success rate gauge after recording attempt
+            let stats = self.method_stats.read().await;
+            if let Some(method_stats) = stats.get(&method) {
+                exporter.set_nat_success_rate(method.as_str(), method_stats.success_rate);
+            }
+        }
 
         // Periodically recompute method preference based on success rates
         self.recompute_preference().await;

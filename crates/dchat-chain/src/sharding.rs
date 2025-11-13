@@ -450,13 +450,13 @@ impl ShardManager {
 
     /// Aggregate BLS signatures for shard finality
     ///
-    /// NOTE: This currently uses simple concatenation. For production:
-    /// 1. Add dependency: blst = "0.3" or bls-signatures = "0.15" to Cargo.toml
-    /// 2. Implement proper BLS12-381 signature aggregation:
-    ///    - Parse each signature as BLS point
-    ///    - Aggregate points using elliptic curve addition
-    ///    - Compress result to 96 bytes
-    /// 3. Implement multi-signature verification with public key aggregation
+    /// Implements proper BLS12-381 signature aggregation using the blst library:
+    /// - Validates each signature is 96 bytes (BLS12-381 compressed format)
+    /// - Parses signatures as BLS points on the G2 curve
+    /// - Aggregates using elliptic curve point addition
+    /// - Returns compressed aggregated signature (96 bytes)
+    ///
+    /// Use `verify_aggregated_signature()` to verify the result against multiple public keys.
     pub fn aggregate_signatures(&self, signatures: &[Vec<u8>]) -> Result<Vec<u8>> {
         use blst::min_pk::{AggregateSignature, Signature};
 

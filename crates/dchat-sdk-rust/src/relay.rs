@@ -33,11 +33,42 @@ impl Default for RelayConfig {
     }
 }
 
-/// Reputation cache entry
+/// Cache entry for reputation scores
 #[derive(Debug, Clone)]
 struct ReputationCacheEntry {
     score: u32,
     cached_at: SystemTime,
+}
+
+/// Downtime event tracking
+#[derive(Debug, Clone)]
+struct DowntimeEvent {
+    /// When the downtime started
+    start_time: SystemTime,
+    /// When the downtime ended (None if ongoing)
+    end_time: Option<SystemTime>,
+    /// Reason for downtime
+    reason: String,
+}
+
+impl DowntimeEvent {
+    fn new(reason: String) -> Self {
+        Self {
+            start_time: SystemTime::now(),
+            end_time: None,
+            reason,
+        }
+    }
+
+    fn end(&mut self) {
+        self.end_time = Some(SystemTime::now());
+    }
+
+    fn duration(&self) -> Duration {
+        let end = self.end_time.unwrap_or_else(SystemTime::now);
+        end.duration_since(self.start_time)
+            .unwrap_or(Duration::from_secs(0))
+    }
 }
 
 /// Internal relay state
@@ -47,6 +78,10 @@ struct RelayState {
     start_time: std::time::SystemTime,
     /// Cache of relay reputation scores with timestamps
     reputation_cache: HashMap<Vec<u8>, ReputationCacheEntry>,
+    /// Track downtime events for accurate uptime calculation
+    downtime_events: Vec<DowntimeEvent>,
+    /// Current ongoing downtime event (if any)
+    current_downtime: Option<DowntimeEvent>,
 }
 
 impl RelayState {
@@ -56,11 +91,52 @@ impl RelayState {
             messages_relayed: 0,
             start_time: std::time::SystemTime::now(),
             reputation_cache: HashMap::new(),
+            downtime_events: Vec::new(),
+            current_downtime: None,
         }
     }
 
     fn peer_count(&self) -> usize {
         self.connected_peers
+    }
+
+    /// Start tracking a downtime event
+    fn start_downtime(&mut self, reason: String) {
+        if self.current_downtime.is_none() {
+            tracing::warn!("Starting downtime tracking: {}", reason);
+            self.current_downtime = Some(DowntimeEvent::new(reason));
+        }
+    }
+
+    /// End the current downtime event
+    fn end_downtime(&mut self) {
+        if let Some(mut downtime) = self.current_downtime.take() {
+            downtime.end();
+            let duration = downtime.duration();
+            tracing::info!(
+                "Downtime ended: {} (duration: {:?})",
+                downtime.reason,
+                duration
+            );
+            self.downtime_events.push(downtime);
+        }
+    }
+
+    /// Calculate total downtime in seconds
+    fn total_downtime_secs(&self) -> f64 {
+        let mut total = Duration::from_secs(0);
+        
+        // Add all completed downtime events
+        for event in &self.downtime_events {
+            total += event.duration();
+        }
+        
+        // Add current ongoing downtime if any
+        if let Some(current) = &self.current_downtime {
+            total += current.duration();
+        }
+        
+        total.as_secs() as f64
     }
 }
 
@@ -109,6 +185,12 @@ impl RelayNode {
         let mut running = self.running.write().await;
         if *running {
             return Err(SdkError::Config("Relay already running".to_string()));
+        }
+
+        // End any previous downtime tracking
+        {
+            let mut state = self.state.write().await;
+            state.end_downtime();
         }
 
         // 1. Initialize libp2p swarm with relay capabilities
@@ -204,6 +286,12 @@ impl RelayNode {
         // 5. Shutdown libp2p swarm
         tracing::info!("Shutting down libp2p swarm");
 
+        // Track downtime after graceful shutdown
+        {
+            let mut state = self.state.write().await;
+            state.start_downtime("Graceful shutdown".to_string());
+        }
+
         tracing::info!("Relay node stopped successfully");
 
         *running = false;
@@ -213,6 +301,42 @@ impl RelayNode {
     /// Check if the relay is running
     pub async fn is_running(&self) -> bool {
         *self.running.read().await
+    }
+
+    /// Record a downtime event (useful for crashes, network failures, etc.)
+    /// This can be called externally to track unexpected downtime
+    pub async fn record_downtime_start(&self, reason: String) {
+        let mut state = self.state.write().await;
+        state.start_downtime(reason);
+    }
+
+    /// End the current downtime recording
+    pub async fn record_downtime_end(&self) {
+        let mut state = self.state.write().await;
+        state.end_downtime();
+    }
+
+    /// Get total downtime in seconds since relay started
+    pub async fn get_total_downtime(&self) -> f64 {
+        let state = self.state.read().await;
+        state.total_downtime_secs()
+    }
+
+    /// Get all downtime events for auditing
+    pub async fn get_downtime_events(&self) -> Vec<(SystemTime, Option<SystemTime>, String, Duration)> {
+        let state = self.state.read().await;
+        state
+            .downtime_events
+            .iter()
+            .map(|event| {
+                (
+                    event.start_time,
+                    event.end_time,
+                    event.reason.clone(),
+                    event.duration(),
+                )
+            })
+            .collect()
     }
 
     /// Get relay statistics
@@ -231,9 +355,8 @@ impl RelayNode {
         // Calculate uptime percentage from tracked downtime events
         let total_time = uptime.as_secs() as f64;
 
-        // Production: Query downtime events from database
-        // let downtime_secs = database.query_total_downtime(relay_id).await?.as_secs() as f64;
-        let downtime_secs = 0.0; // Placeholder: 0 downtime for new relay
+        // Get actual downtime from tracked events
+        let downtime_secs = state.total_downtime_secs();
 
         let uptime_percent = if total_time > 0.0 {
             ((total_time - downtime_secs) / total_time * 100.0).min(100.0)
@@ -259,11 +382,7 @@ impl RelayNode {
     }
 
     /// Get relay reputation from blockchain with 5-minute cache
-    async fn get_relay_reputation_cached(
-        &self,
-        state: &mut RelayState,
-        relay_id: &[u8],
-    ) -> u32 {
+    async fn get_relay_reputation_cached(&self, state: &mut RelayState, relay_id: &[u8]) -> u32 {
         const CACHE_TTL: Duration = Duration::from_secs(5 * 60); // 5 minutes
 
         // Check cache first
@@ -319,23 +438,25 @@ impl RelayNode {
         // Query reputation from blockchain
         // The chat chain stores reputation scores for users
         // For relays, we use the same mechanism but with relay IDs
+
+        // Convert relay_id bytes to UUID
+        use uuid::Uuid;
+        let uuid = Uuid::from_slice(relay_id).map_err(|e| {
+            SdkError::Blockchain(format!("Invalid relay ID format: {}", e))
+        })?;
+        
+        let user_id = dchat_core::types::UserId(uuid);
+        
         let reputation = client
-            .get_reputation(&relay_id.to_vec())
+            .get_reputation(&user_id)
             .map_err(|e| SdkError::Blockchain(format!("Failed to query reputation: {}", e)))?;
 
-        // Convert i64 reputation to u32 score (0-100)
-        // Reputation can be negative (bad behavior) or positive (good behavior)
-        // We normalize to 0-100 scale:
-        // - reputation <= 0: score = 0
+        // The reputation is already u32 from ChatChainClient (0-unlimited)
+        // We normalize to 0-100 scale for display:
+        // - reputation 0: score = 0
         // - reputation 1-100: score = reputation
-        // - reputation > 100: score = 100
-        let score = if reputation <= 0 {
-            0
-        } else if reputation > 100 {
-            100
-        } else {
-            reputation as u32
-        };
+        // - reputation > 100: score = 100 (capped)
+        let score = reputation.min(100);
 
         Ok(score)
     }
@@ -508,10 +629,8 @@ mod tests {
             .register_user(relay_id_normal.clone(), vec![1; 32], 50)
             .unwrap();
 
-        let relay = RelayNode::with_config_and_blockchain(
-            RelayConfig::default(),
-            Some(blockchain_client),
-        );
+        let relay =
+            RelayNode::with_config_and_blockchain(RelayConfig::default(), Some(blockchain_client));
 
         relay.start().await.unwrap();
 
@@ -552,15 +671,15 @@ mod tests {
         // Don't register the relay - this will cause an error
         let unregistered_relay_id = vec![255, 255, 255];
 
-        let relay = RelayNode::with_config_and_blockchain(
-            RelayConfig::default(),
-            Some(blockchain_client),
-        );
+        let relay =
+            RelayNode::with_config_and_blockchain(RelayConfig::default(), Some(blockchain_client));
 
         relay.start().await.unwrap();
 
         // Should return default neutral score (50) on error
-        let stats = relay.get_stats_for_relay(Some(&unregistered_relay_id)).await;
+        let stats = relay
+            .get_stats_for_relay(Some(&unregistered_relay_id))
+            .await;
         assert_eq!(stats.reputation_score, 50); // Neutral default
 
         relay.stop().await.unwrap();
@@ -607,9 +726,7 @@ mod tests {
         assert_eq!(entry.score, 80);
 
         // Verify timestamp is recent
-        let elapsed = SystemTime::now()
-            .duration_since(entry.cached_at)
-            .unwrap();
+        let elapsed = SystemTime::now().duration_since(entry.cached_at).unwrap();
         assert!(elapsed.as_secs() < 1); // Less than 1 second old
     }
 }

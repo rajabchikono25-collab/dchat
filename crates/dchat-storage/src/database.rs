@@ -278,6 +278,92 @@ impl Database {
         Ok(result.rows_affected())
     }
 
+    /// Query oldest messages for pruning
+    /// Returns message IDs sorted by timestamp (oldest first)
+    pub async fn query_oldest_messages(&self, limit: usize) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT id FROM messages ORDER BY timestamp ASC LIMIT ?")
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to query oldest messages: {}", e)))?;
+
+        let ids = rows
+            .iter()
+            .map(|row| row.get::<String, _>("id"))
+            .collect();
+
+        Ok(ids)
+    }
+
+    /// Get total size of messages by their IDs
+    /// Returns map of message_id -> size_in_bytes
+    pub async fn get_message_sizes(
+        &self,
+        message_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, usize>> {
+        if message_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        // Build IN clause dynamically
+        let placeholders = message_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query_str = format!("SELECT id, size FROM messages WHERE id IN ({})", placeholders);
+
+        let mut query = sqlx::query(&query_str);
+        for id in message_ids {
+            query = query.bind(id);
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to get message sizes: {}", e)))?;
+
+        let mut sizes = std::collections::HashMap::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let size: i64 = row.get("size");
+            sizes.insert(id, size as usize);
+        }
+
+        Ok(sizes)
+    }
+
+    /// Delete messages by IDs and return total bytes freed
+    pub async fn delete_messages(&self, message_ids: &[String]) -> Result<(u64, u64)> {
+        if message_ids.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // Get sizes before deletion
+        let sizes = self.get_message_sizes(message_ids).await?;
+        let total_bytes: usize = sizes.values().sum();
+
+        // Build IN clause dynamically
+        let placeholders = message_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query_str = format!("DELETE FROM messages WHERE id IN ({})", placeholders);
+
+        let mut query = sqlx::query(&query_str);
+        for id in message_ids {
+            query = query.bind(id);
+        }
+
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to delete messages: {}", e)))?;
+
+        Ok((result.rows_affected(), total_bytes as u64))
+    }
+
     /// Get database statistics
     pub async fn stats(&self) -> Result<DatabaseStats> {
         let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")

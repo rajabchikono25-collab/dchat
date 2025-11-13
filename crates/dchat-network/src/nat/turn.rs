@@ -135,7 +135,7 @@ impl TurnClient {
         // Message Type: Allocate Request (0x0003)
         msg.extend_from_slice(&[0x00, 0x03]);
 
-        // Message Length (placeholder)
+        // Message Length (placeholder - will be calculated and updated after attributes are added)
         msg.extend_from_slice(&[0x00, 0x00]);
 
         // Magic Cookie
@@ -300,7 +300,7 @@ impl TurnClient {
         // Message Type: Send Indication
         msg.extend_from_slice(&[0x00, 0x16]);
 
-        // Placeholder for length
+        // Message Length (placeholder - calculated and updated after DATA attribute is added)
         msg.extend_from_slice(&[0x00, 0x00]);
 
         // Magic cookie + transaction ID
@@ -345,7 +345,7 @@ impl TurnClient {
         // Message Type: Refresh Request
         msg.extend_from_slice(&[0x00, 0x04]);
 
-        // Placeholder for length
+        // Message Length (placeholder - calculated and updated after LIFETIME attribute is added)
         msg.extend_from_slice(&[0x00, 0x00]);
 
         // Magic cookie + transaction ID
@@ -411,7 +411,7 @@ impl TurnClient {
             // Message Type: Refresh Request (0x0004)
             msg.extend_from_slice(&[0x00, 0x04]);
 
-            // Placeholder for length
+            // Message Length (placeholder - calculated and updated after attributes are added)
             msg.extend_from_slice(&[0x00, 0x00]);
 
             // Magic cookie + transaction ID

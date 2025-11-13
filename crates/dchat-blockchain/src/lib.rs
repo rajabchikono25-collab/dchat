@@ -6,6 +6,7 @@ pub mod chat_chain;
 pub mod client;
 pub mod cross_chain;
 pub mod currency_chain;
+pub mod currency_chain_block_sync;
 pub mod proof_of_relay_work;
 pub mod proof_of_transit;
 pub mod rpc;
@@ -19,12 +20,16 @@ pub mod vote_persistence;
 
 pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
-    Transaction, ValidatorSignature, WorldState,
+    ValidatorSignature, WorldState,
 };
+pub use dchat_chain::Transaction;
 pub use chat_chain::{ChatChainClient, ChatChainConfig};
 pub use client::BlockchainClient;
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};
 pub use currency_chain::{CurrencyChainClient, CurrencyChainConfig};
+pub use currency_chain_block_sync::{
+    BlockSyncConfig, BlockSyncManager, CurrencyBlock, CurrencyBlockHeader, ForkInfo, SyncStatus,
+};
 pub use proof_of_relay_work::{
     BlockVotes, ConsensusError, DeliveryProof, GeographicRegion, ProofOfRelayWork, RelayScore,
     RelayVote,

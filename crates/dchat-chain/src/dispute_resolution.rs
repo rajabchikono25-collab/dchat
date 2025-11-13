@@ -8,8 +8,10 @@
 
 use blake3::Hasher;
 use dchat_core::error::{Error, Result};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Dispute claim identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -92,6 +94,8 @@ pub struct ForkEvidence {
     pub signature_b: Vec<u8>,
     /// Sequence number (should be same for fork)
     pub sequence_number: u64,
+    /// Public key of the accused validator (32 bytes Ed25519)
+    pub accused_public_key: Vec<u8>,
 }
 
 /// Integrity violation evidence
@@ -103,12 +107,76 @@ pub struct IntegrityEvidence {
     pub signature: Vec<u8>,
 }
 
+/// Currency chain client interface for staking and slashing operations
+#[async_trait::async_trait]
+pub trait CurrencyChainClient: Send + Sync {
+    /// Get validator's current stake amount
+    async fn get_validator_stake(&self, validator_key: &[u8]) -> Result<u64>;
+    
+    /// Execute slash transaction: reduce validator's stake
+    async fn execute_slash(
+        &self,
+        validator_key: &[u8],
+        slash_amount: u64,
+        reason: &str,
+    ) -> Result<String>; // Returns transaction ID
+    
+    /// Transfer reward to reporter/claimant
+    async fn transfer_reward(
+        &self,
+        recipient_key: &[u8],
+        amount: u64,
+    ) -> Result<String>;
+}
+
+/// Slashing configuration
+#[derive(Debug, Clone)]
+pub struct SlashingConfig {
+    /// Base slash percentage for resolved disputes (0.0 to 1.0)
+    pub base_slash_rate: f64,
+    /// False claim penalty multiplier
+    pub false_claim_multiplier: f64,
+    /// Reward percentage for successful claimants (0.0 to 1.0)
+    pub claimant_reward_rate: f64,
+    /// Minimum stake required to participate in disputes
+    pub min_dispute_stake: u64,
+}
+
+impl Default for SlashingConfig {
+    fn default() -> Self {
+        Self {
+            base_slash_rate: 0.30,        // 30% stake reduction
+            false_claim_multiplier: 1.5,   // 45% for false claims
+            claimant_reward_rate: 0.10,    // 10% to claimant
+            min_dispute_stake: 1000,       // Minimum 1000 tokens
+        }
+    }
+}
+
+/// Slashing event record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlashingEvent {
+    pub claim_id: String,
+    pub slashed_party: String,
+    pub slash_amount: u64,
+    pub original_stake: u64,
+    pub slash_rate: f64,
+    pub reason: String,
+    pub transaction_id: String,
+    pub timestamp: i64,
+    pub beneficiary: String,
+    pub reward_amount: u64,
+}
+
 /// Dispute resolver
 pub struct DisputeResolver {
     claims: HashMap<ClaimId, DisputeClaim>,
     challenges: HashMap<ClaimId, Vec<DisputeChallenge>>,
     responses: HashMap<ClaimId, Vec<DisputeResponse>>,
     slash_threshold: f64,
+    slashing_config: SlashingConfig,
+    currency_chain_client: Option<Arc<dyn CurrencyChainClient>>,
+    slashing_events: Vec<SlashingEvent>,
 }
 
 impl DisputeResolver {
@@ -118,7 +186,41 @@ impl DisputeResolver {
             challenges: HashMap::new(),
             responses: HashMap::new(),
             slash_threshold: 0.66, // 66% vote threshold for slashing
+            slashing_config: SlashingConfig::default(),
+            currency_chain_client: None,
+            slashing_events: Vec::new(),
         }
+    }
+
+    /// Create with custom slashing configuration
+    pub fn with_slashing_config(mut self, config: SlashingConfig) -> Self {
+        self.slashing_config = config;
+        self
+    }
+
+    /// Set currency chain client for slashing execution
+    pub fn with_currency_chain_client(
+        mut self,
+        client: Arc<dyn CurrencyChainClient>,
+    ) -> Self {
+        self.currency_chain_client = Some(client);
+        self
+    }
+
+    /// Get all slashing events
+    pub fn get_slashing_events(&self) -> &[SlashingEvent] {
+        &self.slashing_events
+    }
+
+    /// Set claim status directly (for testing)
+    #[cfg(test)]
+    pub fn set_claim_status(&mut self, claim_id: &ClaimId, status: DisputeStatus) -> Result<()> {
+        let claim = self
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| Error::network("Claim not found"))?;
+        claim.status = status;
+        Ok(())
     }
 
     /// Submit a new dispute claim
@@ -264,24 +366,79 @@ impl DisputeResolver {
 
     /// Verify fork evidence cryptographically
     pub fn verify_fork_evidence(&self, evidence: &ForkEvidence) -> Result<bool> {
-        // Check that both messages claim same sequence number
+        // Check that both messages exist and differ (basic fork requirement)
         if evidence.message_a.is_empty() || evidence.message_b.is_empty() {
             return Ok(false);
         }
 
-        // Production: verify Ed25519 signatures on both messages
-        // 1. Extract accused's public key (embedded in evidence or queried from chain)
-        // 2. Verify signature_a on message_a: verify_strict(public_key, message_a, signature_a)
-        // 3. Verify signature_b on message_b: verify_strict(public_key, message_b, signature_b)
-        // 4. Check both messages have same sequence number
-        // 5. Check messages have different content (fork proof)
-        // Use ed25519_dalek crate: VerifyingKey::from_bytes() and verify_strict()
+        if evidence.message_a == evidence.message_b {
+            return Ok(false); // Not a fork if messages are identical
+        }
 
-        // For fork to be valid:
-        // - Both signatures must be valid
-        // - Messages must differ
-        // - Same sequence number
-        Ok(evidence.message_a != evidence.message_b)
+        // 1. Extract and validate accused's public key
+        if evidence.accused_public_key.len() != 32 {
+            return Err(Error::network(
+                "Invalid public key length (expected 32 bytes for Ed25519)",
+            ));
+        }
+
+        let public_key_bytes: [u8; 32] = evidence.accused_public_key[..]
+            .try_into()
+            .map_err(|_| Error::network("Failed to convert public key to array"))?;
+
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|e| Error::network(&format!("Invalid Ed25519 public key: {}", e)))?;
+
+        // 2. Verify signature_a on message_a
+        if evidence.signature_a.len() != 64 {
+            return Err(Error::network(
+                "Invalid signature_a length (expected 64 bytes for Ed25519)",
+            ));
+        }
+
+        let sig_a_bytes: [u8; 64] = evidence.signature_a[..]
+            .try_into()
+            .map_err(|_| Error::network("Failed to convert signature_a to array"))?;
+
+        let signature_a = Signature::from_bytes(&sig_a_bytes);
+
+        if verifying_key
+            .verify(&evidence.message_a, &signature_a)
+            .is_err()
+        {
+            tracing::warn!("Fork evidence: signature_a verification failed");
+            return Ok(false);
+        }
+
+        // 3. Verify signature_b on message_b
+        if evidence.signature_b.len() != 64 {
+            return Err(Error::network(
+                "Invalid signature_b length (expected 64 bytes for Ed25519)",
+            ));
+        }
+
+        let sig_b_bytes: [u8; 64] = evidence.signature_b[..]
+            .try_into()
+            .map_err(|_| Error::network("Failed to convert signature_b to array"))?;
+
+        let signature_b = Signature::from_bytes(&sig_b_bytes);
+
+        if verifying_key
+            .verify(&evidence.message_b, &signature_b)
+            .is_err()
+        {
+            tracing::warn!("Fork evidence: signature_b verification failed");
+            return Ok(false);
+        }
+
+        // 4. Check that sequence numbers would be the same (already stored in evidence)
+        // Both messages were signed by same key with different content - fork proven!
+        tracing::info!(
+            "Fork evidence verified: accused signed two different messages (seq: {})",
+            evidence.sequence_number
+        );
+
+        Ok(true)
     }
 
     /// Verify integrity violation evidence
@@ -310,46 +467,145 @@ impl DisputeResolver {
     }
 
     /// Resolve dispute based on vote
-    pub fn resolve_dispute(&mut self, claim_id: ClaimId, vote_for_claimant: f64) -> Result<()> {
+    pub async fn resolve_dispute(&mut self, claim_id: ClaimId, vote_for_claimant: f64) -> Result<()> {
         let claim = self
             .claims
-            .get_mut(&claim_id)
+            .get(&claim_id)
             .ok_or_else(|| Error::network("Claim not found"))?;
 
         if claim.status != DisputeStatus::UnderVote {
             return Err(Error::network("Claim not under vote"));
         }
 
+        // Clone data needed for async operations to avoid borrow issues
+        let claim_id_str = claim.id.0.clone();
+        let accused = claim.accused.clone();
+        let claimant = claim.claimant.clone();
+
         if vote_for_claimant >= self.slash_threshold {
-            claim.status = DisputeStatus::ResolvedForClaimant;
-            // Production: slash accused's stake
-            // 1. Query accused's staked amount from currency chain
-            // 2. Calculate slash amount: stake * slash_percentage (e.g., 30%)
-            // 3. Create blockchain transaction: transfer(accused_stake_account, slash_pool, slash_amount)
-            // 4. Distribute 50% to claimant as reward, 50% to DAO treasury
-            // 5. Emit SlashEvent with (accused, claim_id, amount, reason)
-            // 6. Update accused's reputation score (penalty)
+            // Execute slashing against accused
+            self.execute_slash(
+                accused.as_bytes(),
+                claimant.as_bytes(),
+                &claim_id_str,
+                "Dispute resolved against accused",
+                self.slashing_config.base_slash_rate,
+            ).await?;
+            
+            // Update claim status after slash completes
+            if let Some(claim) = self.claims.get_mut(&claim_id) {
+                claim.status = DisputeStatus::ResolvedForClaimant;
+            }
+            
             tracing::info!(
-                "Slashing {}'s stake for dispute {}",
-                claim.accused,
-                claim.id.0
+                "Slashed {}'s stake for dispute {}",
+                accused,
+                claim_id_str
             );
         } else if vote_for_claimant <= (1.0 - self.slash_threshold) {
-            claim.status = DisputeStatus::ResolvedForAccused;
-            // Production: slash claimant's stake for false claim
-            // Same process as above but targeting claimant
-            // Prevents frivolous claims (skin in the game)
-            // Slash percentage may be higher for false accusers (deterrent)
+            // Execute slashing against claimant for false claim
+            let false_claim_rate = self.slashing_config.base_slash_rate 
+                * self.slashing_config.false_claim_multiplier;
+            
+            self.execute_slash(
+                claimant.as_bytes(),
+                accused.as_bytes(),
+                &claim_id_str,
+                "False claim penalty",
+                false_claim_rate,
+            ).await?;
+            
+            // Update claim status after slash completes
+            if let Some(claim) = self.claims.get_mut(&claim_id) {
+                claim.status = DisputeStatus::ResolvedForAccused;
+            }
+            
             tracing::info!(
-                "Slashing {}'s stake for false claim {}",
-                claim.claimant,
-                claim.id.0
+                "Slashed {}'s stake for false claim {}",
+                claimant,
+                claim_id_str
             );
         } else {
-            claim.status = DisputeStatus::Dismissed;
-            // Inconclusive: no slashing
-            // Both parties keep their stakes but dispute recorded
+            // Update claim status - no slashing
+            if let Some(claim) = self.claims.get_mut(&claim_id) {
+                claim.status = DisputeStatus::Dismissed;
+            }
+            tracing::info!("Dispute {} dismissed as inconclusive", claim_id_str);
         }
+
+        Ok(())
+    }
+
+    /// Execute slash transaction on currency chain
+    async fn execute_slash(
+        &mut self,
+        slashed_party_key: &[u8],
+        beneficiary_key: &[u8],
+        claim_id: &str,
+        reason: &str,
+        slash_rate: f64,
+    ) -> Result<()> {
+        let client = self
+            .currency_chain_client
+            .as_ref()
+            .ok_or_else(|| Error::network("Currency chain client not configured"))?;
+
+        // 1. Query staked amount
+        let original_stake = client.get_validator_stake(slashed_party_key).await?;
+
+        if original_stake < self.slashing_config.min_dispute_stake {
+            return Err(Error::network(
+                format!("Insufficient stake: {} < {}", original_stake, self.slashing_config.min_dispute_stake)
+            ));
+        }
+
+        // 2. Calculate slash amount
+        let slash_amount = (original_stake as f64 * slash_rate).round() as u64;
+        
+        if slash_amount == 0 {
+            tracing::warn!("Slash amount is zero, skipping execution");
+            return Ok(());
+        }
+
+        // 3. Execute slash on currency chain
+        let slash_tx_id = client
+            .execute_slash(slashed_party_key, slash_amount, reason)
+            .await?;
+
+        tracing::info!(
+            "Executed slash: {} tokens ({}% of {}), tx: {}",
+            slash_amount,
+            slash_rate * 100.0,
+            original_stake,
+            slash_tx_id
+        );
+
+        // 4. Transfer reward to beneficiary (claimant or accused)
+        let reward_amount = (slash_amount as f64 * self.slashing_config.claimant_reward_rate).round() as u64;
+        
+        let _reward_tx_id = if reward_amount > 0 {
+            client
+                .transfer_reward(beneficiary_key, reward_amount)
+                .await?
+        } else {
+            String::from("N/A")
+        };
+
+        // 5. Record slashing event
+        let event = SlashingEvent {
+            claim_id: claim_id.to_string(),
+            slashed_party: hex::encode(slashed_party_key),
+            slash_amount,
+            original_stake,
+            slash_rate,
+            reason: reason.to_string(),
+            transaction_id: slash_tx_id,
+            timestamp: chrono::Utc::now().timestamp(),
+            beneficiary: hex::encode(beneficiary_key),
+            reward_amount,
+        };
+
+        self.slashing_events.push(event);
 
         Ok(())
     }
@@ -425,18 +681,39 @@ pub struct DisputeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use rand::rngs::OsRng;
+
+    /// Helper to create properly signed fork evidence for testing
+    fn create_signed_fork_evidence(
+        message_a: &[u8],
+        message_b: &[u8],
+        sequence_number: u64,
+    ) -> (ForkEvidence, SigningKey) {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+
+        let signature_a = signing_key.sign(message_a);
+        let signature_b = signing_key.sign(message_b);
+
+        let evidence = ForkEvidence {
+            message_a: message_a.to_vec(),
+            message_b: message_b.to_vec(),
+            signature_a: signature_a.to_bytes().to_vec(),
+            signature_b: signature_b.to_bytes().to_vec(),
+            sequence_number,
+            accused_public_key: verifying_key.to_bytes().to_vec(),
+        };
+
+        (evidence, signing_key)
+    }
 
     #[test]
     fn test_submit_claim() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         let claim_id = resolver
             .submit_claim(
@@ -457,13 +734,7 @@ mod tests {
     fn test_challenge_claim() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         let claim_id = resolver
             .submit_claim(
@@ -487,13 +758,7 @@ mod tests {
     fn test_respond_to_challenge() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         let claim_id = resolver
             .submit_claim(
@@ -519,28 +784,31 @@ mod tests {
     fn test_verify_fork_evidence() {
         let resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
-
+        // Test valid fork with proper signatures
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
         let valid = resolver.verify_fork_evidence(&evidence).unwrap();
-        assert!(valid);
+        assert!(valid, "Valid fork evidence should pass verification");
 
-        // Same message should be invalid fork
-        let invalid_evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 1".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
-
+        // Test invalid fork: same message
+        let (invalid_evidence, _) = create_signed_fork_evidence(b"message 1", b"message 1", 42);
         let valid = resolver.verify_fork_evidence(&invalid_evidence).unwrap();
-        assert!(!valid);
+        assert!(!valid, "Same messages should not be valid fork");
+
+        // Test invalid signature
+        let mut invalid_sig_evidence = evidence.clone();
+        invalid_sig_evidence.signature_a = vec![0; 64]; // Zero signature is invalid
+        let valid = resolver
+            .verify_fork_evidence(&invalid_sig_evidence)
+            .unwrap();
+        assert!(!valid, "Invalid signature should fail verification");
+
+        // Test wrong public key
+        let mut csprng = OsRng;
+        let wrong_key = SigningKey::generate(&mut csprng);
+        let mut wrong_key_evidence = evidence.clone();
+        wrong_key_evidence.accused_public_key = wrong_key.verifying_key().to_bytes().to_vec();
+        let valid = resolver.verify_fork_evidence(&wrong_key_evidence).unwrap();
+        assert!(!valid, "Wrong public key should fail verification");
     }
 
     #[test]
@@ -567,13 +835,7 @@ mod tests {
     fn test_resolve_dispute_for_claimant() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         let claim_id = resolver
             .submit_claim(
@@ -601,13 +863,7 @@ mod tests {
     fn test_resolve_dispute_for_accused() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         let claim_id = resolver
             .submit_claim(
@@ -635,13 +891,7 @@ mod tests {
     fn test_dispute_stats() {
         let mut resolver = DisputeResolver::new();
 
-        let evidence = ForkEvidence {
-            message_a: b"message 1".to_vec(),
-            message_b: b"message 2".to_vec(),
-            signature_a: vec![0; 64],
-            signature_b: vec![0; 64],
-            sequence_number: 42,
-        };
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
 
         resolver
             .submit_claim(

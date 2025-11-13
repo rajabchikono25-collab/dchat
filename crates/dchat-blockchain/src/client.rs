@@ -1,6 +1,6 @@
 //! Blockchain client implementation for transaction submission and querying
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use dchat_chain::{
     CreateChannelTx, PostToChannelTx, RegisterUserTx, SendDirectMessageTx, Transaction,
     TransactionReceipt, TransactionStatus, TransactionType,
@@ -198,6 +198,52 @@ impl BlockchainClient {
 
         self.submit_transaction_to_chain(transaction).await?;
 
+        Ok(tx_id)
+    }
+
+    /// Submit a delivery proof transaction for relay reward
+    pub async fn submit_delivery_proof(
+        &self,
+        message_id: MessageId,
+        relay_peer_id: String,
+        recipient_id: UserId,
+        recipient_signature: &[u8],
+        timestamp: DateTime<Utc>,
+        content_hash: String,
+        reward_amount: u64,
+    ) -> Result<Uuid> {
+        use dchat_chain::SubmitDeliveryProofTx;
+
+        tracing::info!(
+            "📦 Submitting delivery proof for message {} via relay {}",
+            message_id.0,
+            &relay_peer_id
+        );
+
+        let tx_payload = SubmitDeliveryProofTx {
+            message_id,
+            relay_peer_id,
+            recipient_id,
+            recipient_signature: hex::encode(recipient_signature),
+            timestamp,
+            content_hash,
+            reward_amount,
+        };
+
+        let payload_bytes = serde_json::to_vec(&tx_payload)
+            .map_err(|e| Error::internal(format!("Failed to serialize tx: {}", e)))?;
+
+        let transaction = Transaction::new(TransactionType::SubmitDeliveryProof, payload_bytes);
+        let tx_id = transaction.tx_id;
+
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, transaction.clone());
+
+        self.submit_transaction_to_chain(transaction).await?;
+
+        tracing::info!("✅ Delivery proof submitted, tx_id: {}", tx_id);
         Ok(tx_id)
     }
 

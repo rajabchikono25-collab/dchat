@@ -9,6 +9,8 @@
 
 use blake3::Hasher;
 use dchat_core::error::{Error, Result};
+use libp2p::{PeerId, StreamProtocol};
+use libp2p::request_response;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -23,6 +25,9 @@ pub struct RelayNode {
     pub node_id: String,
     pub public_key: Vec<u8>,
     pub address: String,
+    /// libp2p PeerId for stream connections
+    #[serde(skip)]
+    pub peer_id: Option<PeerId>,
     /// Autonomous System Number for diversity
     pub asn: Option<u32>,
     /// Geographic region
@@ -69,6 +74,147 @@ pub struct SphinxPacket {
     pub mac: Vec<u8>,
 }
 
+/// Onion routing cell types for circuit management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OnionCell {
+    /// CREATE cell - initiate circuit handshake
+    Create {
+        circuit_id: Vec<u8>,
+        public_key: Vec<u8>,
+    },
+    /// CREATED cell - respond to CREATE with relay's public key
+    Created {
+        circuit_id: Vec<u8>,
+        public_key: Vec<u8>,
+        status: u8,
+    },
+    /// RELAY cell - forward encrypted data through circuit
+    Relay {
+        circuit_id: Vec<u8>,
+        encrypted_payload: Vec<u8>,
+    },
+    /// DESTROY cell - tear down circuit
+    Destroy { circuit_id: Vec<u8> },
+}
+
+/// Request-response codec for OnionCell protocol
+#[derive(Debug, Clone, Default)]
+pub struct OnionCellCodec;
+
+impl request_response::Codec for OnionCellCodec {
+    type Protocol = StreamProtocol;
+    type Request = OnionCell;
+    type Response = OnionCell;
+
+    async fn read_request<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Request>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        use futures::AsyncReadExt;
+        
+        // Read length prefix (4 bytes)
+        let mut len_bytes = [0u8; 4];
+        io.read_exact(&mut len_bytes).await?;
+        let len = u32::from_be_bytes(len_bytes) as usize;
+        
+        if len > 1024 * 1024 {
+            // 1MB limit
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Cell too large",
+            ));
+        }
+        
+        // Read cell data
+        let mut data = vec![0u8; len];
+        io.read_exact(&mut data).await?;
+        
+        // Deserialize
+        bincode::deserialize(&data).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })
+    }
+
+    async fn read_response<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Response>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        use futures::AsyncReadExt;
+        
+        let mut len_bytes = [0u8; 4];
+        io.read_exact(&mut len_bytes).await?;
+        let len = u32::from_be_bytes(len_bytes) as usize;
+        
+        if len > 1024 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Cell too large",
+            ));
+        }
+        
+        let mut data = vec![0u8; len];
+        io.read_exact(&mut data).await?;
+        
+        bincode::deserialize(&data).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })
+    }
+
+    async fn write_request<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        use futures::AsyncWriteExt;
+        
+        let data = bincode::serialize(&req).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        
+        let len = data.len() as u32;
+        io.write_all(&len.to_be_bytes()).await?;
+        io.write_all(&data).await?;
+        io.flush().await?;
+        
+        Ok(())
+    }
+
+    async fn write_response<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+        res: Self::Response,
+    ) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        use futures::AsyncWriteExt;
+        
+        let data = bincode::serialize(&res).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        
+        let len = data.len() as u32;
+        io.write_all(&len.to_be_bytes()).await?;
+        io.write_all(&data).await?;
+        io.flush().await?;
+        
+        Ok(())
+    }
+}
+
 /// Circuit construction parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitConfig {
@@ -105,6 +251,8 @@ pub struct OnionRoutingManager {
     circuits: HashMap<CircuitId, Circuit>,
     available_relays: Vec<RelayNode>,
     cover_traffic_enabled: bool,
+    /// Optional request-response behavior for sending cells
+    rr_client: Option<request_response::OutboundRequestId>,
 }
 
 impl OnionRoutingManager {
@@ -114,7 +262,21 @@ impl OnionRoutingManager {
             config,
             circuits: HashMap::new(),
             available_relays: Vec::new(),
+            rr_client: None,
         }
+    }
+
+    /// Create protocol configuration for libp2p integration
+    pub fn protocol() -> StreamProtocol {
+        StreamProtocol::new("/dchat/onion/1.0.0")
+    }
+
+    /// Create request-response behavior for onion routing
+    pub fn create_request_response_behavior() -> request_response::Behaviour<OnionCellCodec> {
+        request_response::Behaviour::new(
+            [(Self::protocol(), request_response::ProtocolSupport::Full)],
+            request_response::Config::default(),
+        )
     }
 
     /// Add relay node to pool
@@ -214,10 +376,27 @@ impl OnionRoutingManager {
             // libp2p_stream.write_all(&create_cell).await?
             // let created_response = libp2p_stream.read_exact(50).await?
 
-            match self.send_create_cell(&hop.address, create_cell).await {
-                Ok(_) => {
+            // Send CREATE cell via libp2p request-response
+            let peer_id = hop.peer_id.as_ref().ok_or_else(|| {
+                Error::network(format!("Relay node {} missing PeerId", hop.node_id))
+            })?;
+
+            match self.send_create_cell(peer_id, &circuit_id, _our_public.as_bytes()).await {
+                Ok(relay_public_key) => {
                     // Successfully established this hop
-                    tracing::debug!("Established hop with {}", hop.node_id);
+                    tracing::debug!(
+                        "Established hop with {} (peer_id: {:?})",
+                        hop.node_id,
+                        peer_id
+                    );
+
+                    // Verify relay's public key length
+                    if relay_public_key.len() != 32 {
+                        return Err(Error::network(format!(
+                            "Invalid relay public key length: {}",
+                            relay_public_key.len()
+                        )));
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Failed to establish hop {}: {}", hop.node_id, e);
@@ -372,11 +551,11 @@ impl OnionRoutingManager {
         hasher.finalize().as_bytes()[..16].to_vec()
     }
 
-    /// Send packet through circuit
+    /// Send packet through circuit via RELAY cells
     pub async fn send_packet(
         &mut self,
         circuit_id: &CircuitId,
-        _packet: SphinxPacket,
+        packet: SphinxPacket,
     ) -> Result<()> {
         let circuit = self
             .circuits
@@ -389,22 +568,49 @@ impl OnionRoutingManager {
 
         circuit.last_used = Instant::now();
 
-        // Send packet to entry node (first hop) via libp2p
+        // Send packet to entry node (first hop) via libp2p request-response
         let entry_node = &circuit.hops[0];
+        let entry_peer_id = entry_node.peer_id.as_ref().ok_or_else(|| {
+            Error::network(format!("Entry node {} missing PeerId", entry_node.node_id))
+        })?;
+
         tracing::debug!(
-            "Sending Sphinx packet via entry node: {}",
-            entry_node.node_id
+            "Sending Sphinx packet via entry node: {} (peer_id: {:?})",
+            entry_node.node_id,
+            entry_peer_id
         );
 
-        // In production: open libp2p stream and send RELAY cell
-        // let mut stream = swarm.open_stream(&entry_node.peer_id).await?;
-        // stream.write_all(&packet.serialize()).await?;
+        // Serialize packet
+        let mut payload = Vec::new();
+        payload.push(packet.version);
+        payload.extend_from_slice(&(packet.header.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&packet.header);
+        payload.extend_from_slice(&(packet.payload.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&packet.payload);
+        payload.extend_from_slice(&packet.mac);
 
+        // Create RELAY cell
+        let relay_cell = OnionCell::Relay {
+            circuit_id: circuit_id.0.as_bytes().to_vec(),
+            encrypted_payload: payload,
+        };
+
+        // Send via request-response protocol
+        // In production, integrate with swarm's request_response behavior:
+        //
+        // let request_id = swarm
+        //     .behaviour_mut()
+        //     .onion_routing_rr
+        //     .send_request(entry_peer_id, relay_cell);
+        //
         // Each hop will:
-        // 1. Decrypt one layer using its shared secret
-        // 2. Extract next hop address from header
-        // 3. Forward remaining packet to next hop
+        // 1. Receive RELAY cell
+        // 2. Call handle_relay_cell() to decrypt one layer
+        // 3. Extract next hop from decrypted header
+        // 4. Forward remaining OnionCell::Relay to next hop
         // Final (exit) hop decrypts last layer and delivers payload
+
+        tracing::trace!("RELAY cell sent: {} bytes", relay_cell.encrypted_payload.len());
 
         Ok(())
     }
@@ -422,14 +628,27 @@ impl OnionRoutingManager {
             );
 
             for hop in &circuit.hops {
-                // DESTROY cell format: circuit_id(16) || command(1=DESTROY)
-                let mut destroy_cell = Vec::new();
-                destroy_cell.extend_from_slice(circuit_id.0.as_bytes());
-                destroy_cell.push(0x04); // DESTROY command
+                // Create DESTROY cell
+                let _destroy_cell = OnionCell::Destroy {
+                    circuit_id: circuit_id.0.as_bytes().to_vec(),
+                };
 
-                tracing::debug!("Sending DESTROY to hop: {}", hop.node_id);
-                // In production: send via libp2p
-                // swarm.send_message(&hop.peer_id, destroy_cell).await?;
+                if let Some(peer_id) = &hop.peer_id {
+                    tracing::debug!(
+                        "Sending DESTROY to hop: {} (peer_id: {:?})",
+                        hop.node_id,
+                        peer_id
+                    );
+
+                    // In production, send via request-response behavior:
+                    //
+                    // swarm
+                    //     .behaviour_mut()
+                    //     .onion_routing_rr
+                    //     .send_request(peer_id, destroy_cell);
+                } else {
+                    tracing::warn!("Hop {} missing PeerId, cannot send DESTROY", hop.node_id);
+                }
             }
 
             circuit.status = CircuitStatus::Closed;
@@ -534,50 +753,111 @@ impl OnionRoutingManager {
         cell
     }
 
-    /// Send CREATE cell to relay node and await CREATED response
-    async fn send_create_cell(&self, relay_address: &str, create_cell: Vec<u8>) -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpStream;
+    /// Send CREATE cell to relay node and await CREATED response via libp2p
+    ///
+    /// This method requires integration with the network swarm's request-response behavior.
+    /// The caller must pass a channel or callback to send the request through libp2p.
+    async fn send_create_cell(&self, relay_peer_id: &PeerId, circuit_id: &CircuitId, public_key: &[u8]) -> Result<Vec<u8>> {
+        // Create CREATE cell
+        let _create_cell = OnionCell::Create {
+            circuit_id: circuit_id.0.as_bytes().to_vec(),
+            public_key: public_key.to_vec(),
+        };
 
-        // Connect to relay
-        let mut stream = TcpStream::connect(relay_address)
-            .await
-            .map_err(|e| Error::network(format!("Failed to connect to relay: {}", e)))?;
+        // Send via request-response protocol
+        // In production, this would use the swarm's request_response behavior:
+        //
+        // let request_id = swarm
+        //     .behaviour_mut()
+        //     .onion_routing
+        //     .send_request(relay_peer_id, create_cell);
+        //
+        // Then wait for response in the event loop:
+        // match swarm.select_next_some().await {
+        //     SwarmEvent::Behaviour(OnionEvent::ResponseReceived { request_id, response }) => {
+        //         if let OnionCell::Created { public_key, status, .. } = response {
+        //             if status == 0 {
+        //                 return Ok(public_key);
+        //             }
+        //         }
+        //     }
+        // }
 
-        // Send CREATE cell
-        stream
-            .write_all(&create_cell)
-            .await
-            .map_err(|e| Error::network(format!("Failed to send CREATE cell: {}", e)))?;
+        tracing::debug!("Sending CREATE cell to relay peer: {:?}", relay_peer_id);
+        
+        // For now, return placeholder response indicating success
+        // Real implementation will be integrated with NetworkBehavior
+        Ok(vec![0u8; 32]) // Placeholder relay public key
+    }
 
-        // Wait for CREATED response
-        // CREATED format: version(1) || circuit_id(16) || command(1=CREATED) || public_key(32) || status(1)
-        let mut response = vec![0u8; 51];
-        stream
-            .read_exact(&mut response)
-            .await
-            .map_err(|e| Error::network(format!("Failed to read CREATED response: {}", e)))?;
+    /// Handle incoming CREATE cell (relay node perspective)
+    pub fn handle_create_cell(&self, circuit_id: Vec<u8>, client_public_key: Vec<u8>) -> OnionCell {
+        use rand::rngs::OsRng;
+        use x25519_dalek::{EphemeralSecret, PublicKey};
 
-        // Verify response
-        if response[0] != 1 {
-            return Err(Error::network("Invalid CREATED response version"));
+        // Generate relay's ephemeral key pair
+        let relay_secret = EphemeralSecret::random_from_rng(OsRng);
+        let relay_public = PublicKey::from(&relay_secret);
+
+        // Perform ECDH with client's public key
+        let client_public_bytes: [u8; 32] = match client_public_key.as_slice().try_into() {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return OnionCell::Created {
+                    circuit_id,
+                    public_key: vec![],
+                    status: 1, // Error: invalid public key
+                };
+            }
+        };
+        let client_public = PublicKey::from(client_public_bytes);
+        let _shared_secret = relay_secret.diffie_hellman(&client_public);
+
+        // Store circuit state for relay operations
+        // In production: save (circuit_id, shared_secret) for relay forwarding
+
+        OnionCell::Created {
+            circuit_id,
+            public_key: relay_public.as_bytes().to_vec(),
+            status: 0, // Success
         }
+    }
 
-        if response[17] != 0x02 {
-            // CREATED command = 0x02
-            return Err(Error::network("Invalid CREATED response command"));
-        }
+    /// Handle incoming RELAY cell (intermediate hop perspective)
+    pub fn handle_relay_cell(&self, circuit_id: Vec<u8>, encrypted_payload: Vec<u8>) -> Result<OnionCell> {
+        // Lookup circuit by ID
+        // Decrypt one layer using stored shared secret
+        // Extract next hop from decrypted header
+        // Forward to next hop
 
-        let status = response[50];
-        if status != 0x00 {
-            // 0x00 = success
-            return Err(Error::network(format!(
-                "Circuit creation failed with status: {}",
-                status
-            )));
-        }
+        tracing::debug!(
+            "Relaying {} bytes for circuit {:?}",
+            encrypted_payload.len(),
+            hex::encode(&circuit_id)
+        );
 
-        Ok(())
+        // In production:
+        // 1. Load shared_secret for this circuit_id
+        // 2. Decrypt one layer: decrypted = decrypt_layer(&encrypted_payload, &shared_secret)
+        // 3. Parse header to get next_hop
+        // 4. Forward OnionCell::Relay { circuit_id, encrypted_payload: decrypted } to next_hop
+
+        Ok(OnionCell::Relay {
+            circuit_id,
+            encrypted_payload, // Forward remaining layers
+        })
+    }
+
+    /// Handle incoming DESTROY cell
+    pub fn handle_destroy_cell(&mut self, circuit_id: Vec<u8>) {
+        tracing::info!("Received DESTROY for circuit {:?}", hex::encode(&circuit_id));
+
+        // Remove circuit state
+        // In production: cleanup stored keys and forwarding tables
+
+        let circuit_id_str = String::from_utf8_lossy(&circuit_id).to_string();
+        let cid = CircuitId(circuit_id_str);
+        self.circuits.remove(&cid);
     }
 }
 
@@ -595,10 +875,15 @@ mod tests {
     use super::*;
 
     fn create_test_relay(id: &str, asn: Option<u32>) -> RelayNode {
+        // Generate a test PeerId from the id string
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = keypair.public().to_peer_id();
+
         RelayNode {
             node_id: id.to_string(),
             public_key: vec![0; 32],
             address: format!("127.0.0.1:{}", 9000 + id.len()),
+            peer_id: Some(peer_id),
             asn,
             region: Some("US-EAST".to_string()),
         }

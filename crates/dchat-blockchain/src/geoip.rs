@@ -82,6 +82,7 @@ impl GeoLocation {
 /// GeoIP database manager
 pub struct GeoIPManager {
     reader: Arc<Reader<Vec<u8>>>,
+    asn_reader: Option<Arc<Reader<Vec<u8>>>>,
 }
 
 impl GeoIPManager {
@@ -93,28 +94,74 @@ impl GeoIPManager {
 
         Ok(Self {
             reader: Arc::new(reader),
+            asn_reader: None,
+        })
+    }
+
+    /// Load GeoIP database with ASN database
+    pub fn with_asn_database<P: AsRef<Path>, Q: AsRef<Path>>(
+        city_db_path: P,
+        asn_db_path: Q,
+    ) -> Result<Self> {
+        let city_reader = Reader::open_readfile(city_db_path.as_ref()).map_err(|e| {
+            GeoIPError::DatabaseNotFound(format!("{:?}: {}", city_db_path.as_ref(), e))
+        })?;
+
+        let asn_reader = Reader::open_readfile(asn_db_path.as_ref())
+            .map(|r| Some(Arc::new(r)))
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "ASN database not available ({:?}): {}. ASN lookups will return None.",
+                    asn_db_path.as_ref(),
+                    e
+                );
+                None
+            });
+
+        Ok(Self {
+            reader: Arc::new(city_reader),
+            asn_reader,
         })
     }
 
     /// Create with default database path
     pub fn with_default_path() -> Result<Self> {
         // Look for database in common locations
-        let possible_paths = [
+        let possible_city_paths = [
             "/usr/share/GeoIP/GeoLite2-City.mmdb",
             "/var/lib/GeoIP/GeoLite2-City.mmdb",
             "./data/GeoLite2-City.mmdb",
             "../data/GeoLite2-City.mmdb",
         ];
 
-        for path in &possible_paths {
-            if Path::new(path).exists() {
-                return Self::new(path);
-            }
-        }
+        let possible_asn_paths = [
+            "/usr/share/GeoIP/GeoLite2-ASN.mmdb",
+            "/var/lib/GeoIP/GeoLite2-ASN.mmdb",
+            "./data/GeoLite2-ASN.mmdb",
+            "../data/GeoLite2-ASN.mmdb",
+        ];
 
-        Err(GeoIPError::DatabaseNotFound(
-            "GeoLite2-City.mmdb not found in standard locations".to_string(),
-        ))
+        // Find City database
+        let city_path = possible_city_paths
+            .iter()
+            .find(|p| Path::new(p).exists())
+            .ok_or_else(|| {
+                GeoIPError::DatabaseNotFound(
+                    "GeoLite2-City.mmdb not found in standard locations".to_string(),
+                )
+            })?;
+
+        // Find ASN database (optional)
+        let asn_path = possible_asn_paths
+            .iter()
+            .find(|p| Path::new(p).exists());
+
+        if let Some(asn) = asn_path {
+            Self::with_asn_database(city_path, asn)
+        } else {
+            tracing::warn!("GeoLite2-ASN.mmdb not found. ASN lookups will return None.");
+            Self::new(city_path)
+        }
     }
 
     /// Lookup IP address
@@ -155,9 +202,25 @@ impl GeoIPManager {
                 .unwrap_or_else(|| "Unknown".to_string()),
             continent_code: continent.code.unwrap_or("XX").to_string(),
             timezone: location.time_zone.map(|s| s.to_string()),
-            asn: None, // Requires separate ASN database
-            asn_organization: None,
+            asn: self.lookup_asn(ip).ok().and_then(|(asn, _)| asn),
+            asn_organization: self.lookup_asn(ip).ok().and_then(|(_, org)| org),
         })
+    }
+
+    /// Lookup ASN information for an IP address
+    pub fn lookup_asn(&self, ip: IpAddr) -> Result<(Option<u32>, Option<String>)> {
+        let asn_reader = self.asn_reader.as_ref().ok_or_else(|| {
+            GeoIPError::AddressNotFound("ASN database not loaded".to_string())
+        })?;
+
+        let asn: geoip2::Asn = asn_reader
+            .lookup(ip)
+            .map_err(|e| GeoIPError::AddressNotFound(format!("ASN lookup failed for {}: {}", ip, e)))?;
+
+        Ok((
+            asn.autonomous_system_number,
+            asn.autonomous_system_organization.map(|s| s.to_string()),
+        ))
     }
 
     /// Batch lookup multiple IPs

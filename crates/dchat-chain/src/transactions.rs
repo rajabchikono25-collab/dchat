@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Transaction type identifier
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TransactionType {
     /// Register a new user identity on-chain
     RegisterUser,
@@ -26,6 +26,8 @@ pub enum TransactionType {
     JoinChannel,
     /// Update user profile
     UpdateProfile,
+    /// Submit delivery proof for relay reward
+    SubmitDeliveryProof,
 }
 
 /// On-chain user registration transaction
@@ -79,6 +81,25 @@ pub struct CreateChannelTx {
     pub timestamp: DateTime<Utc>,
     /// Required stake for moderation (if any)
     pub stake_amount: Option<u64>,
+}
+
+/// On-chain delivery proof transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitDeliveryProofTx {
+    /// Unique message identifier
+    pub message_id: MessageId,
+    /// Relay node that delivered
+    pub relay_peer_id: String,
+    /// Recipient user ID
+    pub recipient_id: UserId,
+    /// Recipient signature (hex-encoded Ed25519 signature)
+    pub recipient_signature: String,
+    /// Delivery timestamp
+    pub timestamp: DateTime<Utc>,
+    /// Message content hash (for verification)
+    pub content_hash: String,
+    /// Relay reward amount (calculated based on message size/priority)
+    pub reward_amount: u64,
 }
 
 /// On-chain channel message transaction

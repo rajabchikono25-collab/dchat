@@ -465,7 +465,7 @@ impl NatTraversalManager {
         // Message Type: 0x0003 (Allocate Request)
         request.extend_from_slice(&[0x00, 0x03]);
 
-        // Message Length (placeholder, will update)
+        // Message Length (placeholder - calculated at end after all attributes are added)
         let length_pos = request.len();
         request.extend_from_slice(&[0x00, 0x00]);
 

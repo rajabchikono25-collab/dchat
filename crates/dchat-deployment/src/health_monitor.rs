@@ -305,6 +305,38 @@ impl AlertChannel {
         }
     }
 
+    /// Validate alert channel configuration
+    pub fn is_valid(&self) -> bool {
+        // Check endpoint is not empty
+        if self.endpoint.is_empty() {
+            return false;
+        }
+
+        // Check for placeholder values
+        match self.channel_type.as_str() {
+            "slack" => {
+                // Slack webhook should be a valid URL
+                self.endpoint.starts_with("https://hooks.slack.com/services/")
+                    && !self.endpoint.contains("/XXX/")
+                    && !self.endpoint.contains("/YYY/")
+                    && !self.endpoint.contains("/ZZZ")
+            }
+            "pagerduty" => {
+                // PagerDuty endpoint should contain a real integration key
+                self.endpoint.contains("events.pagerduty.com")
+                    && !self.endpoint.contains("pagerduty_integration_key")
+            }
+            "email" | "webhook" => {
+                // Email/webhook should have non-empty endpoint
+                !self.endpoint.contains("example.com") && !self.endpoint.contains("placeholder")
+            }
+            _ => {
+                // Unknown type, but if endpoint is set, assume valid
+                true
+            }
+        }
+    }
+
     pub fn new_email(smtp_endpoint: String) -> Self {
         Self {
             name: "email".to_string(),
@@ -449,14 +481,60 @@ pub struct HealthMonitorConfig {
 
 impl HealthMonitorConfig {
     pub fn new_production() -> Self {
+        // Load alert channels from environment variables
+        let mut alert_channels = Vec::new();
+
+        // Slack webhook URL from DCHAT_SLACK_WEBHOOK_URL
+        if let Ok(slack_url) = std::env::var("DCHAT_SLACK_WEBHOOK_URL") {
+            if !slack_url.is_empty() && slack_url != "https://hooks.slack.com/services/XXX/YYY/ZZZ" {
+                alert_channels.push(AlertChannel::new_slack(slack_url));
+            } else {
+                tracing::warn!(
+                    "DCHAT_SLACK_WEBHOOK_URL is set but contains placeholder value. Slack alerts will not be sent."
+                );
+            }
+        } else {
+            tracing::warn!(
+                "DCHAT_SLACK_WEBHOOK_URL not set. Slack alerts will not be configured. \
+                Set this environment variable to enable Slack notifications."
+            );
+        }
+
+        // PagerDuty integration key from DCHAT_PAGERDUTY_KEY
+        if let Ok(pd_key) = std::env::var("DCHAT_PAGERDUTY_KEY") {
+            if !pd_key.is_empty() && pd_key != "pagerduty_integration_key" {
+                alert_channels.push(AlertChannel::new_pagerduty(pd_key));
+            } else {
+                tracing::warn!(
+                    "DCHAT_PAGERDUTY_KEY is set but contains placeholder value. PagerDuty alerts will not be sent."
+                );
+            }
+        } else {
+            tracing::warn!(
+                "DCHAT_PAGERDUTY_KEY not set. PagerDuty alerts will not be configured. \
+                Set this environment variable to enable PagerDuty notifications."
+            );
+        }
+
+        // Fallback to placeholder if no valid alert channels configured (for development)
+        if alert_channels.is_empty() {
+            tracing::warn!(
+                "No valid alert channels configured. Using placeholder channels for development. \
+                Configure DCHAT_SLACK_WEBHOOK_URL and/or DCHAT_PAGERDUTY_KEY for production."
+            );
+            alert_channels.push(AlertChannel::new_slack(
+                "https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string(),
+            ));
+            alert_channels.push(AlertChannel::new_pagerduty(
+                "pagerduty_integration_key".to_string(),
+            ));
+        }
+
         Self {
             health_check: HealthCheckConfig::new_production(),
             dns_failover: DNSFailoverConfig::new_production(),
             auto_scaling: AutoScalingConfig::new_production(),
-            alert_channels: vec![
-                AlertChannel::new_slack("https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string()),
-                AlertChannel::new_pagerduty("pagerduty_integration_key".to_string()),
-            ],
+            alert_channels,
             bft_monitor: BFTMonitorConfig::new_production(),
             prometheus: PrometheusConfig::new_production(),
             grafana: GrafanaConfig::new_production(),
@@ -497,6 +575,29 @@ impl HealthMonitorConfig {
             return Err(HealthError::ConfigError(
                 "At least one alert channel required".to_string(),
             ));
+        }
+
+        // Validate alert channels and warn about placeholders
+        let valid_channels: Vec<_> = self
+            .alert_channels
+            .iter()
+            .filter(|channel| channel.is_valid())
+            .collect();
+
+        if valid_channels.is_empty() {
+            tracing::warn!(
+                "All {} configured alert channels contain placeholder values. \
+                Alerts will not be delivered in production. \
+                Set DCHAT_SLACK_WEBHOOK_URL and/or DCHAT_PAGERDUTY_KEY environment variables.",
+                self.alert_channels.len()
+            );
+        } else if valid_channels.len() < self.alert_channels.len() {
+            tracing::warn!(
+                "Only {}/{} alert channels are valid. {} channel(s) contain placeholder values.",
+                valid_channels.len(),
+                self.alert_channels.len(),
+                self.alert_channels.len() - valid_channels.len()
+            );
         }
 
         Ok(())
@@ -813,10 +914,20 @@ mod tests {
 
     #[test]
     fn test_health_monitor_config() {
+        // Set required Grafana API key for test
+        let original_grafana = std::env::var("GRAFANA_API_KEY");
+        std::env::set_var("GRAFANA_API_KEY", "test_grafana_key");
+
         let config = HealthMonitorConfig::new_production();
         assert!(config.verify().is_ok());
         assert_eq!(config.alert_channels.len(), 2);
         assert_eq!(config.bft_monitor.total_validators, 7);
+
+        // Restore Grafana key
+        match original_grafana {
+            Ok(val) => std::env::set_var("GRAFANA_API_KEY", val),
+            Err(_) => std::env::remove_var("GRAFANA_API_KEY"),
+        }
     }
 
     #[test]
@@ -864,6 +975,109 @@ mod tests {
     }
 
     #[test]
+    fn test_alert_channel_validation() {
+        // Valid Slack webhook
+        let valid_slack = AlertChannel::new_slack(
+            "https://hooks.slack.com/services/T12345678/B12345678/abc123def456".to_string(),
+        );
+        assert!(valid_slack.is_valid());
+
+        // Invalid Slack webhook (placeholder)
+        let invalid_slack =
+            AlertChannel::new_slack("https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string());
+        assert!(!invalid_slack.is_valid());
+
+        // Valid PagerDuty
+        let valid_pd = AlertChannel::new_pagerduty("real_integration_key_12345".to_string());
+        assert!(valid_pd.is_valid());
+
+        // Invalid PagerDuty (placeholder)
+        let invalid_pd = AlertChannel::new_pagerduty("pagerduty_integration_key".to_string());
+        assert!(!invalid_pd.is_valid());
+
+        // Invalid empty endpoint
+        let empty_channel = AlertChannel {
+            name: "test".to_string(),
+            channel_type: "slack".to_string(),
+            endpoint: "".to_string(),
+            severity_levels: vec!["critical".to_string()],
+            rate_limit: 30,
+        };
+        assert!(!empty_channel.is_valid());
+    }
+
+    #[test]
+    fn test_health_monitor_config_with_env_vars() {
+        // Save original env vars
+        let original_slack = std::env::var("DCHAT_SLACK_WEBHOOK_URL");
+        let original_pd = std::env::var("DCHAT_PAGERDUTY_KEY");
+        let original_grafana = std::env::var("GRAFANA_API_KEY");
+
+        // Set required Grafana API key for test
+        std::env::set_var("GRAFANA_API_KEY", "test_grafana_key");
+
+        // Test with valid env vars
+        std::env::set_var(
+            "DCHAT_SLACK_WEBHOOK_URL",
+            "https://hooks.slack.com/services/T123/B456/xyz789",
+        );
+        std::env::set_var("DCHAT_PAGERDUTY_KEY", "real_key_abc123");
+
+        let config = HealthMonitorConfig::new_production();
+        assert_eq!(config.alert_channels.len(), 2);
+        assert!(config.alert_channels[0].is_valid());
+        assert!(config.alert_channels[1].is_valid());
+
+        // Test with only Slack configured
+        std::env::remove_var("DCHAT_PAGERDUTY_KEY");
+        let config = HealthMonitorConfig::new_production();
+        assert!(config.alert_channels.iter().any(|c| c.channel_type == "slack"));
+        assert!(config.alert_channels.iter().any(|c| c.is_valid()));
+
+        // Restore original env vars
+        match original_slack {
+            Ok(val) => std::env::set_var("DCHAT_SLACK_WEBHOOK_URL", val),
+            Err(_) => std::env::remove_var("DCHAT_SLACK_WEBHOOK_URL"),
+        }
+        match original_pd {
+            Ok(val) => std::env::set_var("DCHAT_PAGERDUTY_KEY", val),
+            Err(_) => std::env::remove_var("DCHAT_PAGERDUTY_KEY"),
+        }
+        match original_grafana {
+            Ok(val) => std::env::set_var("GRAFANA_API_KEY", val),
+            Err(_) => std::env::remove_var("GRAFANA_API_KEY"),
+        }
+    }
+
+    #[test]
+    fn test_config_verification_warns_about_invalid_channels() {
+        // Set required Grafana API key for test
+        let original_grafana = std::env::var("GRAFANA_API_KEY");
+        std::env::set_var("GRAFANA_API_KEY", "test_grafana_key");
+
+        // Create config with placeholder channels
+        let mut config = HealthMonitorConfig::new_production();
+        
+        // Override with placeholder channels
+        config.alert_channels = vec![
+            AlertChannel::new_slack("https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string()),
+            AlertChannel::new_pagerduty("pagerduty_integration_key".to_string()),
+        ];
+
+        // Verification should pass (with warnings) but not error
+        assert!(config.verify().is_ok());
+
+        // All channels should be invalid
+        assert!(config.alert_channels.iter().all(|c| !c.is_valid()));
+
+        // Restore Grafana key
+        match original_grafana {
+            Ok(val) => std::env::set_var("GRAFANA_API_KEY", val),
+            Err(_) => std::env::remove_var("GRAFANA_API_KEY"),
+        }
+    }
+
+    #[test]
     fn test_alert_creation() {
         let alert = Alert::new_critical(
             "validator-1".to_string(),
@@ -908,11 +1122,21 @@ mod tests {
 
     #[test]
     fn test_grafana_config() {
+        // Set required Grafana API key for test
+        let original_grafana = std::env::var("GRAFANA_API_KEY");
+        std::env::set_var("GRAFANA_API_KEY", "test_grafana_key");
+
         let config = GrafanaConfig::new_production();
         assert_eq!(config.endpoint, "https://grafana.dchat.internal");
         assert_eq!(config.dashboards.len(), 4);
         assert!(config
             .dashboards
             .contains(&"infrastructure-overview".to_string()));
+
+        // Restore Grafana key
+        match original_grafana {
+            Ok(val) => std::env::set_var("GRAFANA_API_KEY", val),
+            Err(_) => std::env::remove_var("GRAFANA_API_KEY"),
+        }
     }
 }

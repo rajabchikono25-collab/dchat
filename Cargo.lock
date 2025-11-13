@@ -1291,6 +1291,7 @@ dependencies = [
  "dchat-chain",
  "dchat-core",
  "ed25519-dalek",
+ "futures-util",
  "hex",
  "maxminddb",
  "pqcrypto-dilithium",
@@ -1302,6 +1303,7 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
 ]
@@ -1356,6 +1358,7 @@ dependencies = [
 name = "dchat-chain"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "blake3",
  "blst",
  "chrono",
@@ -1578,6 +1581,7 @@ dependencies = [
  "hmac",
  "libp2p",
  "once_cell",
+ "prometheus",
  "quick-xml 0.31.0",
  "rand 0.8.5",
  "reqwest 0.11.27",
@@ -3346,6 +3350,7 @@ dependencies = [
  "libp2p-ping",
  "libp2p-quic",
  "libp2p-relay",
+ "libp2p-request-response",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-upnp",
@@ -3679,6 +3684,26 @@ dependencies = [
  "rand 0.8.5",
  "static_assertions",
  "thiserror 1.0.69",
+ "tracing",
+ "void",
+ "web-time",
+]
+
+[[package]]
+name = "libp2p-request-response"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1356c9e376a94a75ae830c42cdaea3d4fe1290ba409a22c809033d1b7dcab0a6"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "rand 0.8.5",
+ "smallvec",
  "tracing",
  "void",
  "web-time",
@@ -6676,7 +6701,9 @@ checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "tokio",
+ "tokio-native-tls",
  "tungstenite",
 ]
 
@@ -6965,6 +6992,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.8.5",
  "sha1",
  "thiserror 1.0.69",

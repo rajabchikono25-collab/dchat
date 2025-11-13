@@ -27,17 +27,17 @@ pub enum GossipError {
 }
 
 /// Extract Ed25519 verifying key from a libp2p PeerId
-/// 
+///
 /// PeerIds in libp2p are derived from public keys. For Ed25519 keys,
 /// the PeerId embeds the public key directly, allowing signature verification.
 fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> Result<VerifyingKey, GossipError> {
     // Try to extract the public key from the PeerId
     // For Ed25519 keys, PeerId contains the multihash of the public key
     // We need to decode it to get the actual public key bytes
-    
+
     // Convert PeerId to bytes and attempt to decode as public key
     let peer_bytes = peer_id.to_bytes();
-    
+
     // Try to decode as a PublicKey (libp2p protobuf format)
     match PublicKey::try_decode_protobuf(&peer_bytes) {
         Ok(public_key) => {
@@ -56,7 +56,7 @@ fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> Result<VerifyingKey, Go
             // If protobuf decoding fails, the PeerId might be using inline key format
             // For small keys like Ed25519, libp2p uses "identity" multihash
             // which directly embeds the public key
-            
+
             // Check if PeerId uses identity hash (0x00 multihash code)
             // In this case, the key is directly embedded after the multihash header
             if peer_bytes.len() >= 34 {
@@ -66,12 +66,12 @@ fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> Result<VerifyingKey, Go
                     let key_bytes: [u8; 32] = peer_bytes[2..34]
                         .try_into()
                         .map_err(|_| GossipError::InvalidPublicKey("Wrong key length".into()))?;
-                    
+
                     return VerifyingKey::from_bytes(&key_bytes)
                         .map_err(|e| GossipError::InvalidPublicKey(e.to_string()));
                 }
             }
-            
+
             Err(GossipError::KeyExtractionFailed(format!(
                 "Failed to decode public key from PeerId: {}",
                 e
@@ -638,7 +638,10 @@ mod tests {
                 println!("✅ Successfully extracted Ed25519 key from PeerId");
             }
             Err(e) => {
-                println!("⚠️ Key extraction failed (may need libp2p identity encoding): {}", e);
+                println!(
+                    "⚠️ Key extraction failed (may need libp2p identity encoding): {}",
+                    e
+                );
                 // This is expected if PeerId encoding doesn't support direct key extraction
                 // In production, we'd use peer key exchange or DHT lookups
             }

@@ -621,16 +621,40 @@ impl PrometheusExporter {
     }
 }
 
+// Implement NatMetricsExporter trait from dchat-network to enable seamless integration
+#[cfg(feature = "nat-telemetry-integration")]
+impl dchat_network::network::nat_telemetry::NatMetricsExporter for PrometheusExporter {
+    fn record_nat_attempt(&self, method: &str, result: &str) {
+        self.record_nat_attempt(method, result);
+    }
+
+    fn set_nat_success_rate(&self, method: &str, rate: f64) {
+        self.set_nat_success_rate(method, rate);
+    }
+}
+
 /// Global Prometheus exporter singleton
 static PROMETHEUS_EXPORTER: once_cell::sync::OnceCell<Arc<PrometheusExporter>> =
     once_cell::sync::OnceCell::new();
 
 /// Initialize the global Prometheus exporter
+///
+/// With `nat-telemetry-integration` feature enabled, this also registers
+/// the exporter with dchat-network's NAT telemetry system for automatic metrics export.
 pub fn initialize_prometheus() -> Result<(), MetricsError> {
     let exporter = PrometheusExporter::new()?;
-    PROMETHEUS_EXPORTER.set(Arc::new(exporter)).map_err(|_| {
-        MetricsError::RegistrationFailed("Prometheus already initialized".to_string())
-    })?;
+    let arc_exporter = Arc::new(exporter);
+    
+    PROMETHEUS_EXPORTER
+        .set(arc_exporter.clone())
+        .map_err(|_| {
+            MetricsError::RegistrationFailed("Prometheus already initialized".to_string())
+        })?;
+
+    // Register with NAT telemetry if feature is enabled
+    #[cfg(feature = "nat-telemetry-integration")]
+    dchat_network::network::nat_telemetry::set_metrics_exporter(arc_exporter.clone());
+
     Ok(())
 }
 

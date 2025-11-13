@@ -380,10 +380,7 @@ impl EnhancedHealthChecker {
     }
 
     /// Execute HTTP health check against validator endpoint
-    async fn execute_http_health_check(
-        &self,
-        probe: &HealthProbe,
-    ) -> Result<(), HealthCheckError> {
+    async fn execute_http_health_check(&self, probe: &HealthProbe) -> Result<(), HealthCheckError> {
         use reqwest::Client;
         use serde_json::Value;
 

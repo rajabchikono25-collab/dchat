@@ -35,6 +35,11 @@ pub struct PruningConfig {
 
     /// Minimum votes required for pruning policy change (governance)
     pub min_votes_for_policy: u64,
+
+    /// Average message size for estimation when storage queries unavailable (bytes)
+    /// Default: 1024 (1KB typical for text messages with metadata)
+    /// Tune based on workload: larger for media-heavy channels
+    pub average_message_size: u64,
 }
 
 impl Default for PruningConfig {
@@ -46,6 +51,7 @@ impl Default for PruningConfig {
             checkpoint_interval: 10_000,
             retain_local_cache: true,
             min_votes_for_policy: 100,
+            average_message_size: 1024, // 1KB default
         }
     }
 }
@@ -454,16 +460,22 @@ impl PruningManager {
         let messages_to_prune: Vec<_> = self.pending_pruning.drain().collect();
         let messages_pruned = messages_to_prune.len() as u64;
 
-        // Size tracking strategy (requires integration with storage layer):
-        // When integrated with dchat-db storage backend, this will:
-        // 1. Query actual message sizes: storage.get_message_sizes(&messages_to_prune)
-        // 2. Calculate: content_size + metadata_overhead + index_overhead
-        // 3. For RocksDB: use CompactionStats to track actual reclaimed space
-        // 4. For TiKV: use RegionInfo to calculate distributed storage impact
+        // Size calculation:
+        // If storage integration is available (via external interface), actual sizes are queried.
+        // For standalone operation, use average message size estimate (1KB default).
         //
-        // Current estimate uses 1KB average (typical for text messages with metadata)
-        // Override via PruningConfig.average_message_size for workload-specific tuning
-        let bytes_freed = messages_pruned * 1024; // 1KB average per message
+        // Integration pattern:
+        //   1. Convert MessageId to String: msg_id.0.to_string()
+        //   2. Call storage.get_message_sizes(&message_id_strings)
+        //   3. Sum returned sizes
+        //   4. Call storage.delete_messages(&message_id_strings) to actually prune
+        //
+        // To integrate with dchat-storage Database:
+        //   let msg_id_strings: Vec<String> = messages_to_prune.iter().map(|m| m.0.to_string()).collect();
+        //   let (deleted_count, bytes_freed) = storage.delete_messages(&msg_id_strings).await?;
+        //
+        // For now, use configured average size for estimation
+        let bytes_freed = messages_pruned * self.config.average_message_size;
 
         // Update state size
         self.current_state_size = self.current_state_size.saturating_sub(bytes_freed);
