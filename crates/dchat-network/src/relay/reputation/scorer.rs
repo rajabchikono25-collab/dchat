@@ -10,10 +10,9 @@
 use ed25519_dalek::VerifyingKey;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 use thiserror::Error;
 
-use dchat_identity::peer_registry::PeerRole;
 
 /// Reputation scoring constants
 pub const UPTIME_WEIGHT: f64 = 0.30;

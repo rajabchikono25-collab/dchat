@@ -83,6 +83,7 @@ impl SlashableOffense {
 
 /// Signature record for double-sign detection
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct SignatureRecord {
     validator: VerifyingKey,
     block_height: u64,
@@ -92,6 +93,7 @@ struct SignatureRecord {
 }
 
 /// Slashing detector tracks validator behavior and detects offenses
+#[allow(dead_code)]
 pub struct SlashingDetector {
     /// Map of (validator, block_height) -> signature records
     seen_signatures: Arc<RwLock<HashMap<(VerifyingKey, u64), Vec<SignatureRecord>>>>,

@@ -10,9 +10,6 @@ use thiserror::Error;
 
 use super::detector::SlashableOffense;
 use super::evidence::SlashingEvidence;
-use dchat_core::config::constants::{
-    SLASH_RATE_CENSORSHIP, SLASH_RATE_DOUBLE_SIGN, SLASH_RATE_INVALID_PROOF, SLASH_RATE_LOW_UPTIME,
-};
 
 /// Errors during penalty application
 #[derive(Debug, Error)]

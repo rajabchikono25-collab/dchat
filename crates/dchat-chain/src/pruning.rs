@@ -14,7 +14,6 @@ use dchat_core::types::MessageId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
 
 /// Pruning configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

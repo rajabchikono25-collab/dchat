@@ -46,6 +46,7 @@ categories = ["cryptography", "network-programming", "web-programming"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
+sentry = "0.45.0"
 dchat-core = { path = "crates/dchat-core" }
 dchat-crypto = { path = "crates/dchat-crypto" }
 dchat-identity = { path = "crates/dchat-identity" }

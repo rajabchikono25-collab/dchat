@@ -40,7 +40,7 @@ impl DeliveryProof {
     /// Verify the proof is valid (without chain verification)
     /// Use verify_with_chain_client for full verification including on-chain confirmation
     pub fn verify(&self, recipient_pubkey: &[u8]) -> Result<bool> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_dalek::{Signature, VerifyingKey};
 
         // 1. Verify recipient signature if present
         if let Some(sig) = &self.recipient_signature {

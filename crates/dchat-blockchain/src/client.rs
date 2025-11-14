@@ -268,6 +268,7 @@ impl Default for BlockchainConfig {
 }
 
 /// Blockchain client for interacting with the chat chain
+#[allow(dead_code)]
 pub struct BlockchainClient {
     config: BlockchainConfig,
     /// Transaction cache with hash mapping
@@ -624,6 +625,7 @@ impl BlockchainClient {
     }
 
     /// Submit transaction to blockchain (internal)
+    #[allow(dead_code)]
     async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
         use reqwest::Client as HttpClient;
         use serde_json::json;

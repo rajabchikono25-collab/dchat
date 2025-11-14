@@ -19,14 +19,28 @@
 //! - Self-healing: Automatic peer discovery and connection recovery
 //! - Geographic distribution: Ensures global reach and censorship resistance
 
+// Initialize Sentry for error monitoring
+fn init_sentry() -> sentry::ClientInitGuard {
+    sentry::init((
+        "https://65435f2abbb76a7161663eaf59e78878@o4510363493531648.ingest.de.sentry.io/4510363498446928",
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            send_default_pii: true,
+            ..Default::default()
+        },
+    ))
+}
+
 use dchat::blockchain::{
     ChatChainClient, ChatChainConfig, CrossChainBridge, CurrencyChainClient, CurrencyChainConfig,
 };
 use dchat::prelude::*;
 
 use clap::{Parser, Subcommand};
-use dchat_core::{BurnerIdentity, Config, Error, Identity, KeyPair, PrivateKey, Result, UserId};
-use dchat_crypto::Color;
+use dchat_core::{Config, Error, Result, UserId};
+use dchat_identity::{BurnerIdentity, Identity};
+use dchat_crypto::{KeyPair, PrivateKey};
+use dchat_accessibility::Color;
 use dchat_network::{
     DchatMessage, DiscoveryConfig, Multiaddr, NatConfig, NetworkConfig, NetworkEvent,
     NetworkManager, PeerId,

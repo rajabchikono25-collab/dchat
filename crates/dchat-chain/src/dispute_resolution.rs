@@ -284,7 +284,7 @@ impl DisputeResolver {
     
     /// Verify Ed25519 signatures on fork evidence messages
     fn verify_fork_signatures(&self, evidence: &ForkEvidence) -> Result<()> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_dalek::{Signature, VerifyingKey};
         
         // Extract accused validator's public key
         // In production: query from validator registry on chain

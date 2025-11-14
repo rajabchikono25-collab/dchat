@@ -310,6 +310,7 @@ impl Default for CircuitConfig {
 /// Circuit state for relay operations
 /// Stores the shared secrets and forwarding information for active circuits
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CircuitState {
     circuit_id: CircuitId,
     /// Shared secret with the client for this circuit
@@ -1262,7 +1263,7 @@ impl OnionRoutingManager {
         let next_hop = circuit_state.next_hop.clone();
         
         // Drop the mutable borrow before calling decrypt_relay_layer
-        drop(circuit_state);
+        let _ = circuit_state;
         
         let decrypted_payload = self.decrypt_relay_layer(&encrypted_payload, &shared_secret)?;
 

@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// BLS signature from a single validator
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +152,7 @@ impl AggregatedFinalityProof {
 }
 
 /// Finality tracking manager with validator consensus
+#[allow(dead_code)]
 pub struct FinalityTracker {
     /// Pending finality proofs awaiting signatures
     pending_proofs: HashMap<String, AggregatedFinalityProof>,

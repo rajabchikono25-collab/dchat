@@ -9,14 +9,10 @@
 // - NAT: traversal method usage, success rates
 
 use prometheus::{
-    core::{Collector, Desc},
-    proto::MetricFamily,
     Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
 
 #[derive(Debug, Error)]
 pub enum MetricsError {

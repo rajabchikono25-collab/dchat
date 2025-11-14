@@ -197,7 +197,7 @@ impl GossipMessage {
         message_bytes.push(self.ttl);
 
         // Production Ed25519 verification
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_dalek::Signature;
 
         // Parse signature (64 bytes)
         let sig_bytes: [u8; 64] = match self.signature[..].try_into() {
@@ -275,6 +275,7 @@ impl GossipMessage {
 }
 
 /// Gossip protocol implementation
+#[allow(dead_code)]
 pub struct GossipProtocol {
     config: GossipConfig,
     message_cache: MessageCache,
@@ -325,6 +326,7 @@ impl GossipProtocol {
     }
 
     /// Get or extract Ed25519 key for a peer (with caching)
+    #[allow(dead_code)]
     fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
         if !self.peer_key_cache.contains_key(peer_id) {
             let key = extract_ed25519_key_from_peer_id(peer_id)?;

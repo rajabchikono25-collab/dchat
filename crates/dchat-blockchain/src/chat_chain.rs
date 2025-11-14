@@ -38,6 +38,7 @@ impl Default for ChatChainConfig {
 }
 
 /// Chat Chain client for on-chain operations: identity, messaging, channels, governance
+#[allow(dead_code)]
 pub struct ChatChainClient {
     config: ChatChainConfig,
     /// Transaction cache with hash mapping

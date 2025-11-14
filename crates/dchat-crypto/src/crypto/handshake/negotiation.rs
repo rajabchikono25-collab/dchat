@@ -101,6 +101,7 @@ pub enum NegotiationError {
 
 /// Tracks version negotiation state for a peer
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct NegotiationState {
     peer_id: PeerId,
     started_at: Instant,

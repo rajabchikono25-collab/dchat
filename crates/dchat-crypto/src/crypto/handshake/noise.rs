@@ -93,6 +93,7 @@ pub struct HandshakeMetrics {
 
 /// Handshake metadata for tracking lifecycle.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct HandshakeMetadata {
     peer_id: PeerId,
     started_at: Instant,

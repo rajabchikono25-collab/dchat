@@ -1,0 +1,142 @@
+    Checking dchat-network v0.1.0 (C:\Users\USER\dchat\crates\dchat-network)
+warning: unused import: `UNIX_EPOCH`
+   --> crates\dchat-chain\src\chain\currency_chain\staking.rs:349:33
+    |
+349 |     use std::time::{SystemTime, UNIX_EPOCH};
+    |                                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Signature`
+ --> crates\dchat-chain\src\chain\slashing\evidence.rs:6:21
+  |
+6 | use ed25519_dalek::{Signature, VerifyingKey};
+  |                     ^^^^^^^^^
+
+warning: unused imports: `SLASH_RATE_CENSORSHIP`, `SLASH_RATE_DOUBLE_SIGN`, `SLASH_RATE_INVALID_PROOF`, and `SLASH_RATE_LOW_UPTIME`
+  --> crates\dchat-chain\src\chain\slashing\penalty.rs:14:5
+   |
+14 |     SLASH_RATE_CENSORSHIP, SLASH_RATE_DOUBLE_SIGN, SLASH_RATE_INVALID_PROOF, SLASH_RATE_LOW_UPTIME,
+   |     ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Verifier`
+   --> crates\dchat-chain\src\dispute_resolution.rs:287:40
+    |
+287 |         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    |                                        ^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\dchat-chain\src\pruning.rs:17:5
+   |
+17 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: `dchat-chain` (lib) generated 5 warnings (run `cargo fix --lib -p dchat-chain` to apply 5 suggestions)
+warning: field `config` is never read
+  --> crates\dchat-blockchain\src\chat_chain.rs:42:5
+   |
+41 | pub struct ChatChainClient {
+   |            --------------- field in this struct
+42 |     config: ChatChainConfig,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `config` is never read
+   --> crates\dchat-blockchain\src\client.rs:272:5
+    |
+271 | pub struct BlockchainClient {
+    |            ---------------- field in this struct
+272 |     config: BlockchainConfig,
+    |     ^^^^^^
+
+warning: method `submit_transaction_to_chain` is never used
+   --> crates\dchat-blockchain\src\client.rs:627:14
+    |
+279 | impl BlockchainClient {
+    | --------------------- method in this implementation
+...
+627 |     async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `dchat-blockchain` (lib) generated 3 warnings
+    Checking dchat-storage v0.1.0 (C:\Users\USER\dchat\crates\dchat-storage)
+    Checking dchat-distribution v0.1.0 (C:\Users\USER\dchat\crates\dchat-distribution)
+warning: field `total_validators` is never read
+   --> crates\dchat-bridge\src\finality.rs:167:5
+    |
+155 | pub struct FinalityTracker {
+    |            --------------- field in this struct
+...
+167 |     total_validators: usize,
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `dchat-bridge` (lib) generated 1 warning
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> crates\dchat-network\src\network\onion\sphinx.rs:277:28
+    |
+277 |         let nonce = Nonce::from_slice(nonce_bytes);
+    |                            ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> crates\dchat-network\src\network\onion\sphinx.rs:311:28
+    |
+311 |         let nonce = Nonce::from_slice(nonce_bytes);
+    |                            ^^^^^^^^^^
+
+warning: field `peer_key_cache` is never read
+   --> crates\dchat-network\src\gossip\protocol.rs:284:5
+    |
+278 | pub struct GossipProtocol {
+    |            -------------- field in this struct
+...
+284 |     peer_key_cache: HashMap<PeerId, VerifyingKey>,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_peer_key` is never used
+   --> crates\dchat-network\src\gossip\protocol.rs:328:8
+    |
+311 | impl GossipProtocol {
+    | ------------------- method in this implementation
+...
+328 |     fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
+    |        ^^^^^^^^^^^^
+
+warning: field `circuit_id` is never read
+   --> crates\dchat-network\src\onion_routing.rs:314:5
+    |
+313 | struct CircuitState {
+    |        ------------ field in this struct
+314 |     circuit_id: CircuitId,
+    |     ^^^^^^^^^^
+    |
+    = note: `CircuitState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> crates\dchat-network\src\onion_routing.rs:1265:9
+     |
+1265 |         drop(circuit_state);
+     |         ^^^^^-------------^
+     |              |
+     |              argument has type `&mut CircuitState`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+1265 -         drop(circuit_state);
+1265 +         let _ = circuit_state;
+     |
+
+warning: `dchat-network` (lib) generated 6 warnings
+    Checking dchat-messaging v0.1.0 (C:\Users\USER\dchat\crates\dchat-messaging)
+    Checking dchat-observability v0.1.0 (C:\Users\USER\dchat\crates\dchat-observability)
+    Checking dchat-sdk-rust v0.1.0 (C:\Users\USER\dchat\crates\dchat-sdk-rust)
+    Checking dchat-bots v0.1.0 (C:\Users\USER\dchat\crates\dchat-bots)
+    Checking dchat v0.1.0 (C:\Users\USER\dchat)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.78s

@@ -5,7 +5,7 @@
 // requirements are at risk.
 
 use dchat_core::config::constants::{MAX_REGION_PERCENTAGE, MIN_REGIONS, REGION_WARNING_THRESHOLD};
-use dchat_identity::peer_registry::{PeerRegistry, PeerRole};
+use dchat_identity::peer_registry::PeerRegistry;
 use dchat_validator::thresholds::{DiversityWarningLevel, RegionDiversityMetrics};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -3,7 +3,7 @@
 // Collects cryptographic evidence of slashable offenses,
 // verifies validity, and prepares for on-chain submission.
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use thiserror::Error;

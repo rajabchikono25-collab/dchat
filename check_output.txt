@@ -1,143 +1,207 @@
     Blocking waiting for file lock on build directory
+    Checking dchat-network v0.1.0 (C:\Users\USER\dchat\crates\dchat-network)
+    Checking dchat-chain v0.1.0 (C:\Users\USER\dchat\crates\dchat-chain)
+    Checking dchat-storage v0.1.0 (C:\Users\USER\dchat\crates\dchat-storage)
+    Checking dchat-distribution v0.1.0 (C:\Users\USER\dchat\crates\dchat-distribution)
+warning: field `total_validators` is never read
+   --> crates\dchat-bridge\src\finality.rs:167:5
+    |
+155 | pub struct FinalityTracker {
+    |            --------------- field in this struct
+...
+167 |     total_validators: usize,
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `dchat-bridge` (lib) generated 1 warning
+warning: unused import: `UNIX_EPOCH`
+   --> crates\dchat-chain\src\chain\currency_chain\staking.rs:349:33
+    |
+349 |     use std::time::{SystemTime, UNIX_EPOCH};
+    |                                 ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Signature`
+ --> crates\dchat-chain\src\chain\slashing\evidence.rs:6:21
+  |
+6 | use ed25519_dalek::{Signature, VerifyingKey};
+  |                     ^^^^^^^^^
+
+warning: unused imports: `SLASH_RATE_CENSORSHIP`, `SLASH_RATE_DOUBLE_SIGN`, `SLASH_RATE_INVALID_PROOF`, and `SLASH_RATE_LOW_UPTIME`
+  --> crates\dchat-chain\src\chain\slashing\penalty.rs:14:5
+   |
+14 |     SLASH_RATE_CENSORSHIP, SLASH_RATE_DOUBLE_SIGN, SLASH_RATE_INVALID_PROOF, SLASH_RATE_LOW_UPTIME,
+   |     ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Verifier`
+   --> crates\dchat-chain\src\dispute_resolution.rs:287:40
+    |
+287 |         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    |                                        ^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\dchat-chain\src\pruning.rs:17:5
+   |
+17 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> crates\dchat-network\src\network\onion\sphinx.rs:277:28
+    |
+277 |         let nonce = Nonce::from_slice(nonce_bytes);
+    |                            ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> crates\dchat-network\src\network\onion\sphinx.rs:311:28
+    |
+311 |         let nonce = Nonce::from_slice(nonce_bytes);
+    |                            ^^^^^^^^^^
+
+warning: `dchat-chain` (lib) generated 5 warnings (run `cargo fix --lib -p dchat-chain` to apply 5 suggestions)
     Checking dchat-blockchain v0.1.0 (C:\Users\USER\dchat\crates\dchat-blockchain)
-warning: unused import: `ed25519_dalek::VerifyingKey`
-  --> crates\dchat-blockchain\src\vote_persistence.rs:16:5
+warning: field `peer_key_cache` is never read
+   --> crates\dchat-network\src\gossip\protocol.rs:284:5
+    |
+278 | pub struct GossipProtocol {
+    |            -------------- field in this struct
+...
+284 |     peer_key_cache: HashMap<PeerId, VerifyingKey>,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_peer_key` is never used
+   --> crates\dchat-network\src\gossip\protocol.rs:328:8
+    |
+311 | impl GossipProtocol {
+    | ------------------- method in this implementation
+...
+328 |     fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
+    |        ^^^^^^^^^^^^
+
+warning: field `circuit_id` is never read
+   --> crates\dchat-network\src\onion_routing.rs:314:5
+    |
+313 | struct CircuitState {
+    |        ------------ field in this struct
+314 |     circuit_id: CircuitId,
+    |     ^^^^^^^^^^
+    |
+    = note: `CircuitState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> crates\dchat-network\src\onion_routing.rs:1265:9
+     |
+1265 |         drop(circuit_state);
+     |         ^^^^^-------------^
+     |              |
+     |              argument has type `&mut CircuitState`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+1265 -         drop(circuit_state);
+1265 +         let _ = circuit_state;
+     |
+
+warning: `dchat-network` (lib) generated 6 warnings
+    Checking dchat-observability v0.1.0 (C:\Users\USER\dchat\crates\dchat-observability)
+warning: field `config` is never read
+  --> crates\dchat-blockchain\src\chat_chain.rs:42:5
    |
-16 | use ed25519_dalek::VerifyingKey;
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+41 | pub struct ChatChainClient {
+   |            --------------- field in this struct
+42 |     config: ChatChainConfig,
+   |     ^^^^^^
    |
-   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
-warning: unused import: `crate::block_hierarchy::Hash`
-  --> crates\dchat-blockchain\src\vote_persistence.rs:23:5
+warning: field `config` is never read
+   --> crates\dchat-blockchain\src\client.rs:272:5
+    |
+271 | pub struct BlockchainClient {
+    |            ---------------- field in this struct
+272 |     config: BlockchainConfig,
+    |     ^^^^^^
+
+warning: method `submit_transaction_to_chain` is never used
+   --> crates\dchat-blockchain\src\client.rs:627:14
+    |
+279 | impl BlockchainClient {
+    | --------------------- method in this implementation
+...
+627 |     async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `dchat-blockchain` (lib) generated 3 warnings
+    Checking dchat-messaging v0.1.0 (C:\Users\USER\dchat\crates\dchat-messaging)
+warning: unexpected `cfg` condition value: `test-mocks`
+  --> crates\dchat-messaging\src\lib.rs:34:17
    |
-23 | use crate::block_hierarchy::Hash;
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unnecessary parentheses around block return value
-   --> crates\dchat-blockchain\src\geoip.rs:200:9
-    |
-200 |         (continent_diversity * 0.4 + country_diversity * 0.3 + distance_score * 0.3)
-    |         ^                                                                          ^
-    |
-    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
-help: remove these parentheses
-    |
-200 -         (continent_diversity * 0.4 + country_diversity * 0.3 + distance_score * 0.3)
-200 +         continent_diversity * 0.4 + country_diversity * 0.3 + distance_score * 0.3
-    |
-
-warning: unused imports: `Signer` and `SigningKey`
-  --> crates\dchat-blockchain\src\oracle_network.rs:17:32
+34 | #[cfg(any(test, feature = "test-mocks"))]
+   |                 ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
    |
-17 | use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-   |                                ^^^^^^  ^^^^^^^^^^
+   = note: no expected values for `feature`
+   = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
 
-error[E0061]: this method takes 2 arguments but 1 argument was supplied
-   --> crates\dchat-blockchain\src\proof_of_transit.rs:397:14
-    |
-397 |         path.verify_signatures(&message_hash)?;
-    |              ^^^^^^^^^^^^^^^^^--------------- argument #2 of type `&[Vec<u8>]` is missing
-    |
-note: method defined here
-   --> crates\dchat-blockchain\src\proof_of_transit.rs:182:12
-    |
-182 |     pub fn verify_signatures(&self, message_hash: &Hash, dilithium_public_keys: &[Vec<u8>]) -> Result<(), PoTError> {
-    |            ^^^^^^^^^^^^^^^^^                             ---------------------------------
-help: provide the argument
-    |
-397 |         path.verify_signatures(&message_hash, /* &[Vec<u8>] */)?;
-    |                                             ++++++++++++++++++
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:138:19
-    |
-138 |             city: city.city.and_then(|c| c.names).and_then(|n| n.get("en").cloned()),
-    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `Option<&str>`
-    |
-    = note: expected enum `std::option::Option<std::string::String>`
-               found enum `std::option::Option<&str>`
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:141:36
-    |
-141 |                 .unwrap_or_else(|| "Unknown".to_string()),
-    |                                    ^^^^^^^^^^^^^^^^^^^^^ expected `&str`, found `String`
-    |
-help: try removing the method call
-    |
-141 -                 .unwrap_or_else(|| "Unknown".to_string()),
-141 +                 .unwrap_or_else(|| "Unknown"),
-    |
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:139:22
-    |
-139 |               country: country.names
-    |  ______________________^
-140 | |                 .and_then(|n| n.get("en").cloned())
-141 | |                 .unwrap_or_else(|| "Unknown".to_string()),
-    | |_________________________________________________________^ expected `String`, found `&str`
-    |
-help: try using a conversion method
-    |
-141 |                 .unwrap_or_else(|| "Unknown".to_string()).to_string(),
-    |                                                          ++++++++++++
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:145:36
-    |
-145 |                 .unwrap_or_else(|| "Unknown".to_string()),
-    |                                    ^^^^^^^^^^^^^^^^^^^^^ expected `&str`, found `String`
-    |
-help: try removing the method call
-    |
-145 -                 .unwrap_or_else(|| "Unknown".to_string()),
-145 +                 .unwrap_or_else(|| "Unknown"),
-    |
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:143:24
-    |
-143 |               continent: continent.names
-    |  ________________________^
-144 | |                 .and_then(|n| n.get("en").cloned())
-145 | |                 .unwrap_or_else(|| "Unknown".to_string()),
-    | |_________________________________________________________^ expected `String`, found `&str`
-    |
-help: try using a conversion method
-    |
-145 |                 .unwrap_or_else(|| "Unknown".to_string()).to_string(),
-    |                                                          ++++++++++++
-
-error[E0308]: mismatched types
-   --> crates\dchat-blockchain\src\geoip.rs:147:23
-    |
-147 |             timezone: location.time_zone.clone(),
-    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `Option<&str>`
-    |
-    = note: expected enum `std::option::Option<std::string::String>`
-               found enum `std::option::Option<&str>`
-
-warning: unused import: `SecretKey`
-  --> crates\dchat-blockchain\src\proof_of_transit.rs:18:74
+warning: unexpected `cfg` condition value: `test-mocks`
+  --> crates\dchat-messaging\src\rate_limit.rs:58:21
    |
-18 | use pqcrypto_traits::sign::{DetachedSignature, PublicKey as PQPublicKey, SecretKey as PQSecretKey, SignedMessage};
-   |                                                                          ^^^^^^^^^
-
-warning: unused import: `SignedMessage`
-  --> crates\dchat-blockchain\src\proof_of_transit.rs:18:100
+58 |     #[cfg(any(test, feature = "test-mocks"))]
+   |                     ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
    |
-18 | use pqcrypto_traits::sign::{DetachedSignature, PublicKey as PQPublicKey, SecretKey as PQSecretKey, SignedMessage};
-   |                                                                                                    ^^^^^^^^^^^^^
+   = note: no expected values for `feature`
+   = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
 
-warning: unused import: `Row`
-  --> crates\dchat-blockchain\src\vote_persistence.rs:18:45
+warning: unexpected `cfg` condition value: `test-mocks`
+  --> crates\dchat-messaging\src\staking_verifier.rs:77:17
    |
-18 | use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-   |                                             ^^^
+77 | #[cfg(any(test, feature = "test-mocks"))]
+   |                 ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
 
-Some errors have detailed explanations: E0061, E0308.
-For more information about an error, try `rustc --explain E0061`.
-warning: `dchat-blockchain` (lib) generated 7 warnings
-error: could not compile `dchat-blockchain` (lib) due to 7 previous errors; 7 warnings emitted
+warning: unexpected `cfg` condition value: `test-mocks`
+  --> crates\dchat-messaging\src\staking_verifier.rs:83:17
+   |
+83 | #[cfg(any(test, feature = "test-mocks"))]
+   |                 ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `test-mocks`
+   --> crates\dchat-messaging\src\staking_verifier.rs:110:17
+    |
+110 | #[cfg(any(test, feature = "test-mocks"))]
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `test-mocks`
+   --> crates\dchat-messaging\src\staking_verifier.rs:117:17
+    |
+117 | #[cfg(any(test, feature = "test-mocks"))]
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `test-mocks` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: `dchat-messaging` (lib) generated 6 warnings
+    Checking dchat-bots v0.1.0 (C:\Users\USER\dchat\crates\dchat-bots)
+    Checking dchat-sdk-rust v0.1.0 (C:\Users\USER\dchat\crates\dchat-sdk-rust)
+    Checking dchat v0.1.0 (C:\Users\USER\dchat)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.58s

@@ -4,7 +4,7 @@
 
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Minimum reputation score for relay selection

@@ -346,7 +346,7 @@ pub async fn submit_relay_stake(
 ) -> Result<StakeReceipt, StakingError> {
     use reqwest::Client as HttpClient;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
 
     if amount < MIN_RELAY_STAKE {
         return Err(StakingError::InsufficientStake(amount, MIN_RELAY_STAKE));

@@ -18,12 +18,11 @@
 //! - With parallel processing (4x) = **50,000 TPS**
 //! - With SIMD optimizations (1.5x) = **75,000 TPS**
 
-use dchat_chain::{Transaction, TransactionReceipt, TransactionStatus, TransactionType};
+use dchat_chain::{Transaction, TransactionReceipt, TransactionType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use thiserror::Error;
-use uuid::Uuid;
 
 // Blake3 hash wrapper with serde support
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -137,7 +137,7 @@ impl MultiSigState {
         signature: &ValidatorSignature,
         message: &[u8],
     ) -> Result<(), BridgeError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_dalek::{Signature, VerifyingKey};
 
         // 1. Check signature length (Ed25519 signatures are exactly 64 bytes)
         if signature.signature.len() != 64 {

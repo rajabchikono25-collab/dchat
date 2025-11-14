@@ -7,7 +7,7 @@
 //! - Fork detection and resolution
 
 use dchat_chain::Transaction;
-use dchat_core::error::{Error, Result};
+use dchat_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -201,7 +201,7 @@ impl BlockSyncManager {
 
     /// Start WebSocket streaming for real-time updates
     async fn start_websocket_streaming(&self) -> Result<()> {
-        use dchat_core::error::Error;
+        
         use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
         use futures_util::{StreamExt, SinkExt};
         
