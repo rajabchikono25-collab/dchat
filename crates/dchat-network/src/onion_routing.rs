@@ -6,6 +6,58 @@
 //! - Path selection with geographic/ASN diversity
 //! - Cover traffic generation
 //! - Timing obfuscation
+//!
+//! ## Production Integration
+//!
+//! To integrate onion routing with your libp2p network layer:
+//!
+//! 1. Create channel for network communication:
+//!    ```rust,ignore
+//!    let (network_tx, mut network_rx) = mpsc::unbounded_channel();
+//!    let mut onion_manager = OnionRoutingManager::new(config);
+//!    onion_manager.set_network_channel(network_tx);
+//!    ```
+//!
+//! 2. Add onion routing behavior to your NetworkBehaviour:
+//!    ```rust,ignore
+//!    let onion_behavior = OnionRoutingManager::create_request_response_behavior();
+//!    ```
+//!
+//! 3. Handle network requests in your event loop:
+//!    ```rust,ignore
+//!    tokio::spawn(async move {
+//!        while let Some(request) = network_rx.recv().await {
+//!            match request {
+//!                OnionRoutingRequest::SendCell { peer_id, cell, response_tx } => {
+//!                    // Send cell via swarm's request-response behavior
+//!                    let request_id = swarm.behaviour_mut()
+//!                        .onion_routing
+//!                        .send_request(&peer_id, cell);
+//!                    
+//!                    // Store response_tx mapped to request_id for later use
+//!                    pending_requests.insert(request_id, response_tx);
+//!                }
+//!            }
+//!        }
+//!    });
+//!    ```
+//!
+//! 4. Handle responses in swarm event loop:
+//!    ```rust,ignore
+//!    match swarm.select_next_some().await {
+//!        SwarmEvent::Behaviour(MyBehaviourEvent::OnionRouting(
+//!            request_response::Event::Message { message, .. }
+//!        )) => {
+//!            match message {
+//!                request_response::Message::Response { request_id, response } => {
+//!                    if let Some(response_tx) = pending_requests.remove(&request_id) {
+//!                        let _ = response_tx.send(Ok(response));
+//!                    }
+//!                }
+//!            }
+//!        }
+//!    }
+//!    ```
 
 use blake3::Hasher;
 use dchat_core::error::{Error, Result};
@@ -702,28 +754,39 @@ impl OnionRoutingManager {
                 circuit.hops.len()
             );
 
-            for hop in &circuit.hops {
-                // Create DESTROY cell
-                let _destroy_cell = OnionCell::Destroy {
-                    circuit_id: circuit_id.0.as_bytes().to_vec(),
-                };
+            // Send DESTROY cells to all hops if network is connected
+            if let Some(network_tx) = &self.network_tx {
+                for hop in &circuit.hops {
+                    // Create DESTROY cell
+                    let destroy_cell = OnionCell::Destroy {
+                        circuit_id: circuit_id.0.as_bytes().to_vec(),
+                    };
 
-                if let Some(peer_id) = &hop.peer_id {
-                    tracing::debug!(
-                        "Sending DESTROY to hop: {} (peer_id: {:?})",
-                        hop.node_id,
-                        peer_id
-                    );
+                    if let Some(peer_id) = &hop.peer_id {
+                        tracing::debug!(
+                            "Sending DESTROY to hop: {} (peer_id: {:?})",
+                            hop.node_id,
+                            peer_id
+                        );
 
-                    // In production, send via request-response behavior:
-                    //
-                    // swarm
-                    //     .behaviour_mut()
-                    //     .onion_routing_rr
-                    //     .send_request(peer_id, destroy_cell);
-                } else {
-                    tracing::warn!("Hop {} missing PeerId, cannot send DESTROY", hop.node_id);
+                        // Production implementation: Send via network channel
+                        let (response_tx, _response_rx) = oneshot::channel();
+                        let request = OnionRoutingRequest::SendCell {
+                            peer_id: *peer_id,
+                            cell: destroy_cell,
+                            response_tx,
+                        };
+
+                        // Fire and forget - don't wait for response on DESTROY
+                        if let Err(e) = network_tx.send(request) {
+                            tracing::warn!("Failed to send DESTROY cell to {}: {}", hop.node_id, e);
+                        }
+                    } else {
+                        tracing::warn!("Hop {} missing PeerId, cannot send DESTROY", hop.node_id);
+                    }
                 }
+            } else {
+                tracing::warn!("Network channel not configured, cannot send DESTROY cells");
             }
 
             circuit.status = CircuitStatus::Closed;
