@@ -167,14 +167,14 @@ impl NegotiationResult {
             NegotiationResult::Compatible { local, remote } => {
                 format!("Compatible: local={}, remote={}", local, remote)
             }
-            NegotiationResult::RemoteTooOld { local, remote } => {
+            NegotiationResult::RemoteTooOld { local: _, remote } => {
                 format!(
                     "Remote version {} is too old (minimum: {})",
                     remote,
                     ProtocolVersion::min_acceptable()
                 )
             }
-            NegotiationResult::RemoteTooNew { local, remote } => {
+            NegotiationResult::RemoteTooNew { local: _, remote } => {
                 format!(
                     "Remote version {} is too new (maximum: {})",
                     remote,

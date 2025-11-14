@@ -24,6 +24,12 @@ pub enum SdkError {
     #[error("Message error: {0}")]
     Message(String),
 
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Not connected")]
     NotConnected,
 

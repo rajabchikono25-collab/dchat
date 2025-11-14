@@ -230,6 +230,7 @@ impl RelayNode {
         // 5. Start uptime monitoring and proof-of-delivery tracking
         let state = self.state.clone();
         let running_flag = self.running.clone();
+        let relay_name = self.config.name.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
@@ -248,7 +249,7 @@ impl RelayNode {
 
                 // Production: Submit uptime attestation to blockchain
                 if let Err(e) = submit_uptime_attestation(
-                    &relay_id,
+                    &relay_name,
                     uptime.as_secs(),
                     st.messages_relayed,
                     st.connected_peers

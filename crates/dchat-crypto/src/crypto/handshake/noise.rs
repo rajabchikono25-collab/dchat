@@ -42,7 +42,7 @@ use libp2p::PeerId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 /// Handshake timeout in seconds (30 seconds).
 pub const HANDSHAKE_TIMEOUT: u64 = 30;
