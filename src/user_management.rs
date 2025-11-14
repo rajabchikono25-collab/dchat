@@ -141,6 +141,7 @@ impl UserManager {
         let tx_id = self
             .chat_chain
             .register_user(&user_id_uuid, public_key_bytes.to_vec())
+            .await
             .map_err(|e| {
                 error!("Failed to register on chat chain: {}", e);
                 Error::internal(format!("Chat chain registration failed: {}", e))
@@ -152,7 +153,7 @@ impl UserManager {
             .chat_chain
             .wait_for_finality(&tx_id, 3)
             .await
-            .map_err(|e| Error::chain(&e))?;
+            .map_err(|e| Error::chain(e.to_string()))?;
         if on_chain_confirmed {
             info!("✓ User registration confirmed on chat chain");
         } else {
@@ -284,6 +285,7 @@ impl UserManager {
         let tx_id = self
             .chat_chain
             .send_direct_message(&sender_uuid, &recipient_uuid, message_id)
+            .await
             .map_err(|e| {
                 error!("Failed to record on chat chain: {}", e);
                 Error::internal(format!("Chat chain recording failed: {}", e))
@@ -359,6 +361,7 @@ impl UserManager {
         let tx_id = self
             .chat_chain
             .create_channel(&creator_uuid, &channel_id, channel_name.to_string())
+            .await
             .map_err(|e| {
                 error!("Failed to create channel on chat chain: {}", e);
                 Error::internal(format!("Chat chain channel creation failed: {}", e))
@@ -370,7 +373,7 @@ impl UserManager {
             .chat_chain
             .wait_for_finality(&tx_id, 3)
             .await
-            .map_err(|e| Error::chain(&e))?;
+            .map_err(|e| Error::chain(e.to_string()))?;
 
         info!(
             "✓ Channel created and confirmed on-chain: {} ({})",
@@ -421,6 +424,7 @@ impl UserManager {
         let tx_id = self
             .chat_chain
             .post_to_channel(&sender_uuid, &channel_uuid, message_id)
+            .await
             .map_err(|e| {
                 error!("Failed to post to chat chain: {}", e);
                 Error::internal(format!("Chat chain posting failed: {}", e))
@@ -431,7 +435,7 @@ impl UserManager {
             .chat_chain
             .wait_for_finality(&tx_id, 3)
             .await
-            .map_err(|e| Error::chain(&e))?;
+            .map_err(|e| Error::chain(e.to_string()))?;
 
         // Store message in database
         self.database

@@ -51,7 +51,7 @@ impl CrossChainBridge {
     }
 
     /// Register user with initial stake (atomic operation)
-    pub fn register_user_with_stake(
+    pub async fn register_user_with_stake(
         &self,
         user_id: &UserId,
         public_key: Vec<u8>,
@@ -66,7 +66,8 @@ impl CrossChainBridge {
             .map_err(|e| e.to_string())?;
 
         // Step 2: Register identity on chat chain
-        let chat_tx = self.chat_chain.register_user(user_id, public_key)?;
+        let chat_tx = self.chat_chain.register_user(user_id, public_key).await
+            .map_err(|e| e.to_string())?;
 
         // Step 3: Stake tokens on currency chain
         let currency_tx = self
@@ -95,7 +96,7 @@ impl CrossChainBridge {
     }
 
     /// Create channel with creation fee (atomic operation)
-    pub fn create_channel_with_fee(
+    pub async fn create_channel_with_fee(
         &self,
         owner: &UserId,
         channel_name: String,
@@ -115,7 +116,8 @@ impl CrossChainBridge {
         // Step 2: Create channel on chat chain
         let chat_tx = self
             .chat_chain
-            .create_channel(owner, &channel_id, channel_name)?;
+            .create_channel(owner, &channel_id, channel_name).await
+            .map_err(|e| e.to_string())?;
 
         // Record cross-chain transaction
         let cross_tx = CrossChainTransaction {
@@ -200,17 +202,17 @@ mod tests {
     use crate::chat_chain::ChatChainConfig;
     use crate::currency_chain::CurrencyChainConfig;
 
-    #[test]
-    fn test_register_user_with_stake() {
-        let chat_chain = Arc::new(ChatChainClient::new(ChatChainConfig::default()));
-        let currency_chain = Arc::new(CurrencyChainClient::new(CurrencyChainConfig::default()));
+    #[tokio::test]
+    async fn test_register_user_with_stake() {
+        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let bridge = CrossChainBridge::new(chat_chain, currency_chain);
 
         let user_id = UserId(Uuid::new_v4());
         let public_key = vec![1, 2, 3, 4];
 
         let bridge_tx_id = bridge
-            .register_user_with_stake(&user_id, public_key, 1000)
+            .register_user_with_stake(&user_id, public_key, 1000).await
             .unwrap();
         let status = bridge.get_status(&bridge_tx_id).unwrap();
 

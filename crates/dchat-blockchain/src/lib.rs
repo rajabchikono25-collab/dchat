@@ -22,7 +22,7 @@ pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
     ValidatorSignature, WorldState,
 };
-pub use dchat_chain::Transaction;
+pub use dchat_chain::{Transaction, TransactionStatus};
 pub use chat_chain::{ChatChainClient, ChatChainConfig};
 pub use client::BlockchainClient;
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};

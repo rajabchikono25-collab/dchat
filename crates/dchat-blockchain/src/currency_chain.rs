@@ -6,8 +6,10 @@ use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
 use crate::tokenomics::{BurnReason, TokenomicsManager};
 
 /// Configuration for Currency Chain client
@@ -71,8 +73,9 @@ pub struct StakePosition {
 
 /// Currency Chain client for payments, staking, rewards, and economics
 pub struct CurrencyChainClient {
-    #[allow(dead_code)]
     config: CurrencyChainConfig,
+    /// RPC client for blockchain queries
+    rpc_client: Arc<dyn ChainRpcClient>,
     /// Transaction cache
     transactions: Arc<RwLock<HashMap<Uuid, CurrencyTransaction>>>,
     /// Current block height
@@ -83,18 +86,40 @@ pub struct CurrencyChainClient {
     stakes: Arc<RwLock<HashMap<UserId, StakePosition>>>,
     /// Tokenomics manager (optional - can be shared)
     tokenomics: Option<Arc<TokenomicsManager>>,
+    /// Shutdown signal for block sync task
+    shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 impl CurrencyChainClient {
-    /// Create new currency chain client
-    pub fn new(config: CurrencyChainConfig) -> Self {
-        Self {
+    /// Create new currency chain client with production RPC
+    pub fn new(config: CurrencyChainConfig) -> Result<Self> {
+        let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
+        
+        Ok(Self {
             config,
+            rpc_client: Arc::new(rpc_client),
             transactions: Arc::new(RwLock::new(HashMap::new())),
             current_block: Arc::new(RwLock::new(1)),
             wallets: Arc::new(RwLock::new(HashMap::new())),
             stakes: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
+            shutdown_tx: None,
+        })
+    }
+
+    /// Create new currency chain client with mock RPC for testing
+    pub fn new_mock(config: CurrencyChainConfig) -> Self {
+        let rpc_client = MockRpcClient::new();
+        
+        Self {
+            config,
+            rpc_client: Arc::new(rpc_client),
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            current_block: Arc::new(RwLock::new(1)),
+            wallets: Arc::new(RwLock::new(HashMap::new())),
+            stakes: Arc::new(RwLock::new(HashMap::new())),
+            tokenomics: None,
+            shutdown_tx: None,
         }
     }
 
@@ -102,14 +127,91 @@ impl CurrencyChainClient {
     pub fn with_tokenomics(
         config: CurrencyChainConfig,
         tokenomics: Arc<TokenomicsManager>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
+        
+        Ok(Self {
             config,
+            rpc_client: Arc::new(rpc_client),
             transactions: Arc::new(RwLock::new(HashMap::new())),
             current_block: Arc::new(RwLock::new(1)),
             wallets: Arc::new(RwLock::new(HashMap::new())),
             stakes: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: Some(tokenomics),
+            shutdown_tx: None,
+        })
+    }
+
+    /// Start block synchronization from blockchain
+    /// Polls for new blocks and updates transaction confirmations
+    pub async fn start_sync(&mut self) -> Result<()> {
+        use tokio::time::{sleep, Duration};
+
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+        self.shutdown_tx = Some(shutdown_tx);
+
+        let rpc_client = Arc::clone(&self.rpc_client);
+        let transactions = Arc::clone(&self.transactions);
+        let current_block = Arc::clone(&self.current_block);
+        let confirmation_blocks = self.config.confirmation_blocks;
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        tracing::info!("Block sync task shutting down");
+                        break;
+                    }
+                    _ = sleep(Duration::from_secs(2)) => {
+                        // Poll for new block height
+                        match rpc_client.get_current_height().await {
+                            Ok(new_height) => {
+                                let mut current = current_block.write().unwrap();
+                                let old_height = *current;
+                                
+                                if new_height > old_height {
+                                    *current = new_height;
+                                    drop(current);
+                                    
+                                    // Update transaction confirmations
+                                    let mut txs = transactions.write().unwrap();
+                                    for tx in txs.values_mut() {
+                                        if tx.block_height > 0 && tx.status == "pending" {
+                                            let confirmations = new_height.saturating_sub(tx.block_height) as u32;
+                                            tx.confirmations = confirmations;
+                                            
+                                            if confirmations >= confirmation_blocks {
+                                                tx.status = "confirmed".to_string();
+                                                tracing::debug!(
+                                                    "Transaction {} confirmed with {} confirmations",
+                                                    tx.id, confirmations
+                                                );
+                                            }
+                                        }
+                                    }
+                                    
+                                    tracing::debug!(
+                                        "Block sync: height {} -> {} ({} new blocks)",
+                                        old_height, new_height, new_height - old_height
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to query block height: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Stop block synchronization
+    pub async fn stop_sync(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(()).await;
         }
     }
 
@@ -288,24 +390,6 @@ impl CurrencyChainClient {
         *self.current_block.read().unwrap()
     }
 
-    /// Advance block height (simulated)
-    pub fn advance_block(&self) {
-        let mut block = self.current_block.write().unwrap();
-        *block += 1;
-
-        // Update confirmations for pending transactions
-        let mut txs = self.transactions.write().unwrap();
-        for tx in txs.values_mut() {
-            if tx.status == "pending" || tx.status == "confirmed" {
-                tx.confirmations += 1;
-                if tx.confirmations >= 6 {
-                    tx.status = "confirmed".to_string();
-                }
-                tx.block_height = *block;
-            }
-        }
-    }
-
     /// Get all transactions for a user
     pub fn get_user_transactions(&self, user_id: &UserId) -> Result<Vec<CurrencyTransaction>> {
         let txs = self.transactions.read().unwrap();
@@ -320,6 +404,11 @@ impl CurrencyChainClient {
     pub fn get_wallet(&self, user_id: &UserId) -> Result<Option<Wallet>> {
         Ok(self.wallets.read().unwrap().get(user_id).cloned())
     }
+
+    /// Get current block height from blockchain
+    pub async fn get_current_height(&self) -> Result<u64> {
+        self.rpc_client.get_current_height().await
+    }
 }
 
 #[cfg(test)]
@@ -328,7 +417,7 @@ mod tests {
 
     #[test]
     fn test_create_wallet() {
-        let client = CurrencyChainClient::new(CurrencyChainConfig::default());
+        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
         let user_id = UserId(Uuid::new_v4());
         let wallet = client.create_wallet(&user_id, 1000).unwrap();
         assert_eq!(wallet.balance, 1000);
@@ -336,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_transfer() {
-        let client = CurrencyChainClient::new(CurrencyChainConfig::default());
+        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
         let alice = UserId(Uuid::new_v4());
         let bob = UserId(Uuid::new_v4());
 
@@ -353,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_stake() {
-        let client = CurrencyChainClient::new(CurrencyChainConfig::default());
+        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
         let user_id = UserId(Uuid::new_v4());
 
         client.create_wallet(&user_id, 1000).unwrap();
@@ -364,5 +453,19 @@ mod tests {
         let wallet = client.get_wallet(&user_id).unwrap().unwrap();
         assert_eq!(wallet.balance, 500);
         assert_eq!(wallet.staked, 500);
+    }
+
+    #[tokio::test]
+    async fn test_block_sync() {
+        let mut client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+        
+        // Start sync task
+        client.start_sync().await.unwrap();
+        
+        // Give it time to poll once
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        
+        // Stop sync
+        client.stop_sync().await;
     }
 }

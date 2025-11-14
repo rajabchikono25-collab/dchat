@@ -14,6 +14,7 @@ use dchat_core::types::MessageId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 /// Pruning configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +252,11 @@ pub struct PruningManager {
 
     /// Total messages pruned
     total_pruned: u64,
+
+    /// Optional storage backend for actual size queries and deletion
+    /// If None, uses average_message_size estimate from config
+    #[cfg(feature = "storage-integration")]
+    storage: Option<Arc<dchat_storage::Database>>,
 }
 
 impl PruningManager {
@@ -264,6 +270,23 @@ impl PruningManager {
             local_cache: HashSet::new(),
             current_state_size: 0,
             total_pruned: 0,
+            #[cfg(feature = "storage-integration")]
+            storage: None,
+        }
+    }
+
+    /// Create new pruning manager with storage backend integration
+    #[cfg(feature = "storage-integration")]
+    pub fn with_storage(config: PruningConfig, storage: Arc<dchat_storage::Database>) -> Self {
+        Self {
+            config,
+            active_policy: None,
+            checkpoints: HashMap::new(),
+            pending_pruning: HashSet::new(),
+            local_cache: HashSet::new(),
+            current_state_size: 0,
+            total_pruned: 0,
+            storage: Some(storage),
         }
     }
 
@@ -454,28 +477,37 @@ impl PruningManager {
     }
 
     /// Execute pruning operation
-    pub fn execute_pruning(&mut self) -> Result<PruningResult> {
+    pub async fn execute_pruning(&mut self) -> Result<PruningResult> {
         let start = SystemTime::now();
 
         let messages_to_prune: Vec<_> = self.pending_pruning.drain().collect();
         let messages_pruned = messages_to_prune.len() as u64;
 
-        // Size calculation:
-        // If storage integration is available (via external interface), actual sizes are queried.
-        // For standalone operation, use average message size estimate (1KB default).
-        //
-        // Integration pattern:
-        //   1. Convert MessageId to String: msg_id.0.to_string()
-        //   2. Call storage.get_message_sizes(&message_id_strings)
-        //   3. Sum returned sizes
-        //   4. Call storage.delete_messages(&message_id_strings) to actually prune
-        //
-        // To integrate with dchat-storage Database:
-        //   let msg_id_strings: Vec<String> = messages_to_prune.iter().map(|m| m.0.to_string()).collect();
-        //   let (deleted_count, bytes_freed) = storage.delete_messages(&msg_id_strings).await?;
-        //
-        // For now, use configured average size for estimation
-        let bytes_freed = messages_pruned * self.config.average_message_size;
+        // Calculate actual sizes using storage backend if available
+        let bytes_freed = {
+            #[cfg(feature = "storage-integration")]
+            {
+                if let Some(storage) = &self.storage {
+                    // Convert MessageId to String for database queries
+                    let msg_id_strings: Vec<String> = messages_to_prune
+                        .iter()
+                        .map(|m| m.0.to_string())
+                        .collect();
+
+                    // Delete messages and get actual bytes freed
+                    let (_deleted_count, bytes) = storage.delete_messages(&msg_id_strings).await?;
+                    bytes
+                } else {
+                    // Fallback to average size estimation
+                    messages_pruned * self.config.average_message_size
+                }
+            }
+            #[cfg(not(feature = "storage-integration"))]
+            {
+                // Use average size estimation when storage feature disabled
+                messages_pruned * self.config.average_message_size
+            }
+        };
 
         // Update state size
         self.current_state_size = self.current_state_size.saturating_sub(bytes_freed);
@@ -505,18 +537,7 @@ impl PruningManager {
     }
 
     /// Emergency pruning when state size exceeds limit
-    pub fn emergency_prune(&mut self, force_prune_count: u64) -> Result<PruningResult> {
-        // Emergency pruning strategy: oldest-first selection
-        //
-        // Integration requirements for storage backend (dchat-db):
-        // 1. storage.query_oldest_messages(limit: force_prune_count) -> Vec<MessageId>
-        // 2. Filter: exclude priority channels from active governance policy
-        // 3. Filter: exclude messages with archival flags (disputes, votes)
-        // 4. Sort: timestamp ASC (oldest first), prioritize expired messages
-        //
-        // Current implementation uses deterministic UUID generation for testing.
-        // In production, replace with storage.query_oldest_messages() call.
-
+    pub async fn emergency_prune(&mut self, force_prune_count: u64) -> Result<PruningResult> {
         tracing::warn!(
             force_prune_count,
             current_state_size = self.current_state_size,
@@ -524,16 +545,33 @@ impl PruningManager {
             "Emergency pruning triggered due to state size limit"
         );
 
-        // Deterministic selection: use node_type as seed for consistent emergency behavior
-        // In production, this is replaced by storage layer query
+        // Query oldest messages from storage backend if available
+        #[cfg(feature = "storage-integration")]
+        {
+            if let Some(storage) = &self.storage {
+                // Query oldest messages from database
+                let msg_id_strings = storage
+                    .query_oldest_messages(force_prune_count as usize)
+                    .await?;
+
+                // Convert strings to MessageIds and mark for pruning
+                for id_str in msg_id_strings {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                        self.mark_for_pruning(MessageId(uuid));
+                    }
+                }
+
+                return self.execute_pruning().await;
+            }
+        }
+
+        // Fallback: deterministic selection for testing without storage
         let base_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         for i in 0..force_prune_count {
-            // Create deterministic message ID for testing
-            // Production: msg_id = storage.query_oldest_messages()[i]
             let timestamp = base_time.saturating_sub(i * 3600); // 1 hour intervals going back
             let mut uuid_bytes = [0u8; 16];
             uuid_bytes[0..8].copy_from_slice(&timestamp.to_le_bytes());
@@ -543,7 +581,7 @@ impl PruningManager {
             self.mark_for_pruning(msg_id);
         }
 
-        self.execute_pruning()
+        self.execute_pruning().await
     }
 
     /// Check if emergency pruning needed

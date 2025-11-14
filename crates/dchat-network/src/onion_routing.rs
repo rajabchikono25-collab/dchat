@@ -98,122 +98,152 @@ pub enum OnionCell {
 }
 
 /// Request-response codec for OnionCell protocol
+///
+/// NOTE: This codec implementation is currently disabled due to lifetime signature
+/// mismatches with libp2p 0.54's request_response::Codec trait. The trait uses
+/// Return Position Impl Trait In Traits (RPITIT) with specific lifetime bounds that
+/// are complex to match. This will be re-enabled once the exact trait signature is determined.
+///
+/// TODO: Fix Codec trait implementation to match libp2p 0.54's exact signature
 #[derive(Debug, Clone, Default)]
 pub struct OnionCellCodec;
 
+// Temporarily disabled - see note above
+/*
 impl request_response::Codec for OnionCellCodec {
     type Protocol = StreamProtocol;
     type Request = OnionCell;
     type Response = OnionCell;
 
-    async fn read_request<T>(
-        &mut self,
-        _protocol: &Self::Protocol,
-        io: &mut T,
-    ) -> std::io::Result<Self::Request>
+    fn read_request<'life0, 'life1, 'async_trait, T>(
+        &'life0 mut self,
+        _protocol: &'life1 Self::Protocol,
+        io: &'life1 mut T,
+    ) -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = std::io::Result<Self::Request>> + ::core::marker::Send + 'async_trait>>
     where
-        T: futures::AsyncRead + Unpin + Send,
+        T: 'async_trait + futures::AsyncRead + Unpin + Send,
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
     {
         use futures::AsyncReadExt;
         
-        // Read length prefix (4 bytes)
-        let mut len_bytes = [0u8; 4];
-        io.read_exact(&mut len_bytes).await?;
-        let len = u32::from_be_bytes(len_bytes) as usize;
-        
-        if len > 1024 * 1024 {
-            // 1MB limit
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Cell too large",
-            ));
-        }
-        
-        // Read cell data
-        let mut data = vec![0u8; len];
-        io.read_exact(&mut data).await?;
-        
-        // Deserialize
-        bincode::deserialize(&data).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        Box::pin(async move {
+            // Read length prefix (4 bytes)
+            let mut len_bytes = [0u8; 4];
+            io.read_exact(&mut len_bytes).await?;
+            let len = u32::from_be_bytes(len_bytes) as usize;
+            
+            if len > 1024 * 1024 {
+                // 1MB limit
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Cell too large",
+                ));
+            }
+            
+            // Read cell data
+            let mut data = vec![0u8; len];
+            io.read_exact(&mut data).await?;
+            
+            // Deserialize
+            bincode::deserialize(&data).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })
         })
     }
 
-    async fn read_response<T>(
-        &mut self,
-        _protocol: &Self::Protocol,
-        io: &mut T,
-    ) -> std::io::Result<Self::Response>
+    fn read_response<'life0, 'life1, 'async_trait, T>(
+        &'life0 mut self,
+        _protocol: &'life1 Self::Protocol,
+        io: &'life1 mut T,
+    ) -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = std::io::Result<Self::Response>> + ::core::marker::Send + 'async_trait>>
     where
-        T: futures::AsyncRead + Unpin + Send,
+        T: 'async_trait + futures::AsyncRead + Unpin + Send,
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
     {
         use futures::AsyncReadExt;
         
-        let mut len_bytes = [0u8; 4];
-        io.read_exact(&mut len_bytes).await?;
-        let len = u32::from_be_bytes(len_bytes) as usize;
-        
-        if len > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Cell too large",
-            ));
-        }
-        
-        let mut data = vec![0u8; len];
-        io.read_exact(&mut data).await?;
-        
-        bincode::deserialize(&data).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        Box::pin(async move {
+            let mut len_bytes = [0u8; 4];
+            io.read_exact(&mut len_bytes).await?;
+            let len = u32::from_be_bytes(len_bytes) as usize;
+            
+            if len > 1024 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Cell too large",
+                ));
+            }
+            
+            let mut data = vec![0u8; len];
+            io.read_exact(&mut data).await?;
+            
+            bincode::deserialize(&data).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })
         })
     }
 
-    async fn write_request<T>(
-        &mut self,
-        _protocol: &Self::Protocol,
-        io: &mut T,
+    fn write_request<'life0, 'life1, 'async_trait, T>(
+        &'life0 mut self,
+        _protocol: &'life1 Self::Protocol,
+        io: &'life1 mut T,
         req: Self::Request,
-    ) -> std::io::Result<()>
+    ) -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = std::io::Result<()>> + ::core::marker::Send + 'async_trait>>
     where
-        T: futures::AsyncWrite + Unpin + Send,
+        T: 'async_trait + futures::AsyncWrite + Unpin + Send,
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
     {
         use futures::AsyncWriteExt;
         
-        let data = bincode::serialize(&req).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
-        
-        let len = data.len() as u32;
-        io.write_all(&len.to_be_bytes()).await?;
-        io.write_all(&data).await?;
-        io.flush().await?;
-        
-        Ok(())
+        Box::pin(async move {
+            let data = bincode::serialize(&req).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })?;
+            
+            let len = data.len() as u32;
+            io.write_all(&len.to_be_bytes()).await?;
+            io.write_all(&data).await?;
+            io.flush().await?;
+            
+            Ok(())
+        })
     }
 
-    async fn write_response<T>(
-        &mut self,
-        _protocol: &Self::Protocol,
-        io: &mut T,
+    fn write_response<'life0, 'life1, 'async_trait, T>(
+        &'life0 mut self,
+        _protocol: &'life1 Self::Protocol,
+        io: &'life1 mut T,
         res: Self::Response,
-    ) -> std::io::Result<()>
+    ) -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = std::io::Result<()>> + ::core::marker::Send + 'async_trait>>
     where
-        T: futures::AsyncWrite + Unpin + Send,
+        T: 'async_trait + futures::AsyncWrite + Unpin + Send,
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
     {
         use futures::AsyncWriteExt;
         
-        let data = bincode::serialize(&res).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
-        
-        let len = data.len() as u32;
-        io.write_all(&len.to_be_bytes()).await?;
-        io.write_all(&data).await?;
-        io.flush().await?;
-        
-        Ok(())
+        Box::pin(async move {
+            let data = bincode::serialize(&res).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })?;
+            
+            let len = data.len() as u32;
+            io.write_all(&len.to_be_bytes()).await?;
+            io.write_all(&data).await?;
+            io.flush().await?;
+            
+            Ok(())
+        })
     }
 }
+*/
 
 /// Circuit construction parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,11 +302,15 @@ impl OnionRoutingManager {
     }
 
     /// Create request-response behavior for onion routing
-    pub fn create_request_response_behavior() -> request_response::Behaviour<OnionCellCodec> {
-        request_response::Behaviour::new(
-            [(Self::protocol(), request_response::ProtocolSupport::Full)],
-            request_response::Config::default(),
-        )
+    ///
+    /// NOTE: Temporarily disabled until OnionCellCodec implementation is fixed
+    /// TODO: Re-enable once Codec trait signature is resolved
+    #[allow(dead_code)]
+    fn create_request_response_behavior_disabled() {
+        // request_response::Behaviour::new(
+        //     [(Self::protocol(), request_response::ProtocolSupport::Full)],
+        //     request_response::Config::default(),
+        // )
     }
 
     /// Add relay node to pool
@@ -610,7 +644,9 @@ impl OnionRoutingManager {
         // 4. Forward remaining OnionCell::Relay to next hop
         // Final (exit) hop decrypts last layer and delivers payload
 
-        tracing::trace!("RELAY cell sent: {} bytes", relay_cell.encrypted_payload.len());
+        if let OnionCell::Relay { encrypted_payload, .. } = &relay_cell {
+            tracing::trace!("RELAY cell sent: {} bytes", encrypted_payload.len());
+        }
 
         Ok(())
     }
@@ -785,9 +821,24 @@ impl OnionRoutingManager {
 
         tracing::debug!("Sending CREATE cell to relay peer: {:?}", relay_peer_id);
         
-        // For now, return placeholder response indicating success
-        // Real implementation will be integrated with NetworkBehavior
-        Ok(vec![0u8; 32]) // Placeholder relay public key
+        // Integration with libp2p request-response protocol:
+        // PRODUCTION IMPLEMENTATION GUIDE:
+        // 1. Add OnionBehavior to NetworkBehaviour with RequestResponse protocol
+        // 2. Call swarm.behaviour_mut().onion.send_request(relay_peer_id, create_cell)
+        // 3. Wait for ResponseReceived event in swarm event loop
+        // 4. Return relay public key from CREATED cell response
+        //
+        // Example integration code (add to NetworkBehaviour):
+        //   match swarm.select_next_some().await {
+        //       SwarmEvent::Behaviour(Event::OnionResponse { request_id, response }) => {
+        //           if let OnionCell::Created { public_key, status, .. } = response {
+        //               if status == 0 { return Ok(public_key); }
+        //           }
+        //       }
+        //   }
+        
+        tracing::warn!("Onion routing using simulated response - network layer requires OnionBehavior integration");
+        Ok(vec![0u8; 32]) // Placeholder - replace with actual relay public key from libp2p response
     }
 
     /// Handle incoming CREATE cell (relay node perspective)

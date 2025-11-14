@@ -8,7 +8,7 @@ license.workspace = true
 # Workspace dependencies
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
-dchat-messaging = { path = "../dchat-messaging" }
+# dchat-messaging = { path = "../dchat-messaging" }  # Removed to break circular dependency
 
 # Async runtime
 tokio = { workspace = true }

@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
+dchat-storage = { path = "../dchat-storage", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 blake3 = "1.5"
@@ -26,6 +27,10 @@ tracing = { workspace = true }
 
 # BLS signature aggregation for sharding
 blst = "0.3"
+
+[features]
+default = []
+storage-integration = ["dchat-storage"]
 
 [dev-dependencies]
 tokio = { version = "1.35", features = ["full"] }

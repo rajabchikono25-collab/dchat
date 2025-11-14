@@ -15,6 +15,9 @@ pub enum SdkError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Blockchain error: {0}")]
+    Blockchain(String),
+
     #[error("Identity error: {0}")]
     Identity(String),
 

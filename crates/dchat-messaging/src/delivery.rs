@@ -1,7 +1,6 @@
 //! Proof-of-delivery tracking
 
-use dchat_blockchain::BlockchainClient;
-use dchat_chain::TransactionStatus;
+use dchat_blockchain::{BlockchainClient, TransactionStatus};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{MessageId, Signature};
 use serde::{Deserialize, Serialize};
@@ -98,7 +97,7 @@ impl DeliveryProof {
     pub async fn verify_with_chain_client(
         &self,
         recipient_pubkey: &[u8],
-        chain_client: Option<&ChainVerifier>,
+        chain_client: Option<&impl ChainVerifier>,
     ) -> Result<bool> {
         // First verify the basic proof (signature and timestamp)
         if !self.verify(recipient_pubkey)? {
@@ -157,7 +156,7 @@ impl DeliveryProof {
             .submit_delivery_proof(
                 self.message_id,
                 self.relay_peer_id.clone(),
-                self.recipient_id,
+                self.recipient_id.clone(),
                 &signature.0,
                 datetime,
                 self.content_hash.clone(),
@@ -633,7 +632,8 @@ impl ChainVerifier for ProductionChainVerifier {
                         block_height,
                         block_hash: _,
                     } => {
-                        let current_block = self.client.get_current_block();
+                        let current_block = self.client.get_current_height().await
+                            .unwrap_or(block_height);
                         let confirmations = current_block.saturating_sub(block_height);
 
                         if confirmations < self.required_confirmations as u64 {
@@ -677,7 +677,8 @@ impl ChainVerifier for ProductionChainVerifier {
                     block_height,
                     block_hash: _,
                 } => {
-                    let current_block = self.client.get_current_block();
+                    let current_block = self.client.get_current_height().await
+                        .unwrap_or(block_height);
                     Ok(current_block.saturating_sub(block_height))
                 }
                 _ => Ok(0),

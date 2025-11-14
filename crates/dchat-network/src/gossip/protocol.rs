@@ -30,7 +30,7 @@ pub enum GossipError {
 ///
 /// PeerIds in libp2p are derived from public keys. For Ed25519 keys,
 /// the PeerId embeds the public key directly, allowing signature verification.
-fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> Result<VerifyingKey, GossipError> {
+fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> std::result::Result<VerifyingKey, GossipError> {
     // Try to extract the public key from the PeerId
     // For Ed25519 keys, PeerId contains the multihash of the public key
     // We need to decode it to get the actual public key bytes
@@ -42,14 +42,14 @@ fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> Result<VerifyingKey, Go
     match PublicKey::try_decode_protobuf(&peer_bytes) {
         Ok(public_key) => {
             // Check if it's an Ed25519 key
-            match public_key {
-                PublicKey::Ed25519(ed25519_pk) => {
+            match public_key.try_into_ed25519() {
+                Ok(ed25519_pk) => {
                     // Convert libp2p Ed25519 public key to ed25519-dalek VerifyingKey
                     let key_bytes: [u8; 32] = ed25519_pk.to_bytes();
                     VerifyingKey::from_bytes(&key_bytes)
                         .map_err(|e| GossipError::InvalidPublicKey(e.to_string()))
                 }
-                _ => Err(GossipError::UnsupportedKeyType),
+                Err(_) => Err(GossipError::UnsupportedKeyType),
             }
         }
         Err(e) => {
@@ -325,7 +325,7 @@ impl GossipProtocol {
     }
 
     /// Get or extract Ed25519 key for a peer (with caching)
-    fn get_peer_key(&mut self, peer_id: &PeerId) -> Result<&VerifyingKey, GossipError> {
+    fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
         if !self.peer_key_cache.contains_key(peer_id) {
             let key = extract_ed25519_key_from_peer_id(peer_id)?;
             self.peer_key_cache.insert(*peer_id, key);

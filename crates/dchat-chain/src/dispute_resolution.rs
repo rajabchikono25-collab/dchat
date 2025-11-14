@@ -96,6 +96,8 @@ pub struct ForkEvidence {
     pub sequence_number: u64,
     /// Public key of the accused validator (32 bytes Ed25519)
     pub accused_public_key: Vec<u8>,
+    /// Accused validator identifier
+    pub accused: String,
 }
 
 /// Integrity violation evidence
@@ -257,9 +259,12 @@ impl DisputeResolver {
     fn validate_evidence(&self, dispute_type: &DisputeType, evidence: &[u8]) -> Result<()> {
         match dispute_type {
             DisputeType::ForkDetected => {
-                // Should deserialize to ForkEvidence
-                serde_json::from_slice::<ForkEvidence>(evidence)
+                // Deserialize fork evidence
+                let fork_evidence: ForkEvidence = serde_json::from_slice(evidence)
                     .map_err(|_| Error::network("Invalid fork evidence format"))?;
+                
+                // Verify Ed25519 signatures on both messages
+                self.verify_fork_signatures(&fork_evidence)?;
             }
             DisputeType::IntegrityViolation => {
                 // Should deserialize to IntegrityEvidence
@@ -275,6 +280,84 @@ impl DisputeResolver {
         }
 
         Ok(())
+    }
+    
+    /// Verify Ed25519 signatures on fork evidence messages
+    fn verify_fork_signatures(&self, evidence: &ForkEvidence) -> Result<()> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        
+        // Extract accused validator's public key
+        // In production: query from validator registry on chain
+        let public_key_bytes = self.get_validator_pubkey(&evidence.accused)?;
+        
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
+        
+        // Verify signature A on message A
+        let sig_a_bytes: [u8; 64] = evidence.signature_a.as_slice()
+            .try_into()
+            .map_err(|_| Error::crypto("Invalid signature A length"))?;
+        let sig_a = Signature::from_bytes(&sig_a_bytes);
+        
+        verifying_key.verify_strict(&evidence.message_a, &sig_a)
+            .map_err(|e| Error::crypto(format!("Signature A verification failed: {}", e)))?;
+        
+        // Verify signature B on message B
+        let sig_b_bytes: [u8; 64] = evidence.signature_b.as_slice()
+            .try_into()
+            .map_err(|_| Error::crypto("Invalid signature B length"))?;
+        let sig_b = Signature::from_bytes(&sig_b_bytes);
+        
+        verifying_key.verify_strict(&evidence.message_b, &sig_b)
+            .map_err(|e| Error::crypto(format!("Signature B verification failed: {}", e)))?;
+        
+        // Verify both messages have same sequence number (fork proof)
+        let seq_a = self.extract_sequence_number(&evidence.message_a)?;
+        let seq_b = self.extract_sequence_number(&evidence.message_b)?;
+        
+        if seq_a != seq_b {
+            return Err(Error::validation("Messages have different sequence numbers - not a fork"));
+        }
+        
+        // Verify messages are different
+        if evidence.message_a == evidence.message_b {
+            return Err(Error::validation("Messages are identical - not a fork"));
+        }
+        
+        tracing::info!(
+            "✅ Fork evidence verified: validator {} signed conflicting messages at sequence {}",
+            evidence.accused,
+            seq_a
+        );
+        
+        Ok(())
+    }
+    
+    /// Extract sequence number from message (first 8 bytes as u64)
+    fn extract_sequence_number(&self, message: &[u8]) -> Result<u64> {
+        if message.len() < 8 {
+            return Err(Error::validation("Message too short to contain sequence number"));
+        }
+        
+        let seq_bytes: [u8; 8] = message[0..8]
+            .try_into()
+            .map_err(|_| Error::internal("Failed to parse sequence number"))?;
+        
+        Ok(u64::from_le_bytes(seq_bytes))
+    }
+    
+    /// Get validator public key from chain registry
+    /// Production: query validator registry on blockchain
+    fn get_validator_pubkey(&self, validator_id: &str) -> Result<[u8; 32]> {
+        // In production: query from on-chain validator registry
+        // let pubkey = chain_client.get_validator_info(validator_id).await?.public_key;
+        
+        // For now, return error indicating integration needed
+        tracing::warn!("Validator public key lookup requires chain integration");
+        Err(Error::network(format!(
+            "Validator public key lookup not yet integrated for {}",
+            validator_id
+        )))
     }
 
     /// Hash evidence for integrity

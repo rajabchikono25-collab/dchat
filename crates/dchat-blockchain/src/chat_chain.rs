@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
+use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
+use dchat_core::error::{Error, Result};
 
 /// Configuration for Chat Chain client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,12 +39,11 @@ impl Default for ChatChainConfig {
 
 /// Chat Chain client for on-chain operations: identity, messaging, channels, governance
 pub struct ChatChainClient {
-    #[allow(dead_code)]
     config: ChatChainConfig,
-    /// Transaction cache
-    transactions: Arc<RwLock<HashMap<Uuid, Transaction>>>,
-    /// Current block height
-    current_block: Arc<RwLock<u64>>,
+    /// Transaction cache with hash mapping
+    transactions: Arc<RwLock<HashMap<Uuid, (Transaction, Option<String>)>>>,
+    /// RPC client for blockchain queries
+    rpc_client: Arc<dyn ChainRpcClient>,
     /// Reputation scores per user
     reputation_scores: Arc<RwLock<HashMap<UserId, u32>>>,
     /// Channel ownership and metadata
@@ -60,30 +61,45 @@ pub struct ChannelMetadata {
 }
 
 impl ChatChainClient {
-    /// Create new chat chain client
-    pub fn new(config: ChatChainConfig) -> Self {
+    /// Create new chat chain client with production RPC
+    pub fn new(config: ChatChainConfig) -> Result<Self> {
+        let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
+        
+        Ok(Self {
+            config,
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            rpc_client: Arc::new(rpc_client),
+            reputation_scores: Arc::new(RwLock::new(HashMap::new())),
+            channels: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+    
+    /// Create new chat chain client with mock RPC for testing
+    pub fn new_mock(config: ChatChainConfig) -> Self {
+        let rpc_client = MockRpcClient::new();
+        
         Self {
             config,
             transactions: Arc::new(RwLock::new(HashMap::new())),
-            current_block: Arc::new(RwLock::new(1)),
+            rpc_client: Arc::new(rpc_client),
             reputation_scores: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Register user identity on chat chain
-    pub fn register_user(&self, user_id: &UserId, public_key: Vec<u8>) -> Result<Uuid, String> {
+    pub async fn register_user(&self, user_id: &UserId, public_key: Vec<u8>) -> Result<Uuid> {
         let tx_id = Uuid::new_v4();
         let payload_json = serde_json::json!({
             "public_key": hex::encode(&public_key),
             "timestamp": Utc::now().timestamp(),
         });
-        let payload = serde_json::to_vec(&payload_json).map_err(|e| e.to_string())?;
+        let payload = serde_json::to_vec(&payload_json).map_err(|e| Error::Serialization(e))?;
 
         let tx = Transaction {
             tx_id,
             tx_type: TransactionType::RegisterUser,
-            payload,
+            payload: payload.clone(),
             tx_hash: format!("{:x}", uuid::Uuid::new_v4()),
             status: TransactionStatus::Pending,
             submitted_at: Utc::now(),
@@ -91,7 +107,12 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        self.transactions.write().unwrap().insert(tx_id, tx);
+        // Submit to blockchain via RPC
+        let tx_hash = self.rpc_client.submit_transaction(payload).await
+            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+
+        // Store transaction with hash
+        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
 
         // Initialize reputation score
         self.reputation_scores
@@ -103,22 +124,22 @@ impl ChatChainClient {
     }
 
     /// Send direct message on chat chain (ordering only)
-    pub fn send_direct_message(
+    pub async fn send_direct_message(
         &self,
         _sender: &UserId,
         _recipient: &UserId,
         _message_id: MessageId,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid> {
         let tx_id = Uuid::new_v4();
         let payload_json = serde_json::json!({
             "timestamp": Utc::now().timestamp(),
         });
-        let payload = serde_json::to_vec(&payload_json).map_err(|e| e.to_string())?;
+        let payload = serde_json::to_vec(&payload_json).map_err(|e| Error::Serialization(e))?;
 
         let tx = Transaction {
             tx_id,
             tx_type: TransactionType::SendDirectMessage,
-            payload,
+            payload: payload.clone(),
             tx_hash: format!("{:x}", uuid::Uuid::new_v4()),
             status: TransactionStatus::Pending,
             submitted_at: Utc::now(),
@@ -126,29 +147,34 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        self.transactions.write().unwrap().insert(tx_id, tx);
+        // Submit to blockchain via RPC
+        let tx_hash = self.rpc_client.submit_transaction(payload).await
+            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+
+        // Store transaction with hash
+        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
         Ok(tx_id)
     }
 
     /// Create channel on chat chain
-    pub fn create_channel(
+    pub async fn create_channel(
         &self,
-        owner: &UserId,
+        creator: &UserId,
         channel_id: &ChannelId,
         name: String,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid> {
         let tx_id = Uuid::new_v4();
         let payload_json = serde_json::json!({
             "channel_id": channel_id,
             "name": name,
             "timestamp": Utc::now().timestamp(),
         });
-        let payload = serde_json::to_vec(&payload_json).map_err(|e| e.to_string())?;
+        let payload = serde_json::to_vec(&payload_json).map_err(|e| Error::Serialization(e))?;
 
         let tx = Transaction {
             tx_id,
             tx_type: TransactionType::CreateChannel,
-            payload,
+            payload: payload.clone(),
             tx_hash: format!("{:x}", uuid::Uuid::new_v4()),
             status: TransactionStatus::Pending,
             submitted_at: Utc::now(),
@@ -156,12 +182,17 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        self.transactions.write().unwrap().insert(tx_id, tx);
+        // Submit to blockchain via RPC
+        let tx_hash = self.rpc_client.submit_transaction(payload).await
+            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+
+        // Store transaction with hash
+        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
 
         // Store channel metadata
         let channel_meta = ChannelMetadata {
             channel_id: channel_id.clone(),
-            owner: owner.clone(),
+            owner: creator.clone(),
             name,
             created_at: Utc::now().timestamp(),
             is_token_gated: false,
@@ -175,22 +206,22 @@ impl ChatChainClient {
     }
 
     /// Post message to channel on chat chain
-    pub fn post_to_channel(
+    pub async fn post_to_channel(
         &self,
         _sender: &UserId,
         _channel_id: &ChannelId,
         _message_id: MessageId,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid> {
         let tx_id = Uuid::new_v4();
         let payload_json = serde_json::json!({
             "timestamp": Utc::now().timestamp(),
         });
-        let payload = serde_json::to_vec(&payload_json).map_err(|e| e.to_string())?;
+        let payload = serde_json::to_vec(&payload_json).map_err(|e| Error::Serialization(e))?;
 
         let tx = Transaction {
             tx_id,
             tx_type: TransactionType::PostToChannel,
-            payload,
+            payload: payload.clone(),
             tx_hash: format!("{:x}", uuid::Uuid::new_v4()),
             status: TransactionStatus::Pending,
             submitted_at: Utc::now(),
@@ -198,12 +229,17 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        self.transactions.write().unwrap().insert(tx_id, tx);
+        // Submit to blockchain via RPC
+        let tx_hash = self.rpc_client.submit_transaction(payload).await
+            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+
+        // Store transaction with hash
+        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
         Ok(tx_id)
     }
 
-    /// Get user's reputation score
-    pub fn get_reputation(&self, user_id: &UserId) -> Result<u32, String> {
+    /// Get reputation score
+    pub fn get_reputation(&self, user_id: &UserId) -> Result<u32> {
         Ok(self
             .reputation_scores
             .read()
@@ -214,7 +250,7 @@ impl ChatChainClient {
     }
 
     /// Update user's reputation score
-    pub fn update_reputation(&self, user_id: &UserId, delta: i32) -> Result<u32, String> {
+    pub fn update_reputation(&self, user_id: &UserId, delta: i32) -> Result<u32> {
         let mut scores = self.reputation_scores.write().unwrap();
         let current = scores.get(user_id).copied().unwrap_or(0);
         let new_score = if delta < 0 {
@@ -227,35 +263,23 @@ impl ChatChainClient {
     }
 
     /// Get transaction by ID
-    pub fn get_transaction(&self, tx_id: &Uuid) -> Result<Transaction, String> {
+    pub fn get_transaction(&self, tx_id: &Uuid) -> Result<Transaction> {
         self.transactions
             .read()
             .unwrap()
             .get(tx_id)
-            .cloned()
-            .ok_or_else(|| "Transaction not found".to_string())
-    }
-
-    /// Get current block height
-    pub fn get_current_block(&self) -> Result<u64, String> {
-        Ok(*self.current_block.read().unwrap())
-    }
-
-    /// Advance block height (for testing)
-    pub fn advance_block(&self) -> Result<u64, String> {
-        let mut block = self.current_block.write().unwrap();
-        *block += 1;
-        Ok(*block)
+            .map(|(tx, _hash)| tx.clone())
+            .ok_or_else(|| Error::NotFound(format!("Transaction {}", tx_id)))
     }
 
     /// Get user transactions
-    pub fn get_user_transactions(&self, _user_id: &UserId) -> Result<Vec<Transaction>, String> {
+    pub fn get_user_transactions(&self, _user_id: &UserId) -> Result<Vec<Transaction>> {
         Ok(self
             .transactions
             .read()
             .unwrap()
             .values()
-            .cloned()
+            .map(|(tx, _hash)| tx.clone())
             .collect())
     }
 
@@ -265,48 +289,61 @@ impl ChatChainClient {
         &self,
         tx_id: &Uuid,
         required_confirmations: u32,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         use tokio::time::{sleep, Duration};
 
         // Maximum wait time: 30 seconds
         let max_attempts = 30;
         let mut attempts = 0;
 
+        // Get transaction hash for RPC queries
+        let tx_hash = {
+            let transactions = self.transactions.read().unwrap();
+            let tx_data = transactions.get(tx_id)
+                .ok_or_else(|| Error::NotFound(format!("Transaction {}", tx_id)))?;
+            tx_data.1.clone()
+                .ok_or_else(|| Error::Chain(format!("Transaction not yet submitted to blockchain: {}", tx_id)))?
+        };
+
         while attempts < max_attempts {
-            if let Some(tx) = self.transactions.read().unwrap().get(tx_id) {
-                match &tx.status {
-                    TransactionStatus::Confirmed { .. } => {
-                        // Transaction reached finality
+            // Query blockchain for transaction status
+            let status = self.rpc_client.get_transaction_status(&tx_hash).await
+                .map_err(|e| Error::Chain(format!("RPC error querying status: {}", e)))?;
+
+            match status {
+                TransactionStatus::Confirmed { block_height, .. } => {
+                    // Check if we have enough confirmations
+                    let current_height = self.rpc_client.get_current_height().await
+                        .map_err(|e| Error::Chain(format!("RPC error querying height: {}", e)))?;
+                    
+                    let confirmations = current_height.saturating_sub(block_height);
+                    if confirmations >= required_confirmations as u64 {
+                        // Update local cache
+                        if let Some(tx_data) = self.transactions.write().unwrap().get_mut(tx_id) {
+                            tx_data.0.status = status.clone();
+                            tx_data.0.confirmed_at = Some(Utc::now());
+                        }
                         return Ok(true);
                     }
-                    TransactionStatus::Failed { .. } => {
-                        // Transaction failed
-                        return Ok(false);
-                    }
-                    TransactionStatus::TimedOut => {
-                        // Transaction timed out
-                        return Ok(false);
-                    }
-                    TransactionStatus::Pending => {
-                        // Still pending, wait and retry
-                        // In production, this would check block confirmations
-                        // For now, simulate confirmation after minimum blocks
-                        if attempts >= required_confirmations {
-                            // Mark as confirmed after required confirmations
-                            let current_block = *self.current_block.read().unwrap();
-                            if let Some(tx) = self.transactions.write().unwrap().get_mut(tx_id) {
-                                tx.status = TransactionStatus::Confirmed {
-                                    block_height: current_block,
-                                    block_hash: format!("{:x}", Uuid::new_v4()),
-                                };
-                                tx.confirmed_at = Some(Utc::now());
-                            }
-                            return Ok(true);
-                        }
-                    }
+                    // Not enough confirmations yet, keep waiting
                 }
-            } else {
-                return Err(format!("Transaction not found: {}", tx_id));
+                TransactionStatus::Failed { .. } => {
+                    // Update local cache
+                    if let Some(tx_data) = self.transactions.write().unwrap().get_mut(tx_id) {
+                        tx_data.0.status = status;
+                    }
+                    return Ok(false);
+                }
+                TransactionStatus::TimedOut => {
+                    // Update local cache
+                    if let Some(tx_data) = self.transactions.write().unwrap().get_mut(tx_id) {
+                        tx_data.0.status = status;
+                    }
+                    return Ok(false);
+                }
+                TransactionStatus::Pending => {
+                    // Still pending, continue waiting
+                }
             }
 
             attempts += 1;
@@ -322,37 +359,37 @@ impl ChatChainClient {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_register_user() {
+    #[tokio::test]
+    async fn test_register_user() {
         let config = ChatChainConfig::default();
-        let client = ChatChainClient::new(config);
+        let client = ChatChainClient::new_mock(config);
 
         let user_id = UserId(Uuid::new_v4());
-        let result = client.register_user(&user_id, vec![1, 2, 3]);
+        let result = client.register_user(&user_id, vec![1, 2, 3]).await;
         assert!(result.is_ok());
 
         let reputation = client.get_reputation(&user_id).unwrap();
         assert_eq!(reputation, 50); // Initial reputation
     }
 
-    #[test]
-    fn test_create_channel() {
+    #[tokio::test]
+    async fn test_create_channel() {
         let config = ChatChainConfig::default();
-        let client = ChatChainClient::new(config);
+        let client = ChatChainClient::new_mock(config);
 
         let owner = UserId(Uuid::new_v4());
         let channel_id = ChannelId(Uuid::new_v4());
-        let result = client.create_channel(&owner, &channel_id, "Test Channel".to_string());
+        let result = client.create_channel(&owner, &channel_id, "Test Channel".to_string()).await;
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_reputation_tracking() {
+    #[tokio::test]
+    async fn test_reputation_tracking() {
         let config = ChatChainConfig::default();
-        let client = ChatChainClient::new(config);
+        let client = ChatChainClient::new_mock(config);
 
         let user_id = UserId(Uuid::new_v4());
-        client.register_user(&user_id, vec![1, 2, 3]).unwrap();
+        client.register_user(&user_id, vec![1, 2, 3]).await.unwrap();
 
         // Increase reputation
         client.update_reputation(&user_id, 10).unwrap();
@@ -365,13 +402,16 @@ mod tests {
         assert_eq!(rep, 40);
     }
 
-    #[test]
-    fn test_block_advancement() {
+    #[tokio::test]
+    async fn test_confirmation_tracking() {
         let config = ChatChainConfig::default();
-        let client = ChatChainClient::new(config);
+        let client = ChatChainClient::new_mock(config);
 
-        let block1 = client.get_current_block().unwrap();
-        let block2 = client.advance_block().unwrap();
-        assert_eq!(block2, block1 + 1);
+        let user_id = UserId(Uuid::new_v4());
+        let tx_id = client.register_user(&user_id, vec![1, 2, 3]).await.unwrap();
+
+        // With MockRpcClient, transactions confirm immediately
+        let confirmed = client.wait_for_finality(&tx_id, 1).await.unwrap();
+        assert!(confirmed);
     }
 }

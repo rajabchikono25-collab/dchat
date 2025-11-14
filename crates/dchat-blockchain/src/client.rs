@@ -12,6 +12,234 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
+/// Trait for blockchain RPC client abstraction
+#[async_trait::async_trait]
+pub trait ChainRpcClient: Send + Sync {
+    /// Submit transaction to blockchain and return transaction hash
+    async fn submit_transaction(&self, tx_bytes: Vec<u8>) -> Result<String>;
+    
+    /// Query transaction status by hash
+    async fn get_transaction_status(&self, tx_hash: &str) -> Result<TransactionStatus>;
+    
+    /// Get current block height
+    async fn get_current_height(&self) -> Result<u64>;
+    
+    /// Get transaction receipt
+    async fn get_transaction_receipt(&self, tx_hash: &str) -> Result<Option<TransactionReceipt>>;
+}
+
+/// Production HTTP RPC client implementation
+pub struct HttpRpcClient {
+    rpc_url: String,
+    client: reqwest::Client,
+}
+
+impl HttpRpcClient {
+    pub fn new(rpc_url: String) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
+        
+        Ok(Self { rpc_url, client })
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainRpcClient for HttpRpcClient {
+    async fn submit_transaction(&self, tx_bytes: Vec<u8>) -> Result<String> {
+        use serde_json::json;
+        
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "chain_submitTransaction",
+            "params": [hex::encode(&tx_bytes)],
+            "id": 1
+        });
+        
+        let response = self.client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+        
+        if !response.status().is_success() {
+            return Err(Error::network(format!("RPC returned error: {}", response.status())));
+        }
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+        
+        if let Some(error) = json.get("error") {
+            return Err(Error::network(format!("RPC error: {:?}", error)));
+        }
+        
+        let tx_hash = json["result"]
+            .as_str()
+            .ok_or_else(|| Error::network("Missing transaction hash in response"))?;
+        
+        Ok(tx_hash.to_string())
+    }
+    
+    async fn get_transaction_status(&self, tx_hash: &str) -> Result<TransactionStatus> {
+        use serde_json::json;
+        
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "chain_getTransactionStatus",
+            "params": [tx_hash],
+            "id": 1
+        });
+        
+        let response = self.client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+        
+        if let Some(error) = json.get("error") {
+            return Err(Error::network(format!("RPC error: {:?}", error)));
+        }
+        
+        let status_str = json["result"]["status"]
+            .as_str()
+            .ok_or_else(|| Error::network("Missing status in response"))?;
+        
+        match status_str {
+            "confirmed" => {
+                let block_height = json["result"]["blockHeight"].as_u64().unwrap_or(0);
+                let block_hash = json["result"]["blockHash"].as_str().unwrap_or("").to_string();
+                Ok(TransactionStatus::Confirmed { block_height, block_hash })
+            }
+            "pending" => Ok(TransactionStatus::Pending),
+            "failed" => {
+                let reason = json["result"]["reason"].as_str().unwrap_or("Unknown").to_string();
+                Ok(TransactionStatus::Failed { reason })
+            }
+            _ => Ok(TransactionStatus::Pending)
+        }
+    }
+    
+    async fn get_current_height(&self) -> Result<u64> {
+        use serde_json::json;
+        
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "chain_getBlockHeight",
+            "params": [],
+            "id": 1
+        });
+        
+        let response = self.client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+        
+        if let Some(error) = json.get("error") {
+            return Err(Error::network(format!("RPC error: {:?}", error)));
+        }
+        
+        let height = json["result"]
+            .as_u64()
+            .ok_or_else(|| Error::network("Invalid block height in response"))?;
+        
+        Ok(height)
+    }
+    
+    async fn get_transaction_receipt(&self, tx_hash: &str) -> Result<Option<TransactionReceipt>> {
+        use serde_json::json;
+        
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": "chain_getTransactionReceipt",
+            "params": [tx_hash],
+            "id": 1
+        });
+        
+        let response = self.client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+        
+        if json["result"].is_null() {
+            return Ok(None);
+        }
+        
+        // Parse transaction receipt from JSON
+        // For now, return None if not found
+        Ok(None)
+    }
+}
+
+/// Mock RPC client for testing (simulated responses)
+pub struct MockRpcClient {
+    transactions: Arc<RwLock<HashMap<String, TransactionStatus>>>,
+    current_block: Arc<RwLock<u64>>,
+}
+
+impl MockRpcClient {
+    pub fn new() -> Self {
+        Self {
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            current_block: Arc::new(RwLock::new(1)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainRpcClient for MockRpcClient {
+    async fn submit_transaction(&self, _tx_bytes: Vec<u8>) -> Result<String> {
+        // Generate mock transaction hash
+        let tx_hash = format!("{:x}", Uuid::new_v4());
+        
+        // Store as pending
+        self.transactions.write().unwrap().insert(
+            tx_hash.clone(),
+            TransactionStatus::Pending,
+        );
+        
+        Ok(tx_hash)
+    }
+    
+    async fn get_transaction_status(&self, tx_hash: &str) -> Result<TransactionStatus> {
+        let txs = self.transactions.read().unwrap();
+        Ok(txs.get(tx_hash)
+            .cloned()
+            .unwrap_or(TransactionStatus::Pending))
+    }
+    
+    async fn get_current_height(&self) -> Result<u64> {
+        Ok(*self.current_block.read().unwrap())
+    }
+    
+    async fn get_transaction_receipt(&self, _tx_hash: &str) -> Result<Option<TransactionReceipt>> {
+        Ok(None)
+    }
+}
+
 /// Configuration for blockchain client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockchainConfig {
@@ -41,26 +269,38 @@ impl Default for BlockchainConfig {
 
 /// Blockchain client for interacting with the chat chain
 pub struct BlockchainClient {
-    #[allow(dead_code)]
     config: BlockchainConfig,
-    /// In-memory transaction cache (would be persistent in production)
-    transactions: Arc<RwLock<HashMap<Uuid, Transaction>>>,
-    /// Current block height (simulated for now)
-    current_block: Arc<RwLock<u64>>,
+    /// Transaction cache with hash mapping
+    transactions: Arc<RwLock<HashMap<Uuid, (Transaction, Option<String>)>>>,
+    /// RPC client for blockchain interaction
+    rpc_client: Arc<dyn ChainRpcClient>,
 }
 
 impl BlockchainClient {
-    /// Create a new blockchain client
-    pub fn new(config: BlockchainConfig) -> Self {
+    /// Create a new blockchain client with production RPC
+    pub fn new(config: BlockchainConfig) -> Result<Self> {
+        let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
+        
+        Ok(Self {
+            config,
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            rpc_client: Arc::new(rpc_client),
+        })
+    }
+    
+    /// Create a client with mock RPC for testing
+    pub fn new_mock(config: BlockchainConfig) -> Self {
+        let rpc_client = MockRpcClient::new();
+        
         Self {
             config,
             transactions: Arc::new(RwLock::new(HashMap::new())),
-            current_block: Arc::new(RwLock::new(1)),
+            rpc_client: Arc::new(rpc_client),
         }
     }
 
     /// Create a client with default configuration
-    pub fn default() -> Self {
+    pub fn default() -> Result<Self> {
         Self::new(BlockchainConfig::default())
     }
 
@@ -85,14 +325,19 @@ impl BlockchainClient {
         let transaction = Transaction::new(TransactionType::RegisterUser, payload_bytes);
         let tx_id = transaction.tx_id;
 
-        // Store transaction
+        // Submit transaction to blockchain via RPC
+        let tx_bytes = bincode::serialize(&transaction)
+            .map_err(|e| Error::internal(format!("Failed to serialize transaction: {}", e)))?;
+        
+        let tx_hash = self.rpc_client.submit_transaction(tx_bytes).await?;
+        
+        // Store transaction with hash mapping
         self.transactions
             .write()
             .unwrap()
-            .insert(tx_id, transaction.clone());
-
-        // Submit to blockchain (simulated for now)
-        self.submit_transaction_to_chain(transaction).await?;
+            .insert(tx_id, (transaction.clone(), Some(tx_hash.clone())));
+        
+        tracing::info!("Submitted transaction {} with hash {}", tx_id, tx_hash);
 
         Ok(tx_id)
     }
@@ -123,12 +368,16 @@ impl BlockchainClient {
         let transaction = Transaction::new(TransactionType::SendDirectMessage, payload_bytes);
         let tx_id = transaction.tx_id;
 
+        // Submit transaction to blockchain via RPC
+        let tx_bytes = bincode::serialize(&transaction)
+            .map_err(|e| Error::internal(format!("Failed to serialize transaction: {}", e)))?;
+        
+        let tx_hash = self.rpc_client.submit_transaction(tx_bytes).await?;
+        
         self.transactions
             .write()
             .unwrap()
-            .insert(tx_id, transaction.clone());
-
-        self.submit_transaction_to_chain(transaction).await?;
+            .insert(tx_id, (transaction.clone(), Some(tx_hash)));
 
         Ok(tx_id)
     }
@@ -157,12 +406,16 @@ impl BlockchainClient {
         let transaction = Transaction::new(TransactionType::CreateChannel, payload_bytes);
         let tx_id = transaction.tx_id;
 
+        // Submit transaction to blockchain via RPC
+        let tx_bytes = bincode::serialize(&transaction)
+            .map_err(|e| Error::internal(format!("Failed to serialize transaction: {}", e)))?;
+        
+        let tx_hash = self.rpc_client.submit_transaction(tx_bytes).await?;
+        
         self.transactions
             .write()
             .unwrap()
-            .insert(tx_id, transaction.clone());
-
-        self.submit_transaction_to_chain(transaction).await?;
+            .insert(tx_id, (transaction.clone(), Some(tx_hash)));
 
         Ok(tx_id)
     }
@@ -191,12 +444,16 @@ impl BlockchainClient {
         let transaction = Transaction::new(TransactionType::PostToChannel, payload_bytes);
         let tx_id = transaction.tx_id;
 
+        // Submit transaction to blockchain via RPC
+        let tx_bytes = bincode::serialize(&transaction)
+            .map_err(|e| Error::internal(format!("Failed to serialize transaction: {}", e)))?;
+        
+        let tx_hash = self.rpc_client.submit_transaction(tx_bytes).await?;
+        
         self.transactions
             .write()
             .unwrap()
-            .insert(tx_id, transaction.clone());
-
-        self.submit_transaction_to_chain(transaction).await?;
+            .insert(tx_id, (transaction.clone(), Some(tx_hash)));
 
         Ok(tx_id)
     }
@@ -236,12 +493,16 @@ impl BlockchainClient {
         let transaction = Transaction::new(TransactionType::SubmitDeliveryProof, payload_bytes);
         let tx_id = transaction.tx_id;
 
+        // Submit transaction to blockchain via RPC
+        let tx_bytes = bincode::serialize(&transaction)
+            .map_err(|e| Error::internal(format!("Failed to serialize transaction: {}", e)))?;
+        
+        let tx_hash = self.rpc_client.submit_transaction(tx_bytes).await?;
+        
         self.transactions
             .write()
             .unwrap()
-            .insert(tx_id, transaction.clone());
-
-        self.submit_transaction_to_chain(transaction).await?;
+            .insert(tx_id, (transaction.clone(), Some(tx_hash)));
 
         tracing::info!("✅ Delivery proof submitted, tx_id: {}", tx_id);
         Ok(tx_id)
@@ -251,8 +512,8 @@ impl BlockchainClient {
     pub async fn is_transaction_confirmed(&self, tx_id: Uuid) -> Result<bool> {
         let transactions = self.transactions.read().unwrap();
 
-        if let Some(tx) = transactions.get(&tx_id) {
-            Ok(tx.is_confirmed())
+        if let Some((tx, _hash)) = transactions.get(&tx_id) {
+            Ok(matches!(tx.status, TransactionStatus::Confirmed { .. }))
         } else {
             Err(Error::validation("Transaction not found"))
         }
@@ -300,7 +561,7 @@ impl BlockchainClient {
 
                                 // Update local transaction status
                                 let mut transactions = self.transactions.write().unwrap();
-                                if let Some(tx) = transactions.get_mut(&tx_id) {
+                                if let Some((tx, _hash)) = transactions.get_mut(&tx_id) {
                                     tx.status = TransactionStatus::Confirmed {
                                         block_height,
                                         block_hash: block_hash.clone(),
@@ -349,12 +610,17 @@ impl BlockchainClient {
             .read()
             .unwrap()
             .get(&tx_id)
-            .map(|tx| tx.status.clone())
+            .map(|(tx, _hash)| tx.status.clone())
     }
 
     /// Get transaction by ID
     pub fn get_transaction(&self, tx_id: Uuid) -> Option<Transaction> {
-        self.transactions.read().unwrap().get(&tx_id).cloned()
+        self.transactions.read().unwrap().get(&tx_id).map(|(tx, _hash)| tx.clone())
+    }
+
+    /// Get current blockchain height
+    pub async fn get_current_height(&self) -> Result<u64> {
+        self.rpc_client.get_current_height().await
     }
 
     /// Submit transaction to blockchain (internal)
@@ -422,17 +688,6 @@ impl BlockchainClient {
             transaction.tx_id
         );
         Ok(())
-    }
-
-    /// Increment block height (for simulation)
-    pub fn increment_block(&self) {
-        let mut block = self.current_block.write().unwrap();
-        *block += 1;
-    }
-
-    /// Get current block height
-    pub fn get_current_block(&self) -> u64 {
-        *self.current_block.read().unwrap()
     }
 }
 
