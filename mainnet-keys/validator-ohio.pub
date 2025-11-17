@@ -1,9 +1,0 @@
-{
-  "algorithm": "Ed25519",
-  "validator": {
-    "region": "ohio",
-    "subdomain": "validator1-ohio.schikuno.top",
-    "provider": "AWS"
-  },
-  "public_key": "e26a3592fbffe18419e083e5728935cd17d4b68b67f36dd1bc16d6c60baccf2a"
-}

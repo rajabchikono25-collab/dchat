@@ -1,9 +1,0 @@
-{
-  "algorithm": "Ed25519",
-  "validator": {
-    "region": "saopaulo",
-    "subdomain": "validator1-saopaulo.schikuno.top",
-    "provider": "AWS"
-  },
-  "public_key": "0fc82f04eaec83cca7dea8a732e1aa711e5587e5a5be1bb09acc428fe44e8411"
-}

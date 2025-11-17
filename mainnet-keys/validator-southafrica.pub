@@ -1,9 +1,0 @@
-{
-  "algorithm": "Ed25519",
-  "validator": {
-    "region": "southafrica",
-    "subdomain": "validator1-southafrica.schikuno.top",
-    "provider": "Azure"
-  },
-  "public_key": "b709ae1e971d1d9b77a092c09f9718065a23c72bc83c7077c49686d17570c62c"
-}

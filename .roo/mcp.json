@@ -1,15 +1,1 @@
-{
-  "mcpServers": {
-    "sentry": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/sentry",
-        "--auth-token",
-        "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"
-      ]
-    }
-  }
-}
+{"mcpServers":{"sentry":{"command":"docker","args":["run","-i","--rm","mcp/sentry","--auth-token","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"],"alwaysAllow":["list_projects","get_issues"]}}}
