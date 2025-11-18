@@ -5,10 +5,14 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   test:
@@ -120,6 +124,13 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
+      - name: Verify no mock code in release
+        run: |
+          if nm target/release/dchat 2>/dev/null | grep -i "MockStaking\|MockValidator" || true; then
+            echo "⚠️  Warning: Mock symbols detected in release binary"
+          fi
+        shell: bash
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -128,3 +139,62 @@ jobs:
             target/release/dchat*
             !target/release/*.d
           retention-days: 7
+
+  blockchain-tests:
+    name: Blockchain Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run blockchain tests
+        run: |
+          cargo test --package dchat-blockchain --release --verbose
+          cargo test --package dchat-validator --release --verbose
+          cargo test --package dchat-chain --release --verbose
+
+      - name: Test consensus mechanism
+        run: cargo test --package dchat-validator consensus -- --nocapture
+
+  validator-tests:
+    name: Validator Node Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test validator functionality
+        run: |
+          cargo test --package dchat-validator --release -- --test-threads=1
+          cargo test --package dchat-chain staking -- --nocapture
+
+  network-tests:
+    name: P2P Network Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test P2P networking
+        run: cargo test --package dchat-network --release --verbose
+
+      - name: Test relay functionality
+        run: cargo test --package dchat-network relay -- --nocapture

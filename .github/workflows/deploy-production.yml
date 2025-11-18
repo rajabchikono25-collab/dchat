@@ -4,13 +4,27 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to deploy (git tag or sha)'
+        description: 'Version to deploy (must be a release tag, e.g., v1.0.0)'
         required: true
         type: string
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        type: choice
+        options:
+          - blue-green
+          - rolling
+          - canary
+        default: blue-green
       confirm:
-        description: 'Type "deploy-to-production" to confirm'
+        description: 'Type "DEPLOY-TO-PRODUCTION" to confirm (all caps)'
         required: true
         type: string
+      skip_monitoring:
+        description: 'Skip 10-minute monitoring phase (NOT recommended)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,10 +38,23 @@ jobs:
     steps:
       - name: Validate confirmation
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "deploy-to-production" ]; then
-            echo "Invalid confirmation. Please type 'deploy-to-production' to proceed."
+          if [ "${{ github.event.inputs.confirm }}" != "DEPLOY-TO-PRODUCTION" ]; then
+            echo "❌ Invalid confirmation. Must type 'DEPLOY-TO-PRODUCTION' (all caps)"
             exit 1
           fi
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ github.event.inputs.version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "❌ Invalid version format. Must be semver with 'v' prefix (e.g., v1.0.0)"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+          fetch-depth: 0
 
       - name: Validate version exists
         run: |

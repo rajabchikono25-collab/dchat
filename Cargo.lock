@@ -1875,11 +1875,13 @@ dependencies = [
  "chrono",
  "dchat-core",
  "dchat-crypto",
+ "ed25519-dalek",
  "hex",
  "image",
  "lz4_flex",
  "rand 0.8.5",
  "redis",
+ "reqwest 0.12.24",
  "rust-s3",
  "serde",
  "serde_json",
@@ -2986,6 +2988,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
+ "webpki-roots 1.0.4",
 ]
 
 [[package]]
@@ -5867,6 +5870,8 @@ dependencies = [
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls 0.23.34",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -5874,6 +5879,7 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls 0.26.4",
  "tower 0.5.2",
  "tower-http",
  "tower-service",
@@ -5881,6 +5887,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots 1.0.4",
 ]
 
 [[package]]

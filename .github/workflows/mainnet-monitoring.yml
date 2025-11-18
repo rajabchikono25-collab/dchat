@@ -1,0 +1,379 @@
+name: Mainnet Continuous Monitoring
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:
+
+env:
+  MAINNET_RPC: https://validators.dchat.network
+  MAINNET_RELAY: https://relay.dchat.network
+  PROMETHEUS_URL: https://prometheus.dchat.network
+  ALERT_THRESHOLD_ERROR_RATE: 0.01
+  ALERT_THRESHOLD_MISSED_BLOCKS: 10
+  ALERT_THRESHOLD_MIN_PEERS: 5
+
+jobs:
+  health-checks:
+    name: Health Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check validator RPC health
+        id: validator_health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' ${{ env.MAINNET_RPC }}/health)
+          if [ $STATUS -eq 200 ]; then
+            echo "✅ Validator RPC healthy"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Validator RPC unhealthy: $STATUS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Check relay health
+        id: relay_health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' ${{ env.MAINNET_RELAY }}/health)
+          if [ $STATUS -eq 200 ]; then
+            echo "✅ Relay healthy"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Relay unhealthy: $STATUS"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Check block production
+        id: block_production
+        run: |
+          BLOCK_HEIGHT=$(curl -s ${{ env.MAINNET_RPC }}/rpc/block/latest | jq -r '.height')
+          echo "Current block height: $BLOCK_HEIGHT"
+          
+          sleep 30
+          
+          NEW_BLOCK_HEIGHT=$(curl -s ${{ env.MAINNET_RPC }}/rpc/block/latest | jq -r '.height')
+          echo "New block height: $NEW_BLOCK_HEIGHT"
+          
+          if [ "$NEW_BLOCK_HEIGHT" -le "$BLOCK_HEIGHT" ]; then
+            echo "❌ Blocks not progressing!"
+            echo "status=stalled" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          BLOCKS_PRODUCED=$((NEW_BLOCK_HEIGHT - BLOCK_HEIGHT))
+          echo "✅ Blocks produced: $BLOCKS_PRODUCED"
+          echo "status=producing" >> $GITHUB_OUTPUT
+          echo "blocks_produced=$BLOCKS_PRODUCED" >> $GITHUB_OUTPUT
+
+      - name: Alert on health check failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 MAINNET HEALTH CHECK FAILED 🚨
+            
+            Validator Health: ${{ steps.validator_health.outputs.status || 'unknown' }}
+            Relay Health: ${{ steps.relay_health.outputs.status || 'unknown' }}
+            Block Production: ${{ steps.block_production.outputs.status || 'unknown' }}
+            
+            Immediate investigation required!
+            Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_CRITICAL }}
+
+  consensus-monitoring:
+    name: Consensus Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check validator participation
+        id: validator_participation
+        run: |
+          ACTIVE_VALIDATORS=$(curl -s ${{ env.MAINNET_RPC }}/rpc/validators/active | jq '. | length')
+          TOTAL_VALIDATORS=$(curl -s ${{ env.MAINNET_RPC }}/rpc/validators/all | jq '. | length')
+          
+          echo "Active validators: $ACTIVE_VALIDATORS / $TOTAL_VALIDATORS"
+          echo "active=$ACTIVE_VALIDATORS" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL_VALIDATORS" >> $GITHUB_OUTPUT
+          
+          PARTICIPATION_RATE=$(echo "scale=2; $ACTIVE_VALIDATORS / $TOTAL_VALIDATORS" | bc)
+          echo "Participation rate: $PARTICIPATION_RATE"
+          
+          if (( $(echo "$PARTICIPATION_RATE < 0.66" | bc -l) )); then
+            echo "❌ Low validator participation!"
+            exit 1
+          fi
+
+      - name: Check missed blocks
+        id: missed_blocks
+        run: |
+          MISSED_BLOCKS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=sum(dchat_validator_missed_blocks_total)" | jq -r '.data.result[0].value[1]')
+          echo "Total missed blocks: $MISSED_BLOCKS"
+          echo "missed=$MISSED_BLOCKS" >> $GITHUB_OUTPUT
+          
+          if [ "$MISSED_BLOCKS" -gt "${{ env.ALERT_THRESHOLD_MISSED_BLOCKS }}" ]; then
+            echo "⚠️  High number of missed blocks!"
+          fi
+
+      - name: Check consensus rounds
+        run: |
+          AVG_CONSENSUS_TIME=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=avg(dchat_consensus_round_duration_seconds)" | jq -r '.data.result[0].value[1]')
+          echo "Average consensus time: $AVG_CONSENSUS_TIME seconds"
+          
+          if (( $(echo "$AVG_CONSENSUS_TIME > 5" | bc -l) )); then
+            echo "⚠️  Slow consensus rounds detected"
+          fi
+
+      - name: Alert on consensus issues
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            ⚠️  MAINNET CONSENSUS WARNING
+            
+            Active Validators: ${{ steps.validator_participation.outputs.active }} / ${{ steps.validator_participation.outputs.total }}
+            Missed Blocks: ${{ steps.missed_blocks.outputs.missed }}
+            
+            Monitoring required.
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  network-monitoring:
+    name: Network Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check P2P connectivity
+        id: p2p_connectivity
+        run: |
+          AVG_PEERS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=avg(dchat_peer_count)" | jq -r '.data.result[0].value[1]')
+          echo "Average peer count: $AVG_PEERS"
+          echo "avg_peers=$AVG_PEERS" >> $GITHUB_OUTPUT
+          
+          if (( $(echo "$AVG_PEERS < ${{ env.ALERT_THRESHOLD_MIN_PEERS }}" | bc -l) )); then
+            echo "❌ Low peer connectivity!"
+            exit 1
+          fi
+
+      - name: Check relay performance
+        run: |
+          RELAY_THROUGHPUT=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=rate(dchat_messages_relayed_total[5m])" | jq -r '.data.result[0].value[1]')
+          echo "Relay throughput: $RELAY_THROUGHPUT msg/s"
+          
+          RELAY_LATENCY=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=histogram_quantile(0.95,rate(dchat_relay_latency_seconds_bucket[5m]))" | jq -r '.data.result[0].value[1]')
+          echo "Relay P95 latency: $RELAY_LATENCY seconds"
+          
+          if (( $(echo "$RELAY_LATENCY > 1" | bc -l) )); then
+            echo "⚠️  High relay latency detected"
+          fi
+
+      - name: Check network partitions
+        run: |
+          # Check for network partitioning by comparing block heights across validators
+          echo "Checking for network partitions..."
+          
+          BLOCK_HEIGHTS=$(curl -s ${{ env.MAINNET_RPC }}/rpc/validators/block_heights | jq -r '.[] | .height' | sort -u)
+          UNIQUE_HEIGHTS=$(echo "$BLOCK_HEIGHTS" | wc -l)
+          
+          if [ "$UNIQUE_HEIGHTS" -gt 2 ]; then
+            echo "⚠️  Possible network partition detected! Multiple different block heights"
+          else
+            echo "✅ No network partition detected"
+          fi
+
+      - name: Alert on network issues
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            ⚠️  MAINNET NETWORK WARNING
+            
+            Average Peers: ${{ steps.p2p_connectivity.outputs.avg_peers }}
+            
+            Check network connectivity and firewall rules.
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  error-monitoring:
+    name: Error Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check error rates
+        id: error_rates
+        run: |
+          ERROR_RATE=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=rate(dchat_errors_total[15m])" | jq -r '.data.result[0].value[1]')
+          echo "Error rate: $ERROR_RATE"
+          echo "rate=$ERROR_RATE" >> $GITHUB_OUTPUT
+          
+          if (( $(echo "$ERROR_RATE > ${{ env.ALERT_THRESHOLD_ERROR_RATE }}" | bc -l) )); then
+            echo "❌ High error rate detected!"
+            exit 1
+          fi
+
+      - name: Check critical errors
+        run: |
+          CRITICAL_ERRORS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=sum(dchat_errors_total{severity='critical'}[1h])" | jq -r '.data.result[0].value[1]')
+          echo "Critical errors (last hour): $CRITICAL_ERRORS"
+          
+          if [ "$CRITICAL_ERRORS" != "null" ] && [ "$CRITICAL_ERRORS" -gt 0 ]; then
+            echo "⚠️  Critical errors detected in last hour!"
+          fi
+
+      - name: Check panic/crash rate
+        run: |
+          PANICS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=sum(dchat_panics_total[1h])" | jq -r '.data.result[0].value[1]')
+          echo "Panics (last hour): $PANICS"
+          
+          if [ "$PANICS" != "null" ] && [ "$PANICS" -gt 0 ]; then
+            echo "❌ Node panics detected!"
+            exit 1
+          fi
+
+      - name: Alert on high error rate
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 MAINNET HIGH ERROR RATE 🚨
+            
+            Error Rate: ${{ steps.error_rates.outputs.rate }}
+            Threshold: ${{ env.ALERT_THRESHOLD_ERROR_RATE }}
+            
+            Check logs immediately!
+            Prometheus: ${{ env.PROMETHEUS_URL }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_CRITICAL }}
+
+  performance-monitoring:
+    name: Performance Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check transaction throughput
+        run: |
+          TX_THROUGHPUT=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=rate(dchat_transactions_total[5m])" | jq -r '.data.result[0].value[1]')
+          echo "Transaction throughput: $TX_THROUGHPUT tx/s"
+
+      - name: Check database performance
+        run: |
+          DB_QUERY_TIME=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=histogram_quantile(0.95,rate(dchat_db_query_duration_seconds_bucket[5m]))" | jq -r '.data.result[0].value[1]')
+          echo "Database P95 query time: $DB_QUERY_TIME seconds"
+          
+          if (( $(echo "$DB_QUERY_TIME > 0.5" | bc -l) )); then
+            echo "⚠️  Slow database queries detected"
+          fi
+
+      - name: Check memory usage
+        run: |
+          MEM_USAGE=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=avg(dchat_memory_bytes)" | jq -r '.data.result[0].value[1]')
+          MEM_GB=$(echo "scale=2; $MEM_USAGE / 1073741824" | bc)
+          echo "Average memory usage: $MEM_GB GB"
+
+      - name: Check CPU usage
+        run: |
+          CPU_USAGE=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=avg(rate(dchat_cpu_seconds_total[5m]))" | jq -r '.data.result[0].value[1]')
+          CPU_PERCENT=$(echo "scale=1; $CPU_USAGE * 100" | bc)
+          echo "Average CPU usage: $CPU_PERCENT%"
+
+  security-monitoring:
+    name: Security Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for suspicious activity
+        run: |
+          FAILED_AUTH=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=sum(dchat_auth_failures_total[1h])" | jq -r '.data.result[0].value[1]')
+          echo "Failed auth attempts (last hour): $FAILED_AUTH"
+          
+          if [ "$FAILED_AUTH" != "null" ] && [ "$FAILED_AUTH" -gt 100 ]; then
+            echo "⚠️  High number of failed auth attempts!"
+          fi
+
+      - name: Check for double signing
+        run: |
+          DOUBLE_SIGNS=$(curl -s "${{ env.PROMETHEUS_URL }}/api/v1/query?query=sum(dchat_double_sign_detected_total[1h])" | jq -r '.data.result[0].value[1]')
+          echo "Double sign events (last hour): $DOUBLE_SIGNS"
+          
+          if [ "$DOUBLE_SIGNS" != "null" ] && [ "$DOUBLE_SIGNS" -gt 0 ]; then
+            echo "🚨 DOUBLE SIGNING DETECTED!"
+            exit 1
+          fi
+
+      - name: Check slashing events
+        run: |
+          SLASHING_EVENTS=$(curl -s "${{ env.MAINNET_RPC }}/rpc/slashing/recent" | jq '. | length')
+          echo "Recent slashing events: $SLASHING_EVENTS"
+          
+          if [ "$SLASHING_EVENTS" -gt 0 ]; then
+            echo "⚠️  Slashing events detected"
+          fi
+
+      - name: Alert on security issues
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 MAINNET SECURITY ALERT 🚨
+            
+            Double signing or other security issues detected!
+            
+            IMMEDIATE INVESTIGATION REQUIRED!
+            Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_CRITICAL }}
+
+  generate-monitoring-report:
+    name: Generate Monitoring Report
+    runs-on: ubuntu-latest
+    needs: [health-checks, consensus-monitoring, network-monitoring, error-monitoring, performance-monitoring, security-monitoring]
+    if: always()
+    steps:
+      - name: Create summary report
+        run: |
+          cat << EOF > monitoring-report.md
+          # Mainnet Monitoring Report
+          **Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## Status Summary
+          - Health Checks: ${{ needs.health-checks.result }}
+          - Consensus: ${{ needs.consensus-monitoring.result }}
+          - Network: ${{ needs.network-monitoring.result }}
+          - Errors: ${{ needs.error-monitoring.result }}
+          - Performance: ${{ needs.performance-monitoring.result }}
+          - Security: ${{ needs.security-monitoring.result }}
+          
+          ## Quick Links
+          - [Prometheus](${{ env.PROMETHEUS_URL }})
+          - [Grafana](https://grafana.dchat.network)
+          - [Block Explorer](https://explorer.dchat.network)
+          
+          ---
+          *This report is generated every 15 minutes*
+          EOF
+          
+          cat monitoring-report.md
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-report-${{ github.run_number }}
+          path: monitoring-report.md
+          retention-days: 30
+
+      - name: Send daily summary
+        if: github.event.schedule == '0 0 * * *'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "📊 Daily Mainnet Health Report",
+              "attachments": [{
+                "color": "good",
+                "title": "24-Hour Summary",
+                "fields": [
+                  {"title": "Health Checks", "value": "${{ needs.health-checks.result }}", "short": true},
+                  {"title": "Consensus", "value": "${{ needs.consensus-monitoring.result }}", "short": true},
+                  {"title": "Network", "value": "${{ needs.network-monitoring.result }}", "short": true},
+                  {"title": "Security", "value": "${{ needs.security-monitoring.result }}", "short": true}
+                ]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}

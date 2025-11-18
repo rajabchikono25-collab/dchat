@@ -1,0 +1,542 @@
+name: Network Upgrade
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_version:
+        description: 'Target upgrade version (e.g., v2.0.0)'
+        required: true
+        type: string
+      upgrade_block:
+        description: 'Block height to execute upgrade (leave empty for immediate)'
+        required: false
+        type: string
+      network:
+        description: 'Target network'
+        required: true
+        type: choice
+        options:
+          - mainnet
+          - testnet
+          - staging
+      upgrade_type:
+        description: 'Type of upgrade'
+        required: true
+        type: choice
+        options:
+          - hard-fork
+          - soft-fork
+          - runtime-upgrade
+          - config-update
+      confirm_upgrade:
+        description: 'Type "EXECUTE-NETWORK-UPGRADE" to confirm'
+        required: true
+        type: string
+      skip_coordination:
+        description: 'Skip validator coordination phase (NOT recommended)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  MAINNET_CHAIN_ID: dchat-mainnet-1
+
+jobs:
+  validate-upgrade-request:
+    name: Validate Network Upgrade Request
+    runs-on: ubuntu-latest
+    outputs:
+      is_mainnet: ${{ steps.check_network.outputs.is_mainnet }}
+      upgrade_block_height: ${{ steps.validate_block.outputs.block_height }}
+    steps:
+      - name: Validate confirmation phrase
+        run: |
+          if [ "${{ github.event.inputs.confirm_upgrade }}" != "EXECUTE-NETWORK-UPGRADE" ]; then
+            echo "❌ Invalid confirmation"
+            exit 1
+          fi
+
+      - name: Check if mainnet
+        id: check_network
+        run: |
+          if [ "${{ github.event.inputs.network }}" == "mainnet" ]; then
+            echo "is_mainnet=true" >> $GITHUB_OUTPUT
+            echo "⚠️  MAINNET UPGRADE DETECTED"
+          else
+            echo "is_mainnet=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ github.event.inputs.upgrade_version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "❌ Invalid version format"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.upgrade_version }}
+          fetch-depth: 0
+
+      - name: Verify upgrade version exists
+        run: |
+          if ! git tag | grep -q "^${{ github.event.inputs.upgrade_version }}$"; then
+            echo "❌ Version tag does not exist"
+            exit 1
+          fi
+
+      - name: Validate block height
+        id: validate_block
+        run: |
+          if [ -n "${{ github.event.inputs.upgrade_block }}" ]; then
+            BLOCK_HEIGHT="${{ github.event.inputs.upgrade_block }}"
+            if ! [[ "$BLOCK_HEIGHT" =~ ^[0-9]+$ ]]; then
+              echo "❌ Invalid block height"
+              exit 1
+            fi
+            echo "block_height=$BLOCK_HEIGHT" >> $GITHUB_OUTPUT
+            echo "Upgrade scheduled for block: $BLOCK_HEIGHT"
+          else
+            echo "block_height=immediate" >> $GITHUB_OUTPUT
+            echo "Immediate upgrade (no specific block height)"
+          fi
+
+      - name: Check for breaking changes
+        run: |
+          git diff ${{ github.event.inputs.network }}..${{ github.event.inputs.upgrade_version }} \
+            --name-only | grep -E "crates/(dchat-blockchain|dchat-chain|dchat-validator)" \
+            && echo "⚠️  Breaking changes detected in blockchain crates" || true
+
+  pre-upgrade-tests:
+    name: Pre-Upgrade Testing
+    runs-on: ubuntu-latest
+    needs: validate-upgrade-request
+    steps:
+      - name: Checkout upgrade version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.upgrade_version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run all tests
+        run: cargo test --release --all-features --verbose
+
+      - name: Test migration scripts
+        if: github.event.inputs.upgrade_type == 'hard-fork'
+        run: |
+          cargo test --package dchat-blockchain migration -- --nocapture
+
+      - name: Verify state compatibility
+        run: |
+          cargo test --package dchat-chain state_compatibility -- --nocapture
+
+      - name: Build upgrade binary
+        run: cargo build --release --verbose
+
+  security-audit-upgrade:
+    name: Security Audit for Upgrade
+    runs-on: ubuntu-latest
+    needs: validate-upgrade-request
+    steps:
+      - name: Checkout upgrade version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.upgrade_version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Security audit
+        run: |
+          cargo install cargo-audit
+          cargo audit --deny warnings
+
+      - name: Check for vulnerabilities
+        run: |
+          cargo install cargo-deny
+          cargo deny check advisories
+
+  notify-validators:
+    name: Notify Validators
+    runs-on: ubuntu-latest
+    needs: [validate-upgrade-request, pre-upgrade-tests, security-audit-upgrade]
+    if: needs.validate-upgrade-request.outputs.is_mainnet == 'true' && github.event.inputs.skip_coordination != 'true'
+    steps:
+      - name: Send validator notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🚨 NETWORK UPGRADE ALERT 🚨",
+              "attachments": [{
+                "color": "warning",
+                "title": "dchat Mainnet Upgrade Scheduled",
+                "fields": [
+                  {"title": "Version", "value": "${{ github.event.inputs.upgrade_version }}", "short": true},
+                  {"title": "Type", "value": "${{ github.event.inputs.upgrade_type }}", "short": true},
+                  {"title": "Block Height", "value": "${{ needs.validate-upgrade-request.outputs.upgrade_block_height }}", "short": true},
+                  {"title": "Initiated by", "value": "${{ github.actor }}", "short": true}
+                ],
+                "text": "⚠️  All validators must upgrade before the specified block height!\n\nUpgrade instructions: https://docs.dchat.network/validators/upgrade\n\nPlease confirm upgrade readiness in the #validators channel."
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_VALIDATORS }}
+
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "[CRITICAL] dchat Mainnet Upgrade - ${{ github.event.inputs.upgrade_version }}"
+          to: ${{ secrets.VALIDATOR_EMAIL_LIST }}
+          from: dchat Network <noreply@dchat.network>
+          body: |
+            NETWORK UPGRADE NOTIFICATION
+            
+            Network: Mainnet
+            Version: ${{ github.event.inputs.upgrade_version }}
+            Type: ${{ github.event.inputs.upgrade_type }}
+            Block Height: ${{ needs.validate-upgrade-request.outputs.upgrade_block_height }}
+            
+            Action Required:
+            1. Review upgrade notes: https://github.com/dchat/dchat/releases/tag/${{ github.event.inputs.upgrade_version }}
+            2. Upgrade your validator node before block ${{ needs.validate-upgrade-request.outputs.upgrade_block_height }}
+            3. Follow upgrade guide: https://docs.dchat.network/validators/upgrade
+            
+            Timeline:
+            - Upgrade window opens: Now
+            - Upgrade must be completed by: Block ${{ needs.validate-upgrade-request.outputs.upgrade_block_height }}
+            
+            Support:
+            - Slack: #validators
+            - Email: validators@dchat.network
+
+      - name: Wait for validator coordination
+        run: |
+          echo "⏳ Waiting 24 hours for validator coordination..."
+          echo "Validators should confirm readiness during this period"
+          sleep 3600  # Wait 1 hour in CI (normally would be 24h)
+
+  build-upgrade-artifacts:
+    name: Build Upgrade Artifacts
+    runs-on: ubuntu-latest
+    needs: [validate-upgrade-request, pre-upgrade-tests]
+    steps:
+      - name: Checkout upgrade version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.upgrade_version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build upgrade binary
+        run: cargo build --release --verbose
+
+      - name: Package upgrade binary
+        run: |
+          cd target/release
+          tar czf ../../dchat-upgrade-${{ github.event.inputs.upgrade_version }}.tar.gz dchat
+          cd ../..
+          sha256sum dchat-upgrade-${{ github.event.inputs.upgrade_version }}.tar.gz > \
+            dchat-upgrade-${{ github.event.inputs.upgrade_version }}.tar.gz.sha256
+
+      - name: Upload upgrade artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-artifacts-${{ github.event.inputs.upgrade_version }}
+          path: |
+            dchat-upgrade-*.tar.gz
+            dchat-upgrade-*.tar.gz.sha256
+          retention-days: 90
+
+  execute-upgrade:
+    name: Execute Network Upgrade
+    runs-on: ubuntu-latest
+    needs: [validate-upgrade-request, build-upgrade-artifacts, notify-validators]
+    if: |
+      always() && 
+      needs.validate-upgrade-request.result == 'success' &&
+      needs.build-upgrade-artifacts.result == 'success' &&
+      (needs.notify-validators.result == 'success' || needs.notify-validators.result == 'skipped')
+    environment:
+      name: ${{ github.event.inputs.network }}
+    steps:
+      - name: Checkout upgrade version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.upgrade_version }}
+
+      - name: Configure Kubernetes
+        run: |
+          mkdir -p ~/.kube
+          if [ "${{ github.event.inputs.network }}" == "mainnet" ]; then
+            echo "${{ secrets.MAINNET_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          elif [ "${{ github.event.inputs.network }}" == "testnet" ]; then
+            echo "${{ secrets.TESTNET_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          else
+            echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          fi
+
+      - name: Backup current state
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          kubectl get all -n $NETWORK -o yaml > pre-upgrade-state-$NETWORK.yaml
+          kubectl get configmap -n $NETWORK -o yaml >> pre-upgrade-state-$NETWORK.yaml
+
+      - name: Upload pre-upgrade backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-upgrade-backup-${{ github.event.inputs.network }}
+          path: pre-upgrade-state-*.yaml
+          retention-days: 90
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.13.0'
+
+      - name: Execute rolling upgrade
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          VERSION="${{ github.event.inputs.upgrade_version }}"
+          
+          helm upgrade dchat-validators ./helm/dchat-validator \
+            --namespace $NETWORK \
+            --set image.tag=$VERSION \
+            --set upgrade.enabled=true \
+            --set upgrade.blockHeight="${{ needs.validate-upgrade-request.outputs.upgrade_block_height }}" \
+            --reuse-values \
+            --wait \
+            --timeout 30m
+          
+          helm upgrade dchat-relays ./helm/dchat-relay \
+            --namespace $NETWORK \
+            --set image.tag=$VERSION \
+            --reuse-values \
+            --wait \
+            --timeout 20m
+
+      - name: Verify upgrade rollout
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          kubectl rollout status statefulset/dchat-validators -n $NETWORK --timeout=20m
+          kubectl rollout status deployment/dchat-relays -n $NETWORK --timeout=15m
+
+      - name: Check validator consensus
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          sleep 60
+          kubectl logs -n $NETWORK -l app=dchat-validator --tail=100 | grep -i "upgraded\|consensus\|block"
+
+  post-upgrade-validation:
+    name: Post-Upgrade Validation
+    runs-on: ubuntu-latest
+    needs: execute-upgrade
+    steps:
+      - name: Wait for network stabilization
+        run: sleep 120
+
+      - name: Check network health
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          ENDPOINT="https://${NETWORK}.dchat.network"
+          
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' $ENDPOINT/health)
+          if [ $STATUS -ne 200 ]; then
+            echo "❌ Health check failed: $STATUS"
+            exit 1
+          fi
+          echo "✅ Health check passed"
+
+      - name: Verify block production
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          ENDPOINT="https://${NETWORK}.dchat.network"
+          
+          BLOCK_HEIGHT=$(curl -s $ENDPOINT/rpc/block/latest | jq -r '.height')
+          echo "Current block height: $BLOCK_HEIGHT"
+          
+          sleep 30
+          
+          NEW_BLOCK_HEIGHT=$(curl -s $ENDPOINT/rpc/block/latest | jq -r '.height')
+          echo "New block height: $NEW_BLOCK_HEIGHT"
+          
+          if [ "$NEW_BLOCK_HEIGHT" -le "$BLOCK_HEIGHT" ]; then
+            echo "❌ Blocks not progressing!"
+            exit 1
+          fi
+          echo "✅ Blocks progressing normally"
+
+      - name: Check validator participation
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          ENDPOINT="https://${NETWORK}.dchat.network"
+          
+          ACTIVE_VALIDATORS=$(curl -s $ENDPOINT/rpc/validators/active | jq '. | length')
+          echo "Active validators: $ACTIVE_VALIDATORS"
+          
+          if [ "$ACTIVE_VALIDATORS" -lt 3 ]; then
+            echo "⚠️  Low validator count!"
+          fi
+
+      - name: Verify upgrade version
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          ENDPOINT="https://${NETWORK}.dchat.network"
+          
+          VERSION=$(curl -s $ENDPOINT/version | jq -r '.version')
+          echo "Network version: $VERSION"
+          
+          if [ "$VERSION" != "${{ github.event.inputs.upgrade_version }}" ]; then
+            echo "❌ Version mismatch!"
+            exit 1
+          fi
+          echo "✅ Version verified"
+
+  monitor-post-upgrade:
+    name: Monitor Post-Upgrade
+    runs-on: ubuntu-latest
+    needs: post-upgrade-validation
+    steps:
+      - name: Monitor for 2 hours
+        run: |
+          echo "📊 Monitoring network for 2 hours post-upgrade..."
+          sleep 7200
+
+      - name: Check error rates
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          ERROR_RATE=$(curl -s "https://prometheus.$NETWORK.dchat.network/api/v1/query?query=rate(dchat_errors_total[1h])" | jq -r '.data.result[0].value[1]')
+          echo "Error rate: $ERROR_RATE"
+          if (( $(echo "$ERROR_RATE > 0.02" | bc -l) )); then
+            echo "⚠️  Elevated error rate detected"
+          fi
+
+      - name: Check consensus metrics
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          MISSED_BLOCKS=$(curl -s "https://prometheus.$NETWORK.dchat.network/api/v1/query?query=dchat_validator_missed_blocks_total" | jq -r '.data.result[0].value[1]')
+          echo "Missed blocks: $MISSED_BLOCKS"
+
+  notify-upgrade-complete:
+    name: Notify Upgrade Complete
+    runs-on: ubuntu-latest
+    needs: [validate-upgrade-request, execute-upgrade, post-upgrade-validation, monitor-post-upgrade]
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.post-upgrade-validation.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Network upgrade completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Network upgrade failed or requires attention" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "${{ steps.status.outputs.message }}",
+              "attachments": [{
+                "color": "${{ steps.status.outputs.status == 'success' && 'good' || 'danger' }}",
+                "title": "Network Upgrade: ${{ github.event.inputs.network }}",
+                "fields": [
+                  {"title": "Version", "value": "${{ github.event.inputs.upgrade_version }}", "short": true},
+                  {"title": "Type", "value": "${{ github.event.inputs.upgrade_type }}", "short": true},
+                  {"title": "Status", "value": "${{ steps.status.outputs.status }}", "short": true},
+                  {"title": "Executed by", "value": "${{ github.actor }}", "short": true}
+                ]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Create upgrade report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `
+            ## Network Upgrade Report
+            
+            **Network:** ${{ github.event.inputs.network }}
+            **Version:** ${{ github.event.inputs.upgrade_version }}
+            **Type:** ${{ github.event.inputs.upgrade_type }}
+            **Status:** ${{ steps.status.outputs.status }}
+            
+            **Results:**
+            - Pre-upgrade tests: ${{ needs.pre-upgrade-tests.result }}
+            - Security audit: ${{ needs.security-audit-upgrade.result }}
+            - Upgrade execution: ${{ needs.execute-upgrade.result }}
+            - Post-upgrade validation: ${{ needs.post-upgrade-validation.result }}
+            - Monitoring: ${{ needs.monitor-post-upgrade.result }}
+            
+            **Executed by:** @${{ github.actor }}
+            **Workflow:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: \`Network Upgrade: ${{ github.event.inputs.network }} - ${{ github.event.inputs.upgrade_version }}\`,
+              body: report,
+              labels: ['upgrade', 'operations', '${{ github.event.inputs.network }}']
+            });
+
+  rollback-on-failure:
+    name: Rollback Upgrade
+    runs-on: ubuntu-latest
+    needs: [validate-upgrade-request, execute-upgrade, post-upgrade-validation]
+    if: failure()
+    steps:
+      - name: Configure Kubernetes
+        run: |
+          mkdir -p ~/.kube
+          NETWORK="${{ github.event.inputs.network }}"
+          if [ "$NETWORK" == "mainnet" ]; then
+            echo "${{ secrets.MAINNET_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          elif [ "$NETWORK" == "testnet" ]; then
+            echo "${{ secrets.TESTNET_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          else
+            echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          fi
+
+      - name: Rollback validators
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          kubectl rollout undo statefulset/dchat-validators -n $NETWORK
+
+      - name: Rollback relays
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          kubectl rollout undo deployment/dchat-relays -n $NETWORK
+
+      - name: Send critical alert
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 CRITICAL: NETWORK UPGRADE FAILED - ROLLBACK INITIATED 🚨
+            Network: ${{ github.event.inputs.network }}
+            Version: ${{ github.event.inputs.upgrade_version }}
+            Type: ${{ github.event.inputs.upgrade_type }}
+            
+            Immediate action required!
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}

@@ -4,9 +4,16 @@
 //! Implements economic incentives for long-term storage through token bonds
 //! and micropayment streams.
 
+pub mod storage_bonds;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+
+pub use storage_bonds::{
+    StorageBond as StorageBondV2, StorageBondManager, StorageBondReceipt, StorageBondRequest,
+    MIN_STORAGE_BOND_PER_GB,
+};
 
 /// Storage bond for long-term data retention
 #[derive(Debug, Clone, Serialize, Deserialize)]

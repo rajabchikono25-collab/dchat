@@ -145,6 +145,7 @@ bincode = "1.3"
 # Networking
 libp2p = { version = "0.54", features = ["kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr"] }
 quinn = "0.11"  # QUIC
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # Storage
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
@@ -200,11 +201,31 @@ name = "database_queries"
 harness = false
 
 [[bench]]
-name = "network_latency"
+name = "onion_routing_performance"
 harness = false
 
 [[bench]]
-name = "concurrent_clients"
+name = "post_quantum_crypto"
+harness = false
+
+[[bench]]
+name = "storage_backends"
+harness = false
+
+[[bench]]
+name = "staking_performance"
+harness = false
+
+[[bench]]
+name = "genesis_bootstrap"
+harness = false
+
+[[bench]]
+name = "cross_chain_bridge"
+harness = false
+
+[[bench]]
+name = "governance_operations"
 harness = false
 
 [[bench]]
@@ -212,5 +233,13 @@ name = "relay_performance"
 harness = false
 
 [[bench]]
+name = "network_latency"
+harness = false
+
+[[bench]]
 name = "memory_usage"
+harness = false
+
+[[bench]]
+name = "concurrent_clients"
 harness = false
