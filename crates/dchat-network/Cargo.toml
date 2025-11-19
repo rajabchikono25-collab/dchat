@@ -58,6 +58,7 @@ prometheus = { version = "0.13", optional = true }
 # HTTP client for UPnP and external services
 reqwest = { version = "0.11", features = ["default"] }
 quick-xml = { version = "0.31", features = ["serialize"] }
+local-ip-address = "0.6"
 
 # DNS resolution for mainnet peer discovery
 trust-dns-resolver = { version = "0.23", features = ["tokio-runtime"] }

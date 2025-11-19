@@ -373,9 +373,33 @@ pub struct TiKVBackupConfig {
 
 impl BackendBackupConfig {
     pub fn new_production() -> Self {
+        // Load S3 credentials from environment or AWS Secrets Manager
+        let s3_bucket = std::env::var("DCHAT_BACKUP_S3_BUCKET")
+            .unwrap_or_else(|_| "dchat-backups-hot".to_string());
+        
+        // Use AWS SDK for credential resolution (instance profile, env vars, or credentials file)
+        // The AWS SDK will automatically resolve credentials in this order:
+        // 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        // 2. Web Identity Token credentials from environment (EKS/ECS)
+        // 3. ECS container credentials (ECS_CONTAINER_CREDENTIALS_RELATIVE_URI)
+        // 4. EC2 instance profile credentials
+        // 5. ~/.aws/credentials file
+        //
+        // For production, we should use IAM roles (instance profile) instead of hardcoded keys.
+        // CockroachDB backup will use the AWS SDK's default credential chain.
+        let cockroachdb_destination = format!(
+            "s3://{}/cockroachdb",
+            s3_bucket
+        );
+        
+        let tikv_destination = format!(
+            "s3://{}/tikv",
+            s3_bucket
+        );
+
         Self {
             cockroachdb: CockroachDBBackupConfig {
-                destination: "s3://dchat-backups-hot/cockroachdb?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx".to_string(),
+                destination: cockroachdb_destination,
                 full_schedule: "0 */6 * * *".to_string(),  // Every 6 hours
                 incremental_schedule: "0 * * * *".to_string(),  // Hourly
                 revision_history_days: 14,
@@ -397,12 +421,46 @@ impl BackendBackupConfig {
                 replication_target: Some("minio-replica.dchat.internal".to_string()),
             },
             tikv: TiKVBackupConfig {
-                destination: "s3://dchat-backups-hot/tikv".to_string(),
+                destination: tikv_destination,
                 schedule: "0 */6 * * *".to_string(),  // Every 6 hours
                 rate_limit_mb: 100,
                 checksum_verify: true,
             },
         }
+    }
+    
+    /// Validate backup configuration for production use
+    /// Returns Ok(()) if valid, Err with details if placeholder values detected
+    pub fn validate_for_production(&self) -> Result<(), String> {
+        // Check for hardcoded credential placeholders in S3 URLs
+        if self.cockroachdb.destination.contains("AWS_ACCESS_KEY_ID=xxx") ||
+           self.cockroachdb.destination.contains("AWS_SECRET_ACCESS_KEY=xxx") {
+            return Err(
+                "CockroachDB backup destination contains placeholder credentials. \
+                Set DCHAT_BACKUP_S3_BUCKET environment variable and use IAM roles for S3 access."
+                .to_string()
+            );
+        }
+        
+        if self.tikv.destination.contains("AWS_ACCESS_KEY_ID=xxx") ||
+           self.tikv.destination.contains("AWS_SECRET_ACCESS_KEY=xxx") {
+            return Err(
+                "TiKV backup destination contains placeholder credentials. \
+                Set DCHAT_BACKUP_S3_BUCKET environment variable and use IAM roles for S3 access."
+                .to_string()
+            );
+        }
+        
+        // Warn if using default bucket name (might be intentional in dev)
+        if self.cockroachdb.destination.contains("dchat-backups-hot") &&
+           std::env::var("DCHAT_BACKUP_S3_BUCKET").is_err() {
+            tracing::warn!(
+                "Using default S3 bucket 'dchat-backups-hot'. \
+                Set DCHAT_BACKUP_S3_BUCKET to override."
+            );
+        }
+        
+        Ok(())
     }
 }
 

@@ -95,6 +95,8 @@
 
 // User management module
 pub mod user_management;
+// Onboarding flows (keyless, enrollment, MPC backups)
+pub mod onboarding;
 
 // Re-export all crate modules
 pub use dchat_accessibility as accessibility;

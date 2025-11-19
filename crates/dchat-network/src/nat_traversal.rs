@@ -386,37 +386,122 @@ impl NatTraversalManager {
         Err(Error::network("Gateway address not found in SSDP response"))
     }
 
-    async fn get_upnp_external_ip(&self, _gateway: &SocketAddr) -> Result<std::net::IpAddr> {
+    async fn get_upnp_external_ip(&self, gateway: &SocketAddr) -> Result<std::net::IpAddr> {
         // Send SOAP request to get external IP
-        // This is a simplified implementation - production would use full SOAP client
-
-        let _soap_request = "<?xml version=\"1.0\"?>\n\
+        let soap_request = "<?xml version=\"1.0\"?>\n\
              <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
                          s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n\
                <s:Body>\n\
                  <u:GetExternalIPAddress xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"/>\n\
                </s:Body>\n\
-             </s:Envelope>".to_string();
+             </s:Envelope>";
 
-        // For now, return a detected IP or error
-        // Production would make HTTP POST request to gateway control URL
-        Err(Error::network(
-            "External IP detection not fully implemented",
-        ))
+        let control_url = format!("http://{}/ctl/IPConn", gateway);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&control_url)
+            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress\"")
+            .header("Content-Type", "text/xml; charset=\"utf-8\"")
+            .body(soap_request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("UPnP SOAP request failed: {}", e)))?;
+
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| Error::network(format!("Failed to read UPnP response: {}", e)))?;
+
+        // Parse XML response to extract external IP
+        use quick_xml::de::from_str;
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct Envelope {
+            #[serde(rename = "Body")]
+            body: Body,
+        }
+
+        #[derive(Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct Body {
+            #[serde(rename = "GetExternalIPAddressResponse")]
+            response: GetExternalIPAddressResponse,
+        }
+
+        #[derive(Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct GetExternalIPAddressResponse {
+            #[serde(rename = "NewExternalIPAddress")]
+            external_ip: String,
+        }
+
+        let envelope: Envelope = from_str(&response_text)
+            .map_err(|e| Error::network(format!("Failed to parse UPnP response: {}", e)))?;
+
+        envelope
+            .body
+            .response
+            .external_ip
+            .parse()
+            .map_err(|_| Error::network("Invalid IP address in UPnP response"))
     }
 
     async fn request_upnp_port_mapping(
         &self,
-        _gateway: &SocketAddr,
-        _internal_port: u16,
+        gateway: &SocketAddr,
+        internal_port: u16,
         external_port: u16,
-        _protocol: &str,
-        _lease_duration: u32,
+        protocol: &str,
+        lease_duration: u32,
     ) -> Result<u16> {
-        // Send SOAP AddPortMapping request
-        // Production would send proper SOAP request and parse response
+        // Get local IP address
+        let local_ip = local_ip_address::local_ip()
+            .map_err(|e| Error::network(format!("Failed to get local IP: {}", e)))?;
 
-        Ok(external_port)
+        // Send SOAP AddPortMapping request
+        let soap_request = format!(
+            "<?xml version=\"1.0\"?>\n\
+             <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
+                         s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n\
+               <s:Body>\n\
+                 <u:AddPortMapping xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">\n\
+                   <NewRemoteHost></NewRemoteHost>\n\
+                   <NewExternalPort>{}</NewExternalPort>\n\
+                   <NewProtocol>{}</NewProtocol>\n\
+                   <NewInternalPort>{}</NewInternalPort>\n\
+                   <NewInternalClient>{}</NewInternalClient>\n\
+                   <NewEnabled>1</NewEnabled>\n\
+                   <NewPortMappingDescription>dchat P2P</NewPortMappingDescription>\n\
+                   <NewLeaseDuration>{}</NewLeaseDuration>\n\
+                 </u:AddPortMapping>\n\
+               </s:Body>\n\
+             </s:Envelope>",
+            external_port, protocol, internal_port, local_ip, lease_duration
+        );
+
+        let control_url = format!("http://{}/ctl/IPConn", gateway);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&control_url)
+            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"")
+            .header("Content-Type", "text/xml; charset=\"utf-8\"")
+            .body(soap_request)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("UPnP AddPortMapping request failed: {}", e)))?;
+
+        if response.status().is_success() {
+            Ok(external_port)
+        } else {
+            Err(Error::network(format!(
+                "UPnP port mapping failed with status: {}",
+                response.status()
+            )))
+        }
     }
 
     /// Setup TURN relay connection (RFC 5766)
@@ -622,21 +707,51 @@ impl NatTraversalManager {
     /// Attempt hole punching with remote peer
     pub async fn attempt_hole_punching(
         &mut self,
-        _local_addr: SocketAddr,
-        _remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+        remote_addr: SocketAddr,
     ) -> Result<bool> {
         if !self.config.enable_hole_punching {
             return Err(Error::network("Hole punching is disabled"));
         }
 
-        // Implementation would perform UDP hole punching
-        // Steps:
-        // 1. Both peers send packets to each other's public addresses
-        // 2. NAT creates temporary bindings
-        // 3. Packets eventually get through
-        // 4. Verify bidirectional connectivity
+        use std::time::Duration;
+        use tokio::net::UdpSocket;
+        use tokio::time::{sleep, timeout};
 
-        // Placeholder - would return true if successful
+        // Bind to local address
+        let socket = UdpSocket::bind(local_addr)
+            .await
+            .map_err(|e| Error::network(format!("Failed to bind for hole punching: {}", e)))?;
+
+        // Simultaneous packet sending - both peers do this
+        // Send multiple packets to create NAT binding
+        let punch_packet = b"DCHAT_HOLE_PUNCH";
+        
+        for attempt in 0..5 {
+            // Send punch packet to remote's public address
+            socket
+                .send_to(punch_packet, remote_addr)
+                .await
+                .map_err(|e| Error::network(format!("Hole punch send failed: {}", e)))?;
+
+            // Wait with exponential backoff
+            sleep(Duration::from_millis(200 * (1 << attempt))).await;
+
+            // Try to receive response (non-blocking)
+            let mut buf = [0u8; 1024];
+            match timeout(Duration::from_millis(500), socket.recv_from(&mut buf)).await {
+                Ok(Ok((len, addr))) => {
+                    if addr == remote_addr && &buf[..len] == punch_packet {
+                        // Successfully established bidirectional connection
+                        self.active_strategy = Some(NatStrategy::HolePunching);
+                        return Ok(true);
+                    }
+                }
+                _ => continue, // Timeout or error, try again
+            }
+        }
+
+        // Hole punching failed after retries
         Ok(false)
     }
 
@@ -690,8 +805,35 @@ impl NatTraversalManager {
 
     /// Release UPnP port mapping
     pub async fn release_upnp(&mut self) -> Result<()> {
-        if let Some(_gateway) = &self.upnp_gateway {
-            // Implementation would send delete mapping request to gateway
+        if let Some(gateway) = &self.upnp_gateway {
+            // Send SOAP DeletePortMapping request
+            let soap_request = format!(
+                "<?xml version=\"1.0\"?>\n\
+                 <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
+                             s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n\
+                   <s:Body>\n\
+                     <u:DeletePortMapping xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">\n\
+                       <NewRemoteHost></NewRemoteHost>\n\
+                       <NewExternalPort>{}</NewExternalPort>\n\
+                       <NewProtocol>UDP</NewProtocol>\n\
+                     </u:DeletePortMapping>\n\
+                   </s:Body>\n\
+                 </s:Envelope>",
+                gateway.mapped_port
+            );
+
+            let control_url = format!("http://{}/ctl/IPConn", gateway.gateway_addr);
+
+            let client = reqwest::Client::new();
+            let _response = client
+                .post(&control_url)
+                .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#DeletePortMapping\"")
+                .header("Content-Type", "text/xml; charset=\"utf-8\"")
+                .body(soap_request)
+                .send()
+                .await
+                .map_err(|e| Error::network(format!("UPnP DeletePortMapping request failed: {}", e)))?;
+
             self.upnp_gateway = None;
         }
         Ok(())
@@ -699,7 +841,47 @@ impl NatTraversalManager {
 
     /// Close TURN connections
     pub async fn close_turn_connections(&mut self) -> Result<()> {
-        // Implementation would send refresh with lifetime=0 to TURN servers
+        use tokio::net::UdpSocket;
+
+        // Send Refresh request with lifetime=0 to each TURN server
+        for conn in &self.turn_connections {
+            if let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await {
+                // Build TURN Refresh request with lifetime=0
+                let mut refresh_request = Vec::new();
+
+                // Message Type: 0x0004 (Refresh Request)
+                refresh_request.extend_from_slice(&[0x00, 0x04]);
+
+                // Message Length (placeholder)
+                let length_pos = refresh_request.len();
+                refresh_request.extend_from_slice(&[0x00, 0x00]);
+
+                // Magic Cookie
+                refresh_request.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+
+                // Transaction ID
+                let mut transaction_id = [0u8; 12];
+                use rand::RngCore;
+                rand::thread_rng().fill_bytes(&mut transaction_id);
+                refresh_request.extend_from_slice(&transaction_id);
+
+                // Add LIFETIME attribute (0x000D) with value 0
+                refresh_request.extend_from_slice(&[0x00, 0x0D]); // Type
+                refresh_request.extend_from_slice(&[0x00, 0x04]); // Length
+                refresh_request.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Lifetime = 0
+
+                // Update message length
+                let msg_length = (refresh_request.len() - 20) as u16;
+                refresh_request[length_pos..length_pos + 2]
+                    .copy_from_slice(&msg_length.to_be_bytes());
+
+                // Send refresh to TURN server (ignore errors during cleanup)
+                if let Ok(server_addr) = conn.server_addr.parse::<SocketAddr>() {
+                    let _ = socket.send_to(&refresh_request, server_addr).await;
+                }
+            }
+        }
+
         self.turn_connections.clear();
         Ok(())
     }

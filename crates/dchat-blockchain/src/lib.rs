@@ -10,6 +10,8 @@ pub mod currency_chain_block_sync;
 pub mod proof_of_relay_work;
 pub mod proof_of_transit;
 pub mod rpc;
+pub mod staking;
+pub mod state_validation;
 pub mod temporal_stake_consensus;
 pub mod tokenomics;
 
@@ -39,6 +41,14 @@ pub use proof_of_transit::{
     TransitPath, TransitProof,
 };
 pub use rpc::{RpcClient, RpcConfig};
+pub use staking::{
+    SlashingEvent, SlashingSeverity, StakingManager, StakingTransaction, StakingTxType,
+    ValidatorStake, ValidatorStatus, MIN_VALIDATOR_STAKE, MAX_VALIDATOR_STAKE,
+    UNSTAKE_COOLDOWN_SECONDS, MAX_ACTIVE_VALIDATORS,
+};
+pub use state_validation::{
+    MerkleNode, MerkleProof, MerkleTree, StateValidationError, StateValidator,
+};
 pub use temporal_stake_consensus::{
     LockupTier, PredictiveOracle, TSCBlockVotes, TSCError, TSCVote, TemporalStake,
     TemporalStakeConsensus,

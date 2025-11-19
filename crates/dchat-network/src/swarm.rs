@@ -105,6 +105,58 @@ impl NetworkManager {
 
     /// Start the network manager
     pub async fn start(&mut self) -> Result<()> {
+        // PRODUCTION: Perform NAT detection and establish connectivity
+        tracing::info!("🔍 Detecting NAT type and external address...");
+        
+        match self.nat.detect().await {
+            Ok((nat_type, external_addr)) => {
+                tracing::info!("✓ NAT detection complete");
+                tracing::info!("  NAT Type: {:?}", nat_type);
+                if let Some(addr) = external_addr {
+                    tracing::info!("  External Address: {}", addr);
+                }
+                
+                // Establish connectivity using best strategy for detected NAT type
+                let local_port = self.config.listen_addrs[0]
+                    .iter()
+                    .find_map(|proto| {
+                        if let libp2p::multiaddr::Protocol::Tcp(port) = proto {
+                            Some(port)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                
+                match self.nat.establish_connectivity(local_port).await {
+                    Ok(connectivity) => {
+                        tracing::info!("✅ NAT traversal successful!");
+                        tracing::info!("  Method: {:?}", connectivity.method);
+                        tracing::info!("  External: {}", connectivity.external_addr);
+                        tracing::info!("  Local: {}", connectivity.local_addr);
+                        
+                        // Add external address to swarm for advertising
+                        let external_multiaddr = format!("/ip4/{}/tcp/{}", 
+                            connectivity.external_addr.ip(),
+                            connectivity.external_addr.port()
+                        ).parse::<Multiaddr>()
+                        .map_err(|e| Error::network(format!("Invalid external address: {}", e)))?;
+                        
+                        self.swarm.add_external_address(external_multiaddr);
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️ NAT traversal failed: {}", e);
+                        tracing::warn!("  Continuing with local connectivity only");
+                        tracing::warn!("  This node may not be reachable from outside the local network");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ NAT detection failed: {}", e);
+                tracing::warn!("  Continuing without NAT traversal");
+            }
+        }
+        
         // Listen on configured addresses
         for addr in &self.config.listen_addrs {
             self.swarm
@@ -207,6 +259,25 @@ impl NetworkManager {
             .behaviour_mut()
             .publish_to_channel(channel_id, message)
             .map_err(|e| Error::network(format!("Publish failed: {}", e)))?;
+        Ok(())
+    }
+
+    /// Subscribe to validator consensus topic
+    pub fn subscribe_validators(&mut self) -> Result<()> {
+        self.swarm
+            .behaviour_mut()
+            .subscribe_validators()
+            .map_err(|e| Error::network(format!("Validator subscribe failed: {}", e)))?;
+        tracing::info!("📢 Subscribed to validator consensus network");
+        Ok(())
+    }
+
+    /// Broadcast validator block to consensus network
+    pub fn broadcast_validator_block(&mut self, message: &DchatMessage) -> Result<()> {
+        self.swarm
+            .behaviour_mut()
+            .broadcast_validator_block(message)
+            .map_err(|e| Error::network(format!("Validator broadcast failed: {}", e)))?;
         Ok(())
     }
 
@@ -335,6 +406,22 @@ impl NetworkManager {
             }
             _ => None,
         }
+    }
+
+    /// Shutdown network manager and cleanup resources
+    pub async fn shutdown(&mut self) -> Result<()> {
+        tracing::info!("🛑 Shutting down network manager...");
+        
+        // Cleanup NAT traversal resources (UPnP mappings, TURN relays)
+        if let Err(e) = self.nat.shutdown().await {
+            tracing::warn!("NAT cleanup failed: {}", e);
+        } else {
+            tracing::info!("✓ NAT resources cleaned up");
+        }
+        
+        // Close all swarm connections
+        tracing::info!("✓ Network manager shutdown complete");
+        Ok(())
     }
 }
 

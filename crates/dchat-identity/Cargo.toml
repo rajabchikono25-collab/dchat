@@ -30,6 +30,9 @@ hex = { workspace = true }
 sha2 = "0.10"
 sqlx = { workspace = true }
 
+# FROST threshold signatures (audited by NCC Group, 2023)
+frost-ed25519 = "2.0"
+
 # Platform-specific dependencies for biometric/enclave support
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "2.9"

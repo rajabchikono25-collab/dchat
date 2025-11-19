@@ -12,6 +12,7 @@ mod encryption;
 pub mod handshake;
 pub mod kdf;
 pub mod keys;
+pub mod kms; // AWS KMS integration for secure key management
 pub mod noise;
 pub mod post_quantum;
 pub mod rotation;
@@ -23,6 +24,7 @@ pub use crypto::versioning as crypto_versioning;
 
 pub use encryption::{decrypt_with_password, encrypt_with_password};
 pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
+pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
 pub use noise::{NoiseHandshake, NoiseSession};
 pub use rotation::{KeyRotationManager, RotationPolicy};
 pub use signatures::{sign, verify, SigningKey, VerifyingKey};

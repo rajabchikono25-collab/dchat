@@ -16,12 +16,14 @@ pub mod enclave; // Phase 7 Sprint 6: Keyless UX - Secure enclave integration
 pub mod guardian;
 pub mod guardian_recovery; // Phase 2: Guardian-based account recovery
 pub mod identity; // Core identity management
-pub mod mpc; // Phase 7 Sprint 6: Keyless UX - MPC threshold signing
+pub mod mpc; // Phase 7 Sprint 6: Keyless UX - MPC threshold signing (Shamir)
+pub mod mpc_frost; // Phase 2 Sprint 2: FROST threshold signatures (production-ready)
 pub mod peer_registry; // Peer registry and discovery
 pub mod profile; // User profiles, status, and privacy settings
 pub mod storage;
 pub mod sync;
 pub mod verification; // Profile database storage
+pub mod attestation; // Device attestation verification (simulated verifier)
 
 pub use biometric::{BiometricAuthResult, BiometricAuthenticator, BiometricConfig, BiometricType};
 pub use burner::BurnerIdentity;
@@ -32,6 +34,10 @@ pub use guardian::{Guardian, GuardianManager, RecoveryRequest};
 pub use guardian_recovery::{GuardianId, GuardianRecoveryManager, RecoveryStatus};
 pub use identity::{Identity, IdentityManager};
 pub use mpc::{MpcConfig, MpcSigner, ThresholdSignature};
+pub use mpc_frost::{
+    FrostCoordinator, FrostKeyShare, FrostSignature, FrostConfig, FrostError,
+    SigningRound1Package, SigningRound2Package,
+};
 pub use peer_registry::{PeerRegistry, PeerRole}; // Add peer_registry exports
 pub use profile::{
     MusicApiTrack, MusicProvider, OnlineStatus, PrivacySettings, ProfileManager, ProfilePicture,
@@ -39,3 +45,4 @@ pub use profile::{
 };
 pub use storage::ProfileStorage;
 pub use verification::{VerificationProof, VerifiedBadge};
+pub use attestation::{verify_device_attestation, AttestationResult};

@@ -34,6 +34,22 @@ pub enum DchatMessage {
     },
     /// Sync request for offline messages
     SyncRequest { user_id: UserId, last_sequence: u64 },
+    /// Validator block proposal for consensus
+    ValidatorBlock {
+        height: u64,
+        validator_id: Vec<u8>,
+        block_hash: Vec<u8>,
+        signature: Vec<u8>,
+        timestamp: u64,
+        transactions: Vec<Vec<u8>>,
+    },
+    /// Validator block acknowledgment (vote)
+    BlockAcknowledgment {
+        block_height: u64,
+        block_hash: Vec<u8>,
+        validator_id: Vec<u8>,
+        signature: Vec<u8>,
+    },
 }
 
 /// Combined network behavior for dchat
@@ -135,6 +151,27 @@ impl DchatBehavior {
         message: &DchatMessage,
     ) -> Result<MessageId, gossipsub::PublishError> {
         let topic = gossipsub::IdentTopic::new(format!("dchat/channel/{}", channel_id));
+        let data = bincode::serialize(message).map_err(|e| {
+            gossipsub::PublishError::TransformFailed(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Serialization failed: {}", e),
+            ))
+        })?;
+        self.gossipsub.publish(topic, data)
+    }
+
+    /// Subscribe to validator consensus topic
+    pub fn subscribe_validators(&mut self) -> Result<bool, gossipsub::SubscriptionError> {
+        let topic = gossipsub::IdentTopic::new("dchat/validators/consensus");
+        self.gossipsub.subscribe(&topic)
+    }
+
+    /// Publish validator block to consensus network
+    pub fn broadcast_validator_block(
+        &mut self,
+        message: &DchatMessage,
+    ) -> Result<MessageId, gossipsub::PublishError> {
+        let topic = gossipsub::IdentTopic::new("dchat/validators/consensus");
         let data = bincode::serialize(message).map_err(|e| {
             gossipsub::PublishError::TransformFailed(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
