@@ -5,6 +5,7 @@
 
 pub mod abuse_reporting;
 pub mod moderation;
+pub mod protocol_dao;
 pub mod upgrade;
 pub mod voting;
 

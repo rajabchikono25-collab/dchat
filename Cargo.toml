@@ -21,6 +21,7 @@ members = [
     "crates/dchat-bots",
     "crates/dchat-data",
     "crates/dchat-deployment",
+    "crates/dchat-vr",
 ]
 resolver = "2"
 

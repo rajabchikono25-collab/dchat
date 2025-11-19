@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
+pub mod creator_economy;
+pub mod nft_advanced;
 pub mod escrow;
 
 // Re-export types for escrow module

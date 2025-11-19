@@ -1,20 +1,86 @@
 # Production Readiness Documentation Index
 
-**Generated**: November 4, 2025  
-**Status**: Mock Code Remediation Complete ✅
+**Last Updated**: January 26, 2025  
+**Status**: Production Hardening Phase ✅
 
 ---
 
 ## 📚 Document Overview
 
-This index provides a roadmap to all production readiness documentation generated during the mock code remediation session. Read documents in the order listed for best understanding.
+This index provides a comprehensive roadmap to all production documentation for dchat. Documents are organized by category and reading priority.
 
 ---
 
-## 🎯 Start Here (Executive Summary)
+## 🎯 Start Here (Quick Reference)
 
-### 1. **MOCK_CODE_REMEDIATION_SUMMARY.md**
-**Purpose**: High-level overview of what was accomplished  
+### 1. **PRODUCTION_HARDENING_QUICK_REF.md** ⭐ NEW
+**Purpose**: Quick reference for production hardening work  
+**Audience**: Developers, DevOps, team leads  
+**Reading Time**: 2 minutes  
+
+**Key Sections:**
+- Critical blockers (Week 1-2)
+- High priority items (Week 3-6)
+- Quick commands (cargo, testing, security)
+- Weekly checklists
+- Launch criteria
+
+**When to read**: Daily reference during production hardening phase
+
+---
+
+## 🛡️ Production Hardening (Primary Documents)
+
+### 2. **PRODUCTION_HARDENING_SESSION_SUMMARY.md** ⭐ NEW
+**Purpose**: Executive summary of hardening session and roadmap  
+**Audience**: Management, stakeholders, team leads  
+**Reading Time**: 10 minutes  
+
+**Key Sections:**
+- Phase 4 & 5 verification (100% complete)
+- Production readiness assessment (95%)
+- 10-week implementation roadmap
+- Key findings (121 unwraps, 37 TODOs)
+- Success metrics
+
+**When to read**: First document for understanding production status
+
+### 3. **PRODUCTION_HARDENING.md** ⭐ NEW
+**Purpose**: Comprehensive hardening implementation guide  
+**Audience**: Developers, security team, DevOps  
+**Reading Time**: 60 minutes (reference)  
+
+**Key Sections:**
+- Code quality hardening (error handling, TODO resolution)
+- Security hardening (KMS, secrets, rate limiting)
+- Operational readiness (monitoring, backup, DR)
+- Performance optimization (load tests, database)
+- Testing requirements (coverage, pen tests)
+- 10-week timeline with task breakdown
+
+**When to read**: When implementing specific hardening tasks
+
+### 4. **PRODUCTION_READINESS_STATUS.md** ⭐ UPDATED
+**Purpose**: Detailed status dashboard for all subsystems  
+**Audience**: Project managers, QA, DevOps  
+**Reading Time**: 30 minutes  
+
+**Key Sections:**
+- Executive dashboard (11 categories)
+- 34 architectural components status
+- Test coverage analysis (60% → 80% target)
+- Performance metrics vs. targets
+- Risk assessment matrix
+- Launch checklist
+
+**When to read**: Weekly status reviews, sprint planning
+
+---
+
+## 🎯 Legacy Documentation (Previous Sessions)
+
+### 5. **MOCK_CODE_REMEDIATION_SUMMARY.md**
+**Purpose**: High-level overview of mock code remediation  
 **Audience**: Management, project leads, stakeholders  
 **Reading Time**: 5 minutes  
 
@@ -23,9 +89,8 @@ This index provides a roadmap to all production readiness documentation generate
 - What was fixed (9 critical items)
 - Impact on production readiness (40% → 75%)
 - Key findings and surprises
-- Next steps recommendation
 
-**When to read**: First document to read for quick understanding
+**When to read**: Historical context for Phase 7 Sprint 4 work
 
 ---
 

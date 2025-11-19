@@ -16,6 +16,7 @@ pub mod distributed;
 pub mod economics;
 pub mod error;
 pub mod file_upload;
+pub mod ipfs;
 pub mod lifecycle;
 pub mod migrations;
 pub mod schema;
@@ -35,6 +36,7 @@ pub use distributed::{
 pub use economics::{EconomicsConfig, MicropaymentStream, StorageBond, StorageEconomicsManager};
 pub use error::{StorageError, StorageResult};
 pub use file_upload::{FileUploadManager, MediaFileType, StorageStats, UploadConfig, UploadedFile};
+pub use ipfs::{Cid, IpfsClient, IpfsConfig, IpfsDirectory, IpfsFile, PinStatus, PinType};
 pub use lifecycle::{LifecycleManager, TtlConfig};
 pub use migrations::{Migration, MigrationRunner, MIGRATIONS};
 pub use schema::Schema;

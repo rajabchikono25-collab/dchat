@@ -8,6 +8,7 @@
 //! - Alert rule evaluation and routing
 
 pub mod alerting;
+pub mod distributed_tracing;
 pub mod observability;
 
 use chrono::{DateTime, Utc};
