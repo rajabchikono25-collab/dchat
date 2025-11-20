@@ -19,12 +19,20 @@ num-bigint = "0.4"  # Big integer arithmetic for RSA blind signatures
 num-integer = "0.1"  # Integer operations
 num-traits = "0.2"  # Numeric traits
 
-# Zero-knowledge proofs
-# Note: Using lightweight custom implementation for now
-# Future: Consider arkworks-rs or bellman for production ZK
+# Zero-knowledge proofs (Groth16)
+ark-std = { version = "0.4", default-features = false }
+ark-ff = { version = "0.4", default-features = false }
+ark-ec = { version = "0.4", default-features = false }
+ark-bn254 = { version = "0.4", default-features = false, features = ["curve"] }
+ark-groth16 = { version = "0.4", default-features = false }
+ark-relations = { version = "0.4", default-features = false }
+ark-r1cs-std = { version = "0.4", default-features = false }
+ark-snark = { version = "0.4", default-features = false }
+ark-serialize = { version = "0.4", default-features = false }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
+hex = "0.4"
 
 # Logging
 tracing = { workspace = true }
@@ -35,3 +43,17 @@ anyhow = "1.0"
 
 [dev-dependencies]
 tokio = { version = "1.35", features = ["full"] }
+ark-std = { version = "0.4", features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+    "ark-std/std",
+    "ark-ff/std",
+    "ark-ec/std",
+    "ark-bn254/std",
+    "ark-groth16/std",
+    "ark-relations/std",
+    "ark-r1cs-std/std",
+    "ark-serialize/std",
+]

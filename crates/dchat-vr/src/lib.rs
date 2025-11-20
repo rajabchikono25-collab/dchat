@@ -8,9 +8,14 @@
 //! - VR headset integration (Quest, PSVR2, etc.)
 //! - AR overlay support for mobile devices
 
+pub mod accessibility;
 pub mod avatar;
+pub mod comfort;
 pub mod environment;
 pub mod gesture;
+pub mod haptics;
+pub mod performance;
+pub mod platforms;
 pub mod spatial_audio;
 pub mod vr_session;
 
@@ -19,6 +24,13 @@ use dchat_core::{types::UserId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+// Re-export key types from new modules
+pub use accessibility::{AccessibilityManager, AccessibilitySettings, ColorblindMode, Subtitle, TtsMessage, TtsPriority};
+pub use comfort::{ComfortMode, ComfortSettings, ComfortSystem};
+pub use haptics::{HapticEvent, HapticManager};
+pub use performance::{Frustum, LodLevel, PerformanceMetrics, PerformanceOptimizer};
+pub use platforms::{openxr::OpenXrPlatform, platform_trait::{PlatformCapabilities, PlatformError, VrPlatform}, visionos::VisionOsPlatform};
 
 /// VR/AR device types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

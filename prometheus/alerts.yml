@@ -1,0 +1,265 @@
+groups:
+  - name: dchat_network_alerts
+    interval: 30s
+    rules:
+      - alert: HighNetworkLatency
+        expr: histogram_quantile(0.95, rate(dchat_network_latency_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High network latency detected"
+          description: "P95 network latency is {{ $value }}s (threshold: 0.5s) for instance {{ $labels.instance }}"
+
+      - alert: CriticalNetworkLatency
+        expr: histogram_quantile(0.95, rate(dchat_network_latency_seconds_bucket[5m])) > 2.0
+        for: 2m
+        labels:
+          severity: critical
+          component: network
+        annotations:
+          summary: "Critical network latency detected"
+          description: "P95 network latency is {{ $value }}s (threshold: 2.0s) for instance {{ $labels.instance }}"
+
+      - alert: LowPeerCount
+        expr: dchat_network_peers{state="connected"} < 5
+        for: 10m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "Low peer count"
+          description: "Node {{ $labels.instance }} has only {{ $value }} connected peers (threshold: 5)"
+
+      - alert: NoPeersConnected
+        expr: dchat_network_peers{state="connected"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: network
+        annotations:
+          summary: "No peers connected"
+          description: "Node {{ $labels.instance }} has no connected peers - network isolation detected"
+
+      - alert: HighConnectionFailureRate
+        expr: rate(dchat_network_connection_failures_total[5m]) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High connection failure rate"
+          description: "Connection failures: {{ $value }}/sec on {{ $labels.instance }} (threshold: 1/sec)"
+
+      - alert: DHTRoutingTableDegraded
+        expr: dchat_dht_routing_table_size < 20
+        for: 10m
+        labels:
+          severity: warning
+          component: dht
+        annotations:
+          summary: "DHT routing table degraded"
+          description: "DHT routing table size is {{ $value }} entries (threshold: 20) on {{ $labels.instance }}"
+
+  - name: dchat_relay_alerts
+    interval: 30s
+    rules:
+      - alert: HighRelayQueueDepth
+        expr: dchat_relay_queue_depth > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: relay
+        annotations:
+          summary: "High relay queue depth"
+          description: "Relay {{ $labels.instance }} queue depth is {{ $value }} (threshold: 1000)"
+
+      - alert: CriticalRelayQueueDepth
+        expr: dchat_relay_queue_depth > 5000
+        for: 2m
+        labels:
+          severity: critical
+          component: relay
+        annotations:
+          summary: "Critical relay queue depth"
+          description: "Relay {{ $labels.instance }} queue depth is {{ $value }} (threshold: 5000) - message backlog detected"
+
+      - alert: LowRelayUptimeScore
+        expr: dchat_relay_uptime_score < 95
+        for: 15m
+        labels:
+          severity: warning
+          component: relay
+        annotations:
+          summary: "Low relay uptime score"
+          description: "Relay {{ $labels.instance }} uptime score is {{ $value }}% (threshold: 95%)"
+
+      - alert: HighProofOfDeliveryFailureRate
+        expr: rate(dchat_relay_proof_of_delivery_failures_total[5m]) / rate(dchat_relay_proof_of_delivery_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: relay
+        annotations:
+          summary: "High PoD failure rate"
+          description: "Relay {{ $labels.instance }} PoD failure rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      - alert: LowRelayReputationScore
+        expr: dchat_relay_reputation_score < 50
+        for: 10m
+        labels:
+          severity: warning
+          component: relay
+        annotations:
+          summary: "Low relay reputation score"
+          description: "Relay {{ $labels.instance }} reputation score is {{ $value }} (threshold: 50)"
+
+  - name: dchat_validator_alerts
+    interval: 30s
+    rules:
+      - alert: ValidatorMissedBlocks
+        expr: rate(dchat_validator_missed_blocks_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: validator
+        annotations:
+          summary: "Validator missing blocks"
+          description: "Validator {{ $labels.validator }} is missing {{ $value }} blocks/sec (threshold: 0.1/sec)"
+
+      - alert: LowConsensusParticipation
+        expr: dchat_validator_consensus_participation_rate < 80
+        for: 10m
+        labels:
+          severity: warning
+          component: validator
+        annotations:
+          summary: "Low consensus participation"
+          description: "Validator {{ $labels.validator }} participation rate is {{ $value }}% (threshold: 80%)"
+
+      - alert: CriticalConsensusParticipation
+        expr: dchat_validator_consensus_participation_rate < 50
+        for: 5m
+        labels:
+          severity: critical
+          component: validator
+        annotations:
+          summary: "Critical consensus participation"
+          description: "Validator {{ $labels.validator }} participation rate is {{ $value }}% (threshold: 50%)"
+
+      - alert: ForkDetected
+        expr: rate(dchat_validator_fork_detected_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: validator
+        annotations:
+          summary: "Blockchain fork detected"
+          description: "Fork detected on validator {{ $labels.validator }} - immediate investigation required"
+
+      - alert: HighConsensusRoundDuration
+        expr: histogram_quantile(0.95, rate(dchat_consensus_round_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: validator
+        annotations:
+          summary: "High consensus round duration"
+          description: "P95 consensus round duration is {{ $value }}s (threshold: 10s)"
+
+      - alert: LargeTxPool
+        expr: dchat_validator_txpool_size > 10000
+        for: 10m
+        labels:
+          severity: warning
+          component: validator
+        annotations:
+          summary: "Large transaction pool"
+          description: "Validator {{ $labels.validator }} TX pool size is {{ $value }} (threshold: 10000)"
+
+  - name: dchat_system_alerts
+    interval: 30s
+    rules:
+      - alert: NodeDown
+        expr: up{job="dchat"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Node is down"
+          description: "Node {{ $labels.instance }} has been down for 2 minutes"
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Node {{ $labels.instance }} memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "Node {{ $labels.instance }} CPU usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Low disk space"
+          description: "Node {{ $labels.instance }} has {{ $value | humanizePercentage }} disk space remaining (threshold: 10%)"
+
+      - alert: DiskSpaceCritical
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.05
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Critical disk space"
+          description: "Node {{ $labels.instance }} has {{ $value | humanizePercentage }} disk space remaining (threshold: 5%)"
+
+  - name: dchat_storage_alerts
+    interval: 60s
+    rules:
+      - alert: DatabaseConnectionFailure
+        expr: dchat_storage_database_health == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "Database connection failure"
+          description: "Database health check failed for {{ $labels.instance }}"
+
+      - alert: CacheLowHitRatio
+        expr: dchat_cache_hits_total / (dchat_cache_hits_total + dchat_cache_misses_total) < 0.6
+        for: 15m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Low cache hit ratio"
+          description: "Cache hit ratio is {{ $value | humanizePercentage }} (threshold: 60%) on {{ $labels.instance }}"
+
+      - alert: HighStorageLatency
+        expr: histogram_quantile(0.95, rate(dchat_storage_operation_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High storage latency"
+          description: "P95 storage operation latency is {{ $value }}s (threshold: 1.0s) on {{ $labels.instance }}"

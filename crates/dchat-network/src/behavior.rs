@@ -4,8 +4,9 @@ use dchat_core::types::UserId;
 use libp2p::{
     gossipsub::{self, MessageId},
     identify, kad, mdns, ping,
+    request_response::{self, OutboundRequestId, ProtocolSupport},
     swarm::NetworkBehaviour,
-    PeerId,
+    PeerId, StreamProtocol,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -52,6 +53,106 @@ pub enum DchatMessage {
     },
 }
 
+/// Handshake request/response for peer exchange
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeData {
+    pub data: Vec<u8>,
+}
+
+/// JSON codec for request-response protocol
+#[derive(Debug, Clone)]
+pub struct JsonCodec;
+
+impl request_response::Codec for JsonCodec {
+    type Protocol = StreamProtocol;
+    type Request = HandshakeData;
+    type Response = HandshakeData;
+
+    async fn read_request<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Request>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        use futures::AsyncReadExt;
+        let mut len_buf = [0u8; 4];
+        io.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        
+        if len > 1024 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Handshake too large",
+            ));
+        }
+        
+        let mut data = vec![0u8; len];
+        io.read_exact(&mut data).await?;
+        Ok(HandshakeData { data })
+    }
+
+    async fn read_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Response>
+    where
+        T: futures::AsyncRead + Unpin + Send,
+    {
+        use futures::AsyncReadExt;
+        let mut len_buf = [0u8; 4];
+        io.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        
+        if len > 1024 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Handshake response too large",
+            ));
+        }
+        
+        let mut data = vec![0u8; len];
+        io.read_exact(&mut data).await?;
+        Ok(HandshakeData { data })
+    }
+
+    async fn write_request<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        use futures::AsyncWriteExt;
+        let len = req.data.len() as u32;
+        io.write_all(&len.to_be_bytes()).await?;
+        io.write_all(&req.data).await?;
+        io.flush().await?;
+        Ok(())
+    }
+
+    async fn write_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        res: Self::Response,
+    ) -> std::io::Result<()>
+    where
+        T: futures::AsyncWrite + Unpin + Send,
+    {
+        use futures::AsyncWriteExt;
+        let len = res.data.len() as u32;
+        io.write_all(&len.to_be_bytes()).await?;
+        io.write_all(&res.data).await?;
+        io.flush().await?;
+        Ok(())
+    }
+}
+
 /// Combined network behavior for dchat
 #[derive(NetworkBehaviour)]
 pub struct DchatBehavior {
@@ -69,6 +170,9 @@ pub struct DchatBehavior {
 
     /// Ping for connection liveness
     pub ping: ping::Behaviour,
+    
+    /// Request-response for peer handshakes
+    pub req_resp: request_response::cbor::Behaviour<HandshakeData, HandshakeData>,
 }
 
 impl DchatBehavior {
@@ -116,6 +220,15 @@ impl DchatBehavior {
 
         // Ping protocol
         let ping = ping::Behaviour::new(ping::Config::new());
+        
+        // Request-response for handshakes
+        let protocols = std::iter::once((
+            StreamProtocol::new("/dchat/handshake/1.0.0"),
+            ProtocolSupport::Full,
+        ));
+        let req_resp_config = request_response::Config::default()
+            .with_request_timeout(Duration::from_secs(30));
+        let req_resp = request_response::cbor::Behaviour::new(protocols, req_resp_config);
 
         Ok(Self {
             kademlia,
@@ -123,6 +236,7 @@ impl DchatBehavior {
             gossipsub,
             identify,
             ping,
+            req_resp,
         })
     }
 
@@ -179,6 +293,11 @@ impl DchatBehavior {
             ))
         })?;
         self.gossipsub.publish(topic, data)
+    }
+    
+    /// Send a handshake request to a peer
+    pub fn send_handshake(&mut self, peer_id: PeerId, data: Vec<u8>) -> OutboundRequestId {
+        self.req_resp.send_request(&peer_id, HandshakeData { data })
     }
 }
 

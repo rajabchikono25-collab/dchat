@@ -1,0 +1,114 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # System logs
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          __path__: /var/log/*log
+
+  # Docker container logs
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+
+  # dchat application logs
+  - job_name: dchat
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: dchat
+          __path__: /var/log/dchat/*.log
+    pipeline_stages:
+      # Parse JSON logs
+      - json:
+          expressions:
+            level: level
+            timestamp: timestamp
+            message: message
+            module: module
+            peer_id: peer_id
+            region: region
+      
+      # Set log level as label
+      - labels:
+          level:
+          module:
+          region:
+      
+      # Parse timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+      
+      # Extract additional fields from message
+      - regex:
+          expression: '(?P<event_type>block_produced|vote_received|message_relayed|connection_established)'
+          source: message
+      
+      - labels:
+          event_type:
+
+  # Validator logs
+  - job_name: validators
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: validators
+          component: validator
+          __path__: /var/log/dchat/validator-*.log
+
+  # Relay logs
+  - job_name: relays
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: relays
+          component: relay
+          __path__: /var/log/dchat/relay-*.log
+
+  # Consensus logs (high-value events)
+  - job_name: consensus
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: consensus
+          component: validator
+          __path__: /var/log/dchat/consensus-*.log
+    pipeline_stages:
+      - match:
+          selector: '{job="consensus"}'
+          stages:
+            # Extract consensus-specific fields
+            - regex:
+                expression: 'round=(?P<round>\d+) height=(?P<height>\d+) validator=(?P<validator>[a-zA-Z0-9]+)'
+            - labels:
+                round:
+                height:
+                validator:

@@ -1,0 +1,158 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
+# Templates for notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route alerts to appropriate receivers
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default'
+  
+  routes:
+    # Critical alerts go to PagerDuty and Slack
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      continue: true
+    
+    # Network alerts
+    - match:
+        component: network
+      receiver: 'network-team'
+      group_wait: 30s
+    
+    # Validator alerts
+    - match:
+        component: validator
+      receiver: 'validator-team'
+      group_wait: 30s
+    
+    # Relay alerts
+    - match:
+        component: relay
+      receiver: 'relay-team'
+      group_wait: 30s
+    
+    # Storage alerts
+    - match:
+        component: storage
+      receiver: 'storage-team'
+      group_wait: 30s
+    
+    # System alerts
+    - match:
+        component: system
+      receiver: 'ops-team'
+
+# Inhibition rules - suppress certain alerts when others are firing
+inhibit_rules:
+  # Don't alert about low peer count if node is down
+  - source_match:
+      alertname: 'NodeDown'
+    target_match:
+      alertname: 'LowPeerCount'
+    equal: ['instance']
+  
+  # Don't alert about high latency if no peers connected
+  - source_match:
+      alertname: 'NoPeersConnected'
+    target_match:
+      alertname: 'HighNetworkLatency'
+    equal: ['instance']
+  
+  # Suppress warning if critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+# Alert receivers
+receivers:
+  # Default receiver - log only
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://localhost:8080/webhook/default'
+        send_resolved: true
+
+  # Critical alerts - PagerDuty + Slack
+  - name: 'critical-alerts'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        description: '{{ .GroupLabels.alertname }} - {{ .GroupLabels.instance }}'
+        details:
+          firing: '{{ template "pagerduty.default.description" . }}'
+    slack_configs:
+      - channel: '#dchat-critical-alerts'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+        color: 'danger'
+
+  # Network team
+  - name: 'network-team'
+    slack_configs:
+      - channel: '#dchat-network'
+        title: '📡 Network Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+    email_configs:
+      - to: 'network-team@dchat.network'
+        from: 'alerts@dchat.network'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'alerts@dchat.network'
+        auth_password: '${EMAIL_PASSWORD}'
+        headers:
+          Subject: 'dChat Network Alert: {{ .GroupLabels.alertname }}'
+
+  # Validator team
+  - name: 'validator-team'
+    slack_configs:
+      - channel: '#dchat-validators'
+        title: '⛓️ Validator Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+    email_configs:
+      - to: 'validator-team@dchat.network'
+        from: 'alerts@dchat.network'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'alerts@dchat.network'
+        auth_password: '${EMAIL_PASSWORD}'
+
+  # Relay team
+  - name: 'relay-team'
+    slack_configs:
+      - channel: '#dchat-relays'
+        title: '🔁 Relay Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+
+  # Storage team
+  - name: 'storage-team'
+    slack_configs:
+      - channel: '#dchat-storage'
+        title: '💾 Storage Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+
+  # Operations team
+  - name: 'ops-team'
+    slack_configs:
+      - channel: '#dchat-ops'
+        title: '🔧 System Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+    email_configs:
+      - to: 'ops-team@dchat.network'
+        from: 'alerts@dchat.network'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: 'alerts@dchat.network'
+        auth_password: '${EMAIL_PASSWORD}'

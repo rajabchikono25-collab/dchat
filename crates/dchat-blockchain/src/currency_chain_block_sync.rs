@@ -704,15 +704,35 @@ impl BlockSyncManager {
             .unwrap_or("unknown")
             .to_string();
 
-        // Parse transactions (simplified - storing as generic Transaction objects)
-        // TODO: Proper transaction parsing based on currency chain format
-        let empty_vec = vec![];
-        let tx_array = block_data["transactions"].as_array().unwrap_or(&empty_vec);
-        let transactions: Vec<dchat_chain::Transaction> = tx_array
-            .iter()
-            .filter_map(|_tx| {
-                // For now, skip transaction parsing - just return empty list
-                None
+        // Parse transactions using dedicated parser
+        use dchat_chain::{CurrencyTransactionParser, TransactionData};
+        
+        let parsed_transactions = CurrencyTransactionParser::parse_block_transactions(&block_data)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to parse block transactions: {}", e);
+                Vec::new()
+            });
+
+        // Convert parsed transactions to generic Transaction objects
+        let transactions: Vec<dchat_chain::Transaction> = parsed_transactions
+            .into_iter()
+            .map(|parsed_tx| {
+                use dchat_chain::{TransactionType, TransactionStatus};
+                use uuid::Uuid;
+                
+                // Create a generic transaction payload
+                let payload = serde_json::to_value(&parsed_tx.data).unwrap_or(serde_json::json!({}));
+                
+                dchat_chain::Transaction {
+                    tx_id: Uuid::new_v4(),
+                    tx_type: TransactionType::SendDirectMessage, // Placeholder - currency txs don't map directly
+                    payload,
+                    tx_hash: parsed_tx.tx_hash.clone(),
+                    status: TransactionStatus::Confirmed,
+                    submitted_at: chrono::Utc::now(),
+                    confirmed_at: Some(chrono::Utc::now()),
+                    fee_paid: 0,
+                }
             })
             .collect();
 

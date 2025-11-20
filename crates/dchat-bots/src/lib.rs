@@ -14,7 +14,9 @@ pub mod api;
 pub mod bot_api;
 pub mod bot_manager;
 pub mod commands;
+pub mod event_dispatcher;
 pub mod inline;
+pub mod messaging_integration;
 pub mod music_api;
 pub mod permissions;
 pub mod search;
@@ -24,6 +26,8 @@ pub mod webhook;
 
 pub use api::BotHttpClient;
 pub use bot_api::{BotApi, BotClient};
+pub use event_dispatcher::{BotEvent, BotEventHandler, EventDispatcher};
+pub use messaging_integration::{BotMessagingClient, MessageRouter};
 pub use bot_manager::{BotFather, BotManager};
 pub use commands::{Command, CommandHandler, CommandRegistry};
 pub use dchat_identity::profile::{
@@ -184,28 +188,25 @@ pub struct BotMessage {
     pub message_id: Uuid,
 
     /// Sender user ID
-    pub from: dchat_core::types::UserId,
+    pub from_user_id: Uuid,
 
     /// Chat ID (channel or DM)
     pub chat_id: String,
 
     /// Message text
-    pub text: Option<String>,
+    pub text: String,
 
     /// Message timestamp
-    pub timestamp: DateTime<Utc>,
-
-    /// Is this a command?
-    pub is_command: bool,
-
-    /// Parsed command (if is_command = true)
-    pub command: Option<String>,
-
-    /// Command arguments
-    pub command_args: Vec<String>,
+    pub timestamp: std::time::SystemTime,
 
     /// Reply to message ID
     pub reply_to_message_id: Option<Uuid>,
+
+    /// Message entities
+    pub entities: Vec<MessageEntity>,
+
+    /// Media content
+    pub media: Option<EnhancedBotMessage>,
 }
 
 /// Bot response message
@@ -397,40 +398,42 @@ impl BotMessage {
     /// Parse a message into a BotMessage
     pub fn from_message(
         message_id: Uuid,
-        from: dchat_core::types::UserId,
+        from_user_id: Uuid,
         chat_id: String,
         text: String,
     ) -> Self {
-        let (is_command, command, command_args) = Self::parse_command(&text);
-
         Self {
             message_id,
-            from,
+            from_user_id,
             chat_id,
-            text: Some(text),
-            timestamp: Utc::now(),
-            is_command,
-            command,
-            command_args,
+            text,
+            timestamp: std::time::SystemTime::now(),
             reply_to_message_id: None,
+            entities: Vec::new(),
+            media: None,
         }
     }
 
+    /// Check if message is a command
+    pub fn is_command(&self) -> bool {
+        self.text.starts_with('/')
+    }
+
     /// Parse command from text
-    fn parse_command(text: &str) -> (bool, Option<String>, Vec<String>) {
-        if !text.starts_with('/') {
-            return (false, None, Vec::new());
+    pub fn parse_command(&self) -> Option<(String, Vec<String>)> {
+        if !self.text.starts_with('/') {
+            return None;
         }
 
-        let parts: Vec<&str> = text[1..].split_whitespace().collect();
+        let parts: Vec<&str> = self.text[1..].split_whitespace().collect();
         if parts.is_empty() {
-            return (false, None, Vec::new());
+            return None;
         }
 
         let command = parts[0].to_string();
         let args = parts[1..].iter().map(|s| s.to_string()).collect();
 
-        (true, Some(command), args)
+        Some((command, args))
     }
 }
 
@@ -464,17 +467,20 @@ mod tests {
 
     #[test]
     fn test_parse_command() {
-        let owner_id = dchat_core::types::UserId::new();
         let message = BotMessage::from_message(
             Uuid::new_v4(),
-            owner_id,
+            Uuid::new_v4(),
             "chat123".to_string(),
             "/start hello world".to_string(),
         );
 
-        assert!(message.is_command);
-        assert_eq!(message.command, Some("start".to_string()));
-        assert_eq!(message.command_args, vec!["hello", "world"]);
+        assert!(message.is_command());
+        if let Some((cmd, args)) = message.parse_command() {
+            assert_eq!(cmd, "start");
+            assert_eq!(args, vec!["hello", "world"]);
+        } else {
+            panic!("Failed to parse command");
+        }
     }
 
     #[test]

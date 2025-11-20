@@ -4,6 +4,8 @@ library;
 import 'package:uuid/uuid.dart';
 import '../blockchain/client.dart';
 import '../crypto/keypair.dart';
+import '../messaging/http_client.dart';
+import '../messaging/websocket_client.dart';
 import 'models.dart';
 
 /// User manager for user operations
@@ -11,11 +13,15 @@ class UserManager {
   final BlockchainClient blockchain;
   final String baseUrl;
   final Uuid _uuid = const Uuid();
+  late final HttpClient _httpClient;
+  WebSocketClient? _wsClient;
 
   UserManager({
     required this.blockchain,
     required this.baseUrl,
-  });
+  }) {
+    _httpClient = HttpClient(baseUrl: baseUrl);
+  }
 
   /// Create a new user with blockchain registration
   Future<CreateUserResponse> createUser(String username) async {
@@ -49,31 +55,28 @@ class UserManager {
   }
 
   /// Get user profile by user ID
-  /// Queries blockchain for user registration and profile data
+  /// Queries HTTP API for user registration and profile data
   Future<UserProfile?> getUserProfile(String userId) async {
     try {
-      // Query blockchain for user data
-      final userData = await blockchain.getUserData(userId);
+      final profileData = await _httpClient.get('/api/users/$userId');
       
-      if (userData == null) {
-        return null;
+      if (profileData != null) {
+        return UserProfile(
+          userId: userId,
+          username: profileData['username'] as String,
+          publicKey: profileData['publicKey'] as String,
+          createdAt: profileData['createdAt'] as String,
+          reputation: profileData['reputation'] as int? ?? 0,
+          onChainConfirmed: profileData['onChainConfirmed'] as bool? ?? false,
+        );
       }
       
-      return UserProfile(
-        userId: userId,
-        username: userData['username'] as String,
-        publicKey: userData['publicKey'] as String,
-        displayName: userData['displayName'] as String?,
-        bio: userData['bio'] as String?,
-        avatarUrl: userData['avatarUrl'] as String?,
-        createdAt: userData['createdAt'] as String,
-        lastSeen: userData['lastSeen'] as String?,
-        onChainVerified: userData['verified'] as bool? ?? false,
-      );
+      return null;
     } catch (e) {
       // Log error and return null if user not found or error occurred
       return null;
-    }\n  }
+    }
+  }
 
   /// Send a direct message
   Future<DirectMessageResponse> sendDirectMessage({
@@ -186,9 +189,32 @@ class UserManager {
     required String userId,
     int limit = 50,
   }) async {
-    // Implementation would query the backend/database
-    // For now, this is a placeholder
-    throw UnimplementedError('getDirectMessages not yet implemented');
+    try {
+      final response = await _httpClient.get(
+        '/api/users/$userId/messages',
+        queryParams: {'limit': limit.toString()},
+      );
+
+      if (response == null || response['messages'] == null) {
+        return [];
+      }
+
+      final messagesList = response['messages'] as List;
+      return messagesList
+          .map((msg) => DirectMessage(
+                messageId: msg['messageId'] as String,
+                senderId: msg['senderId'] as String,
+                recipientId: msg['recipientId'] as String,
+                content: msg['content'] as String,
+                contentHash: msg['contentHash'] as String,
+                createdAt: msg['createdAt'] as String,
+                onChainConfirmed: msg['onChainConfirmed'] as bool? ?? false,
+              ))
+          .toList();
+    } catch (e) {
+      // Return empty list on error
+      return [];
+    }
   }
 
   /// Get channel messages
@@ -196,8 +222,64 @@ class UserManager {
     required String channelId,
     int limit = 50,
   }) async {
-    // Implementation would query the backend/database
-    // For now, this is a placeholder
-    throw UnimplementedError('getChannelMessages not yet implemented');
+    try {
+      final response = await _httpClient.get(
+        '/api/channels/$channelId/messages',
+        queryParams: {'limit': limit.toString()},
+      );
+
+      if (response == null || response['messages'] == null) {
+        return [];
+      }
+
+      final messagesList = response['messages'] as List;
+      return messagesList
+          .map((msg) => ChannelMessage(
+                messageId: msg['messageId'] as String,
+                channelId: msg['channelId'] as String,
+                senderId: msg['senderId'] as String,
+                content: msg['content'] as String,
+                contentHash: msg['contentHash'] as String,
+                createdAt: msg['createdAt'] as String,
+                onChainConfirmed: msg['onChainConfirmed'] as bool? ?? false,
+              ))
+          .toList();
+    } catch (e) {
+      // Return empty list on error
+      return [];
+    }
+  }
+
+  /// Connect to WebSocket relay for real-time messaging
+  Future<void> connectToRelay(String relayUrl) async {
+    _wsClient = WebSocketClient(url: relayUrl);
+    await _wsClient!.connect();
+  }
+
+  /// Disconnect from WebSocket relay
+  Future<void> disconnectFromRelay() async {
+    await _wsClient?.disconnect();
+    _wsClient = null;
+  }
+
+  /// Check if connected to relay
+  bool get isConnectedToRelay => _wsClient?.isConnected ?? false;
+
+  /// Send real-time message via WebSocket
+  Future<void> sendRealtimeMessage(Map<String, dynamic> message) async {
+    if (_wsClient == null || !_wsClient!.isConnected) {
+      throw StateError('Not connected to relay');
+    }
+    await _wsClient!.send(message);
+  }
+
+  /// Register message handler for real-time messages
+  void onRealtimeMessage(MessageHandler handler) {
+    _wsClient?.onMessage(handler);
+  }
+
+  /// Dispose resources
+  void dispose() {
+    _wsClient?.dispose();
   }
 }

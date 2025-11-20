@@ -30,6 +30,7 @@
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.50.0",
@@ -40,6 +41,7 @@
     "typescript": "^5.2.0"
   },
   "dependencies": {
+    "@noble/ed25519": "^2.0.0",
     "axios": "^1.6.0",
     "uuid": "^9.0.0",
     "ws": "^8.14.0"

@@ -469,6 +469,19 @@ impl UpgradeManager {
     pub fn get_proposal(&self, id: &Uuid) -> Option<&UpgradeProposal> {
         self.proposals.get(id)
     }
+    
+    /// Add validator signature to proposal (for hard forks)
+    pub fn add_validator_signature(
+        &mut self, 
+        proposal_id: &Uuid, 
+        signature: ValidatorSignature
+    ) -> Result<()> {
+        let proposal = self.proposals
+            .get_mut(proposal_id)
+            .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
+        
+        proposal.add_validator_signature(signature)
+    }
 
     /// Get fork history
     pub fn get_fork_history(&self) -> &[ForkState] {

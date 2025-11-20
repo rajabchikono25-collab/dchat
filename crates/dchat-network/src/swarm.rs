@@ -301,6 +301,15 @@ impl NetworkManager {
             .copied()
             .collect()
     }
+    
+    /// Send a handshake to a peer
+    pub fn send_handshake(&mut self, peer_id: PeerId, handshake_data: Vec<u8>) -> Result<()> {
+        self.swarm
+            .behaviour_mut()
+            .send_handshake(peer_id, handshake_data);
+        tracing::debug!("Sent handshake to peer: {}", peer_id);
+        Ok(())
+    }
 
     /// Process network events
     pub async fn next_event(&mut self) -> Option<NetworkEvent> {

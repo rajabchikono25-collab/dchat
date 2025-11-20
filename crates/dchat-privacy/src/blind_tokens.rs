@@ -15,6 +15,23 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::ops::Rem;
 
+/// Trait for querying currency chain for payment verification
+pub trait CurrencyChainClient: Send + Sync {
+    /// Verify payment transaction on currency chain
+    fn verify_payment_transaction(
+        &self,
+        tx_hash: &str,
+        expected_amount: u64,
+        expected_recipient: &str,
+    ) -> Result<bool>;
+    
+    /// Check if token signature has been redeemed
+    fn is_token_redeemed(&self, signature_hash: &[u8; 32]) -> Result<bool>;
+    
+    /// Mark token as redeemed on-chain
+    fn mark_token_redeemed(&mut self, signature_hash: [u8; 32]) -> Result<()>;
+}
+
 /// A blind token that can be redeemed anonymously
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlindToken {
@@ -69,7 +86,15 @@ impl TokenIssuer {
 
     /// Verify payment before issuing token
     pub fn verify_payment(&self, amount: u64) -> Result<bool> {
-        // In production: query currency chain for payment transaction
+        self.verify_payment_with_blockchain(amount, None)
+    }
+    
+    /// Verify payment with blockchain integration (production)
+    pub fn verify_payment_with_blockchain(
+        &self,
+        amount: u64,
+        currency_chain: Option<(&dyn CurrencyChainClient, &str)>,
+    ) -> Result<bool> {
         // 1. Check payment transaction exists and is confirmed
         // 2. Verify payment amount >= token value
         // 3. Verify payment is to token issuer address
@@ -80,9 +105,40 @@ impl TokenIssuer {
         }
 
         tracing::info!("Verifying blockchain payment of {} tokens", amount);
-        // In production: blockchain_client.verify_payment_tx(tx_hash, amount, issuer_address)
-
-        Ok(true)
+        
+        if let Some((client, tx_hash)) = currency_chain {
+            // Production: Query currency chain for payment transaction
+            let issuer_address = hex::encode(self.signing_key.as_bytes());
+            
+            let payment_valid = client.verify_payment_transaction(
+                tx_hash,
+                amount,
+                &issuer_address,
+            )?;
+            
+            if !payment_valid {
+                return Err(Error::validation(
+                    format!(
+                        "Payment verification failed: expected {} tokens to {}",
+                        amount, issuer_address
+                    )
+                ));
+            }
+            
+            tracing::info!(
+                "✓ Payment verified: {} tokens in transaction {}",
+                amount,
+                tx_hash
+            );
+            
+            Ok(true)
+        } else {
+            // Fallback for testing/development
+            tracing::warn!(
+                "Currency chain not connected - payment verification bypassed (testing mode)"
+            );
+            Ok(true)
+        }
     }
 }
 
@@ -199,6 +255,15 @@ impl TokenVerifier {
     /// This happens when the token is redeemed. The verifier checks
     /// the signature but cannot link it back to the original blind request.
     pub fn verify_token(&self, token: &BlindToken) -> Result<bool> {
+        self.verify_token_with_blockchain(token, None)
+    }
+    
+    /// Verify token with blockchain redemption tracking (production)
+    pub fn verify_token_with_blockchain(
+        &self,
+        token: &BlindToken,
+        currency_chain: Option<&dyn CurrencyChainClient>,
+    ) -> Result<bool> {
         let signature = token
             .signature
             .as_ref()
@@ -217,11 +282,20 @@ impl TokenVerifier {
 
         use ed25519_dalek::Signature;
         let sig = Signature::from_bytes(&sig_bytes);
+        
+        // Check if token already redeemed (prevent double-spend)
+        if let Some(client) = currency_chain {
+            let sig_hash_bytes = blake3::hash(signature);
+            let sig_hash: [u8; 32] = *sig_hash_bytes.as_bytes();
+            
+            if client.is_token_redeemed(&sig_hash)? {
+                return Err(Error::validation(
+                    "Token already redeemed (double-spend detected)".to_string()
+                ));
+            }
+        }
 
-        // In production: verify using issuer's public key
-        // verifying_key.verify_strict(&token.blinded_value, &sig).is_ok()
-
-        // For now, verify signature format is valid
+        // Verify using issuer's public key
         tracing::debug!("Verifying Ed25519 signature on blind token");
         Ok(self
             .public_key

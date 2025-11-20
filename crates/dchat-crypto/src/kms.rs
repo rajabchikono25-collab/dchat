@@ -28,7 +28,7 @@
 
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_kms::{
-    operation::sign::{SignError, SignOutput},
+    operation::sign::SignError,
     types::{MessageType, SigningAlgorithmSpec},
     Client,
 };
@@ -76,8 +76,8 @@ pub enum KmsError {
     InvalidKeyId(String),
 }
 
-impl From<aws_smithy_runtime_api::client::result::SdkError<SignError>> for KmsError {
-    fn from(err: aws_smithy_runtime_api::client::result::SdkError<SignError>) -> Self {
+impl<R> From<aws_smithy_runtime_api::client::result::SdkError<SignError, R>> for KmsError {
+    fn from(err: aws_smithy_runtime_api::client::result::SdkError<SignError, R>) -> Self {
         KmsError::AwsSdk(err.to_string())
     }
 }
@@ -270,7 +270,7 @@ impl AwsKmsClient {
                     );
 
                     // Check if key is enabled
-                    if metadata.enabled() == Some(false) {
+                    if metadata.enabled() == false {
                         warn!("KMS key is disabled: {}", key_id);
                         return Ok(false);
                     }

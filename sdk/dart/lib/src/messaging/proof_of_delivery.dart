@@ -1,4 +1,7 @@
 // Proof of delivery tracking for messages
+library;
+
+import 'websocket_client.dart';
 
 /// Delivery proof states
 enum DeliveryStatus {
@@ -68,6 +71,55 @@ class ProofOfDeliveryTracker {
   final Map<String, DeliveryProof> proofs = {};
   final Map<String, DateTime> pendingMessages = {};
   static const Duration proofTimeout = Duration(minutes: 30);
+  WebSocketClient? _wsClient;
+
+  /// Connect to WebSocket for real-time delivery updates
+  void connectWebSocket(WebSocketClient wsClient) {
+    _wsClient = wsClient;
+    
+    // Listen for delivery proof messages from relay
+    _wsClient?.onMessage((data) {
+      final messageType = data['type'] as String?;
+      
+      if (messageType == 'delivery_proof') {
+        final proof = DeliveryProof.fromJson(data);
+        recordProof(proof);
+      } else if (messageType == 'read_receipt') {
+        final messageId = data['messageId'] as String;
+        final existingProof = proofs[messageId];
+        
+        if (existingProof != null) {
+          // Update status to read
+          proofs[messageId] = DeliveryProof(
+            messageId: messageId,
+            recipientId: existingProof.recipientId,
+            senderPublicKey: existingProof.senderPublicKey,
+            status: DeliveryStatus.read,
+            signature: existingProof.signature,
+            relayNodeId: existingProof.relayNodeId,
+            blockHeight: existingProof.blockHeight,
+          );
+        }
+      }
+    });
+  }
+
+  /// Disconnect WebSocket
+  void disconnectWebSocket() {
+    _wsClient = null;
+  }
+
+  /// Request delivery status from relay via WebSocket
+  Future<void> requestDeliveryStatus(String messageId) async {
+    if (_wsClient == null || !_wsClient!.isConnected) {
+      throw StateError('WebSocket not connected');
+    }
+    
+    await _wsClient!.send({
+      'type': 'request_delivery_status',
+      'messageId': messageId,
+    });
+  }
 
   /// Record message as pending delivery
   void markPending(String messageId, String recipientId) {

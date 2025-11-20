@@ -67,6 +67,13 @@ export type {
 // Cryptographic utilities
 export { generateKeyPair, sign, verify } from './crypto/keypair';
 export type { KeyPair } from './crypto/keypair';
+export { WebSocketManager } from './crypto/websocket';
+export type {
+  WebSocketConfig,
+  MessageHandler,
+  ErrorHandler,
+  ConnectionHandler,
+} from './crypto/websocket';
 
 /**
  * SDK version

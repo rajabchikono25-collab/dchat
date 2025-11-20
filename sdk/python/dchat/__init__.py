@@ -24,6 +24,7 @@ from .user.models import (
     DirectMessage,
 )
 from .crypto.keypair import KeyPair, hash_content
+from .messaging import WebSocketClient, HttpClient, ConnectionState, HttpException
 
 __version__ = "0.1.0"
 __all__ = [
@@ -48,4 +49,9 @@ __all__ = [
     # Crypto
     "KeyPair",
     "hash_content",
+    # Messaging
+    "WebSocketClient",
+    "HttpClient",
+    "ConnectionState",
+    "HttpException",
 ]

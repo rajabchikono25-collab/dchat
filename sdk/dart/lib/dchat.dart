@@ -38,3 +38,5 @@ export 'src/messaging/dht.dart';
 export 'src/messaging/peer_manager.dart';
 export 'src/messaging/proof_of_delivery.dart';
 export 'src/messaging/message_manager.dart';
+export 'src/messaging/websocket_client.dart';
+export 'src/messaging/http_client.dart';
