@@ -179,6 +179,8 @@ pub struct DisputeResolver {
     slashing_config: SlashingConfig,
     currency_chain_client: Option<Arc<dyn CurrencyChainClient>>,
     slashing_events: Vec<SlashingEvent>,
+    validator_registry: Option<Arc<dyn crate::validator_registry::ValidatorRegistry>>,
+    metrics: Option<Arc<dchat_observability::MetricsCollector>>,
 }
 
 impl DisputeResolver {
@@ -191,6 +193,8 @@ impl DisputeResolver {
             slashing_config: SlashingConfig::default(),
             currency_chain_client: None,
             slashing_events: Vec::new(),
+            validator_registry: None,
+            metrics: None,
         }
     }
 
@@ -206,6 +210,21 @@ impl DisputeResolver {
         client: Arc<dyn CurrencyChainClient>,
     ) -> Self {
         self.currency_chain_client = Some(client);
+        self
+    }
+
+    /// Set validator registry for key lookups
+    pub fn with_validator_registry(
+        mut self,
+        registry: Arc<dyn crate::validator_registry::ValidatorRegistry>,
+    ) -> Self {
+        self.validator_registry = Some(registry);
+        self
+    }
+
+    /// Set metrics collector for observability
+    pub fn with_metrics(mut self, metrics: Arc<dchat_observability::MetricsCollector>) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 
@@ -226,7 +245,7 @@ impl DisputeResolver {
     }
 
     /// Submit a new dispute claim
-    pub fn submit_claim(
+    pub async fn submit_claim(
         &mut self,
         dispute_type: DisputeType,
         claimant: String,
@@ -234,14 +253,14 @@ impl DisputeResolver {
         evidence: Vec<u8>,
     ) -> Result<ClaimId> {
         // Validate evidence format based on dispute type
-        self.validate_evidence(&dispute_type, &evidence)?;
+        self.validate_evidence(&dispute_type, &evidence).await?;
 
         let evidence_hash = self.hash_evidence(&evidence);
         let claim_id = ClaimId(uuid::Uuid::new_v4().to_string());
 
         let claim = DisputeClaim {
             id: claim_id.clone(),
-            dispute_type,
+            dispute_type: dispute_type.clone(),
             claimant,
             accused,
             evidence,
@@ -252,11 +271,23 @@ impl DisputeResolver {
 
         self.claims.insert(claim_id.clone(), claim);
 
+        // Record metric
+        if let Some(metrics) = &self.metrics {
+            let mut labels = HashMap::new();
+            labels.insert("type".to_string(), format!("{:?}", dispute_type));
+            let _ = metrics.record_counter(
+                "dispute_claims_total".to_string(),
+                1.0,
+                labels,
+                "Total dispute claims submitted".to_string(),
+            ).await;
+        }
+
         Ok(claim_id)
     }
 
     /// Validate evidence based on dispute type
-    fn validate_evidence(&self, dispute_type: &DisputeType, evidence: &[u8]) -> Result<()> {
+    async fn validate_evidence(&self, dispute_type: &DisputeType, evidence: &[u8]) -> Result<()> {
         match dispute_type {
             DisputeType::ForkDetected => {
                 // Deserialize fork evidence
@@ -264,7 +295,7 @@ impl DisputeResolver {
                     .map_err(|_| Error::network("Invalid fork evidence format"))?;
                 
                 // Verify Ed25519 signatures on both messages
-                self.verify_fork_signatures(&fork_evidence)?;
+                self.verify_fork_signatures(&fork_evidence).await?;
             }
             DisputeType::IntegrityViolation => {
                 // Should deserialize to IntegrityEvidence
@@ -283,12 +314,11 @@ impl DisputeResolver {
     }
     
     /// Verify Ed25519 signatures on fork evidence messages
-    fn verify_fork_signatures(&self, evidence: &ForkEvidence) -> Result<()> {
+    async fn verify_fork_signatures(&self, evidence: &ForkEvidence) -> Result<()> {
         use ed25519_dalek::{Signature, VerifyingKey};
         
-        // Extract accused validator's public key
-        // In production: query from validator registry on chain
-        let public_key_bytes = self.get_validator_pubkey(&evidence.accused)?;
+        // Extract accused validator's public key from registry
+        let public_key_bytes = self.get_validator_pubkey(&evidence.accused).await?;
         
         let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
@@ -348,74 +378,48 @@ impl DisputeResolver {
     
     /// Get validator public key from chain registry
     ///
-    /// Production implementation:
-    /// 1. Check local cache first for performance
-    /// 2. If not cached, query validator registry on blockchain
-    /// 3. Verify key format and cache for future use
-    /// 4. Return public key or error if validator not registered
-    fn get_validator_pubkey(&self, validator_id: &str) -> Result<[u8; 32]> {
-        // Production implementation: Query validator registry from blockchain
-        // This would integrate with the dchat-blockchain validator registry
-        
+    /// Queries the validator registry (on-chain or in-memory) for the validator's public key.
+    /// This method should be used instead of any deterministic key derivation.
+    async fn get_validator_pubkey(&self, validator_id: &str) -> Result<[u8; 32]> {
         tracing::debug!("Looking up validator public key for: {}", validator_id);
         
-        // Step 1: Check if validator_id is in expected format
+        // Validate input
         if validator_id.is_empty() {
             return Err(Error::validation("Validator ID cannot be empty"));
         }
         
-        // Step 2: For production, query from blockchain validator registry:
-        // Example integration:
-        // match self.chain_client.get_validator_info(validator_id).await {
-        //     Ok(validator_info) => {
-        //         tracing::info!("Found validator {} with stake: {}", validator_id, validator_info.stake);
-        //         
-        //         // Validate public key length
-        //         if validator_info.public_key.len() != 32 {
-        //             return Err(Error::validation(format!(
-        //                 "Invalid public key length for validator {}: expected 32, got {}",
-        //                 validator_id, validator_info.public_key.len()
-        //             )));
-        //         }
-        //         
-        //         // Convert to fixed-size array
-        //         let mut pubkey = [0u8; 32];
-        //         pubkey.copy_from_slice(&validator_info.public_key);
-        //         
-        //         // Cache for future lookups
-        //         self.validator_key_cache.insert(validator_id.to_string(), pubkey);
-        //         
-        //         Ok(pubkey)
-        //     }
-        //     Err(e) => {
-        //         tracing::error!("Failed to query validator {}: {}", validator_id, e);
-        //         Err(Error::network(format!("Validator {} not found in registry: {}", validator_id, e)))
-        //     }
-        // }
+        // Use validator registry if available
+        if let Some(registry) = &self.validator_registry {
+            match registry.get_validator_pubkey(validator_id).await {
+                Ok(pubkey) => {
+                    tracing::info!(
+                        "✅ Retrieved validator {} public key from registry: {}",
+                        validator_id,
+                        hex::encode(&pubkey)
+                    );
+                    return Ok(pubkey);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "❌ Failed to retrieve validator {} from registry: {}",
+                        validator_id, e
+                    );
+                    return Err(Error::network(format!(
+                        "Validator {} not found in registry: {}",
+                        validator_id, e
+                    )));
+                }
+            }
+        }
         
-        // Temporary implementation: Use deterministic key derivation from validator ID
-        // This allows the code to function while blockchain integration is being completed
-        tracing::warn!(
-            "Using deterministic key derivation for validator {} (blockchain integration pending)",
+        // If no registry is configured, fail with clear error
+        tracing::error!(
+            "❌ Validator registry not configured - cannot lookup validator {}",
             validator_id
         );
-        
-        // Derive key from validator ID using BLAKE3 hash
-        let mut hasher = Hasher::new();
-        hasher.update(b"dchat-validator-pubkey-v1");
-        hasher.update(validator_id.as_bytes());
-        let hash = hasher.finalize();
-        
-        let mut pubkey = [0u8; 32];
-        pubkey.copy_from_slice(&hash.as_bytes()[0..32]);
-        
-        tracing::debug!(
-            "Derived public key for validator {}: {}",
-            validator_id,
-            hex::encode(&pubkey)
-        );
-        
-        Ok(pubkey)
+        Err(Error::network(
+            "Validator registry not configured. Use with_validator_registry() to set one."
+        ))
     }
 
     /// Hash evidence for integrity
@@ -638,6 +642,18 @@ impl DisputeResolver {
                 claim.status = DisputeStatus::ResolvedForClaimant;
             }
             
+            // Record metric
+            if let Some(metrics) = &self.metrics {
+                let mut labels = HashMap::new();
+                labels.insert("outcome".to_string(), "for_claimant".to_string());
+                let _ = metrics.record_counter(
+                    "dispute_resolutions_total".to_string(),
+                    1.0,
+                    labels,
+                    "Total dispute resolutions".to_string(),
+                ).await;
+            }
+            
             tracing::info!(
                 "Slashed {}'s stake for dispute {}",
                 accused,
@@ -659,6 +675,18 @@ impl DisputeResolver {
             // Update claim status after slash completes
             if let Some(claim) = self.claims.get_mut(&claim_id) {
                 claim.status = DisputeStatus::ResolvedForAccused;
+            }
+            
+            // Record metric
+            if let Some(metrics) = &self.metrics {
+                let mut labels = HashMap::new();
+                labels.insert("outcome".to_string(), "for_accused".to_string());
+                let _ = metrics.record_counter(
+                    "dispute_resolutions_total".to_string(),
+                    1.0,
+                    labels,
+                    "Total dispute resolutions".to_string(),
+                ).await;
             }
             
             tracing::info!(
@@ -830,6 +858,7 @@ mod tests {
         message_a: &[u8],
         message_b: &[u8],
         sequence_number: u64,
+        accused: &str,
     ) -> (ForkEvidence, SigningKey) {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
@@ -845,16 +874,37 @@ mod tests {
             signature_b: signature_b.to_bytes().to_vec(),
             sequence_number,
             accused_public_key: verifying_key.to_bytes().to_vec(),
+            accused: accused.to_string(),
         };
 
         (evidence, signing_key)
     }
+    
+    /// Setup test resolver with in-memory validator registry
+    async fn create_test_resolver() -> (DisputeResolver, Arc<crate::validator_registry::InMemoryValidatorRegistry>) {
+        use crate::validator_registry::InMemoryValidatorRegistry;
+        let registry = Arc::new(InMemoryValidatorRegistry::new());
+        let resolver = DisputeResolver::new().with_validator_registry(registry.clone());
+        (resolver, registry)
+    }
 
-    #[test]
-    fn test_submit_claim() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_submit_claim() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _signing_key) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register the accused validator with the registry
+        use crate::validator_registry::ValidatorInfo;
+        let info = ValidatorInfo {
+            validator_id: "bob".to_string(),
+            public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+            stake: 10000,
+            is_active: true,
+            region: None,
+            registered_at: 0,
+        };
+        registry.register_validator(info).await;
 
         let claim_id = resolver
             .submit_claim(
@@ -863,6 +913,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         let claim = resolver.get_claim(&claim_id).unwrap();
@@ -871,11 +922,22 @@ mod tests {
         assert_eq!(claim.accused, "bob");
     }
 
-    #[test]
-    fn test_challenge_claim() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_challenge_claim() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register validator
+        use crate::validator_registry::ValidatorInfo;
+        registry.register_validator(ValidatorInfo {
+            validator_id: "bob".to_string(),
+            public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+            stake: 10000,
+            is_active: true,
+            region: None,
+            registered_at: 0,
+        }).await;
 
         let claim_id = resolver
             .submit_claim(
@@ -884,6 +946,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         let counter_evidence = b"counter evidence".to_vec();
@@ -921,17 +984,17 @@ mod tests {
         assert_eq!(claim.status, DisputeStatus::Responded);
     }
 
-    #[test]
-    fn test_verify_fork_evidence() {
+    #[tokio::test]
+    async fn test_verify_fork_evidence() {
         let resolver = DisputeResolver::new();
 
         // Test valid fork with proper signatures
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "test-validator");
         let valid = resolver.verify_fork_evidence(&evidence).unwrap();
         assert!(valid, "Valid fork evidence should pass verification");
 
         // Test invalid fork: same message
-        let (invalid_evidence, _) = create_signed_fork_evidence(b"message 1", b"message 1", 42);
+        let (invalid_evidence, _) = create_signed_fork_evidence(b"message 1", b"message 1", 42, "test-validator");
         let valid = resolver.verify_fork_evidence(&invalid_evidence).unwrap();
         assert!(!valid, "Same messages should not be valid fork");
 

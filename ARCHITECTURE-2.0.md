@@ -26,31 +26,39 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 - 5 fuzz targets for security-critical components (fuzz/)
 - 14 comprehensive benchmarks (benches/)
 
+**✅ Recently Completed (Production-Ready)**:
+- NAT traversal (STUN/TURN/UPnP fully implemented with tests in `nat_traversal.rs`, `nat/turn.rs`)
+- Onion routing (X25519 + ChaCha20Poly1305 AEAD encryption with Sphinx-like packets in `onion_routing.rs`)
+- On-chain staking (integrated into `src/main.rs` with lifecycle, slashing, tests)
+- Zero-knowledge proofs (Groth16 circuits for contact/reputation proofs in `dchat-privacy::zk_proofs`)
+- MPC threshold signing (FROST-based implementation in `dchat-identity::mpc_frost` and improved Shamir in `mpc.rs`)
+- State validation (Merkle proofs with Byzantine detection in `dchat-blockchain::state_validation`)
+- BFT block broadcast (multi-region validator coordination with geographic diversity in `dchat-validator::multi_region`)
+- Gossip signatures (Ed25519 signing and verification in `dchat-network::gossip::protocol`)
+
 **⚠️ Partially Implemented (Requires Production Work)**:
 - Post-quantum cryptography (module structure exists, but hybrid schemes incomplete)
-- Zero-knowledge proofs (basic Schnorr-style, not production Groth16/Plonk)
-- NAT traversal (STUN/TURN/UPnP message formats defined, but minimal real networking)
-- Onion routing (Sphinx packet structure exists, encryption is placeholder XOR)
-- On-chain staking (types defined, submission TODOs marked)
-- Consensus mechanisms (BFT thresholds computed, but validator broadcast is TODO)
-- Guardian account recovery (types and flows defined, integration incomplete)
+- Guardian account recovery (ZK proof verification implemented, nullifier persistence on-chain pending)
 - Multi-device sync (conflict resolution outlined, not wired up)
 - Marketplace escrow (primitives exist, not integrated with channels)
 - Distributed storage backends (CockroachDB/TiKV types exist, marked as stubs)
+- Shard rebalancing (algorithms implemented in `sharding/rebalancing.rs` and `state_migration.rs`, runtime integration pending)
+- Legacy DHT discovery (Kademlia stub in `dht_legacy.rs` needs wiring to real libp2p DHT)
+- SDK client networking (`dchat-sdk-rust` has scaffolding but no live libp2p swarm)
+- Device attestation (simulated in `attestation.rs` and `enclave.rs`, platform-specific integration pending)
+- Validator registry lookups (temporary BLAKE3-derived keys in `dispute_resolution.rs`, need on-chain registry integration)
+- DAO execution effects (stubs in `protocol_dao.rs`, need chain state transitions)
+- Bot messaging encryption and routing (placeholder Noise sessions and DHT routing in `dchat-bots`)
+- VR platform integration (OpenXR/visionOS have simulation shims, need real API wiring)
 
 **❌ Placeholder/Stub Code (Must Replace Before Mainnet)**:
-- AWS KMS integration (marked TODO in validator key loading)
-- MPC threshold signing (XOR placeholder instead of real TSS)
+- AWS KMS Ed25519 support (returns `UnsupportedKeyType` in `kms.rs`; ECDSA keys work)
 - Biometric authentication (simplified placeholder)
-- Secure enclave attestation (placeholder certificate chains)
 - TypeScript SDK cryptography (Ed25519 sign/verify TODOs)
 - Dart SDK user profile fetching (throws UnimplementedError)
-- Bot API methods (all return dummy values with TODOs)
 - S3 backup credentials (hardcoded "xxx" placeholders)
 - Slack/PagerDuty webhook URLs (placeholder detection warnings)
-- Database backup functionality (TODO in validator shutdown)
-- ZKP module integration (TODO comments in consensus)
-- Validator broadcast mechanism (TODO in block production)
+- Deployment manual steps (many "Manual step:" comments in `deploy-storage.rs`, `deploy-monitoring.rs`)
 
 ### Codebase Statistics
 - **Total Rust Files**: 225 in `/crates`, 232 in `/src`
@@ -190,13 +198,10 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - **Status**: Types defined but hybrid Kyber768+Curve25519 handshake not implemented
 
 **Production Gaps**:
-1. **AWS KMS Integration**: Marked as TODO in validator key loading (src/main.rs:4500-4530)
-   ```rust
-   // TODO PRODUCTION: Implement AWS KMS integration
-   // Once dchat-crypto::kms module is implemented, uncomment:
-   ```
-   - **Impact**: Validators currently store keys in plain files with 0600 permissions (Unix)
-   - **Remediation**: Implement `dchat-crypto::kms::AwsKmsClient` with `get_signing_key()` method
+1. **AWS KMS Ed25519 Support**: KMS integration exists (`dchat-crypto::kms`) but Ed25519 signing returns `UnsupportedKeyType` because AWS KMS does not natively support Ed25519
+   - **Current State**: ECDSA signing works; Ed25519 returns error
+   - **Impact**: Validators using Ed25519 keys must store keys locally with 0600 permissions (Unix) or use workarounds
+   - **Remediation**: Either switch to ECDSA-based validator keys or implement Ed25519-over-KMS wrapper using KMS for symmetric encryption of Ed25519 private keys
 
 2. **Post-Quantum Migration**: Hybrid schemes incomplete
    - **Missing**: Kyber768 KEM integration for DH key exchange

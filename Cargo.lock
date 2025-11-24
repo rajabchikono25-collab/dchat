@@ -2260,6 +2260,7 @@ dependencies = [
  "chrono",
  "dchat-core",
  "dchat-crypto",
+ "dchat-observability",
  "dchat-storage",
  "ed25519-dalek",
  "hex",

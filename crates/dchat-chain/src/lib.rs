@@ -19,6 +19,7 @@ pub mod insurance_fund;
 pub mod pruning;
 pub mod sharding;
 pub mod transactions;
+pub mod validator_registry;
 
 // Re-export chain submodules
 pub use chain::currency_chain;
@@ -50,4 +51,7 @@ pub use transactions::{
     ChannelVisibility, CreateChannelTx, JoinChannelTx, PostToChannelTx, RegisterUserTx,
     SendDirectMessageTx, SubmitDeliveryProofTx, Transaction, TransactionReceipt,
     TransactionStatus, TransactionType,
+};
+pub use validator_registry::{
+    InMemoryValidatorRegistry, OnChainValidatorRegistry, ValidatorInfo, ValidatorRegistry,
 };

@@ -1,7 +1,6 @@
 /// Unit tests for WebSocketClient
 library;
 
-import 'dart:async';
 import 'package:test/test.dart';
 import 'package:dchat_sdk/dchat.dart';
 

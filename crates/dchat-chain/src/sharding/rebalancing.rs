@@ -338,13 +338,22 @@ impl RebalancingScheduler {
         let total_transfer_bytes = migrations.iter().map(|m| m.estimated_size_bytes).sum();
         let total_downtime_secs = migrations.iter().map(|m| m.estimated_time_secs).sum();
 
-        Ok(RebalancingPlan {
+        let plan = RebalancingPlan {
             migrations,
             total_transfer_bytes,
             total_downtime_secs,
             algorithm: RebalancingAlgorithm::GreedyBinPacking,
             created_at: chrono::Utc::now().timestamp(),
-        })
+        };
+        
+        tracing::info!(
+            "Created rebalancing plan: {} migrations, {} bytes transfer, {:.2}s downtime",
+            plan.migrations.len(),
+            plan.total_transfer_bytes,
+            plan.total_downtime_secs
+        );
+        
+        Ok(plan)
     }
 
     /// Cost-based optimization - minimize data transfer
