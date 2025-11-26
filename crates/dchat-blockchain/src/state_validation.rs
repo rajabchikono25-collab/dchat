@@ -6,7 +6,7 @@
 //! 3. Validating state roots across blocks
 //! 4. Detecting conflicting state claims (Byzantine behavior)
 
-use crate::block_hierarchy::{Block, Hash, Miniblock, Subblock};
+use crate::block_hierarchy::{Block, Miniblock};
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -110,6 +110,7 @@ impl MerkleTree {
             };
         }
 
+        let original_leaves = transitions.clone();
         let mut leaves = transitions;
         let leaf_count = leaves.len();
 
@@ -160,7 +161,7 @@ impl MerkleTree {
 
         Self {
             root: nodes.into_iter().next(),
-            leaves: transitions,
+            leaves: original_leaves,
         }
     }
 

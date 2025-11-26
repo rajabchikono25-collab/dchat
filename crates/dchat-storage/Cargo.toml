@@ -41,7 +41,7 @@ hex = "0.4"
 ed25519-dalek = { workspace = true }
 
 # HTTP client for bond verification
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
 
 # Compression
 zstd = "0.13"

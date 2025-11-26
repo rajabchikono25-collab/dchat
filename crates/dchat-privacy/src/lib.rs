@@ -9,4 +9,4 @@ pub mod zk_proofs;
 
 pub use blind_tokens::{BlindSigner, BlindToken, TokenIssuer};
 pub use stealth::{StealthAddress, StealthPayload};
-pub use zk_proofs::{ContactProof, ReputationProof, ZkProof};
+pub use zk_proofs::{ContactProof, Groth16Keys, ReputationProof, ZkProof, ZkProver, ZkVerifier};

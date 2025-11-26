@@ -22,11 +22,13 @@
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod network;
 pub mod relay;
 
 pub use client::{Client, ClientBuilder};
 pub use config::{ClientConfig, NetworkConfig, StorageConfig};
 pub use error::{Result, SdkError};
+pub use network::{NetworkEvent, NetworkManager};
 pub use relay::{RelayConfig, RelayNode};
 
 use dchat_crypto::keys::KeyPair;

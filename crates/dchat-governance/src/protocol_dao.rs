@@ -13,7 +13,128 @@ use chrono::{DateTime, Duration, Utc};
 use dchat_core::{types::UserId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
+
+/// Chain client interface for executing governance actions on-chain
+#[async_trait::async_trait]
+pub trait GovernanceChainClient: Send + Sync {
+    /// Submit a parameter change transaction
+    async fn submit_parameter_change(
+        &self,
+        parameter: &str,
+        old_value: &str,
+        new_value: &str,
+        proposal_id: &str,
+    ) -> Result<GovernanceTxReceipt>;
+    
+    /// Submit a treasury transfer transaction
+    async fn submit_treasury_transfer(
+        &self,
+        recipient: &[u8],
+        amount: u64,
+        purpose: &str,
+        proposal_id: &str,
+    ) -> Result<GovernanceTxReceipt>;
+    
+    /// Submit a protocol upgrade activation
+    async fn submit_protocol_upgrade(
+        &self,
+        version: &str,
+        upgrade_hash: &str,
+        activation_block: u64,
+        is_hard_fork: bool,
+    ) -> Result<GovernanceTxReceipt>;
+    
+    /// Submit an emergency action (pause/resume/circuit breaker)
+    async fn submit_emergency_action(
+        &self,
+        action_type: &str,
+        parameters: &HashMap<String, String>,
+    ) -> Result<GovernanceTxReceipt>;
+    
+    /// Submit a feature toggle
+    async fn submit_feature_toggle(
+        &self,
+        feature_name: &str,
+        enable: bool,
+    ) -> Result<GovernanceTxReceipt>;
+    
+    /// Get current protocol parameters
+    async fn get_protocol_parameter(&self, parameter: &str) -> Result<String>;
+    
+    /// Get current block height
+    async fn get_current_block(&self) -> Result<u64>;
+    
+    /// Wait for transaction confirmation
+    async fn wait_for_confirmation(&self, tx_hash: &str, confirmations: u32) -> Result<bool>;
+}
+
+/// Receipt from a governance transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceTxReceipt {
+    pub tx_hash: String,
+    pub block_height: u64,
+    pub block_hash: String,
+    pub timestamp: i64,
+    pub success: bool,
+    pub gas_used: u64,
+    pub logs: Vec<GovernanceEventLog>,
+}
+
+/// Event log from governance transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceEventLog {
+    pub event_type: String,
+    pub data: HashMap<String, String>,
+}
+
+/// Protocol state snapshot for upgrades
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolStateSnapshot {
+    pub block_height: u64,
+    pub parameters: HashMap<String, String>,
+    pub feature_flags: HashMap<String, bool>,
+    pub snapshot_hash: String,
+}
+
+/// Grant program state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantProgramState {
+    pub program_id: Uuid,
+    pub program_name: String,
+    pub total_budget: u64,
+    pub remaining_budget: u64,
+    pub start_block: u64,
+    pub end_block: u64,
+    pub is_active: bool,
+    pub disbursements: Vec<GrantDisbursement>,
+}
+
+/// Individual grant disbursement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantDisbursement {
+    pub recipient: UserId,
+    pub amount: u64,
+    pub purpose: String,
+    pub tx_hash: String,
+    pub disbursed_at: DateTime<Utc>,
+}
+
+/// Execution audit record for governance actions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionAuditRecord {
+    pub proposal_id: Uuid,
+    pub action_type: String,
+    pub executor: UserId,
+    pub tx_hash: String,
+    pub block_height: u64,
+    pub executed_at: DateTime<Utc>,
+    pub pre_state_hash: String,
+    pub post_state_hash: String,
+    pub success: bool,
+    pub details: HashMap<String, String>,
+}
 
 /// Protocol DAO proposal
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +241,7 @@ pub enum ProtocolParameter {
 }
 
 /// Emergency action types
-##[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EmergencyActionType {
     /// Pause protocol operations
     PauseProtocol,
@@ -240,6 +361,7 @@ pub struct TreasuryAllocation {
     pub allocated_at: DateTime<Utc>,
     pub disbursed: bool,
     pub disbursed_at: Option<DateTime<Utc>>,
+    pub tx_hash: Option<String>,
 }
 
 /// Protocol DAO manager
@@ -249,6 +371,22 @@ pub struct ProtocolDaoManager {
     treasury: ProtocolTreasury,
     voting_power: HashMap<UserId, u64>,
     emergency_multisig: Vec<UserId>,
+    /// Chain client for submitting governance transactions
+    chain_client: Option<Arc<dyn GovernanceChainClient>>,
+    /// Active grant programs
+    grant_programs: HashMap<Uuid, GrantProgramState>,
+    /// Protocol parameters (local cache)
+    protocol_parameters: HashMap<String, String>,
+    /// Feature flags (local cache)
+    feature_flags: HashMap<String, bool>,
+    /// Execution audit trail
+    audit_records: Vec<ExecutionAuditRecord>,
+    /// Protocol paused state
+    is_protocol_paused: bool,
+    /// Active circuit breakers
+    circuit_breakers: HashMap<String, bool>,
+    /// Metrics collector
+    metrics: Option<Arc<dchat_observability::MetricsCollector>>,
 }
 
 impl ProtocolDaoManager {
@@ -264,7 +402,52 @@ impl ProtocolDaoManager {
             },
             voting_power: HashMap::new(),
             emergency_multisig,
+            chain_client: None,
+            grant_programs: HashMap::new(),
+            protocol_parameters: HashMap::new(),
+            feature_flags: HashMap::new(),
+            audit_records: Vec::new(),
+            is_protocol_paused: false,
+            circuit_breakers: HashMap::new(),
+            metrics: None,
         }
+    }
+
+    /// Set chain client for on-chain governance transactions
+    pub fn with_chain_client(mut self, client: Arc<dyn GovernanceChainClient>) -> Self {
+        self.chain_client = Some(client);
+        self
+    }
+
+    /// Set metrics collector
+    pub fn with_metrics(mut self, metrics: Arc<dchat_observability::MetricsCollector>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Get execution audit records
+    pub fn get_audit_records(&self) -> &[ExecutionAuditRecord] {
+        &self.audit_records
+    }
+
+    /// Get grant program by ID
+    pub fn get_grant_program(&self, program_id: Uuid) -> Option<&GrantProgramState> {
+        self.grant_programs.get(&program_id)
+    }
+
+    /// Get all active grant programs
+    pub fn get_active_grant_programs(&self) -> Vec<&GrantProgramState> {
+        self.grant_programs.values().filter(|p| p.is_active).collect()
+    }
+
+    /// Check if protocol is paused
+    pub fn is_paused(&self) -> bool {
+        self.is_protocol_paused
+    }
+
+    /// Check if a module has circuit breaker active
+    pub fn is_circuit_breaker_active(&self, module: &str) -> bool {
+        *self.circuit_breakers.get(module).unwrap_or(&false)
     }
 
     /// Submit a protocol proposal
@@ -336,6 +519,12 @@ impl ProtocolDaoManager {
         voter: UserId,
         vote_type: VoteType,
     ) -> Result<()> {
+        // Get voter's power first (before mutable borrow of proposal)
+        let voting_power = self.get_effective_voting_power(&voter);
+        if voting_power == 0 {
+            return Err(Error::validation("No voting power"));
+        }
+
         let proposal = self.proposals.get_mut(&proposal_id)
             .ok_or_else(|| Error::validation("Proposal not found"))?;
 
@@ -354,12 +543,6 @@ impl ProtocolDaoManager {
         // Update status to active if pending
         if proposal.status == ProposalStatus::Pending && now >= proposal.voting_starts_at {
             proposal.status = ProposalStatus::Active;
-        }
-
-        // Get voter's power (including delegations)
-        let voting_power = self.get_effective_voting_power(&voter);
-        if voting_power == 0 {
-            return Err(Error::validation("No voting power"));
         }
 
         // Calculate quadratic weight if enabled
@@ -483,121 +666,610 @@ impl ProtocolDaoManager {
     }
 
     /// Execute a passed proposal
-    pub fn execute_proposal(
+    pub async fn execute_proposal(
         &mut self,
         proposal_id: Uuid,
         executor: UserId,
     ) -> Result<ExecutionResult> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self.proposals.get(&proposal_id)
             .ok_or_else(|| Error::validation("Proposal not found"))?;
 
         if proposal.status != ProposalStatus::Passed {
             return Err(Error::validation("Proposal has not passed"));
         }
 
-        // Execute based on proposal type
-        let result = match &proposal.proposal_type {
-            ProposalType::ParameterChange { parameter, proposed_value, .. } => {
-                self.execute_parameter_change(parameter.clone(), proposed_value.clone())?
+        // Clone the proposal type for async execution
+        let proposal_type = proposal.proposal_type.clone();
+        let proposal_id_str = proposal_id.to_string();
+
+        // Compute pre-state hash for audit trail
+        let pre_state_hash = self.compute_state_hash();
+
+        // Execute based on proposal type with on-chain submission
+        let (result, tx_hash) = match proposal_type {
+            ProposalType::ParameterChange { parameter, proposed_value, current_value } => {
+                self.execute_parameter_change_production(
+                    &proposal_id_str,
+                    parameter,
+                    &current_value,
+                    &proposed_value,
+                ).await?
             },
             ProposalType::TreasuryAllocation { amount, recipient, purpose } => {
-                self.execute_treasury_allocation(proposal_id, *amount, recipient.clone(), purpose.clone())?
+                self.execute_treasury_allocation_production(
+                    proposal_id,
+                    amount,
+                    recipient,
+                    &purpose,
+                ).await?
             },
-            ProposalType::ProtocolUpgrade { version, upgrade_hash, .. } => {
-                self.execute_protocol_upgrade(version.clone(), upgrade_hash.clone())?
+            ProposalType::ProtocolUpgrade { version, upgrade_hash, is_hard_fork } => {
+                self.execute_protocol_upgrade_production(
+                    &version,
+                    &upgrade_hash,
+                    is_hard_fork,
+                ).await?
             },
-            ProposalType::EmergencyAction { action_type, .. } => {
-                self.execute_emergency_action(action_type.clone())?
+            ProposalType::EmergencyAction { action_type, justification } => {
+                self.execute_emergency_action_production(
+                    action_type,
+                    &justification,
+                ).await?
             },
             ProposalType::FeatureToggle { feature_name, enable } => {
-                self.execute_feature_toggle(feature_name.clone(), *enable)?
+                self.execute_feature_toggle_production(
+                    &feature_name,
+                    enable,
+                ).await?
             },
             ProposalType::GrantProgram { program_name, total_budget, duration_days } => {
-                self.execute_grant_program(program_name.clone(), *total_budget, *duration_days)?
+                self.execute_grant_program_production(
+                    proposal_id,
+                    &program_name,
+                    total_budget,
+                    duration_days,
+                ).await?
             },
         };
 
-        proposal.status = ProposalStatus::Executed;
+        // Compute post-state hash
+        let post_state_hash = self.compute_state_hash();
+
+        // Update proposal status
+        let proposal = self.proposals.get_mut(&proposal_id).unwrap();
+        
+        if matches!(result, ExecutionResult::Success | ExecutionResult::PartialSuccess { .. }) {
+            proposal.status = ProposalStatus::Executed;
+        } else {
+            proposal.status = ProposalStatus::ExecutionFailed { 
+                reason: format!("{:?}", result)
+            };
+        }
+        
         proposal.executed_at = Some(Utc::now());
         proposal.execution = Some(ExecutionInfo {
-            executor: Some(executor),
-            execution_tx_hash: format!("exec_{}", Uuid::new_v4()),
+            executor: Some(executor.clone()),
+            execution_tx_hash: tx_hash.clone(),
             execution_result: result.clone(),
             executed_at: Utc::now(),
         });
 
+        // Create audit record
+        let action_type = match &proposal.proposal_type {
+            ProposalType::ParameterChange { .. } => "ParameterChange",
+            ProposalType::TreasuryAllocation { .. } => "TreasuryAllocation",
+            ProposalType::ProtocolUpgrade { .. } => "ProtocolUpgrade",
+            ProposalType::EmergencyAction { .. } => "EmergencyAction",
+            ProposalType::FeatureToggle { .. } => "FeatureToggle",
+            ProposalType::GrantProgram { .. } => "GrantProgram",
+        };
+
+        let audit_record = ExecutionAuditRecord {
+            proposal_id,
+            action_type: action_type.to_string(),
+            executor,
+            tx_hash,
+            block_height: self.get_current_block().await.unwrap_or(0),
+            executed_at: Utc::now(),
+            pre_state_hash,
+            post_state_hash,
+            success: matches!(result, ExecutionResult::Success),
+            details: HashMap::new(),
+        };
+
+        self.audit_records.push(audit_record);
+
+        // Record metrics
+        if let Some(metrics) = &self.metrics {
+            let mut labels = HashMap::new();
+            labels.insert("action_type".to_string(), action_type.to_string());
+            labels.insert("success".to_string(), matches!(result, ExecutionResult::Success).to_string());
+            let _ = metrics.record_counter(
+                "governance_executions_total".to_string(),
+                1.0,
+                labels,
+                "Total governance proposal executions".to_string(),
+            ).await;
+        }
+
+        tracing::info!(
+            "✅ Governance proposal {} executed: action={}, success={}",
+            proposal_id, action_type, matches!(result, ExecutionResult::Success)
+        );
+
         Ok(result)
     }
 
-    /// Execute parameter change
-    fn execute_parameter_change(&mut self, _parameter: ProtocolParameter, _value: String) -> Result<ExecutionResult> {
-        // In production, this would update the actual protocol parameter
-        // via chain state transition
-        Ok(ExecutionResult::Success)
+    /// Compute hash of current governance state for audit
+    fn compute_state_hash(&self) -> String {
+        use blake3::Hasher;
+        let mut hasher = Hasher::new();
+        
+        // Hash treasury state
+        hasher.update(&self.treasury.total_balance.to_le_bytes());
+        hasher.update(&self.treasury.available_funds.to_le_bytes());
+        hasher.update(&self.treasury.reserved_funds.to_le_bytes());
+        
+        // Hash protocol parameters
+        for (key, value) in &self.protocol_parameters {
+            hasher.update(key.as_bytes());
+            hasher.update(value.as_bytes());
+        }
+        
+        // Hash feature flags
+        for (key, value) in &self.feature_flags {
+            hasher.update(key.as_bytes());
+            hasher.update(&[*value as u8]);
+        }
+        
+        hex::encode(hasher.finalize().as_bytes())
     }
 
-    /// Execute treasury allocation
-    fn execute_treasury_allocation(
+    /// Get current block height from chain
+    async fn get_current_block(&self) -> Result<u64> {
+        if let Some(client) = &self.chain_client {
+            client.get_current_block().await
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Execute parameter change with on-chain transaction
+    async fn execute_parameter_change_production(
+        &mut self,
+        proposal_id: &str,
+        parameter: ProtocolParameter,
+        current_value: &str,
+        new_value: &str,
+    ) -> Result<(ExecutionResult, String)> {
+        let parameter_name = format!("{:?}", parameter);
+        
+        // Submit to chain if client available
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_parameter_change(
+                &parameter_name,
+                current_value,
+                new_value,
+                proposal_id,
+            ).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Chain transaction failed: tx_hash={}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            // Wait for confirmation (2 blocks for safety)
+            let confirmed = client.wait_for_confirmation(&receipt.tx_hash, 2).await?;
+            if !confirmed {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: "Transaction confirmation timeout".to_string()
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
+        
+        // Update local parameter cache
+        self.protocol_parameters.insert(parameter_name.clone(), new_value.to_string());
+        
+        tracing::info!(
+            "Parameter {} changed: {} → {} (tx: {})",
+            parameter_name, current_value, new_value, tx_hash
+        );
+        
+        Ok((ExecutionResult::Success, tx_hash))
+    }
+
+    /// Execute treasury allocation with on-chain transfer
+    async fn execute_treasury_allocation_production(
         &mut self,
         proposal_id: Uuid,
         amount: u64,
         recipient: UserId,
-        purpose: String,
-    ) -> Result<ExecutionResult> {
+        purpose: &str,
+    ) -> Result<(ExecutionResult, String)> {
+        // Verify sufficient funds
         if amount > self.treasury.available_funds {
-            return Ok(ExecutionResult::Failed {
-                error: "Insufficient treasury funds".to_string(),
-            });
+            return Ok((
+                ExecutionResult::Failed {
+                    error: format!(
+                        "Insufficient treasury funds: requested {}, available {}",
+                        amount, self.treasury.available_funds
+                    )
+                },
+                String::new(),
+            ));
         }
+        
+        // Submit to chain if client available
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_treasury_transfer(
+                &recipient.0.as_bytes()[..],
+                amount,
+                purpose,
+                &proposal_id.to_string(),
+            ).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Treasury transfer failed: {}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            // Wait for confirmation
+            let confirmed = client.wait_for_confirmation(&receipt.tx_hash, 2).await?;
+            if !confirmed {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: "Transfer confirmation timeout".to_string()
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
 
+        // Update local treasury state
         let allocation = TreasuryAllocation {
             id: Uuid::new_v4(),
             proposal_id,
             amount,
-            recipient,
-            purpose,
+            recipient: recipient.clone(),
+            purpose: purpose.to_string(),
             allocated_at: Utc::now(),
-            disbursed: false,
-            disbursed_at: None,
+            disbursed: true,
+            disbursed_at: Some(Utc::now()),
+            tx_hash: Some(tx_hash.clone()),
         };
 
         self.treasury.available_funds -= amount;
-        self.treasury.reserved_funds += amount;
+        self.treasury.total_balance -= amount;
         self.treasury.allocations.push(allocation);
 
-        Ok(ExecutionResult::Success)
+        tracing::info!(
+            "Treasury allocation: {} tokens to {:?} for '{}' (tx: {})",
+            amount, recipient, purpose, tx_hash
+        );
+
+        Ok((ExecutionResult::Success, tx_hash))
     }
 
-    /// Execute protocol upgrade
-    fn execute_protocol_upgrade(&mut self, version: String, _upgrade_hash: String) -> Result<ExecutionResult> {
-        // In production, this would trigger the upgrade process
-        Ok(ExecutionResult::Success)
+    /// Execute protocol upgrade with staged rollout
+    async fn execute_protocol_upgrade_production(
+        &mut self,
+        version: &str,
+        upgrade_hash: &str,
+        is_hard_fork: bool,
+    ) -> Result<(ExecutionResult, String)> {
+        // Calculate activation block (grace period for node upgrades)
+        let current_block = self.get_current_block().await?;
+        let grace_period_blocks = if is_hard_fork { 14400 } else { 7200 }; // ~2 days or 1 day
+        let activation_block = current_block + grace_period_blocks;
+        
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_protocol_upgrade(
+                version,
+                upgrade_hash,
+                activation_block,
+                is_hard_fork,
+            ).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Upgrade scheduling failed: {}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
+
+        tracing::info!(
+            "🚀 Protocol upgrade scheduled: v{} (hash: {}) activating at block {} (hard_fork: {})",
+            version, upgrade_hash, activation_block, is_hard_fork
+        );
+
+        Ok((ExecutionResult::Success, tx_hash))
     }
 
-    /// Execute emergency action
-    fn execute_emergency_action(&mut self, _action_type: EmergencyActionType) -> Result<ExecutionResult> {
-        // In production, this would execute the emergency action
-        Ok(ExecutionResult::Success)
-    }
+    /// Execute emergency action with immediate effect
+    async fn execute_emergency_action_production(
+        &mut self,
+        action_type: EmergencyActionType,
+        justification: &str,
+    ) -> Result<(ExecutionResult, String)> {
+        let action_str = format!("{:?}", action_type);
+        let mut params = HashMap::new();
+        params.insert("justification".to_string(), justification.to_string());
+        
+        // Add action-specific parameters
+        match &action_type {
+            EmergencyActionType::CircuitBreaker { module } => {
+                params.insert("module".to_string(), module.clone());
+            }
+            EmergencyActionType::EmergencyOverride { parameter, value } => {
+                params.insert("parameter".to_string(), parameter.clone());
+                params.insert("value".to_string(), value.clone());
+            }
+            EmergencyActionType::ForceUpgrade { version } => {
+                params.insert("version".to_string(), version.clone());
+            }
+            _ => {}
+        }
+        
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_emergency_action(&action_str, &params).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Emergency action failed: {}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
 
-    /// Execute feature toggle
-    fn execute_feature_toggle(&mut self, _feature_name: String, _enable: bool) -> Result<ExecutionResult> {
-        // In production, this would toggle the feature flag
-        Ok(ExecutionResult::Success)
-    }
-
-    /// Execute grant program
-    fn execute_grant_program(&mut self, _program_name: String, total_budget: u64, _duration_days: u32) -> Result<ExecutionResult> {
-        if total_budget > self.treasury.available_funds {
-            return Ok(ExecutionResult::Failed {
-                error: "Insufficient treasury funds for grant program".to_string(),
-            });
+        // Apply local state changes immediately
+        match action_type {
+            EmergencyActionType::PauseProtocol => {
+                self.is_protocol_paused = true;
+                tracing::warn!("⚠️ PROTOCOL PAUSED: {}", justification);
+            }
+            EmergencyActionType::ResumeProtocol => {
+                self.is_protocol_paused = false;
+                tracing::info!("✅ Protocol resumed");
+            }
+            EmergencyActionType::CircuitBreaker { module } => {
+                self.circuit_breakers.insert(module.clone(), true);
+                tracing::warn!("⚠️ Circuit breaker activated for module: {}", module);
+            }
+            EmergencyActionType::EmergencyOverride { parameter, value } => {
+                self.protocol_parameters.insert(parameter.clone(), value.clone());
+                tracing::warn!("⚠️ Emergency override: {} = {}", parameter, value);
+            }
+            EmergencyActionType::ForceUpgrade { version } => {
+                tracing::warn!("⚠️ Force upgrade initiated to version: {}", version);
+            }
         }
 
+        Ok((ExecutionResult::Success, tx_hash))
+    }
+
+    /// Execute feature toggle with on-chain persistence
+    async fn execute_feature_toggle_production(
+        &mut self,
+        feature_name: &str,
+        enable: bool,
+    ) -> Result<(ExecutionResult, String)> {
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_feature_toggle(feature_name, enable).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Feature toggle failed: {}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
+
+        // Update local feature flags
+        self.feature_flags.insert(feature_name.to_string(), enable);
+
+        tracing::info!(
+            "Feature '{}' toggled: {} (tx: {})",
+            feature_name, if enable { "enabled" } else { "disabled" }, tx_hash
+        );
+
+        Ok((ExecutionResult::Success, tx_hash))
+    }
+
+    /// Execute grant program creation with budget allocation
+    async fn execute_grant_program_production(
+        &mut self,
+        proposal_id: Uuid,
+        program_name: &str,
+        total_budget: u64,
+        duration_days: u32,
+    ) -> Result<(ExecutionResult, String)> {
+        // Verify sufficient funds
+        if total_budget > self.treasury.available_funds {
+            return Ok((
+                ExecutionResult::Failed {
+                    error: format!(
+                        "Insufficient treasury funds for grant program: requested {}, available {}",
+                        total_budget, self.treasury.available_funds
+                    )
+                },
+                String::new(),
+            ));
+        }
+
+        // Reserve funds on chain
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let mut params = HashMap::new();
+            params.insert("program_name".to_string(), program_name.to_string());
+            params.insert("budget".to_string(), total_budget.to_string());
+            params.insert("duration_days".to_string(), duration_days.to_string());
+            
+            let receipt = client.submit_emergency_action("CreateGrantProgram", &params).await?;
+            
+            if !receipt.success {
+                return Ok((
+                    ExecutionResult::Failed {
+                        error: format!("Grant program creation failed: {}", receipt.tx_hash)
+                    },
+                    receipt.tx_hash,
+                ));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
+
+        // Calculate program timeline
+        let current_block = self.get_current_block().await.unwrap_or(0);
+        let blocks_per_day = 7200u64; // ~12s per block
+        let end_block = current_block + (duration_days as u64 * blocks_per_day);
+
+        // Create grant program state
+        let program = GrantProgramState {
+            program_id: proposal_id,
+            program_name: program_name.to_string(),
+            total_budget,
+            remaining_budget: total_budget,
+            start_block: current_block,
+            end_block,
+            is_active: true,
+            disbursements: Vec::new(),
+        };
+
+        self.grant_programs.insert(proposal_id, program);
+
+        // Update treasury
         self.treasury.available_funds -= total_budget;
         self.treasury.reserved_funds += total_budget;
 
-        Ok(ExecutionResult::Success)
+        tracing::info!(
+            "📋 Grant program '{}' created: budget={}, duration={}d, ends at block {} (tx: {})",
+            program_name, total_budget, duration_days, end_block, tx_hash
+        );
+
+        Ok((ExecutionResult::Success, tx_hash))
+    }
+
+    /// Disburse grant from an active program
+    pub async fn disburse_grant(
+        &mut self,
+        program_id: Uuid,
+        recipient: UserId,
+        amount: u64,
+        purpose: &str,
+    ) -> Result<String> {
+        // Get current block first before mutable borrow
+        let current_block = self.get_current_block().await?;
+        
+        // Get program info for validation
+        let (is_active, end_block, remaining_budget, program_name) = {
+            let program = self.grant_programs.get(&program_id)
+                .ok_or_else(|| Error::validation("Grant program not found"))?;
+            (program.is_active, program.end_block, program.remaining_budget, program.program_name.clone())
+        };
+        
+        if !is_active {
+            return Err(Error::validation("Grant program is not active"));
+        }
+        
+        if current_block > end_block {
+            // Mark as inactive
+            if let Some(program) = self.grant_programs.get_mut(&program_id) {
+                program.is_active = false;
+            }
+            return Err(Error::validation("Grant program has expired"));
+        }
+        
+        if amount > remaining_budget {
+            return Err(Error::validation(format!(
+                "Insufficient program budget: requested {}, remaining {}",
+                amount, remaining_budget
+            )));
+        }
+        
+        // Submit disbursement to chain
+        let tx_hash = if let Some(client) = &self.chain_client {
+            let receipt = client.submit_treasury_transfer(
+                &recipient.0.as_bytes()[..],
+                amount,
+                &format!("Grant: {} - {}", program_name, purpose),
+                &program_id.to_string(),
+            ).await?;
+            
+            if !receipt.success {
+                return Err(Error::chain(format!(
+                    "Grant disbursement failed: {}",
+                    receipt.tx_hash
+                )));
+            }
+            
+            receipt.tx_hash
+        } else {
+            format!("local_{}", Uuid::new_v4())
+        };
+
+        // Record disbursement - now we can mutate
+        let program = self.grant_programs.get_mut(&program_id).unwrap();
+        
+        let disbursement = GrantDisbursement {
+            recipient: recipient.clone(),
+            amount,
+            purpose: purpose.to_string(),
+            tx_hash: tx_hash.clone(),
+            disbursed_at: Utc::now(),
+        };
+
+        program.remaining_budget -= amount;
+        program.disbursements.push(disbursement);
+
+        // Update treasury
+        self.treasury.reserved_funds -= amount;
+        self.treasury.total_balance -= amount;
+
+        tracing::info!(
+            "💰 Grant disbursed: {} tokens to {:?} from program '{}' (tx: {})",
+            amount, recipient, program.program_name, tx_hash
+        );
+
+        Ok(tx_hash)
     }
 
     /// Get effective voting power including delegations
@@ -758,8 +1430,99 @@ mod tests {
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
         proposal.status = ProposalStatus::Passed;
 
-        let result = dao.execute_proposal(proposal_id, proposer).unwrap();
+        // Note: execute_proposal is now async, so this test is simplified
+        // Full async tests should use #[tokio::test]
+        assert_eq!(dao.treasury.available_funds, 10000); // Funds not yet deducted
+    }
+
+    #[tokio::test]
+    async fn test_treasury_allocation_async() {
+        let mut dao = ProtocolDaoManager::new(vec![]);
+        dao.add_treasury_funds(10000);
+
+        let proposer = create_test_user();
+        let recipient = create_test_user();
+        
+        dao.set_voting_power(proposer.clone(), 2000);
+
+        let proposal_id = dao.submit_proposal(
+            proposer.clone(),
+            ProposalType::TreasuryAllocation {
+                amount: 1000,
+                recipient: recipient.clone(),
+                purpose: "Development grant".to_string(),
+            },
+            "Dev Grant".to_string(),
+            "Fund development work".to_string(),
+            "Need more developers".to_string(),
+            7,
+        ).unwrap();
+
+        // Skip to passed status
+        let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
+        proposal.status = ProposalStatus::Passed;
+
+        let result = dao.execute_proposal(proposal_id, proposer).await.unwrap();
         assert!(matches!(result, ExecutionResult::Success));
         assert_eq!(dao.treasury.available_funds, 9000);
+    }
+
+    #[tokio::test]
+    async fn test_emergency_action() {
+        let mut dao = ProtocolDaoManager::new(vec![]);
+        let proposer = create_test_user();
+        
+        dao.set_voting_power(proposer.clone(), 2000);
+
+        let proposal_id = dao.submit_proposal(
+            proposer.clone(),
+            ProposalType::EmergencyAction {
+                action_type: EmergencyActionType::PauseProtocol,
+                justification: "Security incident detected".to_string(),
+            },
+            "Emergency Pause".to_string(),
+            "Pause protocol due to security issue".to_string(),
+            "Active exploit detected".to_string(),
+            1,
+        ).unwrap();
+
+        // Skip to passed status
+        let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
+        proposal.status = ProposalStatus::Passed;
+
+        assert!(!dao.is_paused());
+        let result = dao.execute_proposal(proposal_id, proposer).await.unwrap();
+        assert!(matches!(result, ExecutionResult::Success));
+        assert!(dao.is_paused());
+    }
+
+    #[tokio::test]
+    async fn test_feature_toggle() {
+        let mut dao = ProtocolDaoManager::new(vec![]);
+        let proposer = create_test_user();
+        
+        dao.set_voting_power(proposer.clone(), 2000);
+
+        let proposal_id = dao.submit_proposal(
+            proposer.clone(),
+            ProposalType::FeatureToggle {
+                feature_name: "advanced_encryption".to_string(),
+                enable: true,
+            },
+            "Enable Advanced Encryption".to_string(),
+            "Enable the new encryption feature".to_string(),
+            "Testing complete".to_string(),
+            7,
+        ).unwrap();
+
+        // Skip to passed status
+        let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
+        proposal.status = ProposalStatus::Passed;
+
+        let result = dao.execute_proposal(proposal_id, proposer).await.unwrap();
+        assert!(matches!(result, ExecutionResult::Success));
+        
+        // Verify feature flag is set
+        assert_eq!(dao.feature_flags.get("advanced_encryption"), Some(&true));
     }
 }

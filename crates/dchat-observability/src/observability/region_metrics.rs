@@ -264,6 +264,7 @@ pub enum MonitorError {
 }
 
 #[cfg(test)]
+#[cfg(feature = "nat-telemetry-integration")]
 mod tests {
     use super::*;
     use dchat_identity::peer_registry::{AuthenticatedPeer, DiscoveryMethod};

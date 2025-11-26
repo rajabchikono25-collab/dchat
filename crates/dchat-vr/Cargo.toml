@@ -12,6 +12,15 @@ tokio = { version = "1.32", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.4", features = ["v4", "serde"] }
 glam = "0.24" # 3D math library
+tracing = "0.1"
+
+# OpenXR for cross-platform VR (optional, requires OpenXR runtime)
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))'.dependencies]
+openxr = { version = "0.18", optional = true }
+
+[features]
+default = []
+openxr-runtime = ["openxr"]
 
 [dev-dependencies]
 tokio-test = "0.4"

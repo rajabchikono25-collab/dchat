@@ -44,10 +44,10 @@ impl MessageThroughputTracker {
         self.samples_5min.push_back((now, 1));
         self.samples_15min.push_back((now, 1));
 
-        // Prune old samples
-        self.prune_samples(&mut self.samples_1min, 60);
-        self.prune_samples(&mut self.samples_5min, 300);
-        self.prune_samples(&mut self.samples_15min, 900);
+        // Prune old samples - use static method to avoid borrow issues
+        Self::prune_samples_static(&mut self.samples_1min, 60, now);
+        Self::prune_samples_static(&mut self.samples_5min, 300, now);
+        Self::prune_samples_static(&mut self.samples_15min, 900, now);
     }
 
     /// Get messages per second (1-minute average)
@@ -83,9 +83,8 @@ impl MessageThroughputTracker {
         count as f64 / window_secs as f64
     }
 
-    /// Prune samples older than window
-    fn prune_samples(&mut self, samples: &mut VecDeque<(u64, u64)>, window_secs: u64) {
-        let now = Self::now_timestamp();
+    /// Prune samples older than window (static version to avoid borrow issues)
+    fn prune_samples_static(samples: &mut VecDeque<(u64, u64)>, window_secs: u64, now: u64) {
         let cutoff = now.saturating_sub(window_secs);
 
         while let Some(&(ts, _)) = samples.front() {
@@ -95,6 +94,13 @@ impl MessageThroughputTracker {
                 break;
             }
         }
+    }
+    
+    /// Prune samples older than window
+    #[allow(dead_code)]
+    fn prune_samples(&mut self, samples: &mut VecDeque<(u64, u64)>, window_secs: u64) {
+        let now = Self::now_timestamp();
+        Self::prune_samples_static(samples, window_secs, now);
     }
 
     /// Get current Unix timestamp

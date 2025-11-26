@@ -1,9 +1,26 @@
 # Copilot Instructions for dchat
 
+## Project Status: PRODUCTION
+**dchat is now in PRODUCTION. All code must be production-ready.**
+
+- Do NOT write placeholder/stub code
+- Do NOT add "In production:" or "TODO:" comments for future implementation
+- Do NOT use simulated/mock implementations
+- All features must be fully implemented with real integrations
+- All error handling must be comprehensive
+- All security measures must be active
+
 ## Project Overview
 **dchat** is a Rust-based decentralized chat application combining end-to-end encryption, sovereign identity, and blockchain-enforced message ordering. It runs on a parallel chain (chat chain) alongside a currency chain for economics. Key differentiators: wallet-invisible UX, zero-knowledge metadata protection, relay incentives, and decentralized governance via DAO.
 
-**See**: `ARCHITECTURE.md` for complete system design, component breakdown, and integration patterns.
+## Critical Reference Documents
+Always consult these documents when working on dchat:
+
+- **`ARCHITECTURE-2.0.md`**: The authoritative architecture specification. Contains detailed component designs, security requirements, and integration patterns. Use this as the primary reference for system design decisions.
+- **`plan.md`**: The implementation plan capturing remaining work items, stubbed/placeholder code, and phased delivery. Check this before implementing any feature to understand current state and gaps.
+- **`ARCHITECTURE.md`**: Legacy architecture document with component breakdown and threat model.
+
+**Priority**: When there are discrepancies, `ARCHITECTURE-2.0.md` takes precedence over `ARCHITECTURE.md`.
 
 ## Architecture (Summary)
 The system has two interdependent chains:
@@ -408,4 +425,4 @@ cargo test --test integration_tests
 
 ---
 
-**Critical Reference**: See `ARCHITECTURE.md` for detailed component descriptions, design decisions, threat model, and 5-phase development roadmap.
+**Critical Reference**: See `ARCHITECTURE-2.0.md` for authoritative architecture specification and `plan.md` for implementation status, remaining work items, and phased delivery sequence.

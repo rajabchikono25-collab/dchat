@@ -1542,6 +1542,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbor4ii"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "472931dd4dfcc785075b09be910147f9c6258883fc4591d0dac6116392b2daa6"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,6 +1625,33 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "ciborium"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e"
+dependencies = [
+ "ciborium-io",
+ "ciborium-ll",
+ "serde",
+]
+
+[[package]]
+name = "ciborium-io"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757"
+
+[[package]]
+name = "ciborium-ll"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
+dependencies = [
+ "ciborium-io",
+ "half",
 ]
 
 [[package]]
@@ -2113,6 +2149,7 @@ dependencies = [
  "base64 0.21.7",
  "blake3",
  "chrono",
+ "dchat-blockchain",
  "dchat-core",
  "dchat-identity",
  "dchat-messaging",
@@ -2124,6 +2161,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "snow",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -2152,14 +2190,18 @@ name = "dchat-chain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bincode",
  "blake3",
  "blst",
  "chrono",
+ "ciborium",
  "dchat-core",
  "dchat-crypto",
  "dchat-observability",
+ "dchat-privacy",
  "ed25519-dalek",
  "hex",
+ "once_cell",
  "rand 0.8.5",
  "reqwest 0.11.27",
  "serde",
@@ -2292,13 +2334,22 @@ name = "dchat-governance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "blake3",
  "chrono",
  "dchat-core",
  "dchat-crypto",
+ "dchat-observability",
  "dchat-privacy",
+ "hex",
+ "once_cell",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2308,9 +2359,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.21.7",
  "bincode",
  "blake3",
  "chrono",
+ "ciborium",
  "curve25519-dalek",
  "dchat-core",
  "dchat-crypto",
@@ -2335,6 +2388,7 @@ dependencies = [
 name = "dchat-marketplace"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "chrono",
  "dchat-core",
  "serde",
@@ -2384,6 +2438,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "libp2p",
+ "libp2p-request-response",
  "local-ip-address",
  "once_cell",
  "quick-xml 0.31.0",
@@ -2408,7 +2463,6 @@ dependencies = [
  "chrono",
  "dchat-core",
  "dchat-identity",
- "dchat-network",
  "dchat-validator",
  "ed25519-dalek",
  "once_cell",
@@ -4697,6 +4751,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1356c9e376a94a75ae830c42cdaea3d4fe1290ba409a22c809033d1b7dcab0a6"
 dependencies = [
  "async-trait",
+ "cbor4ii",
  "futures",
  "futures-bounded",
  "futures-timer",
@@ -4704,6 +4759,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.8.5",
+ "serde",
  "smallvec",
  "tracing",
  "void",
@@ -6536,6 +6592,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

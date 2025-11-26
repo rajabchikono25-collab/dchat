@@ -237,7 +237,7 @@ pub struct SyncMessage {
 }
 
 /// Types of sync messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncMessageType {
     /// Device registration request
     DeviceAdded,
@@ -327,22 +327,50 @@ impl SyncManager {
         let mut resolved_message = message.clone();
         let mut conflicts_to_remove = Vec::new();
 
-        for (idx, existing) in queue.iter().enumerate() {
-            if self.is_conflicting(&message, existing) {
-                // Found a conflict - resolve it
-                if let Some(winner) = self.resolve_conflict(&message, existing) {
-                    // Mark existing message for removal
-                    conflicts_to_remove.push(idx);
-                    resolved_message = winner;
-                } else {
+        // First pass: identify conflicts (using indices to avoid borrow issues)
+        let conflict_indices: Vec<(usize, SyncMessage)> = queue
+            .iter()
+            .enumerate()
+            .filter(|(_, existing)| {
+                // Check if same message type and concurrent vector clocks
+                existing.message_type == message.message_type
+                    && message.vector_clock.is_concurrent(&existing.vector_clock)
+            })
+            .map(|(idx, msg)| (idx, msg.clone()))
+            .collect();
+
+        // Second pass: resolve conflicts
+        for (idx, existing) in conflict_indices {
+            // Resolve using configured strategy
+            let winner = match self.conflict_resolver.strategy {
+                ConflictResolution::LastWriteWins => {
+                    if message.timestamp > existing.timestamp {
+                        message.clone()
+                    } else {
+                        existing.clone()
+                    }
+                }
+                ConflictResolution::DeviceIdPriority => {
+                    if message.device_id > existing.device_id {
+                        message.clone()
+                    } else {
+                        existing.clone()
+                    }
+                }
+                _ => {
                     // Manual resolution required
                     return Err(Error::identity(format!(
                         "Manual conflict resolution required for sync {}",
                         sync_id
                     )));
                 }
-            }
+            };
+            conflicts_to_remove.push(idx);
+            resolved_message = winner;
         }
+
+        // Re-borrow queue mutably for modifications
+        let queue = self.pending_syncs.get_mut(&user_id).unwrap();
 
         // Remove conflicting messages (in reverse order to preserve indices)
         for &idx in conflicts_to_remove.iter().rev() {
@@ -407,26 +435,71 @@ impl SyncManager {
 
     /// Convert SyncMessage to SyncData for conflict resolution
     fn message_to_sync_data(&self, message: &SyncMessage) -> SyncData {
+        // Decode the sync payload from encrypted_payload
+        // The payload format is: type_byte + payload_data
+        let payload = &message.encrypted_payload;
+        
         match &message.message_type {
-            SyncMessageType::IdentityUpdate => SyncData::IdentityField {
-                field_name: "identity".to_string(),
-                value: String::new(), // Placeholder - would decode from encrypted_payload
-            },
-            SyncMessageType::SettingsUpdate => SyncData::Setting {
-                key: "settings".to_string(),
-                value: String::new(), // Placeholder
-            },
-            SyncMessageType::ContactsUpdate => SyncData::ContactUpdate {
-                contact_id: String::new(), // Placeholder
-                data: message.encrypted_payload.clone(),
-            },
-            SyncMessageType::ReadReceipts => SyncData::ReadReceipt {
-                message_id: String::new(), // Placeholder
-                timestamp: message.timestamp,
-            },
+            SyncMessageType::IdentityUpdate => {
+                // Identity updates: field_name_len(1) + field_name + value
+                if payload.len() >= 2 {
+                    let field_name_len = payload[0] as usize;
+                    if payload.len() >= 1 + field_name_len {
+                        let field_name = String::from_utf8_lossy(&payload[1..1 + field_name_len]).to_string();
+                        let value = String::from_utf8_lossy(&payload[1 + field_name_len..]).to_string();
+                        return SyncData::IdentityField { field_name, value };
+                    }
+                }
+                SyncData::IdentityField {
+                    field_name: "unknown".to_string(),
+                    value: String::new(),
+                }
+            }
+            SyncMessageType::SettingsUpdate => {
+                // Settings updates: key_len(1) + key + value
+                if payload.len() >= 2 {
+                    let key_len = payload[0] as usize;
+                    if payload.len() >= 1 + key_len {
+                        let key = String::from_utf8_lossy(&payload[1..1 + key_len]).to_string();
+                        let value = String::from_utf8_lossy(&payload[1 + key_len..]).to_string();
+                        return SyncData::Setting { key, value };
+                    }
+                }
+                SyncData::Setting {
+                    key: "unknown".to_string(),
+                    value: String::new(),
+                }
+            }
+            SyncMessageType::ContactsUpdate => {
+                // Contact updates: contact_id_len(1) + contact_id + binary_data
+                if payload.len() >= 2 {
+                    let id_len = payload[0] as usize;
+                    if payload.len() >= 1 + id_len {
+                        let contact_id = String::from_utf8_lossy(&payload[1..1 + id_len]).to_string();
+                        let data = payload[1 + id_len..].to_vec();
+                        return SyncData::ContactUpdate { contact_id, data };
+                    }
+                }
+                SyncData::ContactUpdate {
+                    contact_id: String::new(),
+                    data: payload.clone(),
+                }
+            }
+            SyncMessageType::ReadReceipts => {
+                // Read receipts: message_id (36 bytes UUID string)
+                let message_id = if payload.len() >= 36 {
+                    String::from_utf8_lossy(&payload[..36]).to_string()
+                } else {
+                    String::from_utf8_lossy(payload).to_string()
+                };
+                SyncData::ReadReceipt {
+                    message_id,
+                    timestamp: message.timestamp,
+                }
+            }
             _ => SyncData::Setting {
-                key: "unknown".to_string(),
-                value: String::new(),
+                key: format!("sync_{:?}", message.message_type),
+                value: hex::encode(payload),
             },
         }
     }

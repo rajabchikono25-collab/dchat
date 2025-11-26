@@ -8,13 +8,13 @@ license.workspace = true
 [features]
 default = []
 # Enable integration with dchat-network NAT telemetry (requires dchat-network dependency)
-nat-telemetry-integration = []
+nat-telemetry-integration = ["dchat-network"]
 
 [dependencies]
 dchat-core = { path = "../dchat-core" }
 dchat-identity = { path = "../dchat-identity" }
 dchat-validator = { path = "../dchat-validator" }
-dchat-network = { path = "../dchat-network" }
+dchat-network = { path = "../dchat-network", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }

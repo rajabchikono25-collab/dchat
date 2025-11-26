@@ -102,4 +102,9 @@ impl Error {
     pub fn rate_limit(msg: impl Into<String>) -> Self {
         Self::PermissionDenied(msg.into())
     }
+    
+    /// Create an authentication error
+    pub fn unauthenticated(msg: impl Into<String>) -> Self {
+        Self::PermissionDenied(format!("Unauthenticated: {}", msg.into()))
+    }
 }

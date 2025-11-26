@@ -307,10 +307,12 @@ impl FrostCoordinator {
         // Generate key shares for each participant
         let mut key_shares = HashMap::new();
         let mut public_key_shares = HashMap::new();
+        
+        let num_participants = participant_ids.len();
 
-        for participant_id in participant_ids {
+        for participant_id in &participant_ids {
             // Evaluate polynomial at participant_id to get secret share
-            let x = Scalar::from(participant_id as u64);
+            let x = Scalar::from(*participant_id as u64);
             let mut secret_share = coefficients[0];
             let mut x_power = x;
             for coeff in coefficients.iter().skip(1) {
@@ -321,24 +323,24 @@ impl FrostCoordinator {
             // Compute public key share (verification key)
             let public_key_share_point = &secret_share * ED25519_BASEPOINT_TABLE;
             let public_key_share = public_key_share_point.compress().to_bytes().to_vec();
-            public_key_shares.insert(participant_id, public_key_share.clone());
+            public_key_shares.insert(*participant_id, public_key_share.clone());
 
             // Create key share for this participant
             let key_share = FrostKeyShare {
-                participant_id,
+                participant_id: *participant_id,
                 secret_key_share: secret_share.to_bytes().to_vec(),
                 group_public_key: group_public_key.clone(),
                 public_key_shares: public_key_shares.clone(),
                 verifying_key: group_public_key.clone(),
             };
 
-            key_shares.insert(participant_id, key_share.clone());
-            self.key_shares.insert(participant_id, key_share);
+            key_shares.insert(*participant_id, key_share.clone());
+            self.key_shares.insert(*participant_id, key_share);
         }
 
         tracing::info!(
             "✅ FROST DKG complete: {} participants, threshold {}",
-            participant_ids.len(),
+            num_participants,
             self.config.min_signers
         );
 

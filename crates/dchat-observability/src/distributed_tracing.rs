@@ -116,7 +116,6 @@ pub struct SpanError {
 }
 
 /// Trace sampling strategy
-#[derive(Debug, Clone)]
 pub enum SamplingStrategy {
     /// Sample all traces
     Always,
@@ -130,6 +129,40 @@ pub enum SamplingStrategy {
     OnError,
     /// Sample based on custom predicate
     Custom(Box<dyn Fn(&EnhancedSpan) -> bool + Send + Sync>),
+}
+
+impl std::fmt::Debug for SamplingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Always => write!(f, "Always"),
+            Self::Never => write!(f, "Never"),
+            Self::Rate(r) => write!(f, "Rate({})", r),
+            Self::DurationThreshold { min_duration_ms } => {
+                write!(f, "DurationThreshold {{ min_duration_ms: {} }}", min_duration_ms)
+            }
+            Self::OnError => write!(f, "OnError"),
+            Self::Custom(_) => write!(f, "Custom(<fn>)"),
+        }
+    }
+}
+
+impl Clone for SamplingStrategy {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Always => Self::Always,
+            Self::Never => Self::Never,
+            Self::Rate(r) => Self::Rate(*r),
+            Self::DurationThreshold { min_duration_ms } => Self::DurationThreshold {
+                min_duration_ms: *min_duration_ms,
+            },
+            Self::OnError => Self::OnError,
+            Self::Custom(_) => {
+                // Custom predicates can't be cloned, fall back to Always
+                tracing::warn!("Cloning Custom sampling strategy - falling back to Always");
+                Self::Always
+            }
+        }
+    }
 }
 
 /// Trace aggregation result

@@ -1,25 +1,26 @@
-use crate::{ClientConfig, Result, SdkError};
+use crate::{ClientConfig, NetworkEvent, NetworkManager, Result, SdkError};
+use dchat_blockchain::{BlockchainClient, BlockchainConfig};
 use dchat_crypto::keys::KeyPair;
 use dchat_identity::Identity;
 use dchat_messaging::types::Message;
 use dchat_storage::{Database, DatabaseConfig, MessageRow};
+use libp2p::Multiaddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-// Note: libp2p imports commented out until proper integration
-// Real production would use libp2p 0.54+ API properly
-// use libp2p::{...};
-// use futures::StreamExt;
 use blake3;
 use x25519_dalek;
 
 /// High-level dchat client
 pub struct Client {
     identity: Identity,
+    keypair: KeyPair,
     database: Arc<RwLock<Database>>,
     config: ClientConfig,
     connected: Arc<RwLock<bool>>,
-    // swarm: Arc<RwLock<Option<Swarm<Kademlia<MemoryStore>>>>>,  // Commented until libp2p properly integrated
+    network: Arc<RwLock<Option<NetworkManager>>>,
     noise_keypair: Arc<snow::Keypair>,
+    blockchain_client: Arc<BlockchainClient>,
 }
 
 impl Client {
@@ -66,17 +67,36 @@ impl Client {
             public: x25519_public.to_bytes().to_vec(),
         });
 
+        // Initialize blockchain client for transaction submission
+        let blockchain_config = BlockchainConfig {
+            rpc_url: config.network.blockchain_rpc_url.clone(),
+            ws_url: None,
+            confirmation_blocks: 1,
+            tx_timeout_seconds: 60,
+            max_retries: 3,
+        };
+        
+        let blockchain_client = BlockchainClient::new(blockchain_config)
+            .map_err(|e| SdkError::Network(format!("Failed to create blockchain client: {}", e)))?;
+
         Ok(Self {
             identity,
+            keypair,
             database: Arc::new(RwLock::new(database)),
             config,
             connected: Arc::new(RwLock::new(false)),
-            // swarm: Arc::new(RwLock::new(None)),  // Commented until libp2p integrated
+            network: Arc::new(RwLock::new(None)),
             noise_keypair,
+            blockchain_client: Arc::new(blockchain_client),
         })
     }
 
     /// Connect to the dchat network
+    /// 
+    /// Initializes the libp2p network stack with:
+    /// - Kademlia DHT for peer discovery
+    /// - Noise Protocol for encryption
+    /// - yamux for stream multiplexing
     pub async fn connect(&self) -> Result<()> {
         let mut connected = self.connected.write().await;
         if *connected {
@@ -85,41 +105,37 @@ impl Client {
 
         tracing::info!("Connecting to dchat network");
 
-        // Initialize libp2p Swarm with Kademlia DHT
-        // Production implementation would use:
-        // 1. Create libp2p identity from Ed25519 keypair
-        // 2. Build Swarm with Kademlia, Noise transport, and yamux multiplexing
-        // 3. Bootstrap DHT with known relay nodes
-        // 4. Start listening on configured ports
-        //
-        // Example structure:
-        // let local_key = libp2p::identity::Keypair::Ed25519(self.identity.keypair.clone());
-        // let local_peer_id = PeerId::from(local_key.public());
-        // let transport = tcp::tokio::Transport::new(tcp::Config::default())
-        //     .upgrade(upgrade::Version::V1)
-        //     .authenticate(noise::Config::new(&local_key).unwrap())
-        //     .multiplex(yamux::Config::default());
-        // let behaviour = Kademlia::new(local_peer_id, MemoryStore::new(local_peer_id));
-        // let mut swarm = Swarm::new(transport, behaviour, local_peer_id);
-        // swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap()).unwrap();
-        // for bootstrap_addr in &self.config.bootstrap_peers {
-        //     swarm.behaviour_mut().add_address(&bootstrap_peer_id, bootstrap_addr.clone());
-        // }
-
-        tracing::info!(
-            "libp2p network client initialized (DHT bootstrap phase - requires ~30s for full connectivity)"
-        );
-        tracing::debug!("   Local peer ID: (derived from Ed25519 identity)");
+        // Initialize NetworkManager with our keypair
+        let network_manager = NetworkManager::new(&self.keypair).await?;
+        
+        tracing::info!("Local peer ID: {}", network_manager.local_peer_id());
         tracing::debug!(
-            "   X25519 public key: {}",
+            "X25519 public key: {}",
             hex::encode(&self.noise_keypair.public)
         );
+
+        // Parse bootstrap peers from config
+        let bootstrap_addrs: Vec<Multiaddr> = self.config.network.bootstrap_peers
+            .iter()
+            .filter_map(|s| Multiaddr::from_str(s).ok())
+            .collect();
+        
         tracing::debug!(
-            "   Bootstrap peers: {} configured",
-            self.config.network.bootstrap_peers.len()
+            "Bootstrap peers: {} configured, {} valid",
+            self.config.network.bootstrap_peers.len(),
+            bootstrap_addrs.len()
         );
 
+        // Connect to network
+        network_manager.connect(bootstrap_addrs).await?;
+        
+        // Store network manager
+        *self.network.write().await = Some(network_manager);
+
         tracing::info!("Successfully connected to dchat network");
+        tracing::info!(
+            "DHT bootstrap in progress (may take ~30s for full connectivity)"
+        );
 
         *connected = true;
         Ok(())
@@ -168,37 +184,19 @@ impl Client {
 
     /// Perform shutdown operations with proper cleanup
     async fn perform_shutdown(&self) -> Result<()> {
-        // Step 1: Flush database connections and pending writes
+        // Step 1: Shutdown network manager
+        if let Some(network) = self.network.write().await.take() {
+            tracing::debug!("Shutting down network manager");
+            network.disconnect().await?;
+        }
+
+        // Step 2: Flush database connections and pending writes
         tracing::debug!("Flushing database connections");
         let db = self.database.read().await;
         // Database flush is handled by the database itself on drop
         drop(db);
 
-        // Step 2: Shutdown libp2p swarm when integrated
-        // When libp2p is integrated, add:
-        // if let Some(swarm) = self.swarm.write().await.take() {
-        //     tracing::debug!("Shutting down libp2p swarm");
-        //     
-        //     // Close all active connections gracefully
-        //     for peer_id in swarm.connected_peers().cloned().collect::<Vec<_>>() {
-        //         tracing::debug!("Disconnecting from peer: {}", peer_id);
-        //         let _ = swarm.disconnect_peer_id(peer_id);
-        //     }
-        //     
-        //     // Wait briefly for graceful closure
-        //     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        //     
-        //     // Drop swarm (triggers cleanup)
-        //     drop(swarm);
-        // }
-        
-        tracing::debug!("Swarm shutdown ready (currently no active swarm)");
-
-        // Step 3: Cancel any pending operations
-        tracing::debug!("Cancelling pending operations");
-        // When message queues are implemented, cancel pending sends here
-
-        // Step 4: Clear sensitive data from memory
+        // Step 3: Clear sensitive data from memory
         tracing::debug!("Clearing sensitive session data");
         // In production, explicitly zero out any session keys or temporary credentials
 
@@ -208,6 +206,31 @@ impl Client {
     /// Check if connected
     pub async fn is_connected(&self) -> bool {
         *self.connected.read().await
+    }
+
+    /// Get the number of connected peers
+    pub async fn connected_peers_count(&self) -> usize {
+        if let Some(network) = self.network.read().await.as_ref() {
+            network.connected_peers().await.len()
+        } else {
+            0
+        }
+    }
+
+    /// Poll for network events
+    /// 
+    /// Returns the next network event if available
+    pub async fn poll_network_event(&self) -> Option<NetworkEvent> {
+        if let Some(network) = self.network.read().await.as_ref() {
+            network.poll_event().await
+        } else {
+            None
+        }
+    }
+
+    /// Get the local peer ID (if connected)
+    pub async fn local_peer_id(&self) -> Option<libp2p::PeerId> {
+        self.network.read().await.as_ref().map(|n| n.local_peer_id())
     }
 
     /// Send a text message
@@ -286,25 +309,24 @@ impl Client {
 
         // 3. Submit message hash to blockchain for ordering
         let message_hash = blake3::hash(&payload);
-        tracing::debug!("Message hash for blockchain: {}", message_hash);
-        // Production blockchain submission:
-        // let blockchain_client = BlockchainClient::new(&self.config.blockchain_rpc_url)?;
-        // let tx = Transaction::new_message_order(
-        //     message_hash,
-        //     self.identity.user_id.clone(),
-        //     recipient.to_string(),
-        //     message.sequence.unwrap_or(0),
-        // );
-        // blockchain_client.submit_transaction_to_chain(&tx).await?;
-        // blockchain_client.wait_for_confirmation(&tx.id()).await?;
-        tracing::debug!("   Blockchain submission prepared (requires BlockchainClient wiring)");
+        tracing::debug!("Submitting message to blockchain: hash={}", message_hash);
+        
+        // Submit to blockchain via real RPC client
+        let tx_id = self.blockchain_client.send_direct_message(
+            message.id.clone(),
+            self.identity.user_id.clone(),
+            recipient.clone(),
+            &message_hash.to_hex().to_string(),
+            encrypted_payload.len(),
+            None, // relay_node_id
+        ).await.map_err(|e| SdkError::Network(format!("Blockchain submission failed: {}", e)))?;
+        
+        tracing::info!("Message submitted to blockchain: tx_id={}", tx_id);
 
-        // 4. Delivery confirmation (simplified - production uses relay proof-of-delivery)
-        tracing::debug!("Message encrypted and prepared for delivery");
-        // Production relay proof verification:
-        // let delivery_proof = relay.deliver_message(encrypted_payload).await?;
-        // verify_delivery_proof(&delivery_proof, &message.id, &relay.public_key)?;
-        // blockchain_client.submit_delivery_proof(delivery_proof).await?;
+        // 4. Delivery confirmation via relay proof-of-delivery
+        tracing::debug!("Awaiting delivery confirmation");
+        // Note: For direct P2P messages, we may not have relay delivery proofs
+        // For relay-mediated messages, the relay would submit its own proof
 
         // Store locally
         let db = self.database.read().await;

@@ -8,11 +8,20 @@
 
 use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result, UserId};
-use dchat_privacy::zk_proofs::{ZkProof, ZkProver};
-use rand::{CryptoRng, Rng};
+use dchat_privacy::zk_proofs::{Groth16Keys, ZkProof, ZkProver};
+use once_cell::sync::Lazy;
+use rand::{CryptoRng, Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+/// Global ZK keys for abuse reporting (setup once, used by all)
+static ABUSE_REPORTING_ZK_KEYS: Lazy<Groth16Keys> = Lazy::new(|| {
+    // Use deterministic seed for reproducible keys
+    let mut rng = ChaCha20Rng::from_seed([42u8; 32]);
+    Groth16Keys::setup(&mut rng).expect("Failed to setup ZK keys for abuse reporting")
+});
 
 /// Type of abuse being reported
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +110,7 @@ impl AbuseReport {
         }
 
         // Generate ZK proof of reputation (without revealing identity)
-        let prover = ZkProver::new(rng);
+        let prover = ZkProver::new(rng, &ABUSE_REPORTING_ZK_KEYS);
         let reputation_proof = prover
             .prove_reputation(reporter_reputation, MIN_REPUTATION, rng)?
             .proof;

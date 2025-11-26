@@ -33,6 +33,12 @@ sqlx = { workspace = true }
 # FROST threshold signatures (audited by NCC Group, 2023)
 frost-ed25519 = "2.0"
 
+# CBOR parsing for attestation (WebAuthn, App Attest)
+ciborium = "0.2"
+
+# Base64 encoding for attestation challenges
+base64 = "0.21"
+
 # Platform-specific dependencies for biometric/enclave support
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "2.9"

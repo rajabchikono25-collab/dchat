@@ -36,6 +36,7 @@ libp2p = { version = "0.54", features = [
     "request-response",  # For onion routing cell protocol
     "macros"  # Enable NetworkBehaviour derive macro
 ] }
+libp2p-request-response = { version = "0.27", features = ["cbor"] }
 
 # Serialization
 serde = { workspace = true }

@@ -357,9 +357,9 @@ impl PackageManager {
                 // Fallback to HTTP if BitTorrent unavailable
                 tracing::warn!("BitTorrent client not available, attempting HTTP fallback");
                 
-                // Try to find HTTP mirror as fallback
-                if let Some(http_source) = metadata
-                    .download_sources
+                // Try to find HTTP mirror as fallback from our configured sources
+                if let Some(http_source) = self
+                    .sources
                     .iter()
                     .find(|s| s.source_type == SourceType::HttpsMirror)
                 {
@@ -390,9 +390,9 @@ impl PackageManager {
                 
                 tracing::warn!("Gossip P2P network not connected, attempting HTTP fallback");
                 
-                // Try to find HTTP mirror as fallback
-                if let Some(http_source) = metadata
-                    .download_sources
+                // Try to find HTTP mirror as fallback from our configured sources
+                if let Some(http_source) = self
+                    .sources
                     .iter()
                     .find(|s| s.source_type == SourceType::HttpsMirror)
                 {

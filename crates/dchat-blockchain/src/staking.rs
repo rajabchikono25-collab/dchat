@@ -24,7 +24,7 @@
 use chrono::{DateTime, Utc};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
-use ed25519_dalek::{PublicKey, Signature};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
@@ -114,7 +114,7 @@ pub struct ValidatorStake {
     /// Total staked amount (in smallest token unit)
     pub staked_amount: u64,
     /// Validator public key for block signing
-    pub validator_pubkey: PublicKey,
+    pub validator_pubkey: VerifyingKey,
     /// Current status
     pub status: ValidatorStatus,
     /// When stake was first submitted
@@ -147,7 +147,7 @@ impl ValidatorStake {
     pub fn new(
         validator_id: UserId,
         staked_amount: u64,
-        validator_pubkey: PublicKey,
+        validator_pubkey: VerifyingKey,
     ) -> Result<Self> {
         if staked_amount < MIN_VALIDATOR_STAKE {
             return Err(Error::validation(format!(
@@ -238,11 +238,11 @@ impl ValidatorStake {
     /// Complete unstaking after cooldown period
     pub fn complete_unstake(&mut self) -> Result<u64> {
         if self.status != ValidatorStatus::Unstaking {
-            return Err(Error::validation("Validator not in unstaking status".into()));
+            return Err(Error::validation("Validator not in unstaking status"));
         }
 
         let unstaking_initiated = self.unstaking_initiated_at.ok_or_else(|| {
-            Error::validation("Unstaking initiated timestamp missing".into())
+            Error::validation("Unstaking initiated timestamp missing")
         })?;
 
         let elapsed = Utc::now().signed_duration_since(unstaking_initiated);
@@ -386,7 +386,7 @@ impl StakingManager {
         &self,
         validator_id: UserId,
         amount: u64,
-        validator_pubkey: PublicKey,
+        validator_pubkey: VerifyingKey,
     ) -> Result<Uuid> {
         // Validate stake amount
         if amount < MIN_VALIDATOR_STAKE {

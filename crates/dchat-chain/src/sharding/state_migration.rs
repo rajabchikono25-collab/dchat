@@ -91,7 +91,7 @@ impl ShardSnapshot {
 }
 
 /// Migration ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MigrationId(pub u64);
 
 impl MigrationId {
@@ -238,7 +238,7 @@ impl TwoPhaseCommit {
     /// Mark migration as failed
     pub fn fail(&mut self, reason: String) -> Result<()> {
         self.phase = MigrationPhase::Failed;
-        Err(Error::migration(reason))
+        Err(Error::validation(format!("Migration failed: {}", reason)))
     }
 
     /// Get progress percentage
@@ -486,8 +486,8 @@ impl MigrationCoordinator {
         self.rollback_manager
             .create_snapshot(receipt.migration_id, source_snapshot.clone())?;
 
-        // Create chunks
-        let chunks = self.transfer.create_chunks(source_snapshot.serialized_state);
+        // Create chunks - clone the data to avoid moving
+        let chunks = self.transfer.create_chunks(source_snapshot.serialized_state.clone());
 
         // Phase 2: Transfer
         let stats = match self.transfer.parallel_transfer(chunks, &mut commit) {

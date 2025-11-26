@@ -8,6 +8,7 @@ use libp2p::{
     swarm::NetworkBehaviour,
     PeerId, StreamProtocol,
 };
+use libp2p_request_response::cbor;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -59,100 +60,6 @@ pub struct HandshakeData {
     pub data: Vec<u8>,
 }
 
-/// JSON codec for request-response protocol
-#[derive(Debug, Clone)]
-pub struct JsonCodec;
-
-impl request_response::Codec for JsonCodec {
-    type Protocol = StreamProtocol;
-    type Request = HandshakeData;
-    type Response = HandshakeData;
-
-    async fn read_request<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-    ) -> std::io::Result<Self::Request>
-    where
-        T: futures::AsyncRead + Unpin + Send,
-    {
-        use futures::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        io.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        
-        if len > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Handshake too large",
-            ));
-        }
-        
-        let mut data = vec![0u8; len];
-        io.read_exact(&mut data).await?;
-        Ok(HandshakeData { data })
-    }
-
-    async fn read_response<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-    ) -> std::io::Result<Self::Response>
-    where
-        T: futures::AsyncRead + Unpin + Send,
-    {
-        use futures::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        io.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        
-        if len > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Handshake response too large",
-            ));
-        }
-        
-        let mut data = vec![0u8; len];
-        io.read_exact(&mut data).await?;
-        Ok(HandshakeData { data })
-    }
-
-    async fn write_request<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-        req: Self::Request,
-    ) -> std::io::Result<()>
-    where
-        T: futures::AsyncWrite + Unpin + Send,
-    {
-        use futures::AsyncWriteExt;
-        let len = req.data.len() as u32;
-        io.write_all(&len.to_be_bytes()).await?;
-        io.write_all(&req.data).await?;
-        io.flush().await?;
-        Ok(())
-    }
-
-    async fn write_response<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-        res: Self::Response,
-    ) -> std::io::Result<()>
-    where
-        T: futures::AsyncWrite + Unpin + Send,
-    {
-        use futures::AsyncWriteExt;
-        let len = res.data.len() as u32;
-        io.write_all(&len.to_be_bytes()).await?;
-        io.write_all(&res.data).await?;
-        io.flush().await?;
-        Ok(())
-    }
-}
-
 /// Combined network behavior for dchat
 #[derive(NetworkBehaviour)]
 pub struct DchatBehavior {
@@ -172,7 +79,7 @@ pub struct DchatBehavior {
     pub ping: ping::Behaviour,
     
     /// Request-response for peer handshakes
-    pub req_resp: request_response::cbor::Behaviour<HandshakeData, HandshakeData>,
+    pub req_resp: cbor::Behaviour<HandshakeData, HandshakeData>,
 }
 
 impl DchatBehavior {
@@ -228,7 +135,7 @@ impl DchatBehavior {
         ));
         let req_resp_config = request_response::Config::default()
             .with_request_timeout(Duration::from_secs(30));
-        let req_resp = request_response::cbor::Behaviour::new(protocols, req_resp_config);
+        let req_resp = cbor::Behaviour::new(protocols, req_resp_config);
 
         Ok(Self {
             kademlia,

@@ -7,6 +7,7 @@
 //! - Traffic-aware scheduling (2-6 AM low activity windows)
 
 use crate::sharding::{ChannelId, ShardId};
+use chrono::Timelike;
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -452,7 +453,7 @@ impl RebalancingScheduler {
 
         let current_loads: Vec<f64> = shard_loads.iter().map(|s| s.load_score()).collect();
         let mut best_energy = calculate_energy(&current_loads);
-        let mut best_migrations = Vec::new();
+        let mut best_migrations: Vec<ChannelMigration> = Vec::new();
 
         // Simulated annealing iterations
         for _ in 0..iterations {

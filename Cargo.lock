@@ -1563,6 +1563,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
+name = "cbor4ii"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "472931dd4dfcc785075b09be910147f9c6258883fc4591d0dac6116392b2daa6"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2213,6 +2222,7 @@ dependencies = [
  "base64 0.21.7",
  "blake3",
  "chrono",
+ "dchat-blockchain",
  "dchat-core",
  "dchat-identity",
  "dchat-messaging",
@@ -2224,6 +2234,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "snow",
  "sqlx",
  "tempfile",
  "thiserror 1.0.69",
@@ -2255,15 +2266,19 @@ name = "dchat-chain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bincode",
  "blake3",
  "blst",
  "chrono",
+ "ciborium",
  "dchat-core",
  "dchat-crypto",
  "dchat-observability",
+ "dchat-privacy",
  "dchat-storage",
  "ed25519-dalek",
  "hex",
+ "once_cell",
  "rand 0.8.5",
  "reqwest 0.11.27",
  "serde",
@@ -2385,14 +2400,22 @@ name = "dchat-governance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "blake3",
  "chrono",
  "dchat-core",
  "dchat-crypto",
+ "dchat-observability",
  "dchat-privacy",
+ "hex",
+ "once_cell",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2402,9 +2425,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.21.7",
  "bincode",
  "blake3",
  "chrono",
+ "ciborium",
  "curve25519-dalek",
  "dchat-core",
  "dchat-crypto",
@@ -2431,6 +2456,7 @@ dependencies = [
 name = "dchat-marketplace"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "chrono",
  "dchat-core",
  "serde",
@@ -2482,6 +2508,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "libp2p",
+ "libp2p-request-response",
  "local-ip-address",
  "once_cell",
  "prometheus",
@@ -2652,10 +2679,12 @@ dependencies = [
  "chrono",
  "dchat-core",
  "glam",
+ "openxr",
  "serde",
  "serde_json",
  "tokio",
  "tokio-test",
+ "tracing",
  "uuid",
 ]
 
@@ -4882,6 +4911,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1356c9e376a94a75ae830c42cdaea3d4fe1290ba409a22c809033d1b7dcab0a6"
 dependencies = [
  "async-trait",
+ "cbor4ii",
  "futures",
  "futures-bounded",
  "futures-timer",
@@ -4889,6 +4919,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.8.5",
+ "serde",
  "smallvec",
  "tracing",
  "void",
@@ -5398,6 +5429,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ndk-context"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
+
+[[package]]
 name = "neli"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5850,6 +5887,27 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "openxr"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a03958eb34719625119448d483ebd2fe008a2128b6286f2a7138b7e48072053"
+dependencies = [
+ "libc",
+ "libloading",
+ "ndk-context",
+ "openxr-sys",
+]
+
+[[package]]
+name = "openxr-sys"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1534b2c14b56564e58b91f5015817e1d87bd43ca12a188eda6a9ea3859b0ec25"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -6843,6 +6901,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

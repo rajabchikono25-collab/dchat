@@ -57,6 +57,8 @@ pub struct NetworkConfig {
     pub max_connections: usize,
     /// Connection timeout in seconds
     pub connection_timeout_secs: u64,
+    /// Blockchain RPC URL for transaction submission
+    pub blockchain_rpc_url: String,
 }
 
 impl Default for NetworkConfig {
@@ -66,6 +68,8 @@ impl Default for NetworkConfig {
             listen_port: 0, // Random port
             max_connections: 50,
             connection_timeout_secs: 30,
+            blockchain_rpc_url: std::env::var("DCHAT_BLOCKCHAIN_RPC_URL")
+                .unwrap_or_else(|_| "http://localhost:8545".to_string()),
         }
     }
 }

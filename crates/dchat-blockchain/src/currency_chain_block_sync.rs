@@ -705,9 +705,11 @@ impl BlockSyncManager {
             .to_string();
 
         // Parse transactions using dedicated parser
-        use dchat_chain::{CurrencyTransactionParser, TransactionData};
+        use dchat_chain::CurrencyTransactionParser;
         
-        let parsed_transactions = CurrencyTransactionParser::parse_block_transactions(&block_data)
+        // Convert Map back to Value for the parser
+        let block_value = serde_json::Value::Object(block_data.clone());
+        let parsed_transactions = CurrencyTransactionParser::parse_block_transactions(&block_value)
             .unwrap_or_else(|e| {
                 tracing::warn!("Failed to parse block transactions: {}", e);
                 Vec::new()
@@ -720,15 +722,20 @@ impl BlockSyncManager {
                 use dchat_chain::{TransactionType, TransactionStatus};
                 use uuid::Uuid;
                 
-                // Create a generic transaction payload
-                let payload = serde_json::to_value(&parsed_tx.data).unwrap_or(serde_json::json!({}));
+                // Serialize transaction data to bytes for the Transaction payload
+                let payload_bytes = bincode::serialize(&format!("{:?}", parsed_tx.data))
+                    .unwrap_or_default();
                 
+                // Create a generic transaction from parsed currency transaction
                 dchat_chain::Transaction {
                     tx_id: Uuid::new_v4(),
-                    tx_type: TransactionType::SendDirectMessage, // Placeholder - currency txs don't map directly
-                    payload,
+                    tx_type: TransactionType::SendDirectMessage, // Currency txs don't map directly
+                    payload: payload_bytes,
                     tx_hash: parsed_tx.tx_hash.clone(),
-                    status: TransactionStatus::Confirmed,
+                    status: TransactionStatus::Confirmed { 
+                        block_height: block_number, 
+                        block_hash: block_hash.clone() 
+                    },
                     submitted_at: chrono::Utc::now(),
                     confirmed_at: Some(chrono::Utc::now()),
                     fee_paid: 0,

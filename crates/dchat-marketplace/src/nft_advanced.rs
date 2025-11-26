@@ -350,36 +350,38 @@ impl AdvancedNftManager {
         }
 
         let component_ids = nft.composed_from.clone();
-        let composition_metadata = nft.metadata.clone();
+        let creator = nft.creator;
+        let collection_id = nft.collection_id;
+        let royalty_percentage = nft.royalty_percentage;
 
         // Recreate original component NFTs from stored composition metadata
         for (idx, component_id) in component_ids.iter().enumerate() {
-            // Extract component metadata from composition
-            let component_metadata = composition_metadata
-                .get(&format!("component_{}_metadata", idx))
-                .cloned()
-                .unwrap_or_default();
-
-            // Recreate component NFT
-            let component_nft = Nft {
+            // Recreate component NFT with reasonable defaults
+            let component_nft = AdvancedNft {
                 token_id: component_id.clone(),
-                collection_id: nft.collection_id.clone(),
+                name: format!("Component {} from decomposition", idx + 1),
+                description: format!("Decomposed component {} of original NFT", idx + 1),
+                image_hash: format!("component_{}_{}", token_id, idx),
+                creator,
                 current_owner: owner,
-                creator: nft.creator,
-                metadata: serde_json::from_str(&component_metadata)
-                    .unwrap_or_else(|_| HashMap::new()),
-                dynamic_traits: DynamicTraits {
-                    traits: HashMap::new(),
-                    last_updated: chrono::Utc::now(),
-                },
-                royalty: nft.royalty.clone(),
-                mint_timestamp: nft.mint_timestamp,
-                last_transfer: chrono::Utc::now(),
-                is_fractional: false,
-                fractional_info: None,
-                is_composable: true,
+                created_at: Utc::now(),
+                dynamic_traits: Vec::new(),
                 composed_from: Vec::new(),
+                is_decomposable: false,
+                royalty_percentage,
+                collection_id,
+                rarity_score: 50.0, // Default rarity for decomposed components
                 staking_info: None,
+                fractionalization: None,
+                history: vec![NftTransaction {
+                    transaction_id: Uuid::new_v4(),
+                    transaction_type: TransactionType::Decompose,
+                    from_user: Some(owner),
+                    to_user: Some(owner),
+                    price: None,
+                    timestamp: Utc::now(),
+                    transaction_hash: format!("decompose_{}_{}", token_id, idx),
+                }],
             };
 
             self.nfts.insert(component_id.clone(), component_nft);
