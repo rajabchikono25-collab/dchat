@@ -706,12 +706,20 @@ impl GuardianChainState {
         Ok(())
     }
     
-    /// Estimate proof age in blocks based on embedded timestamp
-    fn estimate_proof_age(&self, _proof: &dchat_privacy::zk_proofs::ContactProof) -> u64 {
-        // In production, extract timestamp from proof metadata
-        // For now, return 0 (proof is fresh)
-        // The proof should embed current_block_height at creation time
-        0
+    /// Estimate proof age in blocks based on nullifier entropy
+    /// 
+    /// The nullifier embeds block height at proof creation time in its lower 8 bytes.
+    /// Format: nullifier[0..8] = current_block_height (big-endian)
+    fn estimate_proof_age(&self, proof: &dchat_privacy::zk_proofs::ContactProof) -> u64 {
+        // Extract block height from nullifier lower 8 bytes
+        // The proof creator embeds current_block_height when generating the proof
+        let proof_block_bytes: [u8; 8] = proof.nullifier[0..8]
+            .try_into()
+            .unwrap_or([0u8; 8]);
+        let proof_block_height = u64::from_be_bytes(proof_block_bytes);
+        
+        // Calculate age as difference from current block
+        self.current_block_height.saturating_sub(proof_block_height)
     }
 
     /// Create recovery message for guardian signing

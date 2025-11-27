@@ -68,10 +68,10 @@ impl ExtendedShardManager {
             .map(|m| ShardLoad {
                 shard_id: m.shard_id.clone(),
                 cpu_usage: m.cpu_usage,
-                memory_usage: m.cpu_usage, // Simplified
+                memory_usage: m.memory_usage_bytes as f64 / (1024.0 * 1024.0 * 1024.0), // Convert to GB ratio
                 throughput_msg_s: m.throughput_msg_per_sec,
                 storage_bytes: m.storage_bytes,
-                channel_count: 0, // Would need to query base manager
+                channel_count: self.base.get_channel_count(&m.shard_id).unwrap_or(0),
             })
             .collect();
 
@@ -89,16 +89,19 @@ impl ExtendedShardManager {
             .map(|m| ShardLoad {
                 shard_id: m.shard_id.clone(),
                 cpu_usage: m.cpu_usage,
-                memory_usage: m.cpu_usage,
+                memory_usage: m.memory_usage_bytes as f64 / (1024.0 * 1024.0 * 1024.0), // Convert to GB ratio
                 throughput_msg_s: m.throughput_msg_per_sec,
                 storage_bytes: m.storage_bytes,
-                channel_count: 0,
+                channel_count: self.base.get_channel_count(&m.shard_id).unwrap_or(0),
             })
             .collect();
 
+        // Get channel assignments from base manager
+        let channel_assignments = self.base.get_all_channel_assignments();
+
         self.scheduler.create_plan(
             &shard_loads,
-            &HashMap::new(), // Channel assignments would come from async API
+            &channel_assignments,
             algorithm,
         )
     }
@@ -164,21 +167,36 @@ impl ExtendedShardManager {
     }
 
     /// Create snapshot of shard state
+    /// 
+    /// Queries the shard manager for actual state data and creates a consistent snapshot
     fn create_shard_snapshot(
         &self,
         shard_id: &ShardId,
         channels: &[ChannelId],
     ) -> Result<ShardSnapshot> {
-        // In production, this would query the async shard manager
-        // For now, create a placeholder snapshot
-        let serialized_state = serde_json::to_vec(&shard_id)
+        // Query shard state from base manager (synchronous access)
+        let shard_state = self.base.shards.try_read()
+            .map_err(|_| dchat_core::error::Error::internal("Failed to acquire shard lock"))?
+            .get(shard_id)
+            .cloned()
+            .ok_or_else(|| dchat_core::error::Error::validation(format!("Shard {} not found", shard_id)))?;
+        
+        // Serialize the channel states
+        let channel_data: Vec<(&ChannelId, bool)> = channels.iter()
+            .map(|c| (c, shard_state.channels.contains(c)))
+            .collect();
+        
+        let serialized_state = serde_json::to_vec(&channel_data)
             .map_err(|e| dchat_core::error::Error::validation(e.to_string()))?;
+        
+        // Compute state root as BLAKE3 hash of serialized state
+        let state_root = blake3::hash(&serialized_state).as_bytes().to_vec();
 
         Ok(ShardSnapshot::new(
             shard_id.clone(),
             channels.to_vec(),
-            format!("state_root_{}", shard_id.0).into_bytes(),
-            0, // message count
+            state_root,
+            shard_state.message_count,
             serialized_state,
         ))
     }

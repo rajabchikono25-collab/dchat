@@ -437,7 +437,7 @@ impl RebalancingScheduler {
         shard_loads: &[ShardLoad],
         channel_assignments: &HashMap<ChannelId, ShardId>,
     ) -> Result<RebalancingPlan> {
-        // Simplified simulated annealing for large clusters
+        // Simulated annealing for optimizing shard load distribution
         let mut migrations = Vec::new();
 
         // Initial temperature
@@ -445,42 +445,80 @@ impl RebalancingScheduler {
         let cooling_rate = 0.95;
         let iterations = 100;
 
-        // Calculate current energy (load variance)
+        // Calculate energy as load variance (lower is better)
         let calculate_energy = |loads: &[f64]| -> f64 {
             let mean = loads.iter().sum::<f64>() / loads.len() as f64;
             loads.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
         };
 
-        let current_loads: Vec<f64> = shard_loads.iter().map(|s| s.load_score()).collect();
-        let mut best_energy = calculate_energy(&current_loads);
+        // Build mutable load tracking
+        let mut current_loads: Vec<f64> = shard_loads.iter().map(|s| s.load_score()).collect();
+        let shard_indices: HashMap<ShardId, usize> = shard_loads
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.shard_id.clone(), i))
+            .collect();
+        
+        let mut current_energy = calculate_energy(&current_loads);
         let mut best_migrations: Vec<ChannelMigration> = Vec::new();
+        let mut best_energy = current_energy;
+
+        // Track current channel assignments for simulation
+        let mut sim_assignments = channel_assignments.clone();
 
         // Simulated annealing iterations
         for _ in 0..iterations {
             // Try random swap
             if let Some((from_shard, to_shard)) = self.random_swap(shard_loads) {
-                // Estimate new energy after swap
-                let new_energy = best_energy * 0.95; // Simplified - assume improvement
-
-                // Accept if better, or with probability based on temperature
-                let delta = new_energy - best_energy;
-                if delta < 0.0 || rand::random::<f64>() < (-delta / temperature).exp() {
-                    best_energy = new_energy;
-
-                    // Find a channel to migrate
-                    let channel = channel_assignments
+                if let (Some(&from_idx), Some(&to_idx)) = (
+                    shard_indices.get(&from_shard),
+                    shard_indices.get(&to_shard)
+                ) {
+                    // Find a channel to migrate from the source shard
+                    let channel = sim_assignments
                         .iter()
                         .find(|(_, shard_id)| *shard_id == &from_shard)
                         .map(|(ch_id, _)| ch_id.clone());
 
                     if let Some(ch_id) = channel {
-                        migrations.push(ChannelMigration {
-                            channel_id: ch_id,
-                            from_shard,
-                            to_shard,
-                            estimated_size_bytes: 1_000_000,
-                            estimated_time_secs: 2.0,
-                        });
+                        // Estimate channel load contribution (assume uniform distribution)
+                        let from_channel_count = sim_assignments.values()
+                            .filter(|s| *s == &from_shard)
+                            .count() as f64;
+                        let channel_load = if from_channel_count > 0.0 {
+                            current_loads[from_idx] / from_channel_count
+                        } else {
+                            0.0
+                        };
+
+                        // Calculate new energy with migrated channel
+                        let mut new_loads = current_loads.clone();
+                        new_loads[from_idx] -= channel_load;
+                        new_loads[to_idx] += channel_load;
+                        let new_energy = calculate_energy(&new_loads);
+
+                        // Accept if better, or with probability based on temperature
+                        let delta = new_energy - current_energy;
+                        if delta < 0.0 || rand::random::<f64>() < (-delta / temperature).exp() {
+                            current_energy = new_energy;
+                            current_loads = new_loads;
+                            sim_assignments.insert(ch_id.clone(), to_shard.clone());
+                            
+                            // Track this migration
+                            migrations.push(ChannelMigration {
+                                channel_id: ch_id,
+                                from_shard,
+                                to_shard,
+                                estimated_size_bytes: 1_000_000, // Could be estimated from shard state
+                                estimated_time_secs: 2.0,
+                            });
+                            
+                            // Track best solution found
+                            if current_energy < best_energy {
+                                best_energy = current_energy;
+                                best_migrations = migrations.clone();
+                            }
+                        }
                     }
                 }
             }
@@ -488,8 +526,15 @@ impl RebalancingScheduler {
             temperature *= cooling_rate;
         }
 
+        // Use best solution found, not just final state
+        let final_migrations = if best_migrations.is_empty() && !migrations.is_empty() {
+            migrations
+        } else {
+            best_migrations
+        };
+
         // Deduplicate migrations
-        let unique_migrations: Vec<_> = migrations
+        let unique_migrations: Vec<_> = final_migrations
             .into_iter()
             .collect::<HashSet<_>>()
             .into_iter()

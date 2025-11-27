@@ -90,9 +90,53 @@ impl BootstrapCoordinator {
 
         self.update_status(BootstrapStatus::WaitingForFirstValidator).await;
 
-        // In production, this would poll the currency chain for first stake
-        // For now, we simulate waiting
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Poll currency chain for first validator stake
+        use reqwest::Client as HttpClient;
+        use serde_json::json;
+        
+        let client = HttpClient::new();
+        let mut poll_count = 0;
+        const MAX_POLL_ATTEMPTS: u32 = 300; // 5 minutes at 1 second intervals
+        const POLL_INTERVAL_MS: u64 = 1000;
+        
+        loop {
+            poll_count += 1;
+            if poll_count > MAX_POLL_ATTEMPTS {
+                return Err(Error::chain("Timeout waiting for first validator stake".to_string()));
+            }
+            
+            // Query currency chain for validator registrations
+            let payload = json!({
+                "method": "currency.get_validator_count",
+                "params": {},
+                "jsonrpc": "2.0",
+                "id": poll_count,
+            });
+            
+            match client
+                .post(&self.currency_rpc)
+                .json(&payload)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if let Ok(body) = response.json::<serde_json::Value>().await {
+                        if let Some(count) = body["result"]["count"].as_u64() {
+                            if count > 0 {
+                                info!("✅ First validator detected on currency chain");
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to poll currency chain (attempt {}): {}", poll_count, e);
+                }
+            }
+            
+            tokio::time::sleep(tokio::time::Duration::from_millis(POLL_INTERVAL_MS)).await;
+        }
 
         Ok(())
     }

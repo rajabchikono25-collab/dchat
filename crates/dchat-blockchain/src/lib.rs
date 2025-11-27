@@ -2,6 +2,7 @@
 //! Supports Chat Chain, Currency Chain, Cross-Chain Bridge, and Tokenomics
 
 pub mod block_hierarchy;
+pub mod chain_synchronizer;
 pub mod chat_chain;
 pub mod client;
 pub mod cross_chain;
@@ -23,6 +24,11 @@ pub mod vote_persistence;
 pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
     ValidatorSignature, WorldState,
+};
+pub use chain_synchronizer::{
+    ChainSyncConfig, ChainSynchronizer, ChainThroughput, ChainType, CrossChainFinalityStatus,
+    CurrencyHierarchicalBlock, CurrencyMiniblock, CurrencySubblock, CurrencyTransaction,
+    CurrencyTxType, FinalityAnchor, SyncEpoch, SyncError, SyncStatusReport, ThroughputReport,
 };
 pub use dchat_chain::{Transaction, TransactionStatus};
 pub use chat_chain::{ChatChainClient, ChatChainConfig};

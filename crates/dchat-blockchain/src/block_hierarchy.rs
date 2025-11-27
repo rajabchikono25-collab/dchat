@@ -220,6 +220,8 @@ pub struct FinalityProof {
     pub tsc_finalized: bool,
     /// Combined finality confidence (0.0-1.0)
     pub confidence: f64,
+    /// Validator signatures that contributed to this finality proof
+    pub validator_signatures: Vec<Vec<u8>>,
 }
 
 /// Errors in block operations

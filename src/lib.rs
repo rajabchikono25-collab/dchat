@@ -266,6 +266,7 @@ pub mod client {
         /// 4. Stores in local database
         pub async fn send_message(&self, message: Message) -> Result<()> {
             use dchat_crypto::hash;
+            use dchat_storage::MessageRow;
             
             // Validate message is deliverable
             if !message.is_deliverable() {
@@ -283,12 +284,37 @@ pub mod client {
             let message_hash = hash(&message.encrypted_payload);
             
             // 2. Store in local database
-            self.database.store_message(&message).await?;
+            let msg_row = MessageRow {
+                id: message.id.0.to_string(),
+                sender_id: self.identity.user_id.0.to_string(),
+                recipient_id: match &message.message_type {
+                    MessageType::Direct { recipient, .. } => Some(recipient.0.to_string()),
+                    _ => None,
+                },
+                channel_id: match &message.message_type {
+                    MessageType::Channel { channel_id, .. } => Some(channel_id.0.to_string()),
+                    _ => None,
+                },
+                content_type: "encrypted".to_string(),
+                content: String::new(),
+                encrypted_payload: message.encrypted_payload.clone(),
+                timestamp: chrono::Utc::now().timestamp(),
+                sequence_num: None,
+                status: "pending".to_string(),
+                expires_at: message.expires_at.map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0)
+                }),
+                size: message.size,
+                content_hash: Some(hex::encode(&message_hash)),
+            };
+            self.database.insert_message(&msg_row).await?;
             
             // 3. Queue for network delivery
             {
                 let mut queue = self.message_queue.write().await;
-                queue.enqueue(message.clone())?;
+                queue.push(message.clone())?;
             }
             
             // 4. Route through network based on message type
@@ -322,29 +348,42 @@ pub mod client {
             tracing::debug!("Fetching received messages from database");
             
             // Get user's identity
-            let user_id = self.identity.user_id();
+            let user_id = &self.identity.user_id;
             
-            // Retrieve undelivered messages from database
-            let messages = self.database.get_pending_messages(&user_id).await?;
+            // Retrieve messages from database for this user
+            let msg_rows = self.database.get_messages_for_user(&user_id.0.to_string(), 100).await?;
             
-            // Filter deliverable messages (not expired)
-            let deliverable: Vec<Message> = messages
+            // Convert MessageRow to Message (simplified - in production would decrypt)
+            let messages: Vec<Message> = msg_rows
                 .into_iter()
-                .filter(|msg| msg.is_deliverable())
+                .filter_map(|row| {
+                    // Skip already delivered messages
+                    if row.status == "delivered" {
+                        return None;
+                    }
+                    
+                    // Build message from row (simplified reconstruction)
+                    let message = MessageBuilder::new()
+                        .encrypted_payload(row.encrypted_payload)
+                        .build()
+                        .ok()?;
+                    
+                    // Filter out expired messages
+                    if message.is_deliverable() {
+                        Some(message)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            
-            // Mark messages as delivered
-            for message in &deliverable {
-                self.database.mark_message_delivered(&message.id).await?;
-            }
             
             tracing::info!(
                 "✓ Retrieved {} new messages for user {}",
-                deliverable.len(),
+                messages.len(),
                 user_id
             );
             
-            Ok(deliverable)
+            Ok(messages)
         }
 
         /// Get current identity

@@ -442,11 +442,17 @@ impl BlockSyncManager {
         // Find common ancestor
         let common_ancestor = self.find_common_ancestor(&conflicting_block).await?;
         
+        // Fetch competing chain blocks from common ancestor to conflicting block
+        let chain_b_headers = self.fetch_competing_chain_headers(
+            common_ancestor,
+            conflicting_block.header.parent_hash.clone()
+        ).await.unwrap_or_default();
+        
         // Build fork info
         let fork_info = ForkInfo {
             common_ancestor,
             chain_a: vec![conflicting_block.header.clone()],
-            chain_b: vec![], // Fetch competing chain
+            chain_b: chain_b_headers,
             detected_at: std::time::SystemTime::now(),
         };
 
@@ -456,6 +462,35 @@ impl BlockSyncManager {
         self.resolve_fork().await?;
 
         Ok(())
+    }
+    
+    /// Fetch competing chain headers by walking back from parent hash
+    async fn fetch_competing_chain_headers(
+        &self,
+        common_ancestor: u64,
+        start_parent_hash: String,
+    ) -> Result<Vec<CurrencyBlockHeader>> {
+        let cache = self.block_cache.read().await;
+        let mut headers = Vec::new();
+        let mut current_parent_hash = start_parent_hash;
+        
+        // Walk back through cached blocks to build competing chain
+        for block_num in (common_ancestor + 1..=*self.latest_confirmed_block.read().await).rev() {
+            if let Some(block) = cache.get(&block_num) {
+                if block.header.block_hash == current_parent_hash {
+                    headers.push(block.header.clone());
+                    current_parent_hash = block.header.parent_hash.clone();
+                } else if block.header.parent_hash == current_parent_hash {
+                    // Found an alternative block at this height
+                    headers.push(block.header.clone());
+                    current_parent_hash = block.header.parent_hash.clone();
+                }
+            }
+        }
+        
+        // Reverse to get chronological order
+        headers.reverse();
+        Ok(headers)
     }
 
     /// Find common ancestor block
@@ -480,19 +515,74 @@ impl BlockSyncManager {
         let fork_opt = self.active_fork.read().await.clone();
         
         if let Some(fork) = fork_opt {
-            // Choose longest chain (simplified)
-            if fork.chain_a.len() >= fork.chain_b.len() {
-                info!("✅ Chain A selected as canonical");
+            // Calculate total difficulty for each chain (using length as proxy in PoS context)
+            // In production, this would use actual difficulty or stake weight
+            let chain_a_weight = fork.chain_a.len();
+            let chain_b_weight = fork.chain_b.len();
+            
+            if chain_a_weight >= chain_b_weight {
+                info!("✅ Chain A selected as canonical (weight: {} vs {})", chain_a_weight, chain_b_weight);
+                // Chain A is already in our cache, no reorg needed
             } else {
-                info!("✅ Chain B selected as canonical");
-                // Reorganize cache
+                info!("✅ Chain B selected as canonical (weight: {} vs {})", chain_b_weight, chain_a_weight);
+                // Reorganize cache: remove chain_a blocks and apply chain_b blocks
+                self.reorganize_to_chain(&fork.chain_b, fork.common_ancestor).await?;
             }
 
-            // Clear fork
+            // Clear fork state
             *self.active_fork.write().await = None;
+            
+            // Emit fork resolution event for monitoring
+            info!(
+                "🔗 Fork resolved: common_ancestor={}, chain_a_len={}, chain_b_len={}",
+                fork.common_ancestor,
+                fork.chain_a.len(),
+                fork.chain_b.len()
+            );
         }
 
         *self.status.write().await = SyncStatus::Live;
+        Ok(())
+    }
+    
+    /// Reorganize chain to apply winning fork
+    async fn reorganize_to_chain(
+        &self,
+        canonical_headers: &[CurrencyBlockHeader],
+        common_ancestor: u64,
+    ) -> Result<()> {
+        let mut cache = self.block_cache.write().await;
+        
+        // Remove blocks after common ancestor (orphaned blocks)
+        let latest = *self.latest_confirmed_block.read().await;
+        for block_num in (common_ancestor + 1)..=latest {
+            if let Some(removed) = cache.remove(&block_num) {
+                info!("🗑️ Removed orphaned block {} ({})", block_num, removed.header.block_hash);
+            }
+        }
+        drop(cache);
+        
+        // Fetch and apply canonical chain blocks
+        for header in canonical_headers {
+            match self.fetch_block_rpc(header.block_number).await {
+                Ok(block) => {
+                    let mut cache = self.block_cache.write().await;
+                    cache.insert(block.header.block_number, block.clone());
+                    info!("✅ Applied canonical block {} ({})", 
+                          block.header.block_number, 
+                          block.header.block_hash);
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to fetch canonical block {}: {}", header.block_number, e);
+                }
+            }
+        }
+        
+        // Update latest confirmed block to end of canonical chain
+        if let Some(last_header) = canonical_headers.last() {
+            *self.latest_confirmed_block.write().await = last_header.block_number;
+        }
+        
         Ok(())
     }
 

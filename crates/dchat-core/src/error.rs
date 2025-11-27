@@ -107,4 +107,9 @@ impl Error {
     pub fn unauthenticated(msg: impl Into<String>) -> Self {
         Self::PermissionDenied(format!("Unauthenticated: {}", msg.into()))
     }
+
+    /// Create an unavailable error (e.g., resource or service not available)
+    pub fn unavailable(msg: impl Into<String>) -> Self {
+        Self::Internal(format!("Unavailable: {}", msg.into()))
+    }
 }

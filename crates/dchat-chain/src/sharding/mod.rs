@@ -207,6 +207,21 @@ impl ShardManager {
     pub fn config(&self) -> &ShardConfig {
         &self.config
     }
+    
+    /// Get channel count for a specific shard (synchronous for integration)
+    pub fn get_channel_count(&self, shard_id: &ShardId) -> Option<usize> {
+        // Use try_read for non-blocking access in sync context
+        self.shards.try_read().ok().and_then(|shards| {
+            shards.get(shard_id).map(|s| s.channels.len())
+        })
+    }
+    
+    /// Get all channel to shard assignments (synchronous for integration)
+    pub fn get_all_channel_assignments(&self) -> HashMap<ChannelId, ShardId> {
+        self.channel_to_shard.try_read()
+            .map(|cache| cache.clone())
+            .unwrap_or_default()
+    }
 }
 
 // Re-export key types

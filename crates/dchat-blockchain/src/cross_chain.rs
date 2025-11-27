@@ -1,5 +1,13 @@
 //! Cross-chain bridge for atomic transactions between chat chain and currency chain
+//!
+//! This module now integrates with the ChainSynchronizer to ensure:
+//! - Both chains use identical hierarchical block structure
+//! - Finality is synchronized across chains
+//! - Cross-chain transactions achieve atomic finality
 
+use crate::chain_synchronizer::{
+    ChainSyncConfig, ChainSynchronizer, CrossChainFinalityStatus,
+};
 use crate::chat_chain::ChatChainClient;
 use crate::currency_chain::CurrencyChainClient;
 use chrono::Utc;
@@ -7,6 +15,7 @@ use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Atomic cross-chain transaction
@@ -33,11 +42,14 @@ pub enum CrossChainStatus {
 }
 
 /// Bridge for coordinating transactions between chat and currency chains
+/// Now integrates with ChainSynchronizer for unified block hierarchy and finality
 pub struct CrossChainBridge {
     chat_chain: Arc<ChatChainClient>,
     currency_chain: Arc<CurrencyChainClient>,
     /// Track cross-chain transactions
     transactions: Arc<RwLock<HashMap<Uuid, CrossChainTransaction>>>,
+    /// Chain synchronizer for unified finality
+    synchronizer: Option<Arc<ChainSynchronizer>>,
 }
 
 impl CrossChainBridge {
@@ -47,7 +59,37 @@ impl CrossChainBridge {
             chat_chain,
             currency_chain,
             transactions: Arc::new(RwLock::new(HashMap::new())),
+            synchronizer: None,
         }
+    }
+
+    /// Create cross-chain bridge with chain synchronizer for unified finality
+    pub fn with_synchronizer(
+        chat_chain: Arc<ChatChainClient>,
+        currency_chain: Arc<CurrencyChainClient>,
+        sync_config: ChainSyncConfig,
+    ) -> Self {
+        let synchronizer = Arc::new(ChainSynchronizer::new(sync_config));
+        Self {
+            chat_chain,
+            currency_chain,
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            synchronizer: Some(synchronizer),
+        }
+    }
+
+    /// Get the chain synchronizer
+    pub fn get_synchronizer(&self) -> Option<Arc<ChainSynchronizer>> {
+        self.synchronizer.clone()
+    }
+
+    /// Start chain synchronization (call after creating the bridge)
+    pub async fn start_synchronization(&self) -> Result<(), String> {
+        if let Some(ref synchronizer) = self.synchronizer {
+            synchronizer.start().await.map_err(|e| e.to_string())?;
+            tracing::info!("🔄 Cross-chain synchronization started");
+        }
+        Ok(())
     }
 
     /// Register user with initial stake (atomic operation)
@@ -91,6 +133,11 @@ impl CrossChainBridge {
             .write()
             .unwrap()
             .insert(bridge_tx_id, cross_tx);
+
+        // Register with synchronizer for finality tracking
+        if let Some(ref synchronizer) = self.synchronizer {
+            synchronizer.register_cross_chain_tx(bridge_tx_id).await;
+        }
 
         Ok(bridge_tx_id)
     }
@@ -136,12 +183,65 @@ impl CrossChainBridge {
             .unwrap()
             .insert(bridge_tx_id, cross_tx);
 
+        // Register with synchronizer for finality tracking
+        if let Some(ref synchronizer) = self.synchronizer {
+            synchronizer.register_cross_chain_tx(bridge_tx_id).await;
+        }
+
         Ok(bridge_tx_id)
     }
 
     /// Get cross-chain transaction status
     pub fn get_status(&self, bridge_tx_id: &Uuid) -> Result<Option<CrossChainTransaction>, String> {
         Ok(self.transactions.read().unwrap().get(bridge_tx_id).cloned())
+    }
+
+    /// Wait for cross-chain transaction to achieve finality on both chains
+    /// Uses the chain synchronizer for accurate finality tracking
+    pub async fn wait_for_atomic_finality(
+        &self,
+        bridge_tx_id: &Uuid,
+        timeout_secs: u64,
+    ) -> Result<CrossChainFinalityStatus, String> {
+        if let Some(ref synchronizer) = self.synchronizer {
+            synchronizer
+                .wait_for_cross_chain_finality(bridge_tx_id, Duration::from_secs(timeout_secs))
+                .await
+                .map_err(|e| e.to_string())
+        } else {
+            // Fall back to legacy finality checking
+            self.finalize_pending_transactions()?;
+            let tx = self.get_status(bridge_tx_id)?
+                .ok_or_else(|| "Transaction not found".to_string())?;
+            
+            if tx.status == CrossChainStatus::AtomicSuccess {
+                Ok(CrossChainFinalityStatus::Finalized {
+                    chat_height: 0, // Unknown without synchronizer
+                    currency_height: 0,
+                    confidence: 1.0,
+                })
+            } else {
+                Ok(CrossChainFinalityStatus::Pending)
+            }
+        }
+    }
+
+    /// Get synchronization status report
+    pub async fn get_sync_status(&self) -> Option<crate::chain_synchronizer::SyncStatusReport> {
+        if let Some(ref synchronizer) = self.synchronizer {
+            Some(synchronizer.get_sync_status().await)
+        } else {
+            None
+        }
+    }
+
+    /// Get throughput report for both chains
+    pub async fn get_throughput_report(&self) -> Option<crate::chain_synchronizer::ThroughputReport> {
+        if let Some(ref synchronizer) = self.synchronizer {
+            Some(synchronizer.calculate_throughput().await)
+        } else {
+            None
+        }
     }
 
     /// Check and finalize cross-chain transactions
@@ -220,5 +320,60 @@ mod tests {
         let tx = status.unwrap();
         assert_eq!(tx.user_id, user_id);
         assert_eq!(tx.operation, "register_with_stake");
+    }
+
+    #[tokio::test]
+    async fn test_bridge_with_synchronizer() {
+        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let sync_config = ChainSyncConfig::default();
+        
+        let bridge = CrossChainBridge::with_synchronizer(chat_chain, currency_chain, sync_config);
+        
+        // Verify synchronizer is attached
+        assert!(bridge.get_synchronizer().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_cross_chain_with_finality_tracking() {
+        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let sync_config = ChainSyncConfig::default();
+        
+        let bridge = CrossChainBridge::with_synchronizer(
+            chat_chain.clone(),
+            currency_chain.clone(),
+            sync_config,
+        );
+
+        let user_id = UserId(Uuid::new_v4());
+        let public_key = vec![1, 2, 3, 4];
+
+        let bridge_tx_id = bridge
+            .register_user_with_stake(&user_id, public_key, 1000).await
+            .unwrap();
+
+        // Verify transaction is tracked by synchronizer
+        let sync = bridge.get_synchronizer().unwrap();
+        let finality = sync.check_cross_chain_finality(&bridge_tx_id).await;
+        
+        // Initially should be pending (no finality updates yet)
+        assert!(matches!(finality, CrossChainFinalityStatus::Pending | CrossChainFinalityStatus::Unknown));
+    }
+
+    #[tokio::test]
+    async fn test_throughput_report() {
+        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let sync_config = ChainSyncConfig::default();
+        
+        let bridge = CrossChainBridge::with_synchronizer(chat_chain, currency_chain, sync_config);
+        
+        let report = bridge.get_throughput_report().await.unwrap();
+        
+        // With hierarchical blocks enabled for both chains
+        assert_eq!(report.chat_chain.base_tps, 12_500);
+        assert_eq!(report.currency_chain.base_tps, 12_500);
+        assert_eq!(report.combined_max_tps, 150_000); // 75K + 75K with SIMD
     }
 }

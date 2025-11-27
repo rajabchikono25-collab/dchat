@@ -1,9 +1,11 @@
+use std::env;
+
 use dchat_core::error::{Error, Result};
 
 /// Simulate a biometric check. In real deployments this hooks into platform SDKs.
 pub async fn perform_biometric_check() -> Result<bool> {
     // For development we read an env var `DCHAT_BIOMETRIC_OK` = "1" to succeed.
-    let ok = std::env::var("DCHAT_BIOMETRIC_OK").unwrap_or_else(|_| "0".into());
+    let ok = env::var("DCHAT_BIOMETRIC_OK").unwrap_or_else(|_| "0".into());
     if ok == "1" {
         Ok(true)
     } else {
@@ -11,27 +13,9 @@ pub async fn perform_biometric_check() -> Result<bool> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::runtime::Runtime;
-
-    #[test]
-    fn test_biometric_success_and_failure() {
-        let rt = Runtime::new().unwrap();
-        // Success case
-        std::env::set_var("DCHAT_BIOMETRIC_OK", "1");
-        rt.block_on(async {
-            assert!(perform_biometric_check().await.unwrap());
-        });
-        // Failure case
-        std::env::set_var("DCHAT_BIOMETRIC_OK", "0");
-        rt.block_on(async {
-            let res = perform_biometric_check().await;
-            assert!(res.is_err());
-        });
-    }
-}
+/// Alias for perform_biometric_check for backward compatibility.
+pub async fn authenticate_biometric() -> Result<bool> {
+    perform_biometric_check().await
 }
 
 /// Check if device supports biometric authentication.
@@ -46,7 +30,18 @@ pub fn biometric_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+
+    #[tokio::test]
+    async fn test_biometric_success_and_failure() {
+        // Success case
+        env::set_var("DCHAT_BIOMETRIC_OK", "1");
+        assert!(perform_biometric_check().await.unwrap());
+
+        // Failure case
+        env::set_var("DCHAT_BIOMETRIC_OK", "0");
+        let res = perform_biometric_check().await;
+        assert!(res.is_err());
+    }
 
     #[tokio::test]
     async fn test_biometric_env_success() {
@@ -58,7 +53,8 @@ mod tests {
     #[tokio::test]
     async fn test_biometric_env_fail() {
         env::set_var("DCHAT_BIOMETRIC_OK", "0");
-        assert!(!authenticate_biometric().await.unwrap());
+        let res = authenticate_biometric().await;
+        assert!(res.is_err());
         env::remove_var("DCHAT_BIOMETRIC_OK");
     }
 }
