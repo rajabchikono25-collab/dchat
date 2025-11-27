@@ -4,7 +4,7 @@
 
 use crate::{Bot, BotMessage, CallbackQuery};
 use chrono::Utc;
-use dchat_core::types::{ChannelId, MessageId, UserId};
+use dchat_core::types::{ChannelId, UserId};
 use dchat_core::{Error, Result};
 use dchat_messaging::{Message, MessageType};
 use std::collections::HashMap;
@@ -42,12 +42,6 @@ pub enum BotEvent {
 pub trait BotEventHandler: Send + Sync {
     /// Handle a bot event
     async fn handle_event(&self, bot: &Bot, event: BotEvent) -> Result<()>;
-}
-
-/// Event subscription
-struct EventSubscription {
-    bot_id: uuid::Uuid,
-    handler: Arc<dyn BotEventHandler>,
 }
 
 /// Event dispatcher
@@ -201,10 +195,13 @@ impl EventDispatcher {
         // Decrypt content for bot processing
         let text = match &message.content {
             dchat_core::types::MessageContent::Text(t) => t.clone(),
-            dchat_core::types::MessageContent::Media { caption, .. } => {
-                caption.clone().unwrap_or_default()
-            }
-            _ => String::new(),
+            dchat_core::types::MessageContent::System(s) => s.clone(),
+            // Media types don't have text content
+            dchat_core::types::MessageContent::Image { .. }
+            | dchat_core::types::MessageContent::File { .. }
+            | dchat_core::types::MessageContent::Audio { .. }
+            | dchat_core::types::MessageContent::Video { .. }
+            | dchat_core::types::MessageContent::Sticker { .. } => String::new(),
         };
 
         Some(BotMessage {

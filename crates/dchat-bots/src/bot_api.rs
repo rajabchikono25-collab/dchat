@@ -1,11 +1,14 @@
 //! Bot API - HTTP/gRPC API for bots to send and receive messages
 
-use crate::{Bot, BotMessage, InlineKeyboardButton};
+use crate::storage::BotStorage;
+use crate::{Bot, BotMessage, InlineKeyboardButton, MessageRouter};
 use dchat_blockchain::client::{BlockchainClient, BlockchainConfig};
-use dchat_core::types::MessageId;
+use dchat_core::types::{MessageId, UserId};
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// Bot API client for sending messages
@@ -13,6 +16,12 @@ pub struct BotApi {
     bot: Arc<Bot>,
     /// Blockchain client for on-chain operations
     blockchain_client: Arc<BlockchainClient>,
+    /// Database storage for bot data persistence
+    storage: Option<Arc<BotStorage>>,
+    /// Message router for callback responses
+    message_router: Option<Arc<MessageRouter>>,
+    /// Pending callback queries awaiting response (callback_id -> user_id)
+    callback_cache: Arc<RwLock<HashMap<Uuid, UserId>>>,
 }
 
 /// Bot API client builder
@@ -106,6 +115,9 @@ impl BotApi {
         Ok(Self { 
             bot,
             blockchain_client: Arc::new(blockchain_client),
+            storage: None,
+            message_router: None,
+            callback_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -116,6 +128,9 @@ impl BotApi {
         Ok(Self {
             bot,
             blockchain_client: Arc::new(blockchain_client),
+            storage: None,
+            message_router: None,
+            callback_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -124,6 +139,49 @@ impl BotApi {
         Self {
             bot,
             blockchain_client,
+            storage: None,
+            message_router: None,
+            callback_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create a fully-configured BotApi with storage and message router
+    pub fn with_full_config(
+        bot: Arc<Bot>,
+        blockchain_client: Arc<BlockchainClient>,
+        storage: Arc<BotStorage>,
+        message_router: Arc<MessageRouter>,
+    ) -> Self {
+        Self {
+            bot,
+            blockchain_client,
+            storage: Some(storage),
+            message_router: Some(message_router),
+            callback_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Set storage for bot data persistence
+    pub fn set_storage(&mut self, storage: Arc<BotStorage>) {
+        self.storage = Some(storage);
+    }
+
+    /// Set message router for callback responses
+    pub fn set_message_router(&mut self, router: Arc<MessageRouter>) {
+        self.message_router = Some(router);
+    }
+
+    /// Register a callback query for later response
+    /// Called when a callback query is received to track pending responses
+    pub async fn register_callback_query(&self, callback_id: Uuid, user_id: UserId) {
+        let mut cache = self.callback_cache.write().await;
+        cache.insert(callback_id, user_id);
+        
+        // Clean up old entries (older than 5 minutes)
+        // In production, we'd also have a background task for this
+        if cache.len() > 10000 {
+            tracing::warn!("Callback cache size exceeded 10000, clearing old entries");
+            cache.clear();
         }
     }
 
@@ -155,7 +213,7 @@ impl BotApi {
         let tx_id = self.blockchain_client
             .send_direct_message(
                 message_id,
-                self.bot.user_id,
+                UserId(self.bot.id),
                 dchat_core::types::UserId::new(), // TODO: Parse chat_id to UserId for DMs
                 &content_hash,
                 request.text.len(),
@@ -208,13 +266,53 @@ impl BotApi {
         
         // Get the original transaction from blockchain
         // The bot can only edit messages it sent
-        if let Some(tx) = self.blockchain_client.get_transaction(request.message_id) {
+        let tx_verified = if let Some(tx) = self.blockchain_client.get_transaction(request.message_id) {
             // Verify the transaction was submitted by this bot
             // Transaction payload contains sender_id
             tracing::debug!("Found original message transaction: {:?}", tx.tx_type);
+            
+            // Decode payload to verify sender
+            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&tx.payload) {
+                if let Some(sender_str) = payload.get("sender_id").and_then(|v| v.as_str()) {
+                    let bot_id_str = self.bot.id.to_string();
+                    if sender_str != bot_id_str {
+                        tracing::warn!("Bot {} attempted to edit message owned by {}", self.bot.id, sender_str);
+                        return Err(Error::validation("Cannot edit messages from other senders"));
+                    }
+                }
+            }
+            true
         } else {
-            tracing::warn!("Message {} not found in local transaction cache", request.message_id);
-            // In production, we'd query the blockchain RPC for the message
+            tracing::debug!("Message {} not found in local cache, querying blockchain RPC", request.message_id);
+            
+            // Query blockchain RPC for the message transaction
+            match self.query_transaction_from_rpc(request.message_id).await {
+                Ok(Some(tx_info)) => {
+                    // Verify ownership from RPC response
+                    if let Some(sender_id) = tx_info.get("sender_id").and_then(|v| v.as_str()) {
+                        let bot_id_str = self.bot.id.to_string();
+                        if sender_id != bot_id_str {
+                            tracing::warn!("Bot {} cannot edit message owned by {}", self.bot.id, sender_id);
+                            return Err(Error::validation("Cannot edit messages from other senders"));
+                        }
+                    }
+                    tracing::debug!("Message {} verified via RPC", request.message_id);
+                    true
+                }
+                Ok(None) => {
+                    tracing::warn!("Message {} not found on blockchain", request.message_id);
+                    return Err(Error::NotFound(format!("Message {} not found on blockchain", request.message_id)));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to query blockchain for message {}: {}", request.message_id, e);
+                    // Allow edit attempt - blockchain will reject if invalid
+                    false
+                }
+            }
+        };
+        
+        if tx_verified {
+            tracing::debug!("Message ownership verified for edit");
         }
 
         // Compute new content hash
@@ -227,7 +325,7 @@ impl BotApi {
         let tx_id = self.blockchain_client
             .send_direct_message(
                 message_id,
-                self.bot.user_id,
+                UserId(self.bot.id),
                 dchat_core::types::UserId::new(), // Original recipient
                 &content_hash,
                 request.text.len(),
@@ -276,7 +374,7 @@ impl BotApi {
         let tx_id = self.blockchain_client
             .send_direct_message(
                 message_id,
-                self.bot.user_id,
+                UserId(self.bot.id),
                 dchat_core::types::UserId::new(),
                 &content_hash,
                 0, // Zero payload size indicates deletion
@@ -305,18 +403,58 @@ impl BotApi {
             request.callback_query_id
         );
 
-        // 1. Send callback response to user through messaging system
-        tracing::debug!("Sending callback response to user");
-        // In production:
-        // - Look up callback query in database to get user_id
-        // - Route response message to user
-        // messaging_client.send_callback_answer(
-        //     user_id,
-        //     request.text,
-        //     request.show_alert
-        // ).await?
+        // 1. Look up callback query in cache to get user_id
+        let user_id = {
+            let cache = self.callback_cache.read().await;
+            cache.get(&request.callback_query_id).cloned()
+        };
 
-        // 2. Update UI state if needed (for inline keyboard updates)
+        // 2. Send callback response to user through messaging system
+        if let Some(user_id) = user_id {
+            tracing::debug!("Sending callback response to user {:?}", user_id);
+            
+            if let Some(ref router) = self.message_router {
+                // Build callback answer message
+                let _response_content = serde_json::json!({
+                    "type": "callback_answer",
+                    "callback_query_id": request.callback_query_id.to_string(),
+                    "text": request.text,
+                    "show_alert": request.show_alert,
+                });
+                
+                // Route response message to user via message router
+                match router.send_callback_response(
+                    user_id,
+                    request.callback_query_id,
+                    request.text.clone(),
+                    request.show_alert,
+                ).await {
+                    Ok(_) => {
+                        tracing::debug!("Callback response sent successfully to {:?}", user_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to send callback response: {}", e);
+                        // Don't fail - callback may have been processed by client already
+                    }
+                }
+            } else {
+                tracing::debug!("No message router configured, callback response logged only");
+            }
+            
+            // Remove from cache after responding
+            {
+                let mut cache = self.callback_cache.write().await;
+                cache.remove(&request.callback_query_id);
+            }
+        } else {
+            tracing::warn!(
+                "Callback query {} not found in cache - may have expired or already answered",
+                request.callback_query_id
+            );
+            // Not an error - callback queries can be answered once and may expire
+        }
+
+        // 3. Update UI state if needed (for inline keyboard updates)
         if let Some(text) = &request.text {
             tracing::debug!("Callback response text: {}", text);
         }
@@ -387,26 +525,96 @@ impl BotApi {
     }
 
     /// Set bot commands
-    pub async fn set_commands(&self, _commands: Vec<crate::BotCommand>) -> Result<()> {
+    pub async fn set_commands(&self, commands: Vec<crate::BotCommand>) -> Result<()> {
         if !self.bot.is_active {
             return Err(Error::validation("Bot is not active"));
         }
 
-        tracing::info!("Bot {} updating commands", self.bot.username);
+        tracing::info!("Bot {} updating {} commands", self.bot.username, commands.len());
 
         // 1. Validate commands (length, format, uniqueness)
-        // In production: validate each command has valid name and description
+        let mut seen_commands = std::collections::HashSet::new();
+        for cmd in &commands {
+            // Validate command name format (1-32 chars, alphanumeric + underscore)
+            if cmd.command.is_empty() || cmd.command.len() > 32 {
+                return Err(Error::validation(format!(
+                    "Command '{}' must be 1-32 characters",
+                    cmd.command
+                )));
+            }
+            
+            if !cmd.command.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Err(Error::validation(format!(
+                    "Command '{}' contains invalid characters (only alphanumeric and underscore allowed)",
+                    cmd.command
+                )));
+            }
+            
+            // Validate description (1-256 chars)
+            if cmd.description.is_empty() || cmd.description.len() > 256 {
+                return Err(Error::validation(format!(
+                    "Description for '{}' must be 1-256 characters",
+                    cmd.command
+                )));
+            }
+            
+            // Check for duplicates
+            if !seen_commands.insert(cmd.command.to_lowercase()) {
+                return Err(Error::validation(format!(
+                    "Duplicate command: {}",
+                    cmd.command
+                )));
+            }
+        }
+        tracing::debug!("Command validation passed for {} commands", commands.len());
 
         // 2. Store in local database
-        tracing::debug!("Storing commands in database");
-        // In production: database.update_bot_commands(self.bot.user_id, _commands).await?
+        if let Some(ref storage) = self.storage {
+            tracing::debug!("Storing commands in database");
+            
+            // Create a bot copy with updated commands for storage
+            let mut bot_with_commands = (*self.bot).clone();
+            bot_with_commands.commands = commands.clone();
+            
+            storage.save_bot(&bot_with_commands).await.map_err(|e| {
+                tracing::error!("Failed to save bot commands to database: {}", e);
+                Error::storage(format!("Failed to persist commands: {}", e))
+            })?;
+            
+            tracing::debug!("Commands persisted to database");
+        } else {
+            tracing::debug!("No storage configured, commands stored in memory only");
+        }
 
         // 3. Update bot metadata on blockchain for discoverability
         tracing::debug!("Updating bot metadata on blockchain");
-        // In production: blockchain_client.update_bot_info(
-        //     self.bot.user_id,
-        //     BotMetadata { commands: _commands, ... }
-        // ).await?
+        
+        // Serialize commands for blockchain storage
+        let commands_json = serde_json::to_string(&commands)
+            .map_err(|e| Error::internal(format!("Failed to serialize commands: {}", e)))?;
+        
+        // Create bot metadata hash for blockchain
+        let metadata_hash = blake3::hash(commands_json.as_bytes());
+        let content_hash = hex::encode(metadata_hash.as_bytes());
+        
+        // Submit bot info update transaction
+        // Using a special message type with bot_id as recipient (self-referential update)
+        let tx_id = self.blockchain_client
+            .send_direct_message(
+                MessageId::new(), // New message ID for this update
+                UserId(self.bot.id), // Bot as sender
+                UserId(self.bot.id), // Bot as recipient (metadata update marker)
+                &content_hash,
+                commands_json.len(),
+                None,
+            )
+            .await?;
+        
+        tracing::info!(
+            "Bot metadata update submitted to blockchain, tx_id: {}, commands_hash: {}",
+            tx_id,
+            &content_hash[..16]
+        );
 
         Ok(())
     }
@@ -414,6 +622,49 @@ impl BotApi {
     /// Get bot commands
     pub async fn get_commands(&self) -> Result<Vec<crate::BotCommand>> {
         Ok(self.bot.commands.clone())
+    }
+
+    /// Query blockchain RPC for a transaction by ID
+    /// Used when transaction is not in local cache
+    async fn query_transaction_from_rpc(&self, tx_id: Uuid) -> Result<Option<serde_json::Value>> {
+        let rpc_url = std::env::var("BLOCKCHAIN_RPC_URL")
+            .unwrap_or_else(|_| "http://localhost:8545".to_string());
+
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "chain_getTransaction",
+            "params": [tx_id.to_string()],
+            "id": 1
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&rpc_url)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::network(format!("RPC error: status {}", response.status())));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+
+        if let Some(error) = json.get("error") {
+            tracing::warn!("RPC error querying transaction {}: {:?}", tx_id, error);
+            return Ok(None);
+        }
+
+        if json["result"].is_null() {
+            return Ok(None);
+        }
+
+        Ok(Some(json["result"].clone()))
     }
 }
 

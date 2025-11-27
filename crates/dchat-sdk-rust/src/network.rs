@@ -6,7 +6,7 @@
 //! - yamux for stream multiplexing
 //! - TCP transport with DNS resolution
 
-use crate::{Result, SdkError};
+use crate::SdkError;
 use futures::StreamExt;
 use libp2p::{
     core::upgrade,
@@ -49,22 +49,22 @@ pub enum NetworkCommand {
     /// Connect to the network
     Connect { 
         bootstrap_peers: Vec<Multiaddr>,
-        response: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<crate::Result<()>>,
     },
     /// Disconnect from the network
     Disconnect {
-        response: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<crate::Result<()>>,
     },
     /// Send a message to a peer
     SendMessage {
         peer_id: PeerId,
         payload: Vec<u8>,
-        response: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<crate::Result<()>>,
     },
     /// Find peers closest to a key
     FindPeers {
         key: Vec<u8>,
-        response: oneshot::Sender<Result<Vec<PeerId>>>,
+        response: oneshot::Sender<crate::Result<Vec<PeerId>>>,
     },
     /// Get connected peers
     GetConnectedPeers {
@@ -74,7 +74,7 @@ pub enum NetworkCommand {
     Dial {
         peer_id: PeerId,
         addresses: Vec<Multiaddr>,
-        response: oneshot::Sender<Result<()>>,
+        response: oneshot::Sender<crate::Result<()>>,
     },
 }
 
@@ -116,7 +116,7 @@ impl NetworkManager {
     /// Create a new network manager
     /// 
     /// Spawns a background task to run the libp2p swarm
-    pub async fn new(ed25519_keypair: &dchat_crypto::keys::KeyPair) -> Result<Self> {
+    pub async fn new(ed25519_keypair: &dchat_crypto::keys::KeyPair) -> crate::Result<Self> {
         // Convert dchat keypair to libp2p identity
         let secret_key_bytes = ed25519_keypair.private_key().as_bytes();
         let libp2p_keypair = identity::Keypair::ed25519_from_bytes(secret_key_bytes.to_vec())
@@ -163,7 +163,7 @@ impl NetworkManager {
     }
 
     /// Connect to the network
-    pub async fn connect(&self, bootstrap_peers: Vec<Multiaddr>) -> Result<()> {
+    pub async fn connect(&self, bootstrap_peers: Vec<Multiaddr>) -> crate::Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
         
         self.command_tx
@@ -180,7 +180,7 @@ impl NetworkManager {
     }
 
     /// Disconnect from the network
-    pub async fn disconnect(&self) -> Result<()> {
+    pub async fn disconnect(&self) -> crate::Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
         
         self.command_tx
@@ -213,6 +213,59 @@ impl NetworkManager {
         let mut rx = self.event_rx.write().await;
         rx.recv().await
     }
+
+    /// Find peers closest to a given key via Kademlia DHT
+    pub async fn find_peers(&self, key: Vec<u8>) -> crate::Result<Vec<PeerId>> {
+        let (response_tx, response_rx) = oneshot::channel();
+        
+        self.command_tx
+            .send(NetworkCommand::FindPeers {
+                key,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| SdkError::Network("Network task not running".into()))?;
+        
+        response_rx
+            .await
+            .map_err(|_| SdkError::Network("Network task died".into()))?
+    }
+
+    /// Send a message to a specific peer
+    pub async fn send_message(&self, peer_id: PeerId, payload: Vec<u8>) -> crate::Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        
+        self.command_tx
+            .send(NetworkCommand::SendMessage {
+                peer_id,
+                payload,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| SdkError::Network("Network task not running".into()))?;
+        
+        response_rx
+            .await
+            .map_err(|_| SdkError::Network("Network task died".into()))?
+    }
+
+    /// Dial a peer by ID and addresses
+    pub async fn dial_peer(&self, peer_id: PeerId, addresses: Vec<Multiaddr>) -> crate::Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        
+        self.command_tx
+            .send(NetworkCommand::Dial {
+                peer_id,
+                addresses,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| SdkError::Network("Network task not running".into()))?;
+        
+        response_rx
+            .await
+            .map_err(|_| SdkError::Network("Network task died".into()))?
+    }
 }
 
 /// Run the libp2p network event loop
@@ -222,7 +275,7 @@ async fn run_network_loop(
     mut command_rx: mpsc::Receiver<NetworkCommand>,
     event_tx: mpsc::Sender<NetworkEvent>,
     connected: Arc<RwLock<bool>>,
-) -> Result<()> {
+) -> crate::Result<()> {
     // Build transport: TCP + DNS + Noise + yamux
     let transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true))
         .upgrade(upgrade::Version::V1Lazy)
@@ -252,7 +305,7 @@ async fn run_network_loop(
 
     // Track state
     let mut bootstrap_complete = false;
-    let mut pending_queries: HashMap<kad::QueryId, oneshot::Sender<Result<Vec<PeerId>>>> = HashMap::new();
+    let mut pending_queries: HashMap<kad::QueryId, oneshot::Sender<crate::Result<Vec<PeerId>>>> = HashMap::new();
 
     info!("Network loop started for peer {}", local_peer_id);
 
@@ -373,17 +426,18 @@ async fn run_network_loop(
                                         }
                                     }
                                     kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })) => {
-                                        for peer in &peers {
-                                            debug!("Found peer via DHT: {}", peer);
+                                        let peer_ids: Vec<PeerId> = peers.iter().map(|p| p.peer_id).collect();
+                                        for peer_id in &peer_ids {
+                                            debug!("Found peer via DHT: {}", peer_id);
                                             let _ = event_tx.send(NetworkEvent::PeerDiscovered {
-                                                peer_id: *peer,
+                                                peer_id: *peer_id,
                                                 addresses: vec![], // Addresses come from routing table
                                             }).await;
                                         }
                                         
                                         // Send response if this was a FindPeers command
                                         if let Some(response) = pending_queries.remove(&id) {
-                                            let _ = response.send(Ok(peers));
+                                            let _ = response.send(Ok(peer_ids));
                                         }
                                     }
                                     kad::QueryResult::GetClosestPeers(Err(e)) => {

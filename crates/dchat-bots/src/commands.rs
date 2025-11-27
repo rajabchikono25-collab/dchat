@@ -92,17 +92,16 @@ impl CommandRegistry {
 
     /// Handle a command message
     pub fn handle(&self, message: &BotMessage) -> Result<BotResponse> {
-        if !message.is_command {
+        if !message.is_command() {
             return Err(Error::validation("Not a command"));
         }
 
-        let command_name = message
-            .command
-            .as_ref()
+        let (command_name, _args) = message
+            .parse_command()
             .ok_or_else(|| Error::validation("No command specified"))?;
 
         let command = self
-            .get(command_name)
+            .get(&command_name)
             .ok_or_else(|| Error::validation(format!("Unknown command: /{}", command_name)))?;
 
         (command.handler)(message)
@@ -231,7 +230,6 @@ impl Default for CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dchat_core::types::UserId;
     use uuid::Uuid;
 
     #[test]
@@ -266,7 +264,7 @@ mod tests {
         let handler = StartCommandHandler;
         let message = BotMessage::from_message(
             Uuid::new_v4(),
-            UserId::new(),
+            Uuid::new_v4(),
             "chat123".to_string(),
             "/start".to_string(),
         );
@@ -285,7 +283,7 @@ mod tests {
         let handler = HelpCommandHandler::new(commands);
         let message = BotMessage::from_message(
             Uuid::new_v4(),
-            UserId::new(),
+            Uuid::new_v4(),
             "chat123".to_string(),
             "/help".to_string(),
         );
@@ -300,7 +298,7 @@ mod tests {
         let handler = SettingsCommandHandler;
         let message = BotMessage::from_message(
             Uuid::new_v4(),
-            UserId::new(),
+            Uuid::new_v4(),
             "chat123".to_string(),
             "/settings".to_string(),
         );
@@ -320,7 +318,7 @@ mod tests {
 
         let message = BotMessage::from_message(
             Uuid::new_v4(),
-            UserId::new(),
+            Uuid::new_v4(),
             "chat123".to_string(),
             "/start".to_string(),
         );

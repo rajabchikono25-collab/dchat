@@ -9,10 +9,18 @@ dchat-messaging = { path = "../dchat-messaging" }
 dchat-identity = { path = "../dchat-identity" }
 dchat-storage = { path = "../dchat-storage" }
 dchat-blockchain = { path = "../dchat-blockchain" }
+dchat-network = { path = "../dchat-network" }
+
+# Cryptography
+ed25519-dalek = { workspace = true }
+
+# libp2p (re-exported from dchat-network but needed for types)
+libp2p = { version = "0.54", default-features = false, features = [] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+bincode = "1.3"
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

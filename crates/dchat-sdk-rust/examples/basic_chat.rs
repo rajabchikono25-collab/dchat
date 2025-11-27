@@ -31,7 +31,9 @@ async fn main() -> Result<()> {
 
     // Send a message
     println!("📤 Sending message...");
-    alice.send_message("Hello, decentralized world!").await?;
+    // Create a recipient (in a real app, this would be another user's ID)
+    let recipient = dchat_core::types::UserId::new();
+    alice.send_message(recipient, "Hello, decentralized world!").await?;
     println!("✅ Message sent!\n");
 
     // Receive messages
