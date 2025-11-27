@@ -2,7 +2,7 @@ use crate::types::{BridgeError, TransactionId};
 use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Validator identity with public key
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -197,6 +197,38 @@ pub struct MultiSigManager {
     global_config: Arc<RwLock<MultiSigConfig>>,
 }
 
+/// Multi-sig manager error types
+#[derive(Debug, Clone)]
+pub enum MultiSigError {
+    /// Lock was poisoned by a panicking thread
+    LockPoisoned,
+    /// Bridge error wrapper
+    Bridge(BridgeError),
+}
+
+impl std::fmt::Display for MultiSigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MultiSigError::LockPoisoned => write!(f, "Internal lock was poisoned"),
+            MultiSigError::Bridge(e) => write!(f, "Bridge error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for MultiSigError {}
+
+impl<T> From<PoisonError<T>> for MultiSigError {
+    fn from(_: PoisonError<T>) -> Self {
+        MultiSigError::LockPoisoned
+    }
+}
+
+impl From<BridgeError> for MultiSigError {
+    fn from(e: BridgeError) -> Self {
+        MultiSigError::Bridge(e)
+    }
+}
+
 impl MultiSigManager {
     /// Create a new multi-sig manager
     pub fn new(config: MultiSigConfig) -> Self {
@@ -206,14 +238,38 @@ impl MultiSigManager {
         }
     }
 
+    /// Helper to acquire read lock on states with proper error handling
+    fn states_read(
+        &self,
+    ) -> Result<RwLockReadGuard<'_, HashMap<TransactionId, MultiSigState>>, MultiSigError> {
+        self.states.read().map_err(|_| MultiSigError::LockPoisoned)
+    }
+
+    /// Helper to acquire write lock on states with proper error handling
+    fn states_write(
+        &self,
+    ) -> Result<RwLockWriteGuard<'_, HashMap<TransactionId, MultiSigState>>, MultiSigError> {
+        self.states.write().map_err(|_| MultiSigError::LockPoisoned)
+    }
+
+    /// Helper to acquire read lock on config with proper error handling
+    fn config_read(&self) -> Result<RwLockReadGuard<'_, MultiSigConfig>, MultiSigError> {
+        self.global_config.read().map_err(|_| MultiSigError::LockPoisoned)
+    }
+
+    /// Helper to acquire write lock on config with proper error handling
+    fn config_write(&self) -> Result<RwLockWriteGuard<'_, MultiSigConfig>, MultiSigError> {
+        self.global_config.write().map_err(|_| MultiSigError::LockPoisoned)
+    }
+
     /// Initialize multi-sig for a transaction
-    pub fn init_transaction(&self, transaction_id: TransactionId) -> Result<(), BridgeError> {
-        let config = self.global_config.read().unwrap().clone();
+    pub fn init_transaction(&self, transaction_id: TransactionId) -> Result<(), MultiSigError> {
+        let config = self.config_read()?.clone();
         let state = MultiSigState::new(transaction_id, config);
 
-        let mut states = self.states.write().unwrap();
+        let mut states = self.states_write()?;
         if states.contains_key(&transaction_id) {
-            return Err(BridgeError::TransactionAlreadyExists);
+            return Err(MultiSigError::Bridge(BridgeError::TransactionAlreadyExists));
         }
 
         states.insert(transaction_id, state);
@@ -226,59 +282,60 @@ impl MultiSigManager {
         transaction_id: TransactionId,
         signature: ValidatorSignature,
         message: &[u8],
-    ) -> Result<bool, BridgeError> {
-        let mut states = self.states.write().unwrap();
+    ) -> Result<bool, MultiSigError> {
+        let mut states = self.states_write()?;
         let state = states
             .get_mut(&transaction_id)
-            .ok_or(BridgeError::TransactionNotFound)?;
+            .ok_or(MultiSigError::Bridge(BridgeError::TransactionNotFound))?;
 
         // Verify signature cryptographically
         state.verify_signature(&signature, message)?;
 
         // Add signature and check if quorum reached
-        state.add_signature(signature)
+        Ok(state.add_signature(signature)?)
     }
 
     /// Check if transaction has quorum
-    pub fn has_quorum(&self, transaction_id: TransactionId) -> bool {
-        let states = self.states.read().unwrap();
-        states
+    pub fn has_quorum(&self, transaction_id: TransactionId) -> Result<bool, MultiSigError> {
+        let states = self.states_read()?;
+        Ok(states
             .get(&transaction_id)
             .map(|s| s.quorum_reached)
-            .unwrap_or(false)
+            .unwrap_or(false))
     }
 
     /// Get signature count for transaction
-    pub fn get_signature_count(&self, transaction_id: TransactionId) -> usize {
-        let states = self.states.read().unwrap();
-        states
+    pub fn get_signature_count(&self, transaction_id: TransactionId) -> Result<usize, MultiSigError> {
+        let states = self.states_read()?;
+        Ok(states
             .get(&transaction_id)
             .map(|s| s.signature_count())
-            .unwrap_or(0)
+            .unwrap_or(0))
     }
 
     /// Rotate validator set (for dynamic validator management)
-    pub fn rotate_validators(&self, new_config: MultiSigConfig) -> Result<(), BridgeError> {
-        let mut config = self.global_config.write().unwrap();
+    pub fn rotate_validators(&self, new_config: MultiSigConfig) -> Result<(), MultiSigError> {
+        let mut config = self.config_write()?;
         *config = new_config;
         Ok(())
     }
 
     /// Get current validator set
-    pub fn get_validators(&self) -> Vec<ValidatorId> {
-        self.global_config.read().unwrap().validators.clone()
+    pub fn get_validators(&self) -> Result<Vec<ValidatorId>, MultiSigError> {
+        Ok(self.config_read()?.validators.clone())
     }
 
     /// Get multi-sig state for transaction
-    pub fn get_state(&self, transaction_id: TransactionId) -> Option<MultiSigState> {
-        let states = self.states.read().unwrap();
-        states.get(&transaction_id).cloned()
+    pub fn get_state(&self, transaction_id: TransactionId) -> Result<Option<MultiSigState>, MultiSigError> {
+        let states = self.states_read()?;
+        Ok(states.get(&transaction_id).cloned())
     }
 
     /// Clean up completed transactions
-    pub fn cleanup_transaction(&self, transaction_id: TransactionId) {
-        let mut states = self.states.write().unwrap();
+    pub fn cleanup_transaction(&self, transaction_id: TransactionId) -> Result<(), MultiSigError> {
+        let mut states = self.states_write()?;
         states.remove(&transaction_id);
+        Ok(())
     }
 }
 
@@ -287,28 +344,14 @@ impl MultiSigManager {
 pub struct SignatureAggregator;
 
 impl SignatureAggregator {
-    /// Aggregate multiple BLS signatures into one
+    /// Aggregate multiple BLS signatures into a single signature.
+    ///
+    /// Uses BLS12-381 curve (min_pk variant) for efficient multi-signature aggregation.
+    /// Benefits:
+    /// - Single 96-byte signature replaces N signatures
+    /// - On-chain verification cost is O(1) instead of O(N)
+    /// - Reduces cross-chain transaction size significantly
     pub fn aggregate(signatures: &[ValidatorSignature]) -> Vec<u8> {
-        // Production BLS signature aggregation (using blst crate or similar):
-        // 1. Parse each signature as BLS G1 point
-        // 2. Sum all G1 points: aggregated = sig1 + sig2 + ... + sigN
-        // 3. Serialize aggregated point to bytes
-        // Benefits:
-        //    - Single signature replaces N signatures
-        //    - On-chain verification is O(1) instead of O(N)
-        //    - Reduces cross-chain transaction size by ~96 bytes per validator
-        //
-        // Example with blst:
-        // use blst::min_sig::{Signature, AggregateSignature};
-        // let mut agg = AggregateSignature::new();
-        // for sig in signatures {
-        //     let bls_sig = Signature::from_bytes(&sig.signature)
-        //         .map_err(|_| "Invalid BLS signature")?;
-        //     agg.add_signature(&bls_sig, true)?;
-        // }
-        // agg.to_signature().to_bytes().to_vec()
-
-        // BLS signature aggregation using blst (BLS12-381 curve)
         use blst::min_pk::{AggregateSignature, Signature};
 
         if signatures.is_empty() {
@@ -368,33 +411,21 @@ impl SignatureAggregator {
         }
     }
 
-    /// Verify aggregated BLS signature against multiple public keys
+    /// Verify aggregated BLS signature against multiple public keys.
+    ///
+    /// Uses pairing-based verification: e(agg_sig, G) == e(H(m), ΣPKi)
+    /// This proves all validators signed the same message with O(1) verification cost.
+    ///
+    /// # Arguments
+    /// * `aggregated` - 96-byte aggregated BLS signature
+    /// * `public_keys` - Vector of 48-byte compressed BLS public keys
+    /// * `message` - The message that was signed by all validators
     pub fn verify_aggregated(
         aggregated: &[u8],
         public_keys: &[Vec<u8>],
-        _message: &[u8],
+        message: &[u8],
     ) -> Result<(), BridgeError> {
-        // Production BLS aggregate verification:
-        // 1. Parse aggregated signature as G1 point
-        // 2. Parse each public key as G2 point
-        // 3. Compute pairing check: e(aggregated, G2_generator) == e(H(message), sum(public_keys))
-        // 4. This proves all validators signed the same message
-        //
-        // Example with blst:
-        // use blst::min_sig::{Signature, PublicKey, AggregatePublicKey};
-        // let agg_sig = Signature::from_bytes(aggregated)
-        //     .map_err(|_| BridgeError::InvalidSignature)?;
-        // let mut agg_pk = AggregatePublicKey::new();
-        // for pk_bytes in public_keys {
-        //     let pk = PublicKey::from_bytes(pk_bytes)
-        //         .map_err(|_| BridgeError::InvalidSignature)?;
-        //     agg_pk.add_public_key(&pk, true)?;
-        // }
-        // agg_sig.verify(true, message, b"", &[], &agg_pk.to_public_key(), true)
-        //     .map_err(|_| BridgeError::InvalidSignature)?;
-
-        // BLS aggregate signature verification using blst
-        use blst::min_pk::{PublicKey, Signature};
+        use blst::min_pk::{AggregatePublicKey, PublicKey, Signature};
         use blst::BLST_ERROR;
 
         if aggregated.is_empty() {
@@ -433,15 +464,20 @@ impl SignatureAggregator {
             pks.push(pk);
         }
 
-        // Verify signature with first public key (simplified verification)
-        // Full aggregate verification requires pairing checks: e(agg_sig, G) == e(H(m), ΣPKi)
-        // For production, implement proper multi-signature verification or use batch verification
+        // Aggregate all public keys for verification of aggregated signature
+        // This is correct for the case where all signers signed the SAME message
+        let pk_refs: Vec<&PublicKey> = pks.iter().collect();
+        let agg_pk = AggregatePublicKey::aggregate(&pk_refs, true)
+            .map_err(|_| BridgeError::InvalidSignature)?
+            .to_public_key();
+
+        // Verify aggregated signature against aggregated public key
         let result = agg_sig.verify(
             true,
-            _message,
+            message,
             b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_",
             &[],
-            &pks[0],
+            &agg_pk,
             true,
         );
 
@@ -460,20 +496,55 @@ impl SignatureAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use uuid::Uuid;
 
-    fn create_validator(id: u8) -> ValidatorId {
+    /// Test helper: creates a validator with a real Ed25519 key pair
+    /// Returns (ValidatorId, SigningKey) so we can sign messages
+    fn create_validator_with_key(id: u8) -> (ValidatorId, SigningKey) {
+        // Create deterministic signing key from seed
+        let seed = [id; 32];
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+
         let user_id = UserId::new();
-        let public_key = vec![id; 32]; // 32-byte public key
-        ValidatorId::new(user_id, public_key)
+        let public_key = verifying_key.as_bytes().to_vec();
+        let validator = ValidatorId::new(user_id, public_key);
+        (validator, signing_key)
     }
 
-    fn create_signature(validator: ValidatorId) -> ValidatorSignature {
+    /// Test helper: creates a validator (without exposing signing key, for legacy tests)
+    fn create_validator(id: u8) -> ValidatorId {
+        let (validator, _) = create_validator_with_key(id);
+        validator
+    }
+
+    /// Test helper: creates a valid signature for a message
+    fn create_valid_signature(
+        validator: ValidatorId,
+        signing_key: &SigningKey,
+        message: &[u8],
+    ) -> ValidatorSignature {
+        let signature = signing_key.sign(message);
         ValidatorSignature {
             validator_id: validator,
-            signature: vec![0u8; 64], // 64-byte signature
+            signature: signature.to_bytes().to_vec(),
             signed_at: chrono::Utc::now(),
         }
+    }
+
+    /// Test helper: creates a dummy (invalid) signature for tests that don't verify
+    fn create_dummy_signature(validator: ValidatorId) -> ValidatorSignature {
+        ValidatorSignature {
+            validator_id: validator,
+            signature: vec![0u8; 64], // Invalid but correct length
+            signed_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Alias for create_dummy_signature (for tests that don't need verification)
+    fn create_signature(validator: ValidatorId) -> ValidatorSignature {
+        create_dummy_signature(validator)
     }
 
     #[test]
@@ -596,18 +667,19 @@ mod tests {
         let tx_id = Uuid::new_v4();
         manager.init_transaction(tx_id).unwrap();
 
-        assert_eq!(manager.get_signature_count(tx_id), 0);
-        assert!(!manager.has_quorum(tx_id));
+        assert_eq!(manager.get_signature_count(tx_id).unwrap(), 0);
+        assert!(!manager.has_quorum(tx_id).unwrap());
     }
 
     #[test]
     fn test_multisig_manager_submit_signatures() {
-        let validators = vec![
-            create_validator(1),
-            create_validator(2),
-            create_validator(3),
-        ];
-        let config = MultiSigConfig::new(2, validators.clone()).unwrap();
+        // Create validators with real key pairs
+        let (validator1, sk1) = create_validator_with_key(1);
+        let (validator2, sk2) = create_validator_with_key(2);
+        let (validator3, _sk3) = create_validator_with_key(3);
+
+        let validators = vec![validator1.clone(), validator2.clone(), validator3];
+        let config = MultiSigConfig::new(2, validators).unwrap();
         let manager = MultiSigManager::new(config);
 
         let tx_id = Uuid::new_v4();
@@ -615,17 +687,17 @@ mod tests {
 
         let message = b"transaction_data";
 
-        // Submit first signature
-        let sig1 = create_signature(validators[0].clone());
+        // Submit first signature (valid)
+        let sig1 = create_valid_signature(validator1, &sk1, message);
         let quorum = manager.submit_signature(tx_id, sig1, message).unwrap();
         assert!(!quorum);
-        assert_eq!(manager.get_signature_count(tx_id), 1);
+        assert_eq!(manager.get_signature_count(tx_id).unwrap(), 1);
 
-        // Submit second signature - quorum
-        let sig2 = create_signature(validators[1].clone());
+        // Submit second signature - quorum (valid)
+        let sig2 = create_valid_signature(validator2, &sk2, message);
         let quorum = manager.submit_signature(tx_id, sig2, message).unwrap();
         assert!(quorum);
-        assert!(manager.has_quorum(tx_id));
+        assert!(manager.has_quorum(tx_id).unwrap());
     }
 
     #[test]
@@ -634,7 +706,7 @@ mod tests {
         let config = MultiSigConfig::new(2, validators).unwrap();
         let manager = MultiSigManager::new(config);
 
-        let original_validators = manager.get_validators();
+        let original_validators = manager.get_validators().unwrap();
         assert_eq!(original_validators.len(), 2);
 
         // Rotate to new set
@@ -646,7 +718,7 @@ mod tests {
         let new_config = MultiSigConfig::new(2, new_validators).unwrap();
         manager.rotate_validators(new_config).unwrap();
 
-        let rotated_validators = manager.get_validators();
+        let rotated_validators = manager.get_validators().unwrap();
         assert_eq!(rotated_validators.len(), 3);
     }
 
@@ -659,28 +731,57 @@ mod tests {
         let tx_id = Uuid::new_v4();
         manager.init_transaction(tx_id).unwrap();
 
-        assert!(manager.get_state(tx_id).is_some());
+        assert!(manager.get_state(tx_id).unwrap().is_some());
 
-        manager.cleanup_transaction(tx_id);
-        assert!(manager.get_state(tx_id).is_none());
+        manager.cleanup_transaction(tx_id).unwrap();
+        assert!(manager.get_state(tx_id).unwrap().is_none());
     }
 
     #[test]
     fn test_signature_aggregation() {
-        let validators = vec![create_validator(1), create_validator(2)];
-        let sig1 = create_signature(validators[0].clone());
-        let sig2 = create_signature(validators[1].clone());
+        use blst::min_pk::SecretKey as BlsSecretKey;
+
+        let message = b"transaction_data";
+        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
+        // Generate BLS key pairs
+        let ikm1 = [1u8; 32];
+        let ikm2 = [2u8; 32];
+        let sk1 = BlsSecretKey::key_gen(&ikm1, &[]).unwrap();
+        let sk2 = BlsSecretKey::key_gen(&ikm2, &[]).unwrap();
+        let pk1 = sk1.sk_to_pk();
+        let pk2 = sk2.sk_to_pk();
+
+        // Create BLS signatures
+        let bls_sig1 = sk1.sign(message, dst, &[]);
+        let bls_sig2 = sk2.sign(message, dst, &[]);
+
+        // Create validator IDs with BLS public keys (48 bytes compressed for min_pk)
+        let pk1_bytes = pk1.compress().to_vec(); // 48 bytes
+        let pk2_bytes = pk2.compress().to_vec(); // 48 bytes
+
+        let validator1 = ValidatorId::new(UserId::new(), pk1_bytes.clone());
+        let validator2 = ValidatorId::new(UserId::new(), pk2_bytes.clone());
+
+        // Create ValidatorSignature with BLS signatures (96 bytes)
+        let sig1 = ValidatorSignature {
+            validator_id: validator1.clone(),
+            signature: bls_sig1.compress().to_vec(), // 96 bytes
+            signed_at: chrono::Utc::now(),
+        };
+        let sig2 = ValidatorSignature {
+            validator_id: validator2.clone(),
+            signature: bls_sig2.compress().to_vec(), // 96 bytes
+            signed_at: chrono::Utc::now(),
+        };
 
         let signatures = vec![sig1, sig2];
         let aggregated = SignatureAggregator::aggregate(&signatures);
 
-        assert_eq!(aggregated.len(), 128); // 2 signatures × 64 bytes
+        // BLS aggregation produces a single 96-byte signature
+        assert_eq!(aggregated.len(), 96);
 
-        let public_keys = vec![
-            validators[0].public_key.clone(),
-            validators[1].public_key.clone(),
-        ];
-        let message = b"transaction_data";
+        let public_keys = vec![pk1_bytes, pk2_bytes];
 
         SignatureAggregator::verify_aggregated(&aggregated, &public_keys, message).unwrap();
     }
@@ -688,7 +789,7 @@ mod tests {
     #[test]
     fn test_invalid_signature_length() {
         let validator = create_validator(1);
-        let mut sig = create_signature(validator.clone());
+        let mut sig = create_dummy_signature(validator.clone());
         sig.signature = vec![0u8; 32]; // Invalid length (should be 64)
 
         let config = MultiSigConfig::new(1, vec![validator]).unwrap();

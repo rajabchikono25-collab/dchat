@@ -264,9 +264,11 @@ impl FinalityTracker {
 
         // Move to finalized if ready
         if is_finalized {
-            let finalized_proof = self.pending_proofs.remove(tx_hash).unwrap();
-            self.finalized_proofs
-                .insert(tx_hash.to_string(), finalized_proof);
+            // Safe: we just accessed the proof above via get_mut, so it must exist
+            if let Some(finalized_proof) = self.pending_proofs.remove(tx_hash) {
+                self.finalized_proofs
+                    .insert(tx_hash.to_string(), finalized_proof);
+            }
         }
 
         Ok(is_finalized)

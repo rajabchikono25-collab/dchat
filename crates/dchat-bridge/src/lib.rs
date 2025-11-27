@@ -55,6 +55,38 @@ pub mod types {
     }
 
     impl std::error::Error for BridgeError {}
+
+    /// Error type for BridgeManager initialization
+    #[derive(Debug)]
+    pub enum BridgeManagerError {
+        /// Multi-sig configuration error
+        MultiSigConfig(BridgeError),
+        /// Finality tracker initialization error
+        FinalityTracker(super::finality::FinalityError),
+    }
+
+    impl fmt::Display for BridgeManagerError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                BridgeManagerError::MultiSigConfig(e) => write!(f, "MultiSig config error: {}", e),
+                BridgeManagerError::FinalityTracker(e) => write!(f, "Finality tracker error: {}", e),
+            }
+        }
+    }
+
+    impl std::error::Error for BridgeManagerError {}
+
+    impl From<BridgeError> for BridgeManagerError {
+        fn from(e: BridgeError) -> Self {
+            BridgeManagerError::MultiSigConfig(e)
+        }
+    }
+
+    impl From<super::finality::FinalityError> for BridgeManagerError {
+        fn from(e: super::finality::FinalityError) -> Self {
+            BridgeManagerError::FinalityTracker(e)
+        }
+    }
 }
 
 /// Blockchain identifier
@@ -144,8 +176,20 @@ pub struct BridgeManager {
 }
 
 impl BridgeManager {
-    /// Create a new bridge manager with default 2-of-3 multi-sig
+    /// Create a new bridge manager with default 2-of-3 multi-sig.
+    /// 
+    /// # Panics
+    /// 
+    /// This method panics if the default configuration is invalid.
+    /// For fallible construction, use [`try_new`](#method.try_new).
     pub fn new() -> Self {
+        Self::try_new().expect("Failed to create BridgeManager with default configuration")
+    }
+
+    /// Create a new bridge manager with default 2-of-3 multi-sig (fallible).
+    /// 
+    /// Returns an error if the configuration is invalid.
+    pub fn try_new() -> std::result::Result<Self, types::BridgeManagerError> {
         let mut required_confirmations = HashMap::new();
         required_confirmations.insert(ChainId::ChatChain, 12);
         required_confirmations.insert(ChainId::CurrencyChain, 20);
@@ -156,14 +200,12 @@ impl BridgeManager {
         let validator3 = multisig::ValidatorId::new(UserId::new(), vec![3; 32]);
 
         let multisig_config =
-            multisig::MultiSigConfig::new(2, vec![validator1, validator2, validator3])
-                .expect("Failed to create multi-sig config");
+            multisig::MultiSigConfig::new(2, vec![validator1, validator2, validator3])?;
 
         // Create finality tracker with 5-of-7 consensus
-        let finality_tracker =
-            finality::FinalityTracker::new(5, 7).expect("Failed to create finality tracker");
+        let finality_tracker = finality::FinalityTracker::new(5, 7)?;
 
-        Self {
+        Ok(Self {
             transactions: HashMap::new(),
             validators: HashMap::new(),
             finality_proofs: HashMap::new(),
@@ -172,7 +214,7 @@ impl BridgeManager {
             multisig: multisig::MultiSigManager::new(multisig_config),
             slashing: slashing::SlashingManager::new(),
             finality_tracker,
-        }
+        })
     }
 
     /// Initiate a cross-chain transaction
