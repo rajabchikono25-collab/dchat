@@ -1,7 +1,8 @@
-//! Password-based encryption utilities
+//! Encryption utilities for dchat
 //!
-//! This module provides authenticated encryption using AES-256-GCM
-//! with Argon2 key derivation for password-based encryption.
+//! This module provides authenticated encryption using AES-256-GCM:
+//! - Key-based encryption for governance voting and evidence
+//! - Password-based encryption with Argon2 key derivation
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -13,6 +14,104 @@ use argon2::{
 };
 use dchat_core::error::{Error, Result};
 use rand::RngCore;
+
+// ============================================================================
+// Key-based Encryption (for governance, voting, evidence)
+// ============================================================================
+
+/// AES-256-GCM nonce size in bytes
+pub const NONCE_SIZE: usize = 12;
+
+/// AES-256 key size in bytes
+pub const KEY_SIZE: usize = 32;
+
+/// Encrypt data using AES-256-GCM with a 32-byte key
+///
+/// # Security Properties
+/// - Authenticated encryption (AEAD) - prevents tampering
+/// - Random nonce for each encryption - prevents replay attacks
+/// - NIST-approved algorithm (AES-256-GCM)
+///
+/// # Arguments
+/// * `key` - 32-byte encryption key (AES-256)
+/// * `plaintext` - Data to encrypt
+///
+/// # Returns
+/// Ciphertext with prepended 12-byte nonce (nonce || ciphertext)
+pub fn encrypt_with_key(key: &[u8; KEY_SIZE], plaintext: &[u8]) -> Result<Vec<u8>> {
+    // Generate random nonce
+    let mut nonce_bytes = [0u8; NONCE_SIZE];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
+
+    // Create cipher and encrypt
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| Error::crypto(format!("Cipher initialization failed: {}", e)))?;
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| Error::crypto(format!("Encryption failed: {}", e)))?;
+
+    // Prepend nonce to ciphertext
+    let mut result = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend(ciphertext);
+
+    Ok(result)
+}
+
+/// Decrypt data using AES-256-GCM with a 32-byte key
+///
+/// # Arguments
+/// * `key` - 32-byte decryption key (AES-256)
+/// * `ciphertext` - Encrypted data with prepended nonce (nonce || ciphertext)
+///
+/// # Returns
+/// Decrypted plaintext bytes
+///
+/// # Errors
+/// Returns error if:
+/// - Key is incorrect
+/// - Data has been tampered with (authentication fails)
+/// - Ciphertext is too short (missing nonce)
+pub fn decrypt_with_key(key: &[u8; KEY_SIZE], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    if ciphertext.len() < NONCE_SIZE + 16 {
+        // 16 = minimum auth tag size
+        return Err(Error::crypto(
+            "Ciphertext too short (must include nonce and auth tag)".to_string(),
+        ));
+    }
+
+    // Extract nonce from beginning
+    let nonce_bytes: [u8; NONCE_SIZE] = ciphertext[..NONCE_SIZE]
+        .try_into()
+        .map_err(|_| Error::crypto("Invalid nonce length".to_string()))?;
+    let nonce = Nonce::from(nonce_bytes);
+
+    // Extract actual ciphertext
+    let encrypted_data = &ciphertext[NONCE_SIZE..];
+
+    // Create cipher and decrypt
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| Error::crypto(format!("Cipher initialization failed: {}", e)))?;
+
+    let plaintext = cipher.decrypt(&nonce, encrypted_data).map_err(|_| {
+        Error::crypto("Decryption failed: incorrect key or data tampering detected".to_string())
+    })?;
+
+    Ok(plaintext)
+}
+
+/// Generate a random 32-byte encryption key
+pub fn generate_encryption_key() -> [u8; KEY_SIZE] {
+    let mut key = [0u8; KEY_SIZE];
+    rand::thread_rng().fill_bytes(&mut key);
+    key
+}
+
+// ============================================================================
+// Password-based Encryption (for user-facing encryption)
+// ============================================================================
 
 /// Encrypted data container with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -185,6 +284,115 @@ fn extract_key_from_hash(hash_string: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ========== Key-based encryption tests ==========
+
+    #[test]
+    fn test_key_encrypt_decrypt_roundtrip() {
+        let key = generate_encryption_key();
+        let plaintext = b"This is a secret message for governance voting!";
+
+        let ciphertext = encrypt_with_key(&key, plaintext).unwrap();
+        let decrypted = decrypt_with_key(&key, &ciphertext).unwrap();
+
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_key_encrypt_includes_nonce() {
+        let key = generate_encryption_key();
+        let plaintext = b"Test data";
+
+        let ciphertext = encrypt_with_key(&key, plaintext).unwrap();
+
+        // Ciphertext should be: nonce (12) + encrypted data + auth tag (16)
+        assert!(ciphertext.len() >= NONCE_SIZE + 16);
+        assert!(ciphertext.len() > plaintext.len());
+    }
+
+    #[test]
+    fn test_key_encrypt_random_nonce() {
+        let key = generate_encryption_key();
+        let plaintext = b"Same message";
+
+        let ciphertext1 = encrypt_with_key(&key, plaintext).unwrap();
+        let ciphertext2 = encrypt_with_key(&key, plaintext).unwrap();
+
+        // Nonces should be different (first 12 bytes)
+        assert_ne!(&ciphertext1[..NONCE_SIZE], &ciphertext2[..NONCE_SIZE]);
+        // Full ciphertexts should be different
+        assert_ne!(ciphertext1, ciphertext2);
+
+        // Both should decrypt correctly
+        assert_eq!(
+            decrypt_with_key(&key, &ciphertext1).unwrap(),
+            decrypt_with_key(&key, &ciphertext2).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_key_decrypt_wrong_key() {
+        let key1 = generate_encryption_key();
+        let key2 = generate_encryption_key();
+        let plaintext = b"Secret data";
+
+        let ciphertext = encrypt_with_key(&key1, plaintext).unwrap();
+        let result = decrypt_with_key(&key2, &ciphertext);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Decryption failed"));
+    }
+
+    #[test]
+    fn test_key_decrypt_tampered_data() {
+        let key = generate_encryption_key();
+        let plaintext = b"Secret data";
+
+        let mut ciphertext = encrypt_with_key(&key, plaintext).unwrap();
+
+        // Tamper with ciphertext (after nonce)
+        ciphertext[NONCE_SIZE + 5] ^= 0xFF;
+
+        let result = decrypt_with_key(&key, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_key_decrypt_too_short() {
+        let key = generate_encryption_key();
+        let short_data = vec![0u8; 10]; // Too short
+
+        let result = decrypt_with_key(&key, &short_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn test_key_encrypt_empty_data() {
+        let key = generate_encryption_key();
+        let plaintext = b"";
+
+        let ciphertext = encrypt_with_key(&key, plaintext).unwrap();
+        let decrypted = decrypt_with_key(&key, &ciphertext).unwrap();
+
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_key_encrypt_large_data() {
+        let key = generate_encryption_key();
+        let plaintext = vec![0xAB; 1_000_000]; // 1MB
+
+        let ciphertext = encrypt_with_key(&key, &plaintext).unwrap();
+        let decrypted = decrypt_with_key(&key, &ciphertext).unwrap();
+
+        assert_eq!(plaintext, decrypted);
+    }
+
+    // ========== Password-based encryption tests ==========
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {

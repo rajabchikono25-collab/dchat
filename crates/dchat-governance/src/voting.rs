@@ -2,9 +2,12 @@
 //
 // This module implements token-weighted voting, proposals, and
 // decentralized governance for protocol decisions.
+//
+// Security: Uses AES-256-GCM for vote encryption (NIST-approved AEAD)
 
 use chrono::{DateTime, Duration, Utc};
 use dchat_core::{Error, Result, UserId};
+use dchat_crypto::{decrypt_with_key, encrypt_with_key, KEY_SIZE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -128,22 +131,22 @@ impl Proposal {
 }
 
 impl Vote {
-    /// Create an encrypted vote
+    /// Create an encrypted vote using AES-256-GCM
     ///
-    /// Ballot is encrypted to prevent early result visibility
+    /// Ballot is encrypted to prevent early result visibility.
+    /// Uses authenticated encryption to prevent tampering.
     pub fn new_encrypted(
         voter: UserId,
         proposal_id: Uuid,
         vote_for: bool,
         voting_power: u64,
-        encryption_key: &[u8; 32],
+        encryption_key: &[u8; KEY_SIZE],
     ) -> Result<Self> {
-        // Simple XOR encryption (production should use AES-GCM)
+        // Encode vote as single byte
         let plaintext = if vote_for { vec![1u8] } else { vec![0u8] };
-        let mut encrypted_ballot = plaintext.clone();
-        for (i, byte) in encrypted_ballot.iter_mut().enumerate() {
-            *byte ^= encryption_key[i % 32];
-        }
+
+        // Encrypt using AES-256-GCM (authenticated encryption)
+        let encrypted_ballot = encrypt_with_key(encryption_key, &plaintext)?;
 
         Ok(Self {
             voter,
@@ -155,16 +158,17 @@ impl Vote {
         })
     }
 
-    /// Reveal the ballot after voting deadline
-    pub fn reveal(&mut self, decryption_key: &[u8; 32]) -> Result<bool> {
+    /// Reveal the ballot after voting deadline using AES-256-GCM decryption
+    pub fn reveal(&mut self, decryption_key: &[u8; KEY_SIZE]) -> Result<bool> {
         if self.revealed_ballot.is_some() {
             return Err(Error::validation("Ballot already revealed".to_string()));
         }
 
-        // Decrypt (simple XOR)
-        let mut plaintext = self.encrypted_ballot.clone();
-        for (i, byte) in plaintext.iter_mut().enumerate() {
-            *byte ^= decryption_key[i % 32];
+        // Decrypt using AES-256-GCM (verifies authentication tag)
+        let plaintext = decrypt_with_key(decryption_key, &self.encrypted_ballot)?;
+
+        if plaintext.is_empty() {
+            return Err(Error::validation("Invalid ballot format".to_string()));
         }
 
         let vote_for = plaintext[0] == 1;

@@ -22,7 +22,10 @@ pub mod signatures;
 pub use crypto::handshake as crypto_handshake;
 pub use crypto::versioning as crypto_versioning;
 
-pub use encryption::{decrypt_with_password, encrypt_with_password};
+pub use encryption::{
+    decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
+    generate_encryption_key, EncryptedData, KEY_SIZE, NONCE_SIZE,
+};
 pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
 pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
 pub use noise::{NoiseHandshake, NoiseSession};

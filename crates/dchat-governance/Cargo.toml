@@ -39,6 +39,7 @@ once_cell = "1.19"
 # Hashing
 blake3 = "1.5"
 hex = "0.4"
+sha2 = "0.10"
 
 # Logging
 tracing = "0.1"

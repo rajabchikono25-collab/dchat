@@ -5,9 +5,12 @@
 // - Decentralized jury (sortition) reviews evidence
 // - False reports result in slashing
 // - Appeal mechanisms protect against abuse
+//
+// Security: Uses AES-256-GCM for evidence encryption (NIST-approved AEAD)
 
 use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result, UserId};
+use dchat_crypto::{decrypt_with_key, encrypt_with_key, KEY_SIZE};
 use dchat_privacy::zk_proofs::{Groth16Keys, ZkProof, ZkProver};
 use once_cell::sync::Lazy;
 use rand::{CryptoRng, Rng, SeedableRng};
@@ -91,13 +94,13 @@ pub struct ReportManager {
 }
 
 impl AbuseReport {
-    /// Create a new anonymous abuse report
+    /// Create a new anonymous abuse report with AES-256-GCM encrypted evidence
     pub fn new<R: Rng + CryptoRng>(
         reporter_reputation: u32,
         abuse_type: AbuseType,
         evidence: &[u8],
         accused: UserId,
-        encryption_key: &[u8; 32],
+        encryption_key: &[u8; KEY_SIZE],
         rng: &mut R,
     ) -> Result<Self> {
         // Minimum reputation required to file report (prevents spam)
@@ -115,11 +118,8 @@ impl AbuseReport {
             .prove_reputation(reporter_reputation, MIN_REPUTATION, rng)?
             .proof;
 
-        // Encrypt evidence (simple XOR for demonstration)
-        let mut encrypted_evidence = evidence.to_vec();
-        for (i, byte) in encrypted_evidence.iter_mut().enumerate() {
-            *byte ^= encryption_key[i % 32];
-        }
+        // Encrypt evidence using AES-256-GCM (authenticated encryption)
+        let encrypted_evidence = encrypt_with_key(encryption_key, evidence)?;
 
         Ok(Self {
             id: Uuid::new_v4(),
@@ -133,13 +133,9 @@ impl AbuseReport {
         })
     }
 
-    /// Decrypt evidence (jury members only)
-    pub fn decrypt_evidence(&self, decryption_key: &[u8; 32]) -> Vec<u8> {
-        let mut plaintext = self.encrypted_evidence.clone();
-        for (i, byte) in plaintext.iter_mut().enumerate() {
-            *byte ^= decryption_key[i % 32];
-        }
-        plaintext
+    /// Decrypt evidence using AES-256-GCM (jury members only)
+    pub fn decrypt_evidence(&self, decryption_key: &[u8; KEY_SIZE]) -> Result<Vec<u8>> {
+        decrypt_with_key(decryption_key, &self.encrypted_evidence)
     }
 }
 
@@ -355,7 +351,7 @@ mod tests {
         let report =
             AbuseReport::new(50, AbuseType::Harassment, evidence, accused, &key, &mut rng).unwrap();
 
-        let decrypted = report.decrypt_evidence(&key);
+        let decrypted = report.decrypt_evidence(&key).unwrap();
         assert_eq!(&decrypted, evidence);
     }
 

@@ -450,6 +450,90 @@ impl ProtocolDaoManager {
         *self.circuit_breakers.get(module).unwrap_or(&false)
     }
 
+    /// Check if user is an emergency multisig signer
+    pub fn is_emergency_signer(&self, user: &UserId) -> bool {
+        self.emergency_multisig.contains(user)
+    }
+
+    /// Get emergency multisig signers
+    pub fn get_emergency_signers(&self) -> &[UserId] {
+        &self.emergency_multisig
+    }
+
+    /// Get number of required emergency signatures (majority)
+    pub fn emergency_threshold(&self) -> usize {
+        (self.emergency_multisig.len() / 2) + 1
+    }
+
+    /// Execute emergency action bypassing normal governance
+    /// Requires majority of emergency multisig signers
+    pub async fn execute_emergency_bypass(
+        &mut self,
+        action_type: EmergencyActionType,
+        justification: &str,
+        signers: &[UserId],
+    ) -> Result<ExecutionResult> {
+        // Verify all signers are in emergency multisig
+        for signer in signers {
+            if !self.is_emergency_signer(signer) {
+                return Err(Error::validation(format!(
+                    "User {:?} is not an emergency multisig signer",
+                    signer
+                )));
+            }
+        }
+
+        // Verify threshold met
+        let threshold = self.emergency_threshold();
+        if signers.len() < threshold {
+            return Err(Error::validation(format!(
+                "Emergency action requires {} signers, got {}",
+                threshold,
+                signers.len()
+            )));
+        }
+
+        // Deduplicate signers
+        let unique_signers: std::collections::HashSet<_> = signers.iter().collect();
+        if unique_signers.len() < threshold {
+            return Err(Error::validation("Duplicate signers detected"));
+        }
+
+        tracing::warn!(
+            "⚠️ EMERGENCY BYPASS: {} signers executing {:?}",
+            signers.len(),
+            action_type
+        );
+
+        // Execute the emergency action immediately
+        let (result, tx_hash) = self
+            .execute_emergency_action_production(action_type.clone(), justification)
+            .await?;
+
+        // Create audit record for emergency bypass
+        let audit_record = ExecutionAuditRecord {
+            proposal_id: Uuid::nil(), // No proposal for emergency bypass
+            action_type: format!("EmergencyBypass_{:?}", action_type),
+            executor: signers.first().cloned().unwrap_or_else(UserId::new),
+            tx_hash,
+            block_height: self.get_current_block().await.unwrap_or(0),
+            executed_at: Utc::now(),
+            pre_state_hash: String::new(),
+            post_state_hash: self.compute_state_hash(),
+            success: matches!(result, ExecutionResult::Success),
+            details: {
+                let mut details = HashMap::new();
+                details.insert("signers_count".to_string(), signers.len().to_string());
+                details.insert("justification".to_string(), justification.to_string());
+                details
+            },
+        };
+
+        self.audit_records.push(audit_record);
+
+        Ok(result)
+    }
+
     /// Submit a protocol proposal
     pub fn submit_proposal(
         &mut self,
@@ -735,8 +819,9 @@ impl ProtocolDaoManager {
         // Compute post-state hash
         let post_state_hash = self.compute_state_hash();
 
-        // Update proposal status
-        let proposal = self.proposals.get_mut(&proposal_id).unwrap();
+        // Update proposal status - safe because we verified it exists at the start
+        let proposal = self.proposals.get_mut(&proposal_id)
+            .ok_or_else(|| Error::internal("Proposal disappeared during execution"))?;
         
         if matches!(result, ExecutionResult::Success | ExecutionResult::PartialSuccess { .. }) {
             proposal.status = ProposalStatus::Executed;
@@ -1247,7 +1332,9 @@ impl ProtocolDaoManager {
         };
 
         // Record disbursement - now we can mutate
-        let program = self.grant_programs.get_mut(&program_id).unwrap();
+        // Safe because we verified it exists earlier
+        let program = self.grant_programs.get_mut(&program_id)
+            .ok_or_else(|| Error::internal("Grant program disappeared during disbursement"))?;
         
         let disbursement = GrantDisbursement {
             recipient: recipient.clone(),
@@ -1313,6 +1400,67 @@ impl ProtocolDaoManager {
     pub fn get_treasury(&self) -> &ProtocolTreasury {
         &self.treasury
     }
+
+    /// Update emergency multisig signers (requires governance proposal)
+    /// This should only be called after a successful governance vote
+    pub fn update_emergency_multisig(&mut self, new_signers: Vec<UserId>) -> Result<()> {
+        if new_signers.is_empty() {
+            return Err(Error::validation("Emergency multisig cannot be empty"));
+        }
+        
+        if new_signers.len() < 3 {
+            return Err(Error::validation("Emergency multisig requires at least 3 signers"));
+        }
+
+        // Check for duplicates
+        let unique_count = new_signers.iter().collect::<std::collections::HashSet<_>>().len();
+        if unique_count != new_signers.len() {
+            return Err(Error::validation("Duplicate signers in emergency multisig"));
+        }
+
+        tracing::info!(
+            "🔐 Emergency multisig updated: {} signers",
+            new_signers.len()
+        );
+
+        self.emergency_multisig = new_signers;
+        Ok(())
+    }
+
+    /// Reset a circuit breaker (requires emergency action or governance)
+    pub fn reset_circuit_breaker(&mut self, module: &str) {
+        self.circuit_breakers.remove(module);
+        tracing::info!("✅ Circuit breaker reset for module: {}", module);
+    }
+
+    /// Get all active circuit breakers
+    pub fn get_active_circuit_breakers(&self) -> Vec<&String> {
+        self.circuit_breakers
+            .iter()
+            .filter(|(_, &active)| active)
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    /// Get feature flag status
+    pub fn get_feature_flag(&self, feature: &str) -> Option<bool> {
+        self.feature_flags.get(feature).copied()
+    }
+
+    /// Get all feature flags
+    pub fn get_all_feature_flags(&self) -> &HashMap<String, bool> {
+        &self.feature_flags
+    }
+
+    /// Get protocol parameter
+    pub fn get_protocol_parameter(&self, param: &str) -> Option<&String> {
+        self.protocol_parameters.get(param)
+    }
+
+    /// Get all protocol parameters
+    pub fn get_all_protocol_parameters(&self) -> &HashMap<String, String> {
+        &self.protocol_parameters
+    }
 }
 
 #[cfg(test)]
@@ -1358,7 +1506,7 @@ mod tests {
         dao.set_voting_power(voter1.clone(), 1000);
         dao.set_voting_power(voter2.clone(), 1500);
 
-        let mut proposal_id = dao.submit_proposal(
+        let proposal_id = dao.submit_proposal(
             proposer,
             ProposalType::ParameterChange {
                 parameter: ProtocolParameter::TransactionFee,
