@@ -351,21 +351,21 @@ mod tests {
         ChannelId::new()
     }
 
-    #[test]
-    fn test_public_channel_access() {
+    #[tokio::test]
+    async fn test_public_channel_access() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
 
         manager.set_policy(channel.clone(), AccessPolicy::Public);
 
-        assert!(manager.can_access(&user, &channel).unwrap());
-        manager.grant_access(user.clone(), channel.clone()).unwrap();
+        assert!(manager.can_access(&user, &channel).await.unwrap());
+        manager.grant_access(user.clone(), channel.clone()).await.unwrap();
         assert!(manager.is_member(&user, &channel));
     }
 
-    #[test]
-    fn test_private_channel_access() {
+    #[tokio::test]
+    async fn test_private_channel_access() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user1 = create_test_user();
@@ -382,14 +382,14 @@ mod tests {
         );
 
         // User1 is invited
-        assert!(manager.can_access(&user1, &channel).unwrap());
+        assert!(manager.can_access(&user1, &channel).await.unwrap());
 
         // User2 is not invited
-        assert!(!manager.can_access(&user2, &channel).unwrap());
+        assert!(!manager.can_access(&user2, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_token_gated_channel() {
+    #[tokio::test]
+    async fn test_token_gated_channel() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
@@ -404,19 +404,19 @@ mod tests {
         );
 
         // User doesn't have tokens
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // Give user insufficient tokens
         manager.update_user_tokens(user.clone(), "DCHAT".to_string(), 50);
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // Give user sufficient tokens
         manager.update_user_tokens(user.clone(), "DCHAT".to_string(), 150);
-        assert!(manager.can_access(&user, &channel).unwrap());
+        assert!(manager.can_access(&user, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_nft_gated_channel() {
+    #[tokio::test]
+    async fn test_nft_gated_channel() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
@@ -430,19 +430,19 @@ mod tests {
         );
 
         // User doesn't have NFT
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // Give user wrong NFT
         manager.add_user_nft(user.clone(), "badge_002".to_string());
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // Give user correct NFT
         manager.add_user_nft(user.clone(), "badge_001".to_string());
-        assert!(manager.can_access(&user, &channel).unwrap());
+        assert!(manager.can_access(&user, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_reputation_gated_channel() {
+    #[tokio::test]
+    async fn test_reputation_gated_channel() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
@@ -453,19 +453,19 @@ mod tests {
         );
 
         // User has no reputation
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // User has low reputation
         manager.update_reputation(user.clone(), 30);
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // User has sufficient reputation
         manager.update_reputation(user.clone(), 75);
-        assert!(manager.can_access(&user, &channel).unwrap());
+        assert!(manager.can_access(&user, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_combined_policy() {
+    #[tokio::test]
+    async fn test_combined_policy() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
@@ -485,19 +485,19 @@ mod tests {
         );
 
         // User has neither
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // User has tokens but not reputation
         manager.update_user_tokens(user.clone(), "DCHAT".to_string(), 150);
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // User has both
         manager.update_reputation(user.clone(), 75);
-        assert!(manager.can_access(&user, &channel).unwrap());
+        assert!(manager.can_access(&user, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_invite_to_private_channel() {
+    #[tokio::test]
+    async fn test_invite_to_private_channel() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
@@ -510,21 +510,21 @@ mod tests {
         );
 
         // User not invited
-        assert!(!manager.can_access(&user, &channel).unwrap());
+        assert!(!manager.can_access(&user, &channel).await.unwrap());
 
         // Invite user
         manager.invite_user(&channel, user.clone()).unwrap();
-        assert!(manager.can_access(&user, &channel).unwrap());
+        assert!(manager.can_access(&user, &channel).await.unwrap());
     }
 
-    #[test]
-    fn test_revoke_access() {
+    #[tokio::test]
+    async fn test_revoke_access() {
         let mut manager = ChannelAccessManager::new();
         let channel = create_test_channel();
         let user = create_test_user();
 
         manager.set_policy(channel.clone(), AccessPolicy::Public);
-        manager.grant_access(user.clone(), channel.clone()).unwrap();
+        manager.grant_access(user.clone(), channel.clone()).await.unwrap();
 
         assert!(manager.is_member(&user, &channel));
 

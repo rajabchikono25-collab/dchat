@@ -3,16 +3,29 @@
 //!
 //! Implements economic incentives for long-term storage through token bonds
 //! and micropayment streams.
+//!
+//! ## Modules
+//! - `storage_bonds`: Basic chain-backed storage bond manager
+//! - `production_bonds`: Production-grade bonding with signatures, slashing, unbonding periods
 
+pub mod production_bonds;
 pub mod storage_bonds;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+// Re-export basic storage bonds
 pub use storage_bonds::{
     StorageBond as StorageBondV2, StorageBondManager, StorageBondReceipt, StorageBondRequest,
     MIN_STORAGE_BOND_PER_GB,
+};
+
+// Re-export production-grade bonds (recommended for production)
+pub use production_bonds::{
+    BondCreationResult, BondError, BondOperation, BondSignature, BondStatistics, BondStatus,
+    CreateBondRequest, ProductionBond, ProductionBondConfig, ProductionBondManager,
+    StorageProvider, WithdrawBondRequest, WithdrawalResult,
 };
 
 /// Storage bond for long-term data retention

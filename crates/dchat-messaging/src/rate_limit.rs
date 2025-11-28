@@ -438,17 +438,20 @@ impl RateLimiter {
     pub async fn update_reputation(&self, user_id: &str, reputation_score: f64) {
         let mut user_states = self.user_states.write().await;
 
-        if let Some(state) = user_states.get_mut(user_id) {
-            state.reputation_score = reputation_score.clamp(0.0, 1.0);
+        // Get or create user state
+        let state = user_states
+            .entry(user_id.to_string())
+            .or_insert_with(|| UserRateLimitState::new(&self.config, 0.5));
 
-            // Adjust limits based on new reputation
-            let adjusted_limit =
-                (self.config.per_user_limit as f64 * (1.0 + reputation_score)).floor() as u64;
-            let adjusted_capacity =
-                (self.config.burst_capacity as f64 * (1.0 + reputation_score * 0.5)).floor() as u64;
+        state.reputation_score = reputation_score.clamp(0.0, 1.0);
 
-            state.message_bucket = TokenBucket::new(adjusted_capacity, adjusted_limit);
-        }
+        // Adjust limits based on new reputation
+        let adjusted_limit =
+            (self.config.per_user_limit as f64 * (1.0 + reputation_score)).floor() as u64;
+        let adjusted_capacity =
+            (self.config.burst_capacity as f64 * (1.0 + reputation_score * 0.5)).floor() as u64;
+
+        state.message_bucket = TokenBucket::new(adjusted_capacity, adjusted_limit);
     }
 
     /// Record a connection open

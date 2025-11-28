@@ -34,7 +34,7 @@ tracing = { workspace = true }
 blst = "0.3"
 
 [features]
-default = []
+default = ["storage-integration"]
 storage-integration = ["dchat-storage"]
 
 [dev-dependencies]

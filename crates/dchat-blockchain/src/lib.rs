@@ -30,9 +30,9 @@ pub use chain_synchronizer::{
     CurrencyHierarchicalBlock, CurrencyMiniblock, CurrencySubblock, CurrencyTransaction,
     CurrencyTxType, FinalityAnchor, SyncEpoch, SyncError, SyncStatusReport, ThroughputReport,
 };
-pub use dchat_chain::{Transaction, TransactionStatus};
+pub use dchat_chain::{Transaction, TransactionStatus, TransactionType};
 pub use chat_chain::{ChatChainClient, ChatChainConfig};
-pub use client::BlockchainClient;
+pub use client::{BlockchainClient, BlockchainConfig};
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};
 pub use currency_chain::{CurrencyChainClient, CurrencyChainConfig};
 pub use currency_chain_block_sync::{

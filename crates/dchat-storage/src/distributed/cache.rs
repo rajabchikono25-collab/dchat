@@ -349,6 +349,7 @@ pub mod keys {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_cache_key_generation() {

@@ -8,6 +8,7 @@
 //! - Message consensus pruning with Merkle checkpoints
 //! - Insurance fund for economic security
 //! - Guardian-based account recovery with on-chain timelock verification
+//! - Distributed storage integration (TiKV, CockroachDB, Redis, MinIO)
 
 pub mod chain; // Currency chain, slashing, and guardian modules
 pub mod currency_chain_client;
@@ -18,6 +19,8 @@ pub mod dispute_resolution;
 pub mod insurance_fund;
 pub mod pruning;
 pub mod sharding;
+pub mod storage_backend;
+pub mod transaction_storage;
 pub mod transactions;
 pub mod validator_registry;
 
@@ -54,4 +57,11 @@ pub use transactions::{
 };
 pub use validator_registry::{
     InMemoryValidatorRegistry, OnChainValidatorRegistry, ValidatorInfo, ValidatorRegistry,
+};
+pub use storage_backend::{
+    ChainStorageBackend, ChainStorageConfig, StorageHealthStatus, StorageStatistics,
+    StoredTransaction,
+};
+pub use transaction_storage::{
+    TransactionStorageService, TransactionStorageConfig, ServiceStatistics,
 };

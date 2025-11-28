@@ -48,11 +48,11 @@ impl EncryptedBackup {
         // 3. Encrypt the data
         // 4. Calculate checksum
 
-        let mut nonce = vec![0u8; 12];
+        let mut nonce = [0u8; 12];
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut nonce);
 
-        let encrypted_data = Self::encrypt(&plaintext, encryption_key)?;
+        let encrypted_data = Self::encrypt_with_nonce(&plaintext, encryption_key, &nonce)?;
         let checksum = blake3::hash(&plaintext).to_hex().to_string();
 
         let metadata = BackupMetadata {
@@ -67,7 +67,7 @@ impl EncryptedBackup {
         Ok(Self {
             metadata,
             encrypted_data,
-            nonce,
+            nonce: nonce.to_vec(),
         })
     }
 
@@ -82,7 +82,7 @@ impl EncryptedBackup {
         checksum == self.metadata.checksum
     }
 
-    fn encrypt(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+    fn encrypt_with_nonce(plaintext: &[u8], key: &[u8], nonce_bytes: &[u8; 12]) -> Result<Vec<u8>> {
         use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
 
         if key.len() != 32 {
@@ -92,7 +92,7 @@ impl EncryptedBackup {
         let cipher = ChaCha20Poly1305::new_from_slice(key)
             .map_err(|e| Error::crypto(format!("Invalid key: {}", e)))?;
 
-        let nonce = Nonce::from([0u8; 12]); // Will be replaced with random nonce
+        let nonce = Nonce::from(*nonce_bytes);
 
         let mut buffer = plaintext.to_vec();
         cipher

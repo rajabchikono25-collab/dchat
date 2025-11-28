@@ -598,14 +598,17 @@ impl DeltaEncoder {
             }
 
             if d > 0 {
-                if x == prev_x {
+                if x == prev_x && y > 0 {
                     // Insertion
-                    edits.push(Edit::Insert {
-                        pos: y as usize,
-                        data: vec![new[(y - 1) as usize]],
-                    });
+                    let insert_idx = (y - 1) as usize;
+                    if insert_idx < new.len() {
+                        edits.push(Edit::Insert {
+                            pos: y as usize,
+                            data: vec![new[insert_idx]],
+                        });
+                    }
                     y -= 1;
-                } else {
+                } else if x > 0 {
                     // Deletion
                     edits.push(Edit::Delete {
                         pos: x as usize,

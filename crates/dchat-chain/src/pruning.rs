@@ -13,6 +13,7 @@ use dchat_core::error::{Error, Result};
 use dchat_core::types::MessageId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Pruning configuration
@@ -549,13 +550,13 @@ impl PruningManager {
         {
             if let Some(storage) = &self.storage {
                 // Query oldest messages from database
-                let msg_id_strings = storage
+                let msg_id_strings: Vec<String> = storage
                     .query_oldest_messages(force_prune_count as usize)
                     .await?;
 
                 // Convert strings to MessageIds and mark for pruning
-                for id_str in msg_id_strings {
-                    if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                for id_str in &msg_id_strings {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(id_str) {
                         self.mark_for_pruning(MessageId(uuid));
                     }
                 }

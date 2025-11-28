@@ -61,6 +61,21 @@ pub enum StorageError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Circuit breaker open: {0}")]
+    CircuitOpen(String),
+
+    #[error("Retry exhausted after {attempts} attempts: {message}")]
+    RetryExhausted { attempts: u32, message: String },
+
+    #[error("Fallback failed: {0}")]
+    FallbackFailed(String),
+
+    #[error("Connection lost: {0}")]
+    ConnectionLost(String),
+
+    #[error("Degraded mode: {0}")]
+    DegradedMode(String),
 }
 
 /// Result type alias for storage operations

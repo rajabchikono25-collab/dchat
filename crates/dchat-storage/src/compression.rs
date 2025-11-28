@@ -372,16 +372,19 @@ mod tests {
 
     #[test]
     fn test_algorithm_selection() {
+        // Large text file should use Zstd
         assert_eq!(
             CompressionEngine::select_algorithm("text/plain", 100 * 1024),
             CompressionAlgorithm::Zstd
         );
 
+        // Large JPEG (already compressed) should return None
         assert_eq!(
-            CompressionEngine::select_algorithm("image/jpeg", 1024),
+            CompressionEngine::select_algorithm("image/jpeg", 100 * 1024),
             CompressionAlgorithm::None
         );
 
+        // Small text file (< 10KB) should use LZ4 for speed
         assert_eq!(
             CompressionEngine::select_algorithm("text/plain", 5 * 1024),
             CompressionAlgorithm::Lz4
@@ -390,7 +393,10 @@ mod tests {
 
     #[test]
     fn test_compression_config() {
-        let data = b"Test data for compression configuration";
+        // Use data with repeated patterns that will actually compress well
+        let data = b"This is a test message that repeats. This is a test message that repeats. \
+                     This is a test message that repeats. This is a test message that repeats. \
+                     This is a test message that repeats. This is a test message that repeats.";
         let config = CompressionConfig {
             algorithm: CompressionAlgorithm::Zstd,
             level: CompressionLevel::FAST,

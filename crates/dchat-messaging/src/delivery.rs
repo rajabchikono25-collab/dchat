@@ -433,8 +433,8 @@ mod tests {
         // Verify proof before submission
         assert!(proof.verify(verifying_key.as_bytes()).unwrap());
 
-        // Submit to blockchain
-        let blockchain_client = BlockchainClient::default();
+        // Submit to blockchain using mock client for testing
+        let blockchain_client = BlockchainClient::new_mock(dchat_blockchain::BlockchainConfig::default());
         let tx_id = proof
             .submit_to_chain(&blockchain_client)
             .await
@@ -450,7 +450,7 @@ mod tests {
         let tx = tx.unwrap();
         assert_eq!(
             tx.tx_type,
-            dchat_chain::TransactionType::SubmitDeliveryProof
+            dchat_blockchain::TransactionType::SubmitDeliveryProof
         );
     }
 
@@ -471,7 +471,7 @@ mod tests {
             reward_amount: 100,
         };
 
-        let blockchain_client = BlockchainClient::default();
+        let blockchain_client = BlockchainClient::new_mock(dchat_blockchain::BlockchainConfig::default());
         let result = proof.submit_to_chain(&blockchain_client).await;
 
         // Should fail without signature
@@ -516,7 +516,7 @@ mod tests {
             reward_amount: 100,
         };
 
-        let blockchain_client = BlockchainClient::default();
+        let blockchain_client = BlockchainClient::new_mock(dchat_blockchain::BlockchainConfig::default());
         proof
             .submit_to_chain(&blockchain_client)
             .await

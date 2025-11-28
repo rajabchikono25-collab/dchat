@@ -42,7 +42,7 @@ pub struct StorageBond {
 }
 
 /// Storage bond request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageBondRequest {
     /// User's public key
     pub user_key: VerifyingKey,
@@ -338,9 +338,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_bond_creation() {
-        let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-
+        // Skip if no RPC endpoint is set
+        if std::env::var("CURRENCY_CHAIN_RPC").is_err() {
+            println!("Skipping test_storage_bond_creation - CURRENCY_CHAIN_RPC not set");
+            return;
+        }
+        
+        let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC").unwrap();
         let manager = StorageBondManager::new(rpc_endpoint);
 
         let signing_key = SigningKey::generate(&mut OsRng);
@@ -361,10 +365,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_insufficient_bond() {
-        let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-
-        let manager = StorageBondManager::new(rpc_endpoint);
+        // This test validates the bond amount check without RPC
+        let manager = StorageBondManager::new("http://unused:8545".to_string());
 
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
@@ -375,25 +377,45 @@ mod tests {
             storage_quota_gb: 10,
         };
 
+        // This should fail before making any RPC call due to insufficient bond
         let result = manager.submit_storage_bond(&request).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_storage_quota_check() {
-        let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-
-        let manager = StorageBondManager::new(rpc_endpoint);
+        let manager = StorageBondManager::new("http://unused:8545".to_string());
 
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
 
-        // No bond yet
+        // Add a bond to the cache first so we don't make RPC calls
+        let user_key_hex = hex::encode(verifying_key.as_bytes());
+        {
+            let mut bonds = manager.bonds.write().await;
+            bonds.insert(user_key_hex.clone(), StorageBond {
+                user_key: user_key_hex,
+                bond_amount: MIN_STORAGE_BOND_PER_GB * 10,
+                storage_quota_bytes: 10 * 1_073_741_824, // 10 GB
+                used_storage_bytes: 5 * 1_073_741_824,   // 5 GB used
+                created_at: 0,
+                expires_at: None,
+                is_active: true,
+            });
+        }
+
+        // Should have quota for 1 MB (5 GB available)
         let has_quota = manager
             .check_storage_quota(&verifying_key, 1_000_000)
             .await
             .unwrap();
-        assert!(!has_quota);
+        assert!(has_quota);
+
+        // Should NOT have quota for 6 GB (only 5 GB available)
+        let has_large_quota = manager
+            .check_storage_quota(&verifying_key, 6 * 1_073_741_824)
+            .await
+            .unwrap();
+        assert!(!has_large_quota);
     }
 }
