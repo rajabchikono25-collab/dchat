@@ -3,8 +3,9 @@
 use chrono::Utc;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
+use dchat_privacy::blind_tokens::CurrencyChainClient as PrivacyCurrencyChainClient;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -88,6 +89,10 @@ pub struct CurrencyChainClient {
     tokenomics: Option<Arc<TokenomicsManager>>,
     /// Shutdown signal for block sync task
     shutdown_tx: Option<mpsc::Sender<()>>,
+    /// Payment transaction hash -> (amount, recipient, confirmed)
+    payment_records: Arc<RwLock<HashMap<String, (u64, String, bool)>>>,
+    /// Redeemed token signature hashes (for blind token double-spend prevention)
+    redeemed_tokens: Arc<RwLock<HashSet<[u8; 32]>>>,
 }
 
 impl CurrencyChainClient {
@@ -104,6 +109,8 @@ impl CurrencyChainClient {
             stakes: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
             shutdown_tx: None,
+            payment_records: Arc::new(RwLock::new(HashMap::new())),
+            redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
         })
     }
 
@@ -120,6 +127,8 @@ impl CurrencyChainClient {
             stakes: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
             shutdown_tx: None,
+            payment_records: Arc::new(RwLock::new(HashMap::new())),
+            redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -139,6 +148,8 @@ impl CurrencyChainClient {
             stakes: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: Some(tokenomics),
             shutdown_tx: None,
+            payment_records: Arc::new(RwLock::new(HashMap::new())),
+            redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
         })
     }
 
@@ -409,6 +420,61 @@ impl CurrencyChainClient {
     pub async fn get_current_height(&self) -> Result<u64> {
         self.rpc_client.get_current_height().await
     }
+    
+    /// Record a confirmed payment transaction (for blind token verification)
+    pub fn record_payment(&self, tx_hash: &str, amount: u64, recipient: &str) {
+        self.payment_records
+            .write()
+            .unwrap()
+            .insert(tx_hash.to_string(), (amount, recipient.to_string(), true));
+    }
+}
+
+/// Implementation of dchat-privacy's CurrencyChainClient trait
+/// Provides payment verification and token redemption tracking for blind tokens
+impl PrivacyCurrencyChainClient for CurrencyChainClient {
+    /// Verify payment transaction on currency chain
+    fn verify_payment_transaction(
+        &self,
+        tx_hash: &str,
+        expected_amount: u64,
+        expected_recipient: &str,
+    ) -> Result<bool> {
+        let records = self.payment_records.read().unwrap();
+        
+        if let Some((amount, recipient, confirmed)) = records.get(tx_hash) {
+            if *confirmed && *amount >= expected_amount && recipient == expected_recipient {
+                return Ok(true);
+            }
+        }
+        
+        // Also check transaction cache for pending/confirmed transfers
+        for tx in self.transactions.read().unwrap().values() {
+            if tx.tx_type == "payment" && tx.status == "confirmed" {
+                // Match by ID or check amount
+                if tx.amount >= expected_amount {
+                    if let Some(ref to) = tx.to {
+                        if to.to_string() == expected_recipient {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(false)
+    }
+    
+    /// Check if token signature has been redeemed
+    fn is_token_redeemed(&self, signature_hash: &[u8; 32]) -> Result<bool> {
+        Ok(self.redeemed_tokens.read().unwrap().contains(signature_hash))
+    }
+    
+    /// Mark token as redeemed on-chain
+    fn mark_token_redeemed(&mut self, signature_hash: [u8; 32]) -> Result<()> {
+        self.redeemed_tokens.write().unwrap().insert(signature_hash);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -467,5 +533,53 @@ mod tests {
         
         // Stop sync
         client.stop_sync().await;
+    }
+
+    #[test]
+    fn test_privacy_payment_verification() {
+        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+        
+        // Record a payment
+        client.record_payment("tx_abc123", 1000, "recipient_wallet_1");
+        
+        // Verify payment via privacy trait
+        let verified = client.verify_payment_transaction(
+            "tx_abc123",
+            1000,
+            "recipient_wallet_1"
+        ).unwrap();
+        assert!(verified);
+        
+        // Wrong amount should fail
+        let verified = client.verify_payment_transaction(
+            "tx_abc123",
+            2000, // more than recorded
+            "recipient_wallet_1"
+        ).unwrap();
+        assert!(!verified);
+        
+        // Wrong recipient should fail
+        let verified = client.verify_payment_transaction(
+            "tx_abc123",
+            1000,
+            "wrong_recipient"
+        ).unwrap();
+        assert!(!verified);
+    }
+
+    #[test]
+    fn test_privacy_token_redemption_tracking() {
+        let mut client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+        
+        let token_hash: [u8; 32] = [0xCD; 32];
+        
+        // Initially not redeemed
+        assert!(!client.is_token_redeemed(&token_hash).unwrap());
+        
+        // Mark as redeemed
+        client.mark_token_redeemed(token_hash).unwrap();
+        
+        // Now should be redeemed
+        assert!(client.is_token_redeemed(&token_hash).unwrap());
     }
 }

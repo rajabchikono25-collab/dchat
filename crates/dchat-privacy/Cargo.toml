@@ -29,6 +29,11 @@ ark-relations = { version = "0.4", default-features = false }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-snark = { version = "0.4", default-features = false }
 ark-serialize = { version = "0.4", default-features = false }
+ark-crypto-primitives = { version = "0.4", default-features = false, features = ["sponge", "r1cs"] }
+
+# RSA for blind signatures
+rsa = "0.9"
+sha2 = "0.10"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -56,4 +61,5 @@ std = [
     "ark-relations/std",
     "ark-r1cs-std/std",
     "ark-serialize/std",
+    "ark-crypto-primitives/std",
 ]

@@ -3,8 +3,9 @@
 use chrono::Utc;
 use dchat_chain::{Transaction, TransactionStatus, TransactionType};
 use dchat_core::types::{ChannelId, MessageId, UserId};
+use dchat_privacy::zk_proofs::BlockchainClient as PrivacyBlockchainClient;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
@@ -49,6 +50,10 @@ pub struct ChatChainClient {
     reputation_scores: Arc<RwLock<HashMap<UserId, u32>>>,
     /// Channel ownership and metadata
     channels: Arc<RwLock<HashMap<ChannelId, ChannelMetadata>>>,
+    /// Identity registry: user_id -> public_key (32 bytes Ed25519)
+    identity_registry: Arc<RwLock<HashMap<UserId, [u8; 32]>>>,
+    /// Spent nullifiers for ZK proof double-spend prevention
+    spent_nullifiers: Arc<RwLock<HashSet<[u8; 32]>>>,
 }
 
 /// Channel metadata stored on chat chain
@@ -72,6 +77,8 @@ impl ChatChainClient {
             rpc_client: Arc::new(rpc_client),
             reputation_scores: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
+            identity_registry: Arc::new(RwLock::new(HashMap::new())),
+            spent_nullifiers: Arc::new(RwLock::new(HashSet::new())),
         })
     }
     
@@ -85,6 +92,8 @@ impl ChatChainClient {
             rpc_client: Arc::new(rpc_client),
             reputation_scores: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
+            identity_registry: Arc::new(RwLock::new(HashMap::new())),
+            spent_nullifiers: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -120,6 +129,16 @@ impl ChatChainClient {
             .write()
             .unwrap()
             .insert(user_id.clone(), 50);
+
+        // Store public key in identity registry (convert to 32-byte array)
+        if public_key.len() == 32 {
+            let mut pk_array = [0u8; 32];
+            pk_array.copy_from_slice(&public_key);
+            self.identity_registry
+                .write()
+                .unwrap()
+                .insert(user_id.clone(), pk_array);
+        }
 
         Ok(tx_id)
     }
@@ -356,6 +375,31 @@ impl ChatChainClient {
     }
 }
 
+/// Implementation of dchat-privacy's BlockchainClient trait
+/// Provides identity registry queries and nullifier tracking for ZK proofs
+impl PrivacyBlockchainClient for ChatChainClient {
+    /// Get user's public key from on-chain identity registry
+    fn get_user_public_key(&self, user_id: &UserId) -> Result<[u8; 32]> {
+        self.identity_registry
+            .read()
+            .unwrap()
+            .get(user_id)
+            .copied()
+            .ok_or_else(|| Error::NotFound(format!("User public key not found: {}", user_id)))
+    }
+    
+    /// Check if nullifier has been spent (prevents ZK proof double-use)
+    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool> {
+        Ok(self.spent_nullifiers.read().unwrap().contains(nullifier))
+    }
+    
+    /// Mark nullifier as spent on-chain
+    fn mark_nullifier_spent(&mut self, nullifier: [u8; 32]) -> Result<()> {
+        self.spent_nullifiers.write().unwrap().insert(nullifier);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +458,38 @@ mod tests {
         // With MockRpcClient, transactions confirm immediately
         let confirmed = client.wait_for_finality(&tx_id, 1).await.unwrap();
         assert!(confirmed);
+    }
+
+    #[tokio::test]
+    async fn test_privacy_blockchain_client_identity_registry() {
+        let config = ChatChainConfig::default();
+        let client = ChatChainClient::new_mock(config);
+
+        let user_id = UserId(Uuid::new_v4());
+        let public_key: [u8; 32] = [42u8; 32];
+        
+        // Register user with 32-byte public key
+        client.register_user(&user_id, public_key.to_vec()).await.unwrap();
+        
+        // Verify identity is stored via privacy trait
+        let retrieved_key = client.get_user_public_key(&user_id).unwrap();
+        assert_eq!(retrieved_key, public_key);
+    }
+
+    #[tokio::test]
+    async fn test_privacy_blockchain_client_nullifier_tracking() {
+        let config = ChatChainConfig::default();
+        let mut client = ChatChainClient::new_mock(config);
+
+        let nullifier: [u8; 32] = [0xAB; 32];
+        
+        // Initially not spent
+        assert!(!client.is_nullifier_spent(&nullifier).unwrap());
+        
+        // Mark as spent
+        client.mark_nullifier_spent(nullifier).unwrap();
+        
+        // Now should be spent
+        assert!(client.is_nullifier_spent(&nullifier).unwrap());
     }
 }

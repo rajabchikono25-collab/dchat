@@ -404,6 +404,7 @@ checksum = "1f3a13b34da09176a8baba701233fdffbaa7c1b1192ce031a3da4e55ce1f1a56"
 dependencies = [
  "ark-ec",
  "ark-ff",
+ "ark-r1cs-std",
  "ark-relations",
  "ark-serialize",
  "ark-snark",
@@ -412,6 +413,7 @@ dependencies = [
  "derivative",
  "digest",
  "sha2",
+ "tracing",
 ]
 
 [[package]]
@@ -2150,6 +2152,7 @@ dependencies = [
  "chrono",
  "dchat-chain",
  "dchat-core",
+ "dchat-privacy",
  "ed25519-dalek",
  "futures-util",
  "hex",
@@ -2309,6 +2312,18 @@ dependencies = [
 [[package]]
 name = "dchat-data"
 version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bincode",
+ "blake3",
+ "chrono",
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
 
 [[package]]
 name = "dchat-deployment"
@@ -2515,6 +2530,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-bn254",
+ "ark-crypto-primitives",
  "ark-ec",
  "ark-ff",
  "ark-groth16",
@@ -2534,7 +2550,9 @@ dependencies = [
  "num-integer",
  "num-traits",
  "rand 0.8.5",
+ "rsa",
  "serde",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

@@ -74,3 +74,9 @@ pub use vote_persistence::{
     PoRWVoteRecord, PoTProofRecord, TSCVoteRecord, ValidatorStats, VotePersistence,
     VotePersistenceError,
 };
+
+// Re-export privacy trait implementations for integration
+// ChatChainClient implements dchat_privacy::zk_proofs::BlockchainClient
+// CurrencyChainClient implements dchat_privacy::blind_tokens::CurrencyChainClient
+pub use dchat_privacy::zk_proofs::BlockchainClient as PrivacyBlockchainClient;
+pub use dchat_privacy::blind_tokens::CurrencyChainClient as PrivacyCurrencyChainClient;

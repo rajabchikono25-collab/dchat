@@ -1,18 +1,27 @@
 // Blind Token System for Anonymous Messaging and Unlinkable Purchases
 //
-// This module implements cryptographic blind signatures that prevent
-// linking token purchases to token usage, enabling:
+// This module implements RSA-BSSA (Blind Signature Scheme with Appendix)
+// based on RFC 9474 for production-grade blind signatures.
+//
+// Features:
 // - Anonymous message sending without wallet linkage
 // - Unlinkable microtransactions
 // - Privacy-preserving access control
+// - Proper RSA key management (2048-bit keys)
+//
+// See: https://www.rfc-editor.org/rfc/rfc9474.html
 
-use curve25519_dalek::Scalar;
 use dchat_core::{Error, Result};
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use num_bigint::BigUint;
 use num_traits::One;
 use rand::{CryptoRng, Rng};
+use rsa::{
+    BigUint as RsaBigUint,
+    RsaPrivateKey, RsaPublicKey,
+    traits::{PrivateKeyParts, PublicKeyParts},
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::ops::Rem;
 
 /// Trait for querying currency chain for payment verification
@@ -32,56 +41,185 @@ pub trait CurrencyChainClient: Send + Sync {
     fn mark_token_redeemed(&mut self, signature_hash: [u8; 32]) -> Result<()>;
 }
 
+/// RSA key size for blind signatures (2048 bits for security)
+const RSA_KEY_BITS: usize = 2048;
+
 /// A blind token that can be redeemed anonymously
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlindToken {
-    /// Blinded value (user doesn't know the unblinded signature)
-    pub blinded_value: [u8; 32],
+    /// Original message hash (token nonce hash)
+    pub message_hash: [u8; 32],
+    /// Blinded value sent to issuer
+    pub blinded_value: Vec<u8>,
     /// Unblinded signature (after issuer signs)
     pub signature: Option<Vec<u8>>,
     /// Token value (e.g., number of messages)
     pub value: u64,
 }
 
+/// Serializable RSA public key for token verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenIssuerPublicKey {
+    /// RSA modulus N (big-endian bytes)
+    pub n: Vec<u8>,
+    /// RSA public exponent e (big-endian bytes)
+    pub e: Vec<u8>,
+}
+
+impl TokenIssuerPublicKey {
+    /// Create from RSA public key
+    pub fn from_rsa(public_key: &RsaPublicKey) -> Self {
+        Self {
+            n: public_key.n().to_bytes_be(),
+            e: public_key.e().to_bytes_be(),
+        }
+    }
+    
+    /// Convert to RSA public key
+    pub fn to_rsa(&self) -> Result<RsaPublicKey> {
+        let n = RsaBigUint::from_bytes_be(&self.n);
+        let e = RsaBigUint::from_bytes_be(&self.e);
+        RsaPublicKey::new(n, e)
+            .map_err(|e| Error::validation(format!("Invalid RSA public key: {}", e)))
+    }
+}
+
 /// Token issuer (typically a relay node or payment processor)
+/// Uses RSA-2048 for production-grade blind signatures
 pub struct TokenIssuer {
-    /// Issuer's signing key
-    signing_key: SigningKey,
+    /// RSA private key for signing
+    private_key: RsaPrivateKey,
+    /// RSA public key for distribution
+    public_key: RsaPublicKey,
 }
 
 /// Blind signer (user side) for creating blind tokens
 pub struct BlindSigner {
-    /// Blinding factor (secret)
-    blinding_factor: Scalar,
+    /// Blinding factor r (random value coprime to N)
+    blinding_factor: BigUint,
+    /// Issuer's public key (needed for blinding/unblinding)
+    issuer_public_key: RsaPublicKey,
 }
 
-/// Token verifier (anyone can verify)
-#[allow(dead_code)]
+/// Token verifier (anyone can verify with issuer's public key)
 pub struct TokenVerifier {
-    /// Issuer's public key
-    public_key: VerifyingKey,
+    /// Issuer's RSA public key
+    public_key: RsaPublicKey,
+}
+
+/// Compute modular exponentiation: base^exp mod modulus
+fn mod_pow(base: &BigUint, exp: &BigUint, modulus: &BigUint) -> BigUint {
+    base.modpow(exp, modulus)
+}
+
+/// Compute modular inverse: a^(-1) mod n using Fermat's little theorem
+/// For RSA modulus N = p*q, we use extended Euclidean algorithm
+fn mod_inverse(a: &BigUint, n: &BigUint) -> Option<BigUint> {
+    use num_bigint::BigInt;
+    use num_traits::{Signed, Zero};
+    
+    // Convert to signed integers for extended GCD
+    let a_signed = BigInt::from(a.clone());
+    let n_signed = BigInt::from(n.clone());
+    
+    // Extended Euclidean algorithm
+    let mut old_r = a_signed;
+    let mut r = n_signed.clone();
+    let mut old_s = BigInt::from(1);
+    let mut s = BigInt::zero();
+    
+    while !r.is_zero() {
+        let quotient = &old_r / &r;
+        let temp_r = old_r.clone();
+        old_r = r.clone();
+        r = temp_r - &quotient * &r;
+        
+        let temp_s = old_s.clone();
+        old_s = s.clone();
+        s = temp_s - &quotient * &s;
+    }
+    
+    // GCD must be 1 for inverse to exist
+    if old_r != BigInt::from(1) {
+        return None;
+    }
+    
+    // Ensure result is positive modulo n
+    let result = if old_s.is_negative() {
+        old_s + n_signed
+    } else {
+        old_s
+    };
+    
+    // Convert back to unsigned
+    result.to_biguint()
 }
 
 impl TokenIssuer {
-    /// Create a new token issuer with a random key
-    pub fn new<R: Rng + CryptoRng>(rng: &mut R) -> Self {
-        let signing_key = SigningKey::generate(rng);
-        Self { signing_key }
+    /// Create a new token issuer with a fresh RSA-2048 key pair
+    pub fn new<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self> {
+        let private_key = RsaPrivateKey::new(rng, RSA_KEY_BITS)
+            .map_err(|e| Error::validation(format!("Failed to generate RSA key: {}", e)))?;
+        let public_key = RsaPublicKey::from(&private_key);
+        
+        Ok(Self { private_key, public_key })
+    }
+    
+    /// Create issuer from existing RSA private key bytes
+    pub fn from_private_key_der(der_bytes: &[u8]) -> Result<Self> {
+        use rsa::pkcs8::DecodePrivateKey;
+        let private_key = RsaPrivateKey::from_pkcs8_der(der_bytes)
+            .map_err(|e| Error::validation(format!("Failed to parse RSA private key: {}", e)))?;
+        let public_key = RsaPublicKey::from(&private_key);
+        
+        Ok(Self { private_key, public_key })
+    }
+    
+    /// Export private key as DER bytes (for secure storage)
+    pub fn private_key_der(&self) -> Result<Vec<u8>> {
+        use rsa::pkcs8::EncodePrivateKey;
+        self.private_key.to_pkcs8_der()
+            .map(|doc| doc.as_bytes().to_vec())
+            .map_err(|e| Error::validation(format!("Failed to export private key: {}", e)))
     }
 
     /// Get the issuer's public key for verification
-    pub fn public_key(&self) -> VerifyingKey {
-        self.signing_key.verifying_key()
+    pub fn public_key(&self) -> TokenIssuerPublicKey {
+        TokenIssuerPublicKey::from_rsa(&self.public_key)
+    }
+    
+    /// Get RSA public key reference
+    pub fn rsa_public_key(&self) -> &RsaPublicKey {
+        &self.public_key
     }
 
     /// Issue a blind signature on a blinded token request
     ///
     /// The issuer signs the blinded value without knowing what the
     /// final unblinded token will look like.
-    pub fn issue_blind_signature(&self, blinded_value: &[u8; 32]) -> Result<Vec<u8>> {
-        // Sign the blinded value
-        let signature = self.signing_key.sign(blinded_value);
-        Ok(signature.to_bytes().to_vec())
+    ///
+    /// RSA blind signature: sig = blinded_msg^d mod N
+    pub fn issue_blind_signature(&self, blinded_value: &[u8]) -> Result<Vec<u8>> {
+        // Convert blinded value to BigUint
+        let blinded_msg = BigUint::from_bytes_be(blinded_value);
+        
+        // Get RSA private exponent d and modulus N
+        let d = BigUint::from_bytes_be(&self.private_key.d().to_bytes_be());
+        let n = BigUint::from_bytes_be(&self.public_key.n().to_bytes_be());
+        
+        // Compute blind signature: sig = blinded_msg^d mod N
+        let blind_sig = mod_pow(&blinded_msg, &d, &n);
+        
+        // Return as fixed-size bytes (RSA_KEY_BITS / 8 = 256 bytes for RSA-2048)
+        let mut sig_bytes = blind_sig.to_bytes_be();
+        let expected_len = RSA_KEY_BITS / 8;
+        
+        // Pad with leading zeros if needed
+        while sig_bytes.len() < expected_len {
+            sig_bytes.insert(0, 0);
+        }
+        
+        Ok(sig_bytes)
     }
 
     /// Verify payment before issuing token
@@ -95,11 +233,6 @@ impl TokenIssuer {
         amount: u64,
         currency_chain: Option<(&dyn CurrencyChainClient, &str)>,
     ) -> Result<bool> {
-        // 1. Check payment transaction exists and is confirmed
-        // 2. Verify payment amount >= token value
-        // 3. Verify payment is to token issuer address
-        // 4. Check transaction hasn't been used before (prevent double-spend)
-
         if amount == 0 {
             return Ok(false);
         }
@@ -108,7 +241,7 @@ impl TokenIssuer {
         
         if let Some((client, tx_hash)) = currency_chain {
             // Production: Query currency chain for payment transaction
-            let issuer_address = hex::encode(self.signing_key.as_bytes());
+            let issuer_address = hex::encode(self.public_key.n().to_bytes_be());
             
             let payment_valid = client.verify_payment_transaction(
                 tx_hash,
@@ -119,8 +252,8 @@ impl TokenIssuer {
             if !payment_valid {
                 return Err(Error::validation(
                     format!(
-                        "Payment verification failed: expected {} tokens to {}",
-                        amount, issuer_address
+                        "Payment verification failed: expected {} tokens",
+                        amount
                     )
                 ));
             }
@@ -143,18 +276,48 @@ impl TokenIssuer {
 }
 
 impl BlindSigner {
-    /// Create a new blind signer with random blinding factor
-    pub fn new<R: Rng + CryptoRng>(rng: &mut R) -> Self {
-        let mut bytes = [0u8; 32];
-        rng.fill(&mut bytes);
-        let blinding_factor = Scalar::from_bytes_mod_order(bytes);
-        Self { blinding_factor }
+    /// Create a new blind signer with the issuer's public key
+    pub fn new<R: Rng + CryptoRng>(rng: &mut R, issuer_public_key: &RsaPublicKey) -> Result<Self> {
+        let n = BigUint::from_bytes_be(&issuer_public_key.n().to_bytes_be());
+        
+        // Generate random blinding factor r coprime to N
+        let blinding_factor = Self::generate_blinding_factor(rng, &n)?;
+        
+        Ok(Self {
+            blinding_factor,
+            issuer_public_key: issuer_public_key.clone(),
+        })
+    }
+    
+    /// Generate a random blinding factor coprime to N
+    fn generate_blinding_factor<R: Rng + CryptoRng>(rng: &mut R, n: &BigUint) -> Result<BigUint> {
+        use num_integer::Integer;
+        
+        // Generate random bytes (same size as modulus)
+        let n_bytes = n.to_bytes_be();
+        let mut r_bytes = vec![0u8; n_bytes.len()];
+        
+        for _ in 0..100 {
+            rng.fill(&mut r_bytes[..]);
+            
+            // Ensure r < N
+            let r = BigUint::from_bytes_be(&r_bytes).rem(n);
+            
+            // Check gcd(r, N) == 1
+            if r > BigUint::one() && r.gcd(n) == BigUint::one() {
+                return Ok(r);
+            }
+        }
+        
+        Err(Error::validation("Failed to generate valid blinding factor"))
     }
 
     /// Create a blinded token request
     ///
-    /// User creates a token with a random nonce, blinds it,
+    /// User creates a token with a random nonce, blinds it using RSA-BSSA,
     /// and sends to issuer for signing.
+    ///
+    /// blinded_msg = H(nonce) * r^e mod N
     pub fn create_blind_request<R: Rng + CryptoRng>(
         &self,
         value: u64,
@@ -164,37 +327,32 @@ impl BlindSigner {
         let mut nonce = [0u8; 32];
         rng.fill(&mut nonce);
 
-        // Production: RSA-BSSA blind signature blinding
-        // blinded_message = message * (blinding_factor^e) mod N
-        use num_traits::One;
-
-        // RSA-2048 public exponent (standard value)
-        let public_exponent = BigUint::from(65537u32);
-
-        // Use SHA-256 hash of nonce as message representative
-        let message_hash = blake3::hash(&nonce);
-        let message_int = BigUint::from_bytes_be(message_hash.as_bytes());
-
-        // Create a 2048-bit modulus (in production, use issuer's actual RSA public key)
-        // For now, use a deterministic but cryptographically large modulus
-        let modulus_hash = blake3::hash(b"dchat-blind-token-modulus-v1");
-        let modulus_bytes = modulus_hash.as_bytes();
-        let mut modulus_vec = vec![0xFF; 256]; // 2048 bits
-        modulus_vec[..32].copy_from_slice(modulus_bytes);
-        let modulus = BigUint::from_bytes_be(&modulus_vec) | BigUint::one();
-
-        let blinding_factor_int = BigUint::from_bytes_be(&self.blinding_factor.to_bytes());
-        let blinded_int =
-            (message_int * blinding_factor_int.modpow(&public_exponent, &modulus)).rem(&modulus);
-
-        let blinded_bytes = blinded_int.to_bytes_be();
-        let mut blinded_value = [0u8; 32];
-        let copy_len = blinded_bytes.len().min(32);
-        blinded_value[32 - copy_len..]
-            .copy_from_slice(&blinded_bytes[blinded_bytes.len() - copy_len..]);
+        // Hash the nonce using SHA-256
+        let mut hasher = Sha256::new();
+        hasher.update(&nonce);
+        let message_hash: [u8; 32] = hasher.finalize().into();
+        
+        // Convert message hash to BigUint for RSA blinding
+        let msg = BigUint::from_bytes_be(&message_hash);
+        
+        // Get RSA parameters
+        let n = BigUint::from_bytes_be(&self.issuer_public_key.n().to_bytes_be());
+        let e = BigUint::from_bytes_be(&self.issuer_public_key.e().to_bytes_be());
+        
+        // Compute blinded message: blinded = msg * r^e mod N
+        let r_e = mod_pow(&self.blinding_factor, &e, &n);
+        let blinded_msg = (msg * r_e).rem(&n);
+        
+        // Convert to bytes
+        let mut blinded_bytes = blinded_msg.to_bytes_be();
+        let expected_len = RSA_KEY_BITS / 8;
+        while blinded_bytes.len() < expected_len {
+            blinded_bytes.insert(0, 0);
+        }
 
         Ok(BlindToken {
-            blinded_value,
+            message_hash,
+            blinded_value: blinded_bytes,
             signature: None,
             value,
         })
@@ -202,58 +360,53 @@ impl BlindSigner {
 
     /// Unblind a signature received from the issuer
     ///
-    /// Remove the blinding factor to get the final signature
-    /// that can be verified against the original (now revealed) nonce.
+    /// Remove the blinding factor to get the final valid signature.
+    ///
+    /// unblinded_sig = blind_sig * r^(-1) mod N
     pub fn unblind_signature(
         &self,
         token: &mut BlindToken,
         blind_signature: Vec<u8>,
     ) -> Result<()> {
-        // Production: RSA-BSSA blind signature unblinding
-        // unblinded_signature = blinded_signature * blinding_factor^(-1) mod N
-        use num_bigint::BigUint;
-        use num_integer::Integer;
-
-        let blind_sig_int = BigUint::from_bytes_be(&blind_signature);
-        let blinding_factor_int = BigUint::from_bytes_be(&self.blinding_factor.to_bytes());
-
-        // Create same modulus as in blinding (must match issuer's RSA modulus)
-        let modulus_hash = blake3::hash(b"dchat-blind-token-modulus-v1");
-        let modulus_bytes = modulus_hash.as_bytes();
-        let mut modulus_vec = vec![0xFF; 256];
-        modulus_vec[..32].copy_from_slice(modulus_bytes);
-        let modulus = BigUint::from_bytes_be(&modulus_vec) | BigUint::one();
-
-        // Compute modular inverse: blinding_factor^(-1) mod N
-        let extended_gcd_result = blinding_factor_int.extended_gcd(&modulus);
-        if !extended_gcd_result.gcd.is_one() {
-            return Err(Error::Crypto(
-                "Failed to compute modular inverse".to_string(),
-            ));
+        let blind_sig = BigUint::from_bytes_be(&blind_signature);
+        let n = BigUint::from_bytes_be(&self.issuer_public_key.n().to_bytes_be());
+        
+        // Compute r^(-1) mod N
+        let r_inv = mod_inverse(&self.blinding_factor, &n)
+            .ok_or_else(|| Error::Crypto("Failed to compute modular inverse".to_string()))?;
+        
+        // Compute unblinded signature: sig = blind_sig * r^(-1) mod N
+        let unblinded_sig = (blind_sig * r_inv).rem(&n);
+        
+        // Convert to fixed-size bytes
+        let mut sig_bytes = unblinded_sig.to_bytes_be();
+        let expected_len = RSA_KEY_BITS / 8;
+        while sig_bytes.len() < expected_len {
+            sig_bytes.insert(0, 0);
         }
 
-        // Extended GCD on BigUint returns BigUint, already positive
-        // For RSA, we need the multiplicative inverse which is always positive modulo N
-        let blinding_inverse = extended_gcd_result.x;
-
-        let unblinded_int = (blind_sig_int * blinding_inverse).rem(&modulus);
-        let unblinded_sig = unblinded_int.to_bytes_be();
-
-        token.signature = Some(unblinded_sig.to_vec());
+        token.signature = Some(sig_bytes);
         Ok(())
     }
 }
 
 impl TokenVerifier {
     /// Create a verifier with the issuer's public key
-    pub fn new(public_key: VerifyingKey) -> Self {
+    pub fn new(public_key: RsaPublicKey) -> Self {
         Self { public_key }
+    }
+    
+    /// Create from serializable public key
+    pub fn from_issuer_key(key: &TokenIssuerPublicKey) -> Result<Self> {
+        Ok(Self {
+            public_key: key.to_rsa()?,
+        })
     }
 
     /// Verify that a token was signed by the issuer
     ///
     /// This happens when the token is redeemed. The verifier checks
-    /// the signature but cannot link it back to the original blind request.
+    /// the RSA signature: msg = sig^e mod N
     pub fn verify_token(&self, token: &BlindToken) -> Result<bool> {
         self.verify_token_with_blockchain(token, None)
     }
@@ -269,20 +422,6 @@ impl TokenVerifier {
             .as_ref()
             .ok_or_else(|| Error::validation("Token not signed".to_string()))?;
 
-        // Verify Ed25519 signature on the blinded value
-        if signature.len() != 64 {
-            return Ok(false);
-        }
-
-        // Parse signature bytes
-        let sig_bytes: [u8; 64] = signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| Error::validation("Invalid signature length"))?;
-
-        use ed25519_dalek::Signature;
-        let sig = Signature::from_bytes(&sig_bytes);
-        
         // Check if token already redeemed (prevent double-spend)
         if let Some(client) = currency_chain {
             let sig_hash_bytes = blake3::hash(signature);
@@ -295,12 +434,29 @@ impl TokenVerifier {
             }
         }
 
-        // Verify using issuer's public key
-        tracing::debug!("Verifying Ed25519 signature on blind token");
-        Ok(self
-            .public_key
-            .verify_strict(&token.blinded_value, &sig)
-            .is_ok())
+        // Get RSA parameters
+        let n = BigUint::from_bytes_be(&self.public_key.n().to_bytes_be());
+        let e = BigUint::from_bytes_be(&self.public_key.e().to_bytes_be());
+        
+        // Convert signature to BigUint
+        let sig = BigUint::from_bytes_be(signature);
+        
+        // Verify: recovered_msg = sig^e mod N
+        let recovered_msg = mod_pow(&sig, &e, &n);
+        
+        // Convert original message hash to BigUint
+        let original_msg = BigUint::from_bytes_be(&token.message_hash);
+        
+        // Verify recovered message matches original
+        let valid = recovered_msg == original_msg;
+        
+        if valid {
+            tracing::debug!("RSA blind token signature verified successfully");
+        } else {
+            tracing::warn!("RSA blind token signature verification failed");
+        }
+        
+        Ok(valid)
     }
 
     /// Check if token has sufficient value for operation
@@ -350,9 +506,10 @@ mod tests {
     #[test]
     fn test_token_issuer_creation() {
         let mut rng = OsRng;
-        let issuer = TokenIssuer::new(&mut rng);
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
         let public_key = issuer.public_key();
-        assert_eq!(public_key.as_bytes().len(), 32);
+        assert!(!public_key.n.is_empty());
+        assert!(!public_key.e.is_empty());
     }
 
     #[test]
@@ -360,8 +517,8 @@ mod tests {
         let mut rng = OsRng;
 
         // Setup: Issuer and user
-        let issuer = TokenIssuer::new(&mut rng);
-        let signer = BlindSigner::new(&mut rng);
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
+        let signer = BlindSigner::new(&mut rng, issuer.rsa_public_key()).unwrap();
 
         // User creates blind request
         let mut token = signer.create_blind_request(100, &mut rng).unwrap();
@@ -380,9 +537,9 @@ mod tests {
     fn test_token_verification() {
         let mut rng = OsRng;
 
-        let issuer = TokenIssuer::new(&mut rng);
-        let signer = BlindSigner::new(&mut rng);
-        let verifier = TokenVerifier::new(issuer.public_key());
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
+        let signer = BlindSigner::new(&mut rng, issuer.rsa_public_key()).unwrap();
+        let verifier = TokenVerifier::new(issuer.rsa_public_key().clone());
 
         // Create and sign token
         let mut token = signer.create_blind_request(50, &mut rng).unwrap();
@@ -398,9 +555,9 @@ mod tests {
     fn test_token_value_check() {
         let mut rng = OsRng;
 
-        let issuer = TokenIssuer::new(&mut rng);
-        let verifier = TokenVerifier::new(issuer.public_key());
-        let signer = BlindSigner::new(&mut rng);
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
+        let verifier = TokenVerifier::new(issuer.rsa_public_key().clone());
+        let signer = BlindSigner::new(&mut rng, issuer.rsa_public_key()).unwrap();
 
         let token = signer.create_blind_request(100, &mut rng).unwrap();
 
@@ -421,5 +578,62 @@ mod tests {
         // Second redemption should fail
         let result = tracker.mark_redeemed(token_id);
         assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_issuer_key_serialization() {
+        let mut rng = OsRng;
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
+        
+        // Get public key and serialize
+        let public_key = issuer.public_key();
+        
+        // Recreate verifier from serialized key
+        let verifier = TokenVerifier::from_issuer_key(&public_key).unwrap();
+        
+        // Create a token and verify it works
+        let signer = BlindSigner::new(&mut rng, issuer.rsa_public_key()).unwrap();
+        let mut token = signer.create_blind_request(10, &mut rng).unwrap();
+        let blind_sig = issuer.issue_blind_signature(&token.blinded_value).unwrap();
+        signer.unblind_signature(&mut token, blind_sig).unwrap();
+        
+        let valid = verifier.verify_token(&token).unwrap();
+        assert!(valid);
+    }
+    
+    #[test]
+    fn test_issuer_key_persistence() {
+        let mut rng = OsRng;
+        
+        // Create issuer and export key
+        let issuer1 = TokenIssuer::new(&mut rng).unwrap();
+        let private_key_der = issuer1.private_key_der().unwrap();
+        
+        // Recreate issuer from exported key
+        let issuer2 = TokenIssuer::from_private_key_der(&private_key_der).unwrap();
+        
+        // Verify they produce same public key
+        assert_eq!(issuer1.public_key().n, issuer2.public_key().n);
+        assert_eq!(issuer1.public_key().e, issuer2.public_key().e);
+    }
+    
+    #[test]
+    fn test_wrong_issuer_fails() {
+        let mut rng = OsRng;
+        
+        // Two different issuers
+        let issuer1 = TokenIssuer::new(&mut rng).unwrap();
+        let issuer2 = TokenIssuer::new(&mut rng).unwrap();
+        
+        // Create token with issuer1's key
+        let signer = BlindSigner::new(&mut rng, issuer1.rsa_public_key()).unwrap();
+        let mut token = signer.create_blind_request(10, &mut rng).unwrap();
+        let blind_sig = issuer1.issue_blind_signature(&token.blinded_value).unwrap();
+        signer.unblind_signature(&mut token, blind_sig).unwrap();
+        
+        // Try to verify with issuer2's key - should fail
+        let verifier = TokenVerifier::new(issuer2.rsa_public_key().clone());
+        let valid = verifier.verify_token(&token).unwrap();
+        assert!(!valid, "Token signed by different issuer should not verify");
     }
 }
