@@ -6,6 +6,7 @@
 //! - Digital signatures
 //! - Post-quantum cryptography support
 //! - Zero-knowledge proofs
+//! - BIP-39 mnemonic seed phrases
 
 pub mod crypto; // Additional crypto modules (handshake, versioning)
 mod encryption;
@@ -13,6 +14,7 @@ pub mod handshake;
 pub mod kdf;
 pub mod keys;
 pub mod kms; // AWS KMS integration for secure key management
+pub mod mnemonic; // BIP-39 mnemonic seed phrases
 pub mod noise;
 pub mod post_quantum;
 pub mod rotation;
@@ -28,6 +30,7 @@ pub use encryption::{
 };
 pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
 pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
+pub use mnemonic::{Mnemonic, MnemonicLength, Seed}; // BIP-39 mnemonic exports
 pub use noise::{NoiseHandshake, NoiseSession};
 pub use rotation::{KeyRotationManager, RotationPolicy};
 pub use signatures::{sign, verify, SigningKey, VerifyingKey};

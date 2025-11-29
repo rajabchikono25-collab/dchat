@@ -8,7 +8,7 @@
 //! - Anomaly detection in traces
 //! - OpenTelemetry compatibility
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -237,9 +237,10 @@ pub enum AnomalySeverity {
     Critical,
 }
 
-/// Enhanced distributed tracer
+/// Enhanced distributed tracer with cross-shard correlation and anomaly detection
 pub struct EnhancedDistributedTracer {
     spans: HashMap<Uuid, EnhancedSpan>,
+    #[allow(dead_code)] // Used for future sampling decisions
     sampling_strategy: SamplingStrategy,
     baseline_metrics: HashMap<String, SpanStats>,
 }

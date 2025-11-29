@@ -41,7 +41,10 @@ base64 = { workspace = true }
 zeroize = "1.8"
 constant_time_eq = "0.3"
 hkdf = "0.12"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 getrandom = "0.2"
+unicode-normalization = "0.1"
 toml = "0.8"
 chrono = { workspace = true }
 tracing = { workspace = true }

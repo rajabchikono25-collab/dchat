@@ -467,9 +467,9 @@ mod tests {
         let keypair = KeyPair::generate();
         let manager = NoiseHandshakeManager::new(keypair.private_key().clone());
 
-        // Create fake first message
+        // Create test handshake message (invalid format for testing error handling)
         let peer_id = random_peer_id();
-        let first_message = vec![0u8; 64]; // Placeholder
+        let first_message = vec![0u8; 64]; // Test data - not a valid Noise message
 
         let result = manager
             .respond_to_handshake(peer_id, NoisePattern::XX, &first_message)

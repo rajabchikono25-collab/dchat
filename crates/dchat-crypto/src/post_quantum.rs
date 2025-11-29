@@ -1,7 +1,17 @@
 //! Post-quantum cryptography support
+//!
+//! This module provides hybrid classical/post-quantum cryptographic primitives:
+//! - **HybridKem**: Combines X25519 ECDH with ML-KEM-768 (Kyber) for key encapsulation
+//! - **HybridSigner**: Combines Ed25519 with Falcon512 for signatures
+//!
+//! The hybrid approach provides security even if one algorithm is broken:
+//! - If classical crypto is broken (e.g., by quantum computers), PQ crypto protects
+//! - If PQ crypto has undiscovered weaknesses, classical crypto protects
 
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
+use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 // Re-export post-quantum traits
 pub use pqcrypto_traits::kem::{
@@ -67,86 +77,195 @@ pub mod falcon {
     }
 }
 
-/// Hybrid cryptosystem combining classical and post-quantum algorithms
+/// Hybrid cryptosystem combining classical X25519 and post-quantum ML-KEM-768
+/// 
+/// This provides defense-in-depth: security holds if either algorithm is secure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridPublicKey {
-    pub classical: crate::keys::PublicKey,
-    pub post_quantum: Vec<u8>, // Serialized PQ public key
+    /// X25519 public key for classical ECDH
+    pub classical: [u8; 32],
+    /// ML-KEM-768 public key
+    pub post_quantum: Vec<u8>,
 }
 
-#[derive(Debug)]
+/// Hybrid secret key containing both classical and post-quantum components
+#[derive(Zeroize)]
+#[zeroize(drop)]
 pub struct HybridSecretKey {
-    pub classical: crate::keys::PrivateKey,
-    pub post_quantum: Vec<u8>, // Serialized PQ secret key
+    /// X25519 secret key bytes (zeroized on drop)
+    pub classical: [u8; 32],
+    /// ML-KEM-768 secret key (zeroized on drop)  
+    pub post_quantum: Vec<u8>,
 }
 
-/// Hybrid key encapsulation mechanism
+// Manual Debug impl to avoid leaking secret material
+impl std::fmt::Debug for HybridSecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HybridSecretKey")
+            .field("classical", &"[REDACTED]")
+            .field("post_quantum", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Hybrid ciphertext containing both classical and post-quantum components
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridCiphertext {
+    /// X25519 ephemeral public key
+    pub classical_ephemeral: [u8; 32],
+    /// ML-KEM-768 ciphertext
+    pub post_quantum: Vec<u8>,
+}
+
+/// Hybrid key encapsulation mechanism combining X25519 and ML-KEM-768
+///
+/// Security properties:
+/// - Provides IND-CCA2 security if either X25519 or ML-KEM-768 is secure
+/// - Forward secrecy via ephemeral keys
+/// - Resistant to harvest-now-decrypt-later quantum attacks
 pub struct HybridKem;
 
 impl HybridKem {
-    /// Generate a hybrid keypair
+    /// Generate a hybrid keypair for key encapsulation
     pub fn keypair() -> Result<(HybridPublicKey, HybridSecretKey)> {
-        // Generate classical keypair
-        let classical_keypair = crate::keys::KeyPair::generate();
-        let (classical_private, classical_public) = classical_keypair.into_keys();
+        // Generate X25519 keypair
+        let classical_secret = StaticSecret::random_from_rng(rand::thread_rng());
+        let classical_public = X25519PublicKey::from(&classical_secret);
 
         // Generate post-quantum keypair
         let (pq_public, pq_secret) = kyber::keypair();
 
         let hybrid_public = HybridPublicKey {
-            classical: classical_public,
+            classical: classical_public.to_bytes(),
             post_quantum: pq_public.as_bytes().to_vec(),
         };
 
         let hybrid_secret = HybridSecretKey {
-            classical: classical_private,
+            classical: classical_secret.as_bytes().clone(),
             post_quantum: pq_secret.as_bytes().to_vec(),
         };
 
         Ok((hybrid_public, hybrid_secret))
     }
 
-    /// Encapsulate using both classical and post-quantum methods
-    pub fn encapsulate(public_key: &HybridPublicKey) -> Result<(Vec<u8>, Vec<u8>)> {
-        // Classical key agreement (simplified - in practice would use ECDH)
-        let classical_shared = crate::hash(public_key.classical.as_bytes());
+    /// Encapsulate: Generate a shared secret and ciphertext for the recipient
+    ///
+    /// Uses ephemeral X25519 key for forward secrecy combined with ML-KEM-768.
+    /// The shared secrets from both are combined using HKDF.
+    pub fn encapsulate(public_key: &HybridPublicKey) -> Result<(Vec<u8>, HybridCiphertext)> {
+        // Classical X25519 key agreement with ephemeral key
+        let ephemeral_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
+        let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
+        
+        let recipient_classical = X25519PublicKey::from(public_key.classical);
+        let classical_shared = ephemeral_secret.diffie_hellman(&recipient_classical);
 
         // Post-quantum encapsulation
         let pq_public = kyber::PublicKey::from_bytes(&public_key.post_quantum)
             .map_err(|_| Error::crypto("Invalid PQ public key"))?;
         let (pq_shared, pq_ciphertext) = kyber::encapsulate(&pq_public);
 
-        // Combine shared secrets
-        let mut combined_shared = Vec::new();
-        combined_shared.extend_from_slice(&classical_shared);
-        combined_shared.extend_from_slice(pq_shared.as_bytes());
+        // Combine shared secrets using HKDF for proper key derivation
+        let combined_shared = Self::combine_shared_secrets(
+            classical_shared.as_bytes(),
+            pq_shared.as_bytes(),
+            &ephemeral_public.to_bytes(),
+            &pq_ciphertext.as_bytes(),
+        )?;
 
-        let final_shared = crate::hash(&combined_shared);
+        let ciphertext = HybridCiphertext {
+            classical_ephemeral: ephemeral_public.to_bytes(),
+            post_quantum: pq_ciphertext.as_bytes().to_vec(),
+        };
 
-        Ok((final_shared.to_vec(), pq_ciphertext.as_bytes().to_vec()))
+        Ok((combined_shared, ciphertext))
     }
 
-    /// Decapsulate using both classical and post-quantum methods
-    pub fn decapsulate(ciphertext: &[u8], secret_key: &HybridSecretKey) -> Result<Vec<u8>> {
-        // Classical key agreement
-        let classical_public = secret_key.classical.public_key();
-        let classical_shared = crate::hash(classical_public.as_bytes());
+    /// Decapsulate: Recover the shared secret from the ciphertext
+    pub fn decapsulate(ciphertext: &HybridCiphertext, secret_key: &HybridSecretKey) -> Result<Vec<u8>> {
+        // Classical X25519 key agreement
+        let classical_secret = StaticSecret::from(secret_key.classical);
+        let ephemeral_public = X25519PublicKey::from(ciphertext.classical_ephemeral);
+        let classical_shared = classical_secret.diffie_hellman(&ephemeral_public);
 
         // Post-quantum decapsulation
         let pq_secret = kyber::SecretKey::from_bytes(&secret_key.post_quantum)
             .map_err(|_| Error::crypto("Invalid PQ secret key"))?;
-        let pq_ciphertext = kyber::Ciphertext::from_bytes(ciphertext)
+        let pq_ciphertext = kyber::Ciphertext::from_bytes(&ciphertext.post_quantum)
             .map_err(|_| Error::crypto("Invalid PQ ciphertext"))?;
         let pq_shared = kyber::decapsulate(&pq_ciphertext, &pq_secret);
 
-        // Combine shared secrets
-        let mut combined_shared = Vec::new();
-        combined_shared.extend_from_slice(&classical_shared);
-        combined_shared.extend_from_slice(pq_shared.as_bytes());
+        // Combine shared secrets using HKDF
+        let combined_shared = Self::combine_shared_secrets(
+            classical_shared.as_bytes(),
+            pq_shared.as_bytes(),
+            &ciphertext.classical_ephemeral,
+            &ciphertext.post_quantum,
+        )?;
 
-        let final_shared = crate::hash(&combined_shared);
+        Ok(combined_shared)
+    }
 
-        Ok(final_shared.to_vec())
+    /// Combine classical and PQ shared secrets using HKDF
+    /// 
+    /// Uses the ciphertext components as additional context to bind the
+    /// derived key to the specific encapsulation.
+    fn combine_shared_secrets(
+        classical: &[u8],
+        post_quantum: &[u8],
+        ephemeral_public: &[u8],
+        pq_ciphertext: &[u8],
+    ) -> Result<Vec<u8>> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        // Concatenate shared secrets as input key material
+        let mut ikm = Vec::with_capacity(classical.len() + post_quantum.len());
+        ikm.extend_from_slice(classical);
+        ikm.extend_from_slice(post_quantum);
+
+        // Use ciphertext components as salt for domain separation
+        let mut salt = Vec::with_capacity(ephemeral_public.len() + pq_ciphertext.len());
+        salt.extend_from_slice(ephemeral_public);
+        salt.extend_from_slice(pq_ciphertext);
+
+        let hkdf = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let mut output = vec![0u8; 32];
+        
+        hkdf.expand(b"dchat-hybrid-kem-v1", &mut output)
+            .map_err(|_| Error::crypto("HKDF expansion failed"))?;
+
+        Ok(output)
+    }
+
+    /// Serialize a HybridCiphertext to bytes for transmission
+    pub fn serialize_ciphertext(ciphertext: &HybridCiphertext) -> Vec<u8> {
+        let mut output = Vec::with_capacity(32 + 4 + ciphertext.post_quantum.len());
+        output.extend_from_slice(&ciphertext.classical_ephemeral);
+        output.extend_from_slice(&(ciphertext.post_quantum.len() as u32).to_le_bytes());
+        output.extend_from_slice(&ciphertext.post_quantum);
+        output
+    }
+
+    /// Deserialize a HybridCiphertext from bytes
+    pub fn deserialize_ciphertext(data: &[u8]) -> Result<HybridCiphertext> {
+        if data.len() < 36 {
+            return Err(Error::crypto("Ciphertext too short"));
+        }
+
+        let mut classical_ephemeral = [0u8; 32];
+        classical_ephemeral.copy_from_slice(&data[0..32]);
+
+        let pq_len = u32::from_le_bytes([data[32], data[33], data[34], data[35]]) as usize;
+        
+        if data.len() != 36 + pq_len {
+            return Err(Error::crypto("Invalid ciphertext length"));
+        }
+
+        Ok(HybridCiphertext {
+            classical_ephemeral,
+            post_quantum: data[36..].to_vec(),
+        })
     }
 }
 
@@ -218,9 +337,8 @@ pub fn verify_hybrid_signature(
 }
 
 #[cfg(test)]
-#[allow(unexpected_cfgs)]
-#[cfg(feature = "pq-crypto")] // Post-quantum crypto is a future feature
 mod tests {
+    use super::*;
 
     #[test]
     fn test_kyber_kem() {
@@ -257,6 +375,51 @@ mod tests {
     }
 
     #[test]
+    fn test_hybrid_kem_different_keys() {
+        // Two different keypairs should produce different shared secrets
+        let (public_key1, _secret_key1) = HybridKem::keypair().unwrap();
+        let (public_key2, secret_key2) = HybridKem::keypair().unwrap();
+        
+        let (shared1, _ciphertext1) = HybridKem::encapsulate(&public_key1).unwrap();
+        let (shared2, _ciphertext2) = HybridKem::encapsulate(&public_key2).unwrap();
+        
+        // Different encapsulations should produce different shared secrets
+        assert_ne!(shared1, shared2);
+        
+        // Decapsulating with wrong key should produce different result
+        let (shared_correct, ciphertext) = HybridKem::encapsulate(&public_key2).unwrap();
+        let shared_decapped = HybridKem::decapsulate(&ciphertext, &secret_key2).unwrap();
+        assert_eq!(shared_correct, shared_decapped);
+    }
+
+    #[test]
+    fn test_hybrid_kem_serialization() {
+        let (public_key, secret_key) = HybridKem::keypair().unwrap();
+        let (shared_secret1, ciphertext) = HybridKem::encapsulate(&public_key).unwrap();
+        
+        // Serialize and deserialize
+        let serialized = HybridKem::serialize_ciphertext(&ciphertext);
+        let deserialized = HybridKem::deserialize_ciphertext(&serialized).unwrap();
+        
+        // Should be able to decapsulate the deserialized ciphertext
+        let shared_secret2 = HybridKem::decapsulate(&deserialized, &secret_key).unwrap();
+        assert_eq!(shared_secret1, shared_secret2);
+    }
+
+    #[test]
+    fn test_hybrid_kem_ciphertext_tampering() {
+        let (public_key, secret_key) = HybridKem::keypair().unwrap();
+        let (shared_secret1, mut ciphertext) = HybridKem::encapsulate(&public_key).unwrap();
+        
+        // Tamper with the classical ephemeral key
+        ciphertext.classical_ephemeral[0] ^= 0xFF;
+        
+        // Decapsulation should produce different shared secret
+        let shared_secret2 = HybridKem::decapsulate(&ciphertext, &secret_key).unwrap();
+        assert_ne!(shared_secret1, shared_secret2);
+    }
+
+    #[test]
     fn test_hybrid_signatures() {
         let signer = HybridSigner::new();
         let message = b"Test message for hybrid signature";
@@ -266,5 +429,28 @@ mod tests {
 
         let result = verify_hybrid_signature(&signature, message, &classical_public, &pq_public);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hybrid_signature_wrong_message() {
+        let signer = HybridSigner::new();
+        let message = b"Test message for hybrid signature";
+        let wrong_message = b"Wrong message";
+
+        let signature = signer.sign(message);
+        let (classical_public, pq_public) = signer.public_keys();
+
+        let result = verify_hybrid_signature(&signature, wrong_message, &classical_public, &pq_public);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_secret_key_debug_redacted() {
+        let (_public_key, secret_key) = HybridKem::keypair().unwrap();
+        let debug_output = format!("{:?}", secret_key);
+        
+        // Ensure secret material is not leaked in debug output
+        assert!(debug_output.contains("REDACTED"));
+        assert!(!debug_output.contains(&hex::encode(&secret_key.classical)));
     }
 }

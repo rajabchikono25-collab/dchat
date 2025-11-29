@@ -87,6 +87,8 @@ impl StealthGenerator {
     /// - Only the recipient can decrypt it
     /// - Relay nodes cannot see content or recipient
     /// - Size is padded to prevent traffic analysis
+    ///
+    /// SECURITY: Uses random nonce for each message to prevent nonce reuse attacks
     pub fn create_payload<R: Rng + CryptoRng>(
         &self,
         recipient: &StealthAddress,
@@ -117,12 +119,15 @@ impl StealthGenerator {
         use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 
         let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
-        let nonce_array: [u8; 12] = encryption_key.as_bytes()[0..12]
-            .try_into()
-            .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
-        let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
+        
+        // SECURITY FIX: Generate random nonce for each message instead of deriving from key
+        // This prevents catastrophic nonce reuse when same shared secret is used
+        let mut nonce_bytes = [0u8; 12];
+        rng.fill(&mut nonce_bytes);
+        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_bytes);
+        
         let ciphertext = cipher
-            .encrypt(nonce, plaintext)
+            .encrypt(&nonce, plaintext)
             .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
 
         // Create tag for recipient identification: H(view_key || ephemeral_key)
@@ -136,10 +141,15 @@ impl StealthGenerator {
         // Pad to uniform size (e.g., 1KB blocks)
         let target_size = Self::calculate_padded_size(plaintext.len());
         let padding_size = target_size - plaintext.len();
+        
+        // Prepend nonce to ciphertext so recipient can decrypt
+        let mut ciphertext_with_nonce = Vec::with_capacity(12 + ciphertext.len());
+        ciphertext_with_nonce.extend_from_slice(&nonce_bytes);
+        ciphertext_with_nonce.extend_from_slice(&ciphertext);
 
         Ok(StealthPayload {
             ephemeral_key,
-            ciphertext,
+            ciphertext: ciphertext_with_nonce,
             tag,
             padding_size,
         })
@@ -209,10 +219,23 @@ impl StealthScanner {
     /// Decrypt a stealth payload
     ///
     /// Only works if is_for_me() returns true
+    ///
+    /// SECURITY: Extracts random nonce from ciphertext (first 12 bytes)
     pub fn decrypt(&self, payload: &StealthPayload) -> Result<Vec<u8>> {
         if !self.is_for_me(payload)? {
             return Err(Error::Crypto("Payload not for this recipient".to_string()));
         }
+
+        // Validate ciphertext has nonce prefix
+        if payload.ciphertext.len() < 12 {
+            return Err(Error::Crypto("Ciphertext too short (missing nonce)".to_string()));
+        }
+
+        // Extract nonce (first 12 bytes) and actual ciphertext
+        let nonce_bytes: [u8; 12] = payload.ciphertext[..12]
+            .try_into()
+            .map_err(|_| Error::Crypto("Failed to extract nonce".to_string()))?;
+        let actual_ciphertext = &payload.ciphertext[12..];
 
         // Derive shared secret
         let ephemeral_point =
@@ -230,18 +253,15 @@ impl StealthScanner {
         use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 
         let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
-        let nonce_array: [u8; 12] = decryption_key.as_bytes()[0..12]
-            .try_into()
-            .map_err(|_| Error::Crypto("Failed to create nonce".to_string()))?;
-        let nonce = &chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_array);
-        let mut plaintext = cipher
-            .decrypt(nonce, payload.ciphertext.as_ref())
-            .map_err(|_| Error::Crypto("Decryption failed".to_string()))?;
+        let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_bytes);
+        
+        let plaintext = cipher
+            .decrypt(&nonce, actual_ciphertext)
+            .map_err(|_| Error::Crypto("Decryption failed (authentication failed)".to_string()))?;
 
-        // Remove padding
-        if plaintext.len() > payload.padding_size {
-            plaintext.truncate(plaintext.len() - payload.padding_size);
-        }
+        // Note: padding_size is the difference between padded target and original plaintext size
+        // The actual AEAD ciphertext doesn't include padding - it's just metadata for traffic analysis resistance
+        // The plaintext returned from ChaCha20Poly1305 is the original message without padding
 
         Ok(plaintext)
     }
@@ -322,9 +342,9 @@ mod tests {
         // Scanner should recognize it
         assert!(scanner.is_for_me(&payload).unwrap());
 
-        // Decrypt and verify
+        // Decrypt and verify - exact match now (no padding in ciphertext)
         let decrypted = scanner.decrypt(&payload).unwrap();
-        assert_eq!(&decrypted[..message.len()], message);
+        assert_eq!(decrypted.as_slice(), message.as_slice());
     }
 
     #[test]

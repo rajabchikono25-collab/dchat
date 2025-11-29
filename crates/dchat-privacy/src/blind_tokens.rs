@@ -13,7 +13,7 @@
 
 use dchat_core::{Error, Result};
 use num_bigint::BigUint;
-use num_traits::One;
+use num_traits::{One, Zero};
 use rand::{CryptoRng, Rng};
 use rsa::{
     BigUint as RsaBigUint,
@@ -112,11 +112,19 @@ fn mod_pow(base: &BigUint, exp: &BigUint, modulus: &BigUint) -> BigUint {
     base.modpow(exp, modulus)
 }
 
-/// Compute modular inverse: a^(-1) mod n using Fermat's little theorem
-/// For RSA modulus N = p*q, we use extended Euclidean algorithm
+/// Compute modular inverse: a^(-1) mod n using extended Euclidean algorithm
+/// 
+/// SECURITY NOTE: This implementation uses variable-time arithmetic which is
+/// acceptable for RSA blind signatures where the values being inverted (blinding
+/// factors) are random and independent of secret key material.
 fn mod_inverse(a: &BigUint, n: &BigUint) -> Option<BigUint> {
     use num_bigint::BigInt;
     use num_traits::{Signed, Zero};
+    
+    // Validate inputs
+    if n.is_zero() || a.is_zero() || a >= n {
+        return None;
+    }
     
     // Convert to signed integers for extended GCD
     let a_signed = BigInt::from(a.clone());
@@ -199,20 +207,39 @@ impl TokenIssuer {
     /// final unblinded token will look like.
     ///
     /// RSA blind signature: sig = blinded_msg^d mod N
+    ///
+    /// SECURITY: Validates that blinded_value is in valid range [1, N-1]
     pub fn issue_blind_signature(&self, blinded_value: &[u8]) -> Result<Vec<u8>> {
+        let expected_len = RSA_KEY_BITS / 8;
+        
+        // Validate blinded value length
+        if blinded_value.len() > expected_len {
+            return Err(Error::validation(
+                format!("Blinded value too large: {} bytes (max {})", blinded_value.len(), expected_len)
+            ));
+        }
+        
         // Convert blinded value to BigUint
         let blinded_msg = BigUint::from_bytes_be(blinded_value);
         
-        // Get RSA private exponent d and modulus N
-        let d = BigUint::from_bytes_be(&self.private_key.d().to_bytes_be());
+        // Get RSA modulus N
         let n = BigUint::from_bytes_be(&self.public_key.n().to_bytes_be());
+        
+        // SECURITY: Validate blinded_msg is in valid range [1, N-1]
+        if blinded_msg.is_zero() || blinded_msg >= n {
+            return Err(Error::validation(
+                "Blinded value out of valid range [1, N-1]"
+            ));
+        }
+        
+        // Get RSA private exponent d
+        let d = BigUint::from_bytes_be(&self.private_key.d().to_bytes_be());
         
         // Compute blind signature: sig = blinded_msg^d mod N
         let blind_sig = mod_pow(&blinded_msg, &d, &n);
         
         // Return as fixed-size bytes (RSA_KEY_BITS / 8 = 256 bytes for RSA-2048)
         let mut sig_bytes = blind_sig.to_bytes_be();
-        let expected_len = RSA_KEY_BITS / 8;
         
         // Pad with leading zeros if needed
         while sig_bytes.len() < expected_len {
@@ -412,6 +439,10 @@ impl TokenVerifier {
     }
     
     /// Verify token with blockchain redemption tracking (production)
+    ///
+    /// SECURITY: After successful verification, the caller MUST mark the token
+    /// as redeemed using CurrencyChainClient::mark_token_redeemed() to prevent
+    /// double-spending.
     pub fn verify_token_with_blockchain(
         &self,
         token: &BlindToken,
@@ -422,11 +453,19 @@ impl TokenVerifier {
             .as_ref()
             .ok_or_else(|| Error::validation("Token not signed".to_string()))?;
 
+        // SECURITY: Validate signature length matches RSA key size
+        let expected_len = RSA_KEY_BITS / 8;
+        if signature.len() != expected_len {
+            return Err(Error::validation(
+                format!("Invalid signature length: {} (expected {})", signature.len(), expected_len)
+            ));
+        }
+
         // Check if token already redeemed (prevent double-spend)
+        let sig_hash_bytes = blake3::hash(signature);
+        let sig_hash: [u8; 32] = *sig_hash_bytes.as_bytes();
+        
         if let Some(client) = currency_chain {
-            let sig_hash_bytes = blake3::hash(signature);
-            let sig_hash: [u8; 32] = *sig_hash_bytes.as_bytes();
-            
             if client.is_token_redeemed(&sig_hash)? {
                 return Err(Error::validation(
                     "Token already redeemed (double-spend detected)".to_string()
@@ -438,8 +477,11 @@ impl TokenVerifier {
         let n = BigUint::from_bytes_be(&self.public_key.n().to_bytes_be());
         let e = BigUint::from_bytes_be(&self.public_key.e().to_bytes_be());
         
-        // Convert signature to BigUint
+        // Convert signature to BigUint and validate range
         let sig = BigUint::from_bytes_be(signature);
+        if sig.is_zero() || sig >= n {
+            return Err(Error::validation("Signature out of valid range [1, N-1]"));
+        }
         
         // Verify: recovered_msg = sig^e mod N
         let recovered_msg = mod_pow(&sig, &e, &n);
@@ -635,5 +677,21 @@ mod tests {
         let verifier = TokenVerifier::new(issuer2.rsa_public_key().clone());
         let valid = verifier.verify_token(&token).unwrap();
         assert!(!valid, "Token signed by different issuer should not verify");
+    }
+    
+    #[test]
+    fn test_invalid_blinded_value_rejected() {
+        let mut rng = OsRng;
+        let issuer = TokenIssuer::new(&mut rng).unwrap();
+        
+        // Test zero blinded value
+        let zero_value = vec![0u8; 256];
+        let result = issuer.issue_blind_signature(&zero_value);
+        assert!(result.is_err(), "Zero blinded value should be rejected");
+        
+        // Test oversized blinded value (larger than RSA modulus size)
+        let oversized = vec![0xFFu8; 300];
+        let result = issuer.issue_blind_signature(&oversized);
+        assert!(result.is_err(), "Oversized blinded value should be rejected");
     }
 }

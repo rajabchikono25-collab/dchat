@@ -103,7 +103,11 @@ impl KeyRotationManager {
             self.rotate_key(purpose)?;
         }
 
-        Ok(&self.current_keys.get(purpose).unwrap().0)
+        // Safe: we just ensured the key exists via rotate_key or the contains_key check
+        self.current_keys
+            .get(purpose)
+            .map(|(keypair, _)| keypair)
+            .ok_or_else(|| Error::crypto(format!("Key not found for purpose: {}", purpose)))
     }
 
     /// Check if a key should be rotated based on policy

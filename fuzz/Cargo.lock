@@ -2258,7 +2258,9 @@ dependencies = [
  "getrandom 0.2.16",
  "hex",
  "hkdf",
+ "hmac",
  "libp2p",
+ "pbkdf2",
  "pqcrypto-falcon",
  "pqcrypto-mlkem",
  "pqcrypto-traits",
@@ -2271,6 +2273,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+ "unicode-normalization",
  "x25519-dalek",
  "zeroize",
 ]
