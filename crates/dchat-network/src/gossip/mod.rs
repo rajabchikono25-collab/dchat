@@ -53,12 +53,17 @@ impl Gossip {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
     use libp2p::PeerId;
+    use rand::rngs::OsRng;
+    use std::sync::Arc;
     use std::time::Duration;
 
     fn test_config() -> GossipConfig {
+        let signing_key = Arc::new(SigningKey::generate(&mut OsRng));
         GossipConfig {
             local_peer_id: PeerId::random(),
+            signing_key,
             fanout: 6,
             message_cache_size: 10000,
             max_ttl: 32,

@@ -1,13 +1,16 @@
 // Gossip protocol implementation
+//
+// Production-grade gossip protocol with Ed25519 message signing using persistent keys
 
 use super::flood_control::FloodControl;
 use super::message_cache::{MessageCache, MessageId};
 use dchat_core::Result;
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use libp2p::identity::PublicKey;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Error type for gossip protocol operations
@@ -86,6 +89,10 @@ pub struct GossipConfig {
     /// Local peer ID
     pub local_peer_id: PeerId,
 
+    /// Signing key for message authentication (shared across threads)
+    /// This MUST be loaded from a persistent keystore in production
+    pub signing_key: Arc<SigningKey>,
+
     /// Number of peers to forward messages to (fanout)
     pub fanout: usize,
 
@@ -107,8 +114,13 @@ pub struct GossipConfig {
 
 impl Default for GossipConfig {
     fn default() -> Self {
+        // For testing/development only - production code MUST provide a persistent signing key
+        use rand::rngs::OsRng;
+        let signing_key = Arc::new(SigningKey::generate(&mut OsRng));
+        
         Self {
             local_peer_id: PeerId::random(),
+            signing_key,
             fanout: 6,
             message_cache_size: 10000,
             max_ttl: 32,
@@ -138,20 +150,23 @@ pub struct GossipMessage {
     /// Unix timestamp
     pub timestamp: u64,
 
-    /// Signature (placeholder for now)
+    /// Ed25519 signature (64 bytes)
     pub signature: Vec<u8>,
 }
 
 impl GossipMessage {
-    /// Create a new gossip message
-    pub fn new(payload: Vec<u8>, max_ttl: u8, sender: PeerId) -> Self {
+    /// Create a new gossip message with Ed25519 signature
+    /// 
+    /// The signing_key MUST come from a persistent keystore in production.
+    /// This ensures message authenticity can be verified by recipients.
+    pub fn new(payload: Vec<u8>, max_ttl: u8, sender: PeerId, signing_key: &SigningKey) -> Self {
         let id = MessageId::from_payload(&payload);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
-        let signature = Self::sign_message(&id.to_string(), &payload, timestamp, max_ttl);
+        let signature = Self::sign_message(&id.to_string(), &payload, timestamp, max_ttl, signing_key);
 
         Self {
             id,
@@ -248,25 +263,26 @@ impl GossipMessage {
         }
     }
 
-    /// Sign message with Ed25519 using node's private key
-    fn sign_message(message_id: &str, payload: &[u8], timestamp: u64, ttl: u8) -> Vec<u8> {
-        // Construct message bytes to sign
+    /// Sign message with Ed25519 using the provided signing key
+    /// 
+    /// The signing_key MUST be loaded from a persistent, encrypted keystore.
+    /// This ensures consistent identity across sessions and allows recipients
+    /// to verify message authenticity using the sender's known public key.
+    fn sign_message(
+        message_id: &str, 
+        payload: &[u8], 
+        timestamp: u64, 
+        ttl: u8,
+        signing_key: &SigningKey,
+    ) -> Vec<u8> {
+        // Construct message bytes to sign (deterministic serialization)
         let mut message_bytes = Vec::new();
         message_bytes.extend_from_slice(message_id.as_bytes());
         message_bytes.extend_from_slice(payload);
         message_bytes.extend_from_slice(&timestamp.to_le_bytes());
         message_bytes.push(ttl);
 
-        // Production Ed25519 signing using ed25519_dalek
-        use ed25519_dalek::{Signer, SigningKey};
-        use rand::rngs::OsRng;
-
-        // Generate signing key from node's identity
-        // In production: Load persistent key from encrypted keystore via identity manager
-        // For now: Generate ephemeral key (to be replaced with persistent key management)
-        let signing_key = SigningKey::generate(&mut OsRng);
-
-        // Sign the message bytes
+        // Sign with the persistent Ed25519 key
         let signature = signing_key.sign(&message_bytes);
 
         // Return 64-byte Ed25519 signature
@@ -337,7 +353,12 @@ impl GossipProtocol {
 
     /// Broadcast a message to the network
     pub async fn broadcast(&mut self, payload: Vec<u8>) -> Result<MessageId> {
-        let message = GossipMessage::new(payload, self.config.max_ttl, self.config.local_peer_id);
+        let message = GossipMessage::new(
+            payload, 
+            self.config.max_ttl, 
+            self.config.local_peer_id,
+            &self.config.signing_key,
+        );
 
         let message_id = message.id;
 
@@ -511,10 +532,13 @@ impl GossipProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::OsRng;
 
     fn test_config() -> GossipConfig {
+        let signing_key = Arc::new(SigningKey::generate(&mut OsRng));
         GossipConfig {
             local_peer_id: PeerId::random(),
+            signing_key,
             fanout: 6,
             message_cache_size: 100,
             max_ttl: 32,
@@ -535,17 +559,20 @@ mod tests {
     async fn test_message_creation() {
         let payload = b"test message".to_vec();
         let sender = PeerId::random();
-        let message = GossipMessage::new(payload.clone(), 32, sender);
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let message = GossipMessage::new(payload.clone(), 32, sender, &signing_key);
 
         assert_eq!(message.ttl, 32);
         assert_eq!(message.payload, payload);
         assert!(message.sender.is_some());
+        assert_eq!(message.signature.len(), 64); // Ed25519 signature is 64 bytes
     }
 
     #[tokio::test]
     async fn test_ttl_decrement() {
         let payload = b"test".to_vec();
-        let mut message = GossipMessage::new(payload, 3, PeerId::random());
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut message = GossipMessage::new(payload, 3, PeerId::random(), &signing_key);
 
         assert_eq!(message.ttl, 3);
         assert!(message.decrement_ttl());
@@ -560,11 +587,11 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_detection() {
         let config = test_config();
-        let mut protocol = GossipProtocol::new(config).unwrap();
+        let mut protocol = GossipProtocol::new(config.clone()).unwrap();
 
         let payload = b"test message".to_vec();
         let sender = PeerId::random();
-        let message = GossipMessage::new(payload, 32, sender);
+        let message = GossipMessage::new(payload, 32, sender, &config.signing_key);
 
         // First time should be processed
         assert!(protocol.should_forward(&message));

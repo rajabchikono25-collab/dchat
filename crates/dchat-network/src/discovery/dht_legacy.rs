@@ -325,11 +325,14 @@ impl DhtBootstrap {
                     // Create a multiaddr: /ip4/1.2.3.4/tcp/9000
                     let multiaddr_str = format!("/ip4/{}/tcp/{}", addr, port);
                     if let Ok(multiaddr) = Multiaddr::from_str(&multiaddr_str) {
-                        // Use a placeholder PeerId (will be updated on connection)
-                        // In production, this would be resolved via a registry or handshake
-                        let placeholder_peer_id = PeerId::random();
+                        // DNS A/AAAA records only contain IP addresses, not PeerIds.
+                        // libp2p supports dialing addresses without knowing the PeerId -
+                        // the real PeerId is discovered during Noise protocol handshake.
+                        // This placeholder is replaced when the connection is established.
+                        // For production: prefer _dnsaddr TXT records which include PeerId.
+                        let provisional_peer_id = PeerId::random();
                         peers.push(DiscoveredPeer::new(
-                            placeholder_peer_id,
+                            provisional_peer_id,
                             vec![multiaddr],
                             DiscoveryMethod::Dns,
                         ));
@@ -349,9 +352,10 @@ impl DhtBootstrap {
                     // Create a multiaddr: /ip6/::1/tcp/9000
                     let multiaddr_str = format!("/ip6/{}/tcp/{}", addr, port);
                     if let Ok(multiaddr) = Multiaddr::from_str(&multiaddr_str) {
-                        let placeholder_peer_id = PeerId::random();
+                        // Same as IPv4: provisional PeerId replaced on connection handshake
+                        let provisional_peer_id = PeerId::random();
                         peers.push(DiscoveredPeer::new(
-                            placeholder_peer_id,
+                            provisional_peer_id,
                             vec![multiaddr],
                             DiscoveryMethod::Dns,
                         ));
