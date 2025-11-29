@@ -18,7 +18,9 @@ pub enum AttestationPlatform {
     AndroidKeyAttestation,
     /// WebAuthn attestation
     WebAuthn,
-    /// Simulated attestation (development only)
+    /// Simulated attestation - ONLY available in debug builds for testing
+    /// SECURITY: This variant is compile-time excluded from release builds
+    #[cfg(debug_assertions)]
     Simulated,
 }
 
@@ -105,7 +107,9 @@ pub struct WebAuthnAttestationData {
 /// Attestation verifier configuration
 #[derive(Debug, Clone)]
 pub struct AttestationConfig {
-    /// Allow simulated attestation (development only)
+    /// Allow simulated attestation - ONLY works in debug builds
+    /// SECURITY: This field has no effect in release builds
+    #[cfg(debug_assertions)]
     pub allow_simulated: bool,
     /// iOS App ID prefix (Team ID)
     pub ios_team_id: Option<String>,
@@ -124,7 +128,8 @@ pub struct AttestationConfig {
 impl Default for AttestationConfig {
     fn default() -> Self {
         Self {
-            allow_simulated: cfg!(debug_assertions), // Only in debug builds
+            #[cfg(debug_assertions)]
+            allow_simulated: true, // Only in debug builds for testing
             ios_team_id: None,
             ios_bundle_id: None,
             android_package_name: None,
@@ -576,33 +581,45 @@ impl AttestationVerifier {
 /// Verify a device attestation payload (legacy simple API)
 /// 
 /// For new code, use `AttestationVerifier` with platform-specific methods.
+/// 
+/// SECURITY: Simulated attestation is ONLY available in debug builds.
+/// In release builds, this function will always reject simulated attestation.
+#[cfg(debug_assertions)]
 pub fn verify_device_attestation(attestation: &str) -> Result<AttestationResult> {
-    // Support legacy simulated attestation for backward compatibility
+    // Only allow simulated attestation in debug builds
     if attestation == "dchat-enclave-attestation-v1" {
-        if cfg!(debug_assertions) {
-            Ok(AttestationResult {
-                verified: true,
-                platform: AttestationPlatform::Simulated,
-                device_integrity: DeviceIntegrity {
-                    has_secure_hardware: false,
-                    is_genuine: true,
-                    is_official_app: true,
-                    integrity_passed: true,
-                },
-                reason: Some("Simulated attestation (development only)".to_string()),
-                metadata: HashMap::new(),
-            })
-        } else {
-            Err(Error::unauthenticated(
-                "Simulated attestation not allowed in production"
-            ))
-        }
+        Ok(AttestationResult {
+            verified: true,
+            platform: AttestationPlatform::Simulated,
+            device_integrity: DeviceIntegrity {
+                has_secure_hardware: false,
+                is_genuine: true,
+                is_official_app: true,
+                integrity_passed: true,
+            },
+            reason: Some("Simulated attestation (DEBUG BUILD ONLY)".to_string()),
+            metadata: HashMap::new(),
+        })
     } else {
         Err(Error::unauthenticated("Unknown attestation format"))
     }
 }
 
+/// Verify a device attestation payload (legacy simple API)
+/// 
+/// SECURITY: In release builds, simulated attestation is NEVER accepted.
+#[cfg(not(debug_assertions))]
+pub fn verify_device_attestation(attestation: &str) -> Result<AttestationResult> {
+    // In release builds, reject ALL legacy attestation formats
+    // Production clients MUST use platform-specific attestation (iOS App Attest, Play Integrity, etc.)
+    Err(Error::unauthenticated(
+        "Legacy attestation not supported in production. Use platform-specific attestation."
+    ))
+}
+
 /// Create a `VerifiedBadge` from a successful attestation.
+/// 
+/// SECURITY: In release builds, this only works with platform-specific attestation results.
 pub fn badge_from_attestation(issuer: String, attestation: &str) -> Result<VerifiedBadge> {
     let result = verify_device_attestation(attestation)?;
     
@@ -620,6 +637,7 @@ pub fn badge_from_attestation(issuer: String, attestation: &str) -> Result<Verif
 
     let proof = VerificationProof {
         proof_type: match result.platform {
+            #[cfg(debug_assertions)]
             AttestationPlatform::Simulated => ProofType::SelfSigned,
             AttestationPlatform::IosAppAttest => ProofType::AuthoritySigned { authority: "Apple".to_string() },
             AttestationPlatform::AndroidPlayIntegrity => ProofType::AuthoritySigned { authority: "Google".to_string() },
@@ -683,6 +701,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(debug_assertions)]
     fn test_verify_simulated_attestation() {
         let res = verify_device_attestation("dchat-enclave-attestation-v1").unwrap();
         assert!(res.verified);
@@ -696,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn test_badge_from_attestation() {
         let badge = badge_from_attestation("system".to_string(), "dchat-enclave-attestation-v1").unwrap();
         assert_eq!(badge.issuer, "system");
@@ -713,7 +733,9 @@ mod tests {
     #[test]
     fn test_attestation_config_default() {
         let config = AttestationConfig::default();
-        // allow_simulated depends on debug_assertions
+        // allow_simulated only exists in debug builds
+        #[cfg(debug_assertions)]
+        assert!(config.allow_simulated);
         assert!(config.ios_team_id.is_none());
         assert!(config.android_package_name.is_none());
     }

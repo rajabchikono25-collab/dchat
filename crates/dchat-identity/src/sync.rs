@@ -223,6 +223,13 @@ impl ConflictResolver {
     }
 }
 
+/// Maximum encrypted payload size (1MB)
+const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
+/// Maximum device ID length
+const MAX_DEVICE_ID_LENGTH: usize = 128;
+/// Maximum sync ID length
+const MAX_SYNC_ID_LENGTH: usize = 256;
+
 /// Sync message for device coordination
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncMessage {
@@ -234,6 +241,29 @@ pub struct SyncMessage {
     pub encrypted_payload: Vec<u8>,
     /// Vector clock for causal ordering
     pub vector_clock: VectorClock,
+}
+
+impl SyncMessage {
+    /// Validate sync message fields
+    /// 
+    /// # Security
+    /// - Prevents memory exhaustion from oversized payloads
+    /// - Validates field lengths
+    pub fn validate(&self) -> Result<()> {
+        if self.sync_id.len() > MAX_SYNC_ID_LENGTH {
+            return Err(Error::identity("Sync ID too long"));
+        }
+        if self.device_id.len() > MAX_DEVICE_ID_LENGTH {
+            return Err(Error::identity("Device ID too long"));
+        }
+        if self.encrypted_payload.len() > MAX_PAYLOAD_SIZE {
+            return Err(Error::identity(format!(
+                "Payload exceeds maximum size of {} bytes",
+                MAX_PAYLOAD_SIZE
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Types of sync messages
@@ -312,7 +342,14 @@ impl SyncManager {
     }
 
     /// Add a sync message
+    /// 
+    /// # Security
+    /// - Validates message size to prevent memory exhaustion
+    /// - Checks queue limits
     pub fn add_sync_message(&mut self, message: SyncMessage) -> Result<()> {
+        // Validate message first
+        message.validate()?;
+        
         let user_id = message.user_id.clone();
         let sync_id = message.sync_id.clone();
         let device_id = message.device_id.clone();
@@ -773,23 +810,34 @@ mod tests {
         let user_id = UserId::new();
 
         // Add 5 messages (limit is 3)
+        // Use a cumulative clock to establish causality and avoid conflict detection
+        let mut cumulative_clock = VectorClock::new();
+        
+        // Use different message types to avoid conflict resolution
+        let message_types = [
+            SyncMessageType::IdentityUpdate,
+            SyncMessageType::DeviceAdded,
+            SyncMessageType::DeviceRemoved,
+            SyncMessageType::SettingsUpdate,
+            SyncMessageType::ContactsUpdate,
+        ];
+        
         for i in 0..5 {
-            let mut clock = VectorClock::new();
-            clock.increment(&format!("device{}", i));
+            cumulative_clock.increment("device1");
 
             let message = SyncMessage {
                 sync_id: format!("sync-{}", i),
                 user_id: user_id.clone(),
                 device_id: "device1".to_string(),
-                message_type: SyncMessageType::IdentityUpdate,
+                message_type: message_types[i].clone(),
                 timestamp: Utc::now(),
                 encrypted_payload: vec![i as u8],
-                vector_clock: clock,
+                vector_clock: cumulative_clock.clone(),
             };
             manager.add_sync_message(message).unwrap();
         }
 
-        // Should only have 3 messages
+        // Should only have 3 messages (oldest 2 removed)
         let pending = manager.get_pending_syncs(&user_id);
         assert_eq!(pending.len(), 3);
     }

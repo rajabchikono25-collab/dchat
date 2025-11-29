@@ -89,6 +89,15 @@ impl BurnerIdentity {
     }
 }
 
+/// Maximum burners per parent identity to prevent resource exhaustion
+const MAX_BURNERS_PER_PARENT: usize = 10;
+/// Maximum concurrent active burners across all users
+const MAX_TOTAL_BURNERS: usize = 1000;
+/// Maximum message limit per burner
+const MAX_MESSAGE_LIMIT: u64 = 10000;
+/// Maximum burner lifetime in hours
+const MAX_BURNER_LIFETIME_HOURS: i64 = 24 * 30; // 30 days
+
 /// Manages burner identities
 pub struct BurnerManager {
     burners: HashMap<UserId, BurnerIdentity>,
@@ -105,7 +114,51 @@ impl BurnerManager {
     }
 
     /// Register a burner identity
+    /// 
+    /// # Security
+    /// - Limits total burners per parent
+    /// - Limits total active burners
+    /// - Validates message limits and expiry
     pub fn register_burner(&mut self, burner: BurnerIdentity) -> Result<()> {
+        // Check total burner limit
+        if self.burners.len() >= MAX_TOTAL_BURNERS {
+            return Err(Error::identity(
+                "Maximum total burner identities reached"
+            ));
+        }
+        
+        // Check per-parent limit if linked to parent
+        if let Some(parent_id) = &burner.parent_user_id {
+            let parent_burners = self.parent_index.get(parent_id).map(|v| v.len()).unwrap_or(0);
+            if parent_burners >= MAX_BURNERS_PER_PARENT {
+                return Err(Error::identity(format!(
+                    "Maximum burners per parent ({}) exceeded",
+                    MAX_BURNERS_PER_PARENT
+                )));
+            }
+        }
+        
+        // Validate message limit is reasonable
+        if let Some(max_msgs) = burner.max_messages {
+            if max_msgs > MAX_MESSAGE_LIMIT {
+                return Err(Error::identity(format!(
+                    "Message limit exceeds maximum of {}",
+                    MAX_MESSAGE_LIMIT
+                )));
+            }
+        }
+        
+        // Validate expiry is reasonable
+        if let Some(expires_at) = burner.expires_at {
+            let max_expiry = Utc::now() + chrono::Duration::hours(MAX_BURNER_LIFETIME_HOURS);
+            if expires_at > max_expiry {
+                return Err(Error::identity(format!(
+                    "Burner lifetime exceeds maximum of {} days",
+                    MAX_BURNER_LIFETIME_HOURS / 24
+                )));
+            }
+        }
+        
         let burner_id = burner.burner_id.clone();
 
         // Add to parent index if linked

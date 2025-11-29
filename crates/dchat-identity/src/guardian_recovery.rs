@@ -11,6 +11,7 @@ use dchat_core::error::{Error, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use subtle::ConstantTimeEq;
 
 /// Guardian identifier (anonymous to prevent correlation)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -76,6 +77,32 @@ pub enum RecoveryStatus {
     Failed(String),
 }
 
+/// Maximum failed signature attempts before lockout
+const MAX_FAILED_ATTEMPTS: u32 = 5;
+/// Lockout duration in seconds after max failed attempts
+const LOCKOUT_DURATION_SECS: i64 = 3600; // 1 hour
+/// Maximum concurrent recovery requests per identity
+#[allow(dead_code)]
+const MAX_CONCURRENT_RECOVERIES: usize = 3;
+
+/// Rate limiting state for guardian operations
+#[derive(Debug, Clone)]
+struct RateLimitState {
+    failed_attempts: u32,
+    last_failed_at: Option<DateTime<Utc>>,
+    locked_until: Option<DateTime<Utc>>,
+}
+
+impl Default for RateLimitState {
+    fn default() -> Self {
+        Self {
+            failed_attempts: 0,
+            last_failed_at: None,
+            locked_until: None,
+        }
+    }
+}
+
 /// Guardian recovery manager
 pub struct GuardianRecoveryManager {
     /// All guardians registered for this identity
@@ -84,6 +111,8 @@ pub struct GuardianRecoveryManager {
     recovery_requests: HashMap<String, RecoveryRequest>,
     /// M-of-N threshold configuration
     threshold: GuardianThreshold,
+    /// Rate limiting state per guardian
+    rate_limits: HashMap<GuardianId, RateLimitState>,
 }
 
 /// M-of-N threshold configuration
@@ -105,7 +134,41 @@ impl GuardianRecoveryManager {
                 required: required_signatures,
                 total: 0,
             },
+            rate_limits: HashMap::new(),
         }
+    }
+    
+    /// Check if a guardian is rate-limited
+    fn is_rate_limited(&self, guardian_id: &GuardianId) -> bool {
+        if let Some(state) = self.rate_limits.get(guardian_id) {
+            if let Some(locked_until) = state.locked_until {
+                if Utc::now() < locked_until {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    
+    /// Record a failed signature attempt
+    fn record_failed_attempt(&mut self, guardian_id: &GuardianId) {
+        let state = self.rate_limits.entry(guardian_id.clone()).or_default();
+        state.failed_attempts += 1;
+        state.last_failed_at = Some(Utc::now());
+        
+        if state.failed_attempts >= MAX_FAILED_ATTEMPTS {
+            state.locked_until = Some(Utc::now() + Duration::seconds(LOCKOUT_DURATION_SECS));
+            tracing::warn!(
+                "Guardian {} locked out due to {} failed signature attempts",
+                guardian_id.0,
+                state.failed_attempts
+            );
+        }
+    }
+    
+    /// Reset rate limit state on successful signature
+    fn reset_rate_limit(&mut self, guardian_id: &GuardianId) {
+        self.rate_limits.remove(guardian_id);
     }
 
     /// Add a guardian to the recovery system
@@ -176,12 +239,29 @@ impl GuardianRecoveryManager {
     }
 
     /// Add a guardian signature to a recovery request
+    /// 
+    /// # Security
+    /// - Rate-limited to prevent brute force attacks
+    /// - Uses constant-time signature verification
     pub fn add_guardian_signature(
         &mut self,
         request_id: &str,
         guardian_id: &GuardianId,
         signature: Vec<u8>,
     ) -> Result<()> {
+        // Check rate limiting first
+        if self.is_rate_limited(guardian_id) {
+            return Err(Error::validation(
+                "Guardian temporarily locked due to too many failed attempts"
+            ));
+        }
+        
+        // Validate signature length before processing (64 bytes for Ed25519)
+        if signature.len() != 64 {
+            self.record_failed_attempt(guardian_id);
+            return Err(Error::crypto("Invalid signature length"));
+        }
+        
         // Verify guardian exists first
         let guardian = self
             .guardians
@@ -210,9 +290,13 @@ impl GuardianRecoveryManager {
             .map_err(|_| Error::crypto("Invalid signature length"))?;
         let sig = Signature::from_bytes(&signature_array);
 
-        guardian_public_key
-            .verify(&message, &sig)
-            .map_err(|_| Error::crypto("Invalid guardian signature"))?;
+        if guardian_public_key.verify(&message, &sig).is_err() {
+            self.record_failed_attempt(guardian_id);
+            return Err(Error::crypto("Invalid guardian signature"));
+        }
+        
+        // Reset rate limit on successful verification
+        self.reset_rate_limit(guardian_id);
 
         // Now get mutable borrow to update the request
         let request = self

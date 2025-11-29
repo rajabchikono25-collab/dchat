@@ -12,6 +12,7 @@
 //! - Uses PBKDF2-HMAC-SHA512 for seed derivation (BIP-39 standard)
 
 use crate::keys::PrivateKey;
+use constant_time_eq::constant_time_eq;
 use dchat_core::error::{Error, Result};
 use sha2::{Digest, Sha256, Sha512};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -69,13 +70,34 @@ impl MnemonicLength {
 }
 
 /// A BIP-39 mnemonic phrase with automatic memory zeroization
-#[derive(Clone, ZeroizeOnDrop)]
+#[derive(Clone)]
 pub struct Mnemonic {
-    /// The mnemonic words
-    #[zeroize(skip)] // Words are from static wordlist, safe
+    /// The mnemonic words (zeroized on drop - contains sensitive recovery phrase)
     words: Vec<String>,
     /// Original entropy bytes
     entropy: Vec<u8>,
+}
+
+impl Zeroize for Mnemonic {
+    fn zeroize(&mut self) {
+        // Zeroize each word string
+        for word in &mut self.words {
+            // Overwrite the string's bytes with zeros
+            // SAFETY: We're replacing ASCII chars with zeros, same length
+            unsafe {
+                let bytes = word.as_bytes_mut();
+                bytes.zeroize();
+            }
+        }
+        self.words.clear();
+        self.entropy.zeroize();
+    }
+}
+
+impl Drop for Mnemonic {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 impl Mnemonic {
@@ -183,13 +205,12 @@ impl Mnemonic {
         let wordlist = Self::get_wordlist()?;
 
         // Validate all words exist in wordlist and get their indices
+        // Use constant-time lookup to prevent timing attacks that could reveal word positions
         let mut indices = Vec::with_capacity(words.len());
         for word in &words {
             let word_lower = word.to_lowercase();
-            let index = wordlist
-                .iter()
-                .position(|w| *w == word_lower)
-                .ok_or_else(|| Error::crypto(format!("Invalid mnemonic word: '{}'", word)))?;
+            let index = Self::constant_time_word_lookup(&wordlist, &word_lower)
+                .ok_or_else(|| Error::crypto("Invalid mnemonic word".to_string()))?;
             indices.push(index as u16);
         }
 
@@ -219,14 +240,20 @@ impl Mnemonic {
             entropy[i] = byte;
         }
 
-        // Verify checksum
+        // Verify checksum using constant-time comparison to prevent timing attacks
         let expected_checksum = Sha256::digest(&entropy);
+        let mut checksum_valid = true;
         for i in 0..checksum_bits {
             let expected_bit = (expected_checksum[i / 8] >> (7 - (i % 8))) & 1;
             let actual_bit = bits[entropy_bits + i];
-            if expected_bit != actual_bit {
-                return Err(Error::crypto("Invalid mnemonic checksum"));
-            }
+            // Use bitwise AND to avoid short-circuit evaluation
+            checksum_valid &= expected_bit == actual_bit;
+        }
+        
+        if !checksum_valid {
+            // Zeroize entropy before returning error
+            entropy.zeroize();
+            return Err(Error::crypto("Invalid mnemonic checksum"));
         }
 
         Ok(Self {
@@ -272,17 +299,21 @@ impl Mnemonic {
         // Use NFKD normalization for the mnemonic phrase (BIP-39 requirement)
         use unicode_normalization::UnicodeNormalization;
         let phrase = self.phrase();
-        let normalized_phrase: String = phrase.nfkd().collect();
-        let mnemonic_bytes = normalized_phrase.as_bytes();
+        let mut normalized_phrase: String = phrase.nfkd().collect();
         
         // Salt is "mnemonic" + passphrase (also NFKD normalized)
         let passphrase_str = passphrase.unwrap_or("");
-        let normalized_passphrase: String = passphrase_str.nfkd().collect();
-        let salt = format!("mnemonic{}", normalized_passphrase);
+        let mut normalized_passphrase: String = passphrase_str.nfkd().collect();
+        let mut salt = format!("mnemonic{}", normalized_passphrase);
         
         // BIP-39 uses PBKDF2-HMAC-SHA512 with 2048 iterations
         let mut seed = [0u8; 64];
-        pbkdf2_hmac_sha512(mnemonic_bytes, salt.as_bytes(), 2048, &mut seed);
+        pbkdf2_hmac_sha512(normalized_phrase.as_bytes(), salt.as_bytes(), 2048, &mut seed);
+        
+        // Zeroize intermediate sensitive values
+        normalized_phrase.zeroize();
+        normalized_passphrase.zeroize();
+        salt.zeroize();
         
         Ok(seed)
     }
@@ -294,7 +325,10 @@ impl Mnemonic {
     pub fn seed_to_master_key(seed: &[u8; 64]) -> Result<PrivateKey> {
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(&seed[..32]);
-        Ok(PrivateKey::from_bytes(key_bytes))
+        let key = PrivateKey::from_bytes(key_bytes);
+        // Zeroize the temporary copy
+        key_bytes.zeroize();
+        Ok(key)
     }
 
     /// Generate a mnemonic and directly derive the master key
@@ -338,6 +372,25 @@ impl Mnemonic {
         Ok(words)
     }
 
+    /// Constant-time word lookup to prevent timing side-channel attacks
+    /// 
+    /// This searches the entire wordlist regardless of match position,
+    /// preventing attackers from inferring word positions based on lookup time.
+    fn constant_time_word_lookup(wordlist: &[&str], target: &str) -> Option<usize> {
+        let mut found_index: Option<usize> = None;
+        
+        // Always iterate through entire wordlist
+        for (i, word) in wordlist.iter().enumerate() {
+            // Use constant-time comparison
+            if word.len() == target.len() && constant_time_eq(word.as_bytes(), target.as_bytes()) {
+                found_index = Some(i);
+                // Don't break - continue to ensure constant time
+            }
+        }
+        
+        found_index
+    }
+
     /// Validate that a phrase is a valid mnemonic without parsing
     pub fn is_valid_phrase(phrase: &str) -> bool {
         Self::from_phrase(phrase).is_ok()
@@ -355,6 +408,10 @@ impl std::fmt::Debug for Mnemonic {
 }
 
 /// PBKDF2-HMAC-SHA512 implementation for BIP-39 seed derivation
+/// 
+/// # Security
+/// - All intermediate values are zeroized after use
+/// - Uses constant iteration count (no timing side-channel)
 fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8; 64]) {
     use hmac::{Hmac, Mac};
     type HmacSha512 = Hmac<Sha512>;
@@ -375,13 +432,20 @@ fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iterations: u32, output: &mu
         let mut mac = HmacSha512::new_from_slice(password)
             .expect("HMAC can take key of any size");
         mac.update(&u);
-        u = mac.finalize().into_bytes();
+        let new_u = mac.finalize().into_bytes();
         
         // XOR into output
-        for (out, u_byte) in output.iter_mut().zip(u.iter()) {
+        for (out, u_byte) in output.iter_mut().zip(new_u.iter()) {
             *out ^= u_byte;
         }
+        
+        // Zeroize previous u before overwriting
+        u.as_mut_slice().zeroize();
+        u = new_u;
     }
+    
+    // Zeroize final u value
+    u.as_mut_slice().zeroize();
 }
 
 /// Seed with automatic zeroization

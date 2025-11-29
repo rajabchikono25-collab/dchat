@@ -424,8 +424,35 @@ impl ProfileStorage {
     }
 
     /// Search profiles by query
+    /// 
+    /// # Security
+    /// - Uses parameterized queries to prevent SQL injection
+    /// - Limits search query length
+    /// - Sanitizes input to prevent pattern injection
     pub async fn search_profiles(&self, query: &str, limit: usize) -> Result<Vec<UserProfile>> {
-        let query_pattern = format!("%{}%", query);
+        // Input validation
+        const MAX_QUERY_LENGTH: usize = 100;
+        const MAX_SEARCH_LIMIT: usize = 100;
+        
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        // Sanitize query - remove SQL LIKE pattern characters to prevent pattern injection
+        let sanitized_query: String = query
+            .chars()
+            .filter(|c| !['%', '_', '\\', '[', ']', '^'].contains(c))
+            .take(MAX_QUERY_LENGTH)
+            .collect();
+        
+        if sanitized_query.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        // Limit results to prevent resource exhaustion
+        let safe_limit = limit.min(MAX_SEARCH_LIMIT);
+        
+        let query_pattern = format!("%{}%", sanitized_query);
 
         let rows = sqlx::query(
             r#"
@@ -438,7 +465,7 @@ impl ProfileStorage {
         .bind(&query_pattern)
         .bind(&query_pattern)
         .bind(&query_pattern)
-        .bind(limit as i64)
+        .bind(safe_limit as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::storage(format!("Failed to search profiles: {}", e)))?;

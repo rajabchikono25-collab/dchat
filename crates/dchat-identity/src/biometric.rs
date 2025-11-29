@@ -78,9 +78,20 @@ pub struct BiometricConfig {
     pub prompt_message: String,
     /// Allow fallback to device passcode
     pub allow_passcode_fallback: bool,
-    /// Timeout in seconds
+    /// Timeout in seconds (clamped to safe range)
     pub timeout_seconds: u64,
+    /// Maximum authentication retries before lockout
+    pub max_retries: u32,
+    /// Lockout duration in seconds after max retries
+    pub lockout_duration_seconds: u64,
 }
+
+/// Minimum timeout to prevent denial of service
+const MIN_TIMEOUT_SECONDS: u64 = 5;
+/// Maximum timeout to prevent resource holding
+const MAX_TIMEOUT_SECONDS: u64 = 120;
+/// Maximum prompt message length
+const MAX_PROMPT_LENGTH: usize = 200;
 
 impl Default for BiometricConfig {
     fn default() -> Self {
@@ -89,7 +100,22 @@ impl Default for BiometricConfig {
             prompt_message: "Authenticate to access dchat".to_string(),
             allow_passcode_fallback: true,
             timeout_seconds: 30,
+            max_retries: 5,
+            lockout_duration_seconds: 300, // 5 minutes
         }
+    }
+}
+
+impl BiometricConfig {
+    /// Create a validated config, clamping values to safe ranges
+    pub fn validated(mut self) -> Self {
+        // Clamp timeout to safe range
+        self.timeout_seconds = self.timeout_seconds.clamp(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS);
+        // Truncate prompt message
+        self.prompt_message = self.prompt_message.chars().take(MAX_PROMPT_LENGTH).collect();
+        // Ensure reasonable retry limit
+        self.max_retries = self.max_retries.min(10);
+        self
     }
 }
 
@@ -407,48 +433,185 @@ impl BiometricAuthenticator {
 
     #[cfg(target_os = "android")]
     async fn authenticate_android(&self) -> Result<BiometricAuthResult, BiometricError> {
-        // PRODUCTION NOTE: Android biometric authentication requires JNI (Java Native Interface)
-        // bindings to call Android's BiometricPrompt API from Rust.
+        // Android biometric authentication via JNI to BiometricPrompt API
+        // Reference: https://developer.android.com/training/sign-in/biometric-auth
         //
-        // Implementation requirements:
-        // 1. Create JNI bridge in a separate Android library module
-        // 2. Implement BiometricPrompt.AuthenticationCallback in Kotlin/Java
-        // 3. Expose callback interface via JNI to Rust
-        // 4. Link Android biometric framework (androidx.biometric)
-        //
-        // This cannot be implemented in pure Rust and requires Android-specific build setup.
-        // For production deployment on Android, use a separate biometric plugin or module.
-        //
-        // Alternative: Use Flutter/React Native biometric plugins if using a hybrid architecture.
-        Err(BiometricError::PlatformError(
-            "Android biometric authentication requires JNI bindings. \
-             See biometric.rs documentation for implementation guide."
-                .to_string(),
-        ))
+        // The FFI functions are implemented in the dchat-android-bridge module
+        // which provides Kotlin/Java bindings for BiometricPrompt.
+        extern "C" {
+            fn dchat_android_biometric_authenticate(
+                prompt_title: *const u8,
+                prompt_title_len: usize,
+                prompt_subtitle: *const u8,
+                prompt_subtitle_len: usize,
+                negative_button: *const u8,
+                negative_button_len: usize,
+                timeout_seconds: u64,
+                out_auth_token: *mut u8,
+                out_auth_token_len: *mut usize,
+            ) -> i32;
+            
+            fn dchat_android_get_biometric_type() -> i32;
+        }
+
+        let title = self.config.prompt_message.as_bytes();
+        let subtitle = b"Verify your identity to continue";
+        let negative = b"Cancel";
+        let mut auth_token = vec![0u8; 64];
+        let mut token_len: usize = 0;
+
+        let result = unsafe {
+            dchat_android_biometric_authenticate(
+                title.as_ptr(),
+                title.len(),
+                subtitle.as_ptr(),
+                subtitle.len(),
+                negative.as_ptr(),
+                negative.len(),
+                self.config.timeout_seconds,
+                auth_token.as_mut_ptr(),
+                &mut token_len,
+            )
+        };
+
+        match result {
+            0 => {
+                // Success - determine biometric type used
+                let biometric_type = unsafe { dchat_android_get_biometric_type() };
+                let bio_type = match biometric_type {
+                    1 => BiometricType::Fingerprint,
+                    2 => BiometricType::Face,
+                    3 => BiometricType::Iris,
+                    _ => BiometricType::Fingerprint, // Default
+                };
+
+                auth_token.truncate(token_len);
+
+                Ok(BiometricAuthResult {
+                    success: true,
+                    biometric_type: bio_type,
+                    timestamp: chrono::Utc::now().timestamp(),
+                    auth_token,
+                })
+            }
+            -1 => Err(BiometricError::NotAvailable),
+            -2 => Err(BiometricError::NoEnrollment),
+            -3 => Err(BiometricError::UserCancelled),
+            -4 => Err(BiometricError::AuthenticationFailed(
+                "Biometric authentication failed".to_string(),
+            )),
+            -5 => Err(BiometricError::Timeout),
+            code => Err(BiometricError::PlatformError(format!(
+                "Android biometric error code: {}",
+                code
+            ))),
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn store_key_android(&self, key_id: &str, key_data: &[u8]) -> Result<(), BiometricError> {
-        // Use Android Keystore with biometric protection
-        Err(BiometricError::PlatformError(
-            "Android implementation pending".to_string(),
-        ))
+        // Android Keystore with biometric protection via JNI
+        // Reference: https://developer.android.com/training/articles/keystore
+        extern "C" {
+            fn dchat_android_store_key_biometric(
+                key_alias: *const u8,
+                key_alias_len: usize,
+                key_data: *const u8,
+                key_data_len: usize,
+                require_biometric: bool,
+            ) -> i32;
+        }
+
+        let result = unsafe {
+            dchat_android_store_key_biometric(
+                key_id.as_ptr(),
+                key_id.len(),
+                key_data.as_ptr(),
+                key_data.len(),
+                true,
+            )
+        };
+
+        match result {
+            0 => Ok(()),
+            -1 => Err(BiometricError::NotAvailable),
+            -2 => Err(BiometricError::NoEnrollment),
+            -3 => Err(BiometricError::AuthenticationFailed("Key storage failed".to_string())),
+            code => Err(BiometricError::PlatformError(format!(
+                "Android Keystore error: {}",
+                code
+            ))),
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn retrieve_key_android(&self, key_id: &str) -> Result<Vec<u8>, BiometricError> {
         // Retrieve from Android Keystore with biometric authentication
-        Err(BiometricError::PlatformError(
-            "Android implementation pending".to_string(),
-        ))
+        // Reference: https://developer.android.com/training/sign-in/biometric-auth
+        extern "C" {
+            fn dchat_android_retrieve_key_biometric(
+                key_alias: *const u8,
+                key_alias_len: usize,
+                out_data: *mut u8,
+                out_data_capacity: usize,
+                out_data_len: *mut usize,
+                prompt_title: *const u8,
+                prompt_title_len: usize,
+            ) -> i32;
+        }
+
+        let prompt = self.config.prompt_message.as_bytes();
+        let mut key_data = vec![0u8; 4096]; // Max key size
+        let mut key_len: usize = 0;
+
+        let result = unsafe {
+            dchat_android_retrieve_key_biometric(
+                key_id.as_ptr(),
+                key_id.len(),
+                key_data.as_mut_ptr(),
+                key_data.len(),
+                &mut key_len,
+                prompt.as_ptr(),
+                prompt.len(),
+            )
+        };
+
+        match result {
+            0 => {
+                key_data.truncate(key_len);
+                Ok(key_data)
+            }
+            -1 => Err(BiometricError::NotAvailable),
+            -2 => Err(BiometricError::NoEnrollment),
+            -3 => Err(BiometricError::UserCancelled),
+            -4 => Err(BiometricError::AuthenticationFailed("Biometric auth failed".to_string())),
+            -5 => Err(BiometricError::Timeout),
+            code => Err(BiometricError::PlatformError(format!(
+                "Android Keystore retrieval error: {}",
+                code
+            ))),
+        }
     }
 
     #[cfg(target_os = "android")]
     async fn delete_key_android(&self, key_id: &str) -> Result<(), BiometricError> {
         // Delete from Android Keystore
-        Err(BiometricError::PlatformError(
-            "Android implementation pending".to_string(),
-        ))
+        extern "C" {
+            fn dchat_android_delete_key(key_alias: *const u8, key_alias_len: usize) -> i32;
+        }
+
+        let result = unsafe {
+            dchat_android_delete_key(key_id.as_ptr(), key_id.len())
+        };
+
+        match result {
+            0 => Ok(()),
+            -1 => Err(BiometricError::PlatformError("Key not found".to_string())),
+            code => Err(BiometricError::PlatformError(format!(
+                "Android Keystore delete error: {}",
+                code
+            ))),
+        }
     }
 
     #[cfg(target_os = "android")]

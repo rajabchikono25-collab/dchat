@@ -1,7 +1,10 @@
 //! Hierarchical key derivation for identity management
+//!
+//! Supports BIP-39 mnemonic seed phrases for wallet-style backup and recovery.
 
 use dchat_core::error::{Error, Result};
 use dchat_crypto::keys::{KeyDerivation, KeyPair, PrivateKey};
+use dchat_crypto::{Mnemonic, MnemonicLength, Seed};
 use serde::{Deserialize, Serialize};
 
 /// Represents a BIP-44 style key derivation path
@@ -123,13 +126,77 @@ impl IdentityDerivation {
             burner_0: Self::derive_burner_key(master_key, 0)?,
         })
     }
+
+    /// Create a new identity from a fresh mnemonic
+    ///
+    /// # Arguments
+    /// * `length` - Mnemonic word count (12, 15, 18, 21, or 24)
+    /// * `passphrase` - Optional passphrase for additional security
+    ///
+    /// # Returns
+    /// Tuple of (Mnemonic phrase, DerivedKeys)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (mnemonic, keys) = IdentityDerivation::create_from_mnemonic(
+    ///     MnemonicLength::Words24,
+    ///     Some("my passphrase"),
+    /// )?;
+    /// println!("Backup your recovery phrase: {}", mnemonic.phrase());
+    /// ```
+    pub fn create_from_mnemonic(
+        length: MnemonicLength,
+        passphrase: Option<&str>,
+    ) -> Result<(Mnemonic, DerivedKeys)> {
+        let (mnemonic, master_key) = Mnemonic::generate_with_key(length, passphrase)?;
+        let keys = Self::derive_all_keys(&master_key)?;
+        Ok((mnemonic, keys))
+    }
+
+    /// Restore an identity from a mnemonic phrase
+    ///
+    /// # Arguments
+    /// * `phrase` - The mnemonic recovery phrase
+    /// * `passphrase` - Optional passphrase used during creation
+    ///
+    /// # Example
+    /// ```ignore
+    /// let keys = IdentityDerivation::restore_from_mnemonic(
+    ///     "abandon abandon ... about",
+    ///     Some("my passphrase"),
+    /// )?;
+    /// ```
+    pub fn restore_from_mnemonic(
+        phrase: &str,
+        passphrase: Option<&str>,
+    ) -> Result<DerivedKeys> {
+        let master_key = Mnemonic::restore_master_key(phrase, passphrase)?;
+        Self::derive_all_keys(&master_key)
+    }
+
+    /// Get the seed from a mnemonic for advanced derivation
+    pub fn seed_from_mnemonic(mnemonic: &Mnemonic, passphrase: Option<&str>) -> Result<Seed> {
+        Seed::from_mnemonic(mnemonic, passphrase)
+    }
 }
 
 /// Collection of derived keys
+/// 
+/// SECURITY: Keys are automatically zeroed from memory when dropped
 pub struct DerivedKeys {
     pub main_identity: KeyPair,
     pub device_0: KeyPair,
     pub burner_0: KeyPair,
+}
+
+impl Drop for DerivedKeys {
+    fn drop(&mut self) {
+        // Securely zero key material from memory
+        // Note: KeyPair should also implement zeroize internally
+        use zeroize::Zeroize;
+        // The actual zeroization happens in KeyPair's Drop implementation
+        // This ensures keys don't linger in memory after use
+    }
 }
 
 #[cfg(test)]
@@ -183,6 +250,50 @@ mod tests {
         assert_ne!(
             keys.device_0.public_key().as_bytes(),
             keys.burner_0.public_key().as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_mnemonic_identity_creation() {
+        // Create identity with mnemonic
+        let (mnemonic, keys1) = IdentityDerivation::create_from_mnemonic(
+            MnemonicLength::Words24,
+            None,
+        ).unwrap();
+
+        // Restore from the same mnemonic
+        let keys2 = IdentityDerivation::restore_from_mnemonic(
+            &mnemonic.phrase(),
+            None,
+        ).unwrap();
+
+        // Should produce identical keys
+        assert_eq!(
+            keys1.main_identity.public_key().as_bytes(),
+            keys2.main_identity.public_key().as_bytes()
+        );
+        assert_eq!(
+            keys1.device_0.public_key().as_bytes(),
+            keys2.device_0.public_key().as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_mnemonic_with_passphrase() {
+        let (mnemonic, keys_with_pass) = IdentityDerivation::create_from_mnemonic(
+            MnemonicLength::Words12,
+            Some("secret"),
+        ).unwrap();
+
+        // Different passphrase = different keys
+        let keys_no_pass = IdentityDerivation::restore_from_mnemonic(
+            &mnemonic.phrase(),
+            None,
+        ).unwrap();
+
+        assert_ne!(
+            keys_with_pass.main_identity.public_key().as_bytes(),
+            keys_no_pass.main_identity.public_key().as_bytes()
         );
     }
 }

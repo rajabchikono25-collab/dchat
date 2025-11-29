@@ -214,6 +214,17 @@ impl Default for PrivacySettings {
     }
 }
 
+/// Maximum number of statuses per user
+#[allow(dead_code)]
+const MAX_STATUSES_PER_USER: usize = 30;
+/// Maximum status caption length
+#[allow(dead_code)]
+const MAX_CAPTION_LENGTH: usize = 500;
+/// Maximum viewers tracked per status
+const MAX_VIEWERS_PER_STATUS: usize = 10000;
+/// Maximum profiles to return in search
+const MAX_SEARCH_RESULTS: usize = 50;
+
 /// Profile manager
 pub struct ProfileManager {
     profiles: Arc<RwLock<HashMap<dchat_core::types::UserId, UserProfile>>>,
@@ -284,13 +295,20 @@ impl ProfileManager {
     }
 
     /// Search profiles by username prefix
+    /// 
+    /// # Security
+    /// - Results are limited to prevent resource exhaustion
     pub fn search_profiles(&self, query: &str) -> Vec<UserProfile> {
         let profiles = match self.profiles.read() {
             Ok(p) => p,
             Err(_) => return Vec::new(),
         };
-
-        let query_lower = query.to_lowercase();
+        
+        // Limit query length
+        let query_lower: String = query.chars().take(100).collect::<String>().to_lowercase();
+        if query_lower.is_empty() {
+            return Vec::new();
+        }
 
         profiles
             .values()
@@ -298,6 +316,7 @@ impl ProfileManager {
                 p.username.to_lowercase().contains(&query_lower)
                     || p.display_name.to_lowercase().contains(&query_lower)
             })
+            .take(MAX_SEARCH_RESULTS)
             .cloned()
             .collect()
     }
@@ -386,6 +405,9 @@ impl ProfileManager {
     }
 
     /// Increment status view count
+    /// 
+    /// # Security
+    /// - Limits viewer list size to prevent memory exhaustion
     pub fn view_status(
         &self,
         status_owner: &dchat_core::types::UserId,
@@ -402,7 +424,8 @@ impl ProfileManager {
 
         if let Some(status) = &mut profile.status {
             status.view_count += 1;
-            if !status.viewers.contains(viewer) {
+            // Limit viewer list to prevent memory exhaustion
+            if status.viewers.len() < MAX_VIEWERS_PER_STATUS && !status.viewers.contains(viewer) {
                 status.viewers.push(viewer.clone());
             }
         }

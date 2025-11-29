@@ -12,6 +12,11 @@ dchat-crypto = { path = "../dchat-crypto" }
 # Only need libp2p PeerId type, not full dchat-network dependency
 libp2p = { version = "0.54", default-features = false }
 
+# Security: Memory zeroing for sensitive data
+zeroize = { version = "1.7", features = ["derive"] }
+# Security: Constant-time comparisons
+subtle = "2.5"
+
 tokio = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }

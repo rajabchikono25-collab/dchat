@@ -2424,11 +2424,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

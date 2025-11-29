@@ -45,6 +45,10 @@ pub struct MpcConfig {
     pub timeout_seconds: u64,
     /// Whether to allow fallback to full quorum
     pub allow_full_quorum: bool,
+    /// Maximum signature share size to prevent memory exhaustion
+    pub max_share_size: usize,
+    /// Session expiration time in seconds
+    pub session_expiry_seconds: u64,
 }
 
 impl Default for MpcConfig {
@@ -54,6 +58,8 @@ impl Default for MpcConfig {
             total_signers: 3,
             timeout_seconds: 30,
             allow_full_quorum: true,
+            max_share_size: 256, // Ed25519 signature shares are 64 bytes, allow buffer
+            session_expiry_seconds: 300, // 5 minute session expiry
         }
     }
 }
@@ -308,14 +314,39 @@ impl MpcSigner {
     }
 
     /// Add a signature share to a session
+    /// 
+    /// # Security
+    /// - Validates share size to prevent memory exhaustion
+    /// - Checks session expiry to prevent replay attacks
+    /// - Prevents duplicate shares from same signer
     pub async fn add_signature_share(
         &mut self,
         session_id: &str,
         share: SignatureShare,
     ) -> Result<(), MpcError> {
+        // Validate share size
+        if share.share.len() > self.config.max_share_size {
+            return Err(MpcError::InvalidSignatureShare(
+                "Share exceeds maximum allowed size".to_string()
+            ));
+        }
+        
         // Verify the signer is registered first
         if !self.signers.contains_key(&share.signer_id) {
             return Err(MpcError::SignerNotFound(share.signer_id.0.clone()));
+        }
+        
+        // Check session expiry to prevent replay attacks
+        let now = chrono::Utc::now().timestamp();
+        {
+            let session = self
+                .active_sessions
+                .get(session_id)
+                .ok_or_else(|| MpcError::SignerNotFound(session_id.to_string()))?;
+            
+            if now - session.started_at > self.config.session_expiry_seconds as i64 {
+                return Err(MpcError::Timeout);
+            }
         }
 
         // Get session and extract message before verification
@@ -602,14 +633,29 @@ impl MpcSigner {
 }
 
 /// High-level MPC signing coordinator
+/// 
+/// SECURITY WARNING: This coordinator stores ALL private key shares, which is
+/// only appropriate for testing and development. In production:
+/// - Each signer must only hold their own share
+/// - Use FrostCoordinator for production threshold signatures
+/// - Share distribution must happen over secure channels
+/// 
+/// This struct is available only in debug builds to prevent accidental
+/// production use. Use `FrostCoordinator` in `mpc_frost.rs` for production.
+#[cfg(debug_assertions)]
 pub struct MpcCoordinator {
     signer: MpcSigner,
-    // Store private key shares for testing (in production, each signer has only their own share)
+    /// Store private key shares - TESTING ONLY
+    /// SECURITY: In production, each signer has ONLY their own share
     private_key_shares: HashMap<SignerId, Vec<u8>>,
 }
 
+#[cfg(debug_assertions)]
 impl MpcCoordinator {
-    /// Create a new MPC coordinator
+    /// Create a new MPC coordinator (TESTING ONLY)
+    /// 
+    /// For production, use `mpc_frost::FrostCoordinator` which uses
+    /// the audited frost-ed25519 library.
     pub fn new(config: MpcConfig) -> Self {
         Self {
             signer: MpcSigner::new(config),
@@ -763,10 +809,27 @@ impl MpcCoordinator {
                 .map_err(|_| MpcError::KeyGenerationFailed("Invalid private share".to_string()))?,
         );
 
-        // 1. Generate ephemeral nonce k
-        let mut rng = rand::thread_rng();
+        // 1. Generate ephemeral nonce k with additional entropy sources
+        // SECURITY: Use OsRng for cryptographic randomness, add message and timestamp for domain separation
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
         let mut k_bytes = [0u8; 64];
         rng.fill_bytes(&mut k_bytes);
+        
+        // Mix in message hash and timestamp for additional domain separation
+        // This prevents nonce reuse even if RNG has issues
+        let mut domain_separator = Sha256::new();
+        domain_separator.update(&k_bytes[..32]);
+        domain_separator.update(message);
+        domain_separator.update(&chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        domain_separator.update(&signer.public_key_share);
+        let domain_hash = domain_separator.finalize();
+        
+        // XOR domain hash into nonce for additional entropy
+        for i in 0..32 {
+            k_bytes[i] ^= domain_hash[i];
+        }
+        
         let k = Scalar::from_bytes_mod_order_wide(&k_bytes);
 
         // 2. Compute R = k*G
@@ -813,6 +876,20 @@ impl MpcCoordinator {
         }
 
         Ok(())
+    }
+}
+
+// Production placeholder - provides clear error message in release builds
+#[cfg(not(debug_assertions))]
+pub struct MpcCoordinator;
+
+#[cfg(not(debug_assertions))]
+impl MpcCoordinator {
+    /// MpcCoordinator is not available in production builds
+    /// 
+    /// Use `mpc_frost::FrostCoordinator` for production threshold signatures.
+    pub fn new(_config: MpcConfig) -> Self {
+        panic!("MpcCoordinator is only available in debug builds. Use mpc_frost::FrostCoordinator for production.");
     }
 }
 
@@ -876,6 +953,8 @@ mod tests {
             total_signers: 3,
             timeout_seconds: 30,
             allow_full_quorum: true,
+            max_share_size: 256,
+            session_expiry_seconds: 300,
         };
         let mut signer = MpcSigner::new(config);
 

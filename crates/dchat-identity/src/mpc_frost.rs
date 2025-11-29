@@ -1,28 +1,48 @@
 // FROST (Flexible Round-Optimized Schnorr Threshold) Signatures
 // Production-grade threshold signature implementation for dchat MPC
 //
-// This module integrates the audited frost-ed25519 library (v2.0) for secure
-// threshold signatures, replacing the basic Shamir Secret Sharing implementation.
+// This module provides threshold signature functionality for dchat using the
+// audited frost-ed25519 crate (NCC Group Security Audit, April 2023).
 //
 // FROST Protocol Overview:
 // - Two-round signing protocol (preprocessing + signing)
 // - t-of-n threshold (default: 2-of-3 for user device, cloud, recovery)
-// - DKG (Distributed Key Generation) without trusted dealer
-// - Abort-free guarantee (no single party can force restart)
 // - Compatible with standard Ed25519 public keys and signatures
 //
 // Security Properties:
-// - Honest-majority assumption (t+1 honest parties)
 // - Existentially unforgeable under chosen message attack (EU-CMA)
 // - Robustness against malicious signers (abort detection)
 // - Forward secrecy via nonce commitment
 //
-// Audit Status: NCC Group audit (2023) - PASSED
+// PRODUCTION STATUS: ✅ Uses audited frost-ed25519 v2.x library
+//
 // Paper: "FROST: Flexible Round-Optimized Schnorr Threshold Signatures" (Komlo & Goldberg, 2020)
 
+use frost_ed25519 as frost;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// Helper function to convert frost::Identifier to ParticipantId (u16)
+fn identifier_to_u16(id: &frost::Identifier) -> Result<u16, FrostError> {
+    // Serialize and convert from the serialized bytes
+    let bytes = id.serialize();
+    // frost::Identifier is a scalar, we use the first 2 bytes as the u16
+    // In practice, participant IDs are small positive integers
+    if bytes.len() >= 2 {
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    } else if !bytes.is_empty() {
+        Ok(bytes[0] as u16)
+    } else {
+        Err(FrostError::DkgFailed("Invalid identifier".to_string()))
+    }
+}
+
+/// Helper function to convert ParticipantId (u16) to frost::Identifier
+fn u16_to_identifier(pid: u16) -> Result<frost::Identifier, FrostError> {
+    frost::Identifier::try_from(pid)
+        .map_err(|e| FrostError::SigningFailed(format!("Invalid identifier: {:?}", e)))
+}
 
 /// FROST-specific errors
 #[derive(Error, Debug)]
@@ -118,7 +138,7 @@ pub struct DkgRound1Package {
 pub struct DkgRound2Package {
     pub sender_id: ParticipantId,
     /// Map of participant_id -> encrypted secret share
-    pub shares: HashMap<ParticipantId, Vec<u8>>,
+    pub shares: BTreeMap<ParticipantId, Vec<u8>>,
 }
 
 /// Completed DKG result with key share and public verification data
@@ -131,7 +151,7 @@ pub struct FrostKeyShare {
     /// Group public key (same for all participants)
     pub group_public_key: Vec<u8>,
     /// Public key shares of all participants (for verification)
-    pub public_key_shares: HashMap<ParticipantId, Vec<u8>>,
+    pub public_key_shares: BTreeMap<ParticipantId, Vec<u8>>,
     /// Verification key (group public key in different format)
     pub verifying_key: Vec<u8>,
 }
@@ -163,15 +183,14 @@ pub struct FrostSignature {
 
 /// FROST coordinator managing the signing protocol
 ///
-/// Note: In a decentralized setting, there is no single coordinator.
-/// Each participant runs this logic independently and exchanges messages
-/// via the dchat P2P network. This struct is for convenience/testing.
+/// Uses the audited frost-ed25519 library for all cryptographic operations.
+/// Each participant should run their own coordinator instance in production.
 pub struct FrostCoordinator {
     config: FrostConfig,
     /// Key shares for all participants (in production, each only has their own)
-    key_shares: HashMap<ParticipantId, FrostKeyShare>,
+    key_shares: BTreeMap<ParticipantId, FrostKeyShare>,
     /// Active signing sessions
-    signing_sessions: HashMap<String, FrostSigningSession>,
+    signing_sessions: BTreeMap<String, FrostSigningSession>,
 }
 
 /// State for an active FROST signing session
@@ -179,8 +198,8 @@ pub struct FrostCoordinator {
 struct FrostSigningSession {
     session_id: String,
     message: Vec<u8>,
-    round1_packages: HashMap<ParticipantId, SigningRound1Package>,
-    round2_packages: HashMap<ParticipantId, SigningRound2Package>,
+    round1_packages: BTreeMap<ParticipantId, SigningRound1Package>,
+    round2_packages: BTreeMap<ParticipantId, SigningRound2Package>,
     started_at: i64,
     status: SessionStatus,
 }
@@ -199,26 +218,19 @@ impl FrostCoordinator {
         config.validate()?;
         Ok(Self {
             config,
-            key_shares: HashMap::new(),
-            signing_sessions: HashMap::new(),
+            key_shares: BTreeMap::new(),
+            signing_sessions: BTreeMap::new(),
         })
     }
 
-    /// Perform Distributed Key Generation (DKG)
+    /// Perform Distributed Key Generation (DKG) using frost-ed25519 trusted dealer
     ///
-    /// In production, this is a multi-round protocol:
-    /// 1. Each participant generates Round 1 package (commitments)
-    /// 2. Broadcast commitments to all other participants
-    /// 3. Each participant generates Round 2 package (secret shares)
-    /// 4. Send secret shares to respective participants (encrypted)
-    /// 5. Each participant verifies shares and computes key share
-    ///
-    /// This implementation simulates the full DKG for testing purposes.
-    /// In production, use the frost-ed25519 crate's DKG implementation.
+    /// Uses frost-ed25519's generate_with_dealer for secure key generation.
+    /// For P2P DKG without a trusted dealer, use frost::keys::dkg protocol.
     pub async fn perform_dkg(
         &mut self,
         participant_ids: Vec<ParticipantId>,
-    ) -> Result<HashMap<ParticipantId, FrostKeyShare>, FrostError> {
+    ) -> Result<BTreeMap<ParticipantId, FrostKeyShare>, FrostError> {
         if participant_ids.len() != self.config.max_signers as usize {
             return Err(FrostError::InvalidConfig(format!(
                 "Expected {} participants, got {}",
@@ -242,112 +254,70 @@ impl FrostCoordinator {
             }
         }
 
-        // PRODUCTION IMPLEMENTATION:
-        //
-        // Use frost_ed25519::keys::dkg::part1(), part2(), part3()
-        // for secure distributed key generation without trusted dealer.
-        //
-        // Example integration:
-        // ```
-        // use frost_ed25519 as frost;
-        // 
-        // // Round 1: Generate and broadcast commitments
-        // let (round1_secret_package, round1_package) = 
-        //     frost::keys::dkg::part1(
-        //         participant_id,
-        //         max_signers,
-        //         min_signers,
-        //         &mut rng
-        //     )?;
-        //
-        // // Collect round1_packages from all participants...
-        //
-        // // Round 2: Generate secret shares
-        // let (round2_secret_package, round2_packages) = 
-        //     frost::keys::dkg::part2(
-        //         round1_secret_package,
-        //         &round1_packages
-        //     )?;
-        //
-        // // Distribute round2_packages[i] to participant i...
-        //
-        // // Round 3: Finalize key share
-        // let (key_package, public_key_package) = 
-        //     frost::keys::dkg::part3(
-        //         &round2_secret_package,
-        //         &round1_packages,
-        //         &round2_packages
-        //     )?;
-        // ```
-        //
-        // For now, simulate with simple key generation for testing:
-
-        use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
-        use curve25519_dalek::scalar::Scalar;
         use rand::rngs::OsRng;
-        use rand::RngCore;
+        let mut rng = OsRng;
+        let max_signers = self.config.max_signers;
+        let min_signers = self.config.min_signers;
 
-        // Generate master secret (in real DKG, this is never materialized)
-        let mut secret_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut secret_bytes);
-        let master_secret = Scalar::from_bytes_mod_order(secret_bytes);
+        // Use frost-ed25519's trusted dealer key generation (audited by NCC Group)
+        let (shares, pubkey_package) = frost::keys::generate_with_dealer(
+            max_signers,
+            min_signers,
+            frost::keys::IdentifierList::Default,
+            &mut rng,
+        ).map_err(|e| FrostError::DkgFailed(format!("FROST DKG failed: {:?}", e)))?;
 
-        // Generate polynomial coefficients for Shamir Secret Sharing
-        let mut coefficients = vec![master_secret];
-        for _ in 1..self.config.min_signers {
-            let mut coeff_bytes = [0u8; 32];
-            OsRng.fill_bytes(&mut coeff_bytes);
-            coefficients.push(Scalar::from_bytes_mod_order(coeff_bytes));
+        // Convert to our FrostKeyShare format
+        let mut key_shares = BTreeMap::new();
+        let group_public_key = pubkey_package.verifying_key().serialize()
+            .map_err(|e| FrostError::DkgFailed(format!("Serialization failed: {:?}", e)))?;
+
+        // Build public key shares map
+        let mut public_key_shares: BTreeMap<ParticipantId, Vec<u8>> = BTreeMap::new();
+        for (id, _share) in shares.iter() {
+            let pid = identifier_to_u16(id)?;
+            let verifying_share = pubkey_package.verifying_shares()
+                .get(id)
+                .ok_or_else(|| FrostError::DkgFailed("Missing verifying share".to_string()))?;
+            let serialized = verifying_share.serialize()
+                .map_err(|e| FrostError::DkgFailed(format!("Serialization failed: {:?}", e)))?;
+            public_key_shares.insert(pid, serialized);
         }
 
-        // Compute group public key
-        let group_public_key_point = &master_secret * ED25519_BASEPOINT_TABLE;
-        let group_public_key = group_public_key_point.compress().to_bytes().to_vec();
-
-        // Generate key shares for each participant
-        let mut key_shares = HashMap::new();
-        let mut public_key_shares = HashMap::new();
-        
-        let num_participants = participant_ids.len();
-
-        for participant_id in &participant_ids {
-            // Evaluate polynomial at participant_id to get secret share
-            let x = Scalar::from(*participant_id as u64);
-            let mut secret_share = coefficients[0];
-            let mut x_power = x;
-            for coeff in coefficients.iter().skip(1) {
-                secret_share += coeff * x_power;
-                x_power *= x;
-            }
-
-            // Compute public key share (verification key)
-            let public_key_share_point = &secret_share * ED25519_BASEPOINT_TABLE;
-            let public_key_share = public_key_share_point.compress().to_bytes().to_vec();
-            public_key_shares.insert(*participant_id, public_key_share.clone());
-
-            // Create key share for this participant
+        // Store shares for each participant
+        for (participant_id, share) in shares {
+            let pid = identifier_to_u16(&participant_id)?;
+            
+            // Serialize the signing share securely
+            let key_package = frost::keys::KeyPackage::try_from(share)
+                .map_err(|e| FrostError::DkgFailed(format!("KeyPackage creation failed: {:?}", e)))?;
+            let secret_share = key_package.signing_share().serialize();
+            
             let key_share = FrostKeyShare {
-                participant_id: *participant_id,
-                secret_key_share: secret_share.to_bytes().to_vec(),
+                participant_id: pid,
+                secret_key_share: secret_share,
                 group_public_key: group_public_key.clone(),
                 public_key_shares: public_key_shares.clone(),
                 verifying_key: group_public_key.clone(),
             };
 
-            key_shares.insert(*participant_id, key_share.clone());
-            self.key_shares.insert(*participant_id, key_share);
+            key_shares.insert(pid, key_share.clone());
+            self.key_shares.insert(pid, key_share);
         }
 
         tracing::info!(
-            "✅ FROST DKG complete: {} participants, threshold {}",
-            num_participants,
-            self.config.min_signers
+            "✅ FROST DKG complete (frost-ed25519): {} participants, threshold {}",
+            key_shares.len(),
+            min_signers
         );
 
         Ok(key_shares)
     }
 
-    /// Start a new signing session
+    /// Start a new signing session for P2P FROST signing
+    /// 
+    /// This creates a session that tracks the multi-round FROST protocol
+    /// when participants communicate over the network.
     pub async fn start_signing(
         &mut self,
         message: Vec<u8>,
@@ -365,8 +335,8 @@ impl FrostCoordinator {
         let session = FrostSigningSession {
             session_id: session_id.clone(),
             message,
-            round1_packages: HashMap::new(),
-            round2_packages: HashMap::new(),
+            round1_packages: BTreeMap::new(),
+            round2_packages: BTreeMap::new(),
             started_at: chrono::Utc::now().timestamp(),
             status: SessionStatus::WaitingForRound1,
         };
@@ -378,7 +348,7 @@ impl FrostCoordinator {
         Ok(session_id)
     }
 
-    /// Add Round 1 commitment from a signer
+    /// Add Round 1 commitment from a signer (for P2P mode)
     pub async fn add_round1_commitment(
         &mut self,
         session_id: &str,
@@ -412,7 +382,7 @@ impl FrostCoordinator {
         Ok(())
     }
 
-    /// Add Round 2 signature share from a signer
+    /// Add Round 2 signature share from a signer (for P2P mode)
     pub async fn add_round2_share(
         &mut self,
         session_id: &str,
@@ -451,7 +421,12 @@ impl FrostCoordinator {
         Ok(())
     }
 
-    /// Aggregate signature shares into final FROST signature
+    /// Aggregate signature shares into final FROST signature (for P2P mode)
+    /// 
+    /// This method aggregates the Round 2 packages collected from participants
+    /// into a final FROST signature using the frost-ed25519 library.
+    /// 
+    /// Note: The round packages contain serialized frost-ed25519 types.
     pub async fn aggregate_signature(
         &self,
         session_id: &str,
@@ -475,150 +450,112 @@ impl FrostCoordinator {
             });
         }
 
-        // PRODUCTION IMPLEMENTATION:
-        //
-        // Use frost_ed25519::aggregate() to combine signature shares
-        //
-        // Example:
-        // ```
-        // use frost_ed25519 as frost;
-        //
-        // let signature: frost::Signature = frost::aggregate(
-        //     &signing_package,
-        //     &signature_shares,
-        //     &pubkey_package,
-        // )?;
-        //
-        // let signature_bytes = signature.to_bytes();
-        // ```
-        //
-        // For now, simulate aggregation with Lagrange interpolation:
+        // Collect signer IDs
+        let signer_ids: Vec<ParticipantId> = session.round2_packages.keys().copied().collect();
 
-        use curve25519_dalek::edwards::CompressedEdwardsY;
-        use curve25519_dalek::scalar::Scalar;
-
-        // Collect signer IDs and signature shares
-        let mut signer_ids: Vec<ParticipantId> = session.round2_packages.keys().copied().collect();
-        signer_ids.sort();
-
-        // Parse R (group commitment) from first share (should be same for all)
-        let first_share = &session.round2_packages[&signer_ids[0]];
-        if first_share.signature_share_data.len() < 64 {
-            return Err(FrostError::SigningFailed("Invalid share length".to_string()));
+        // Deserialize round1 commitments into frost types
+        let mut commitments_map: BTreeMap<frost::Identifier, frost::round1::SigningCommitments> = BTreeMap::new();
+        for (&pid, round1_pkg) in &session.round1_packages {
+            let identifier = u16_to_identifier(pid)?;
+            let commitments = frost::round1::SigningCommitments::deserialize(&round1_pkg.commitment_data)
+                .map_err(|e| FrostError::SigningFailed(format!("Invalid commitments: {:?}", e)))?;
+            commitments_map.insert(identifier, commitments);
         }
 
-        let r_bytes: [u8; 32] = first_share.signature_share_data[..32]
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid R component".to_string()))?;
+        // Create signing package
+        let signing_package = frost::SigningPackage::new(commitments_map, &session.message);
 
-        // Aggregate z values using Lagrange interpolation
-        let mut z_aggregated = Scalar::ZERO;
-
-        for (idx, &signer_id) in signer_ids.iter().enumerate() {
-            let share_data = &session.round2_packages[&signer_id].signature_share_data;
-            let z_bytes: [u8; 32] = share_data[32..]
-                .try_into()
-                .map_err(|_| FrostError::SigningFailed("Invalid z component".to_string()))?;
-
-            let z_i = Scalar::from_canonical_bytes(z_bytes)
-                .into_option()
-                .ok_or(FrostError::SigningFailed("Invalid scalar".to_string()))?;
-
-            // Compute Lagrange coefficient λ_i
-            let mut lambda_i = Scalar::ONE;
-            let x_i = Scalar::from(signer_id as u64);
-
-            for (j_idx, &signer_j) in signer_ids.iter().enumerate() {
-                if idx != j_idx {
-                    let x_j = Scalar::from(signer_j as u64);
-                    // λ_i *= x_j / (x_j - x_i)
-                    let numerator = x_j;
-                    let denominator = x_j - x_i;
-                    let denominator_inv = denominator.invert();
-                    lambda_i *= numerator * denominator_inv;
-                }
-            }
-
-            z_aggregated += z_i * lambda_i;
+        // Deserialize signature shares into frost types
+        let mut signature_shares: BTreeMap<frost::Identifier, frost::round2::SignatureShare> = BTreeMap::new();
+        for (&pid, round2_pkg) in &session.round2_packages {
+            let identifier = u16_to_identifier(pid)?;
+            let sig_share = frost::round2::SignatureShare::deserialize(&round2_pkg.signature_share_data)
+                .map_err(|e| FrostError::SigningFailed(format!("Invalid signature share: {:?}", e)))?;
+            signature_shares.insert(identifier, sig_share);
         }
 
-        // Construct final signature: R || z
-        let mut signature = Vec::with_capacity(64);
-        signature.extend_from_slice(&r_bytes);
-        signature.extend_from_slice(z_aggregated.as_bytes());
-
-        // Verify the aggregated signature
-        let group_public_key = &self.key_shares.values().next().unwrap().group_public_key;
-        if !self.verify_signature(&signature, &session.message, group_public_key)? {
-            return Err(FrostError::SigningFailed(
-                "Aggregated signature verification failed".to_string(),
-            ));
+        // Build public key package for aggregation
+        let first_key_share = self.key_shares.values().next()
+            .ok_or_else(|| FrostError::SigningFailed("No key shares".to_string()))?;
+        
+        let verifying_key = frost::VerifyingKey::deserialize(&first_key_share.group_public_key)
+            .map_err(|e| FrostError::SigningFailed(format!("Invalid verifying key: {:?}", e)))?;
+        
+        let mut verifying_shares: BTreeMap<frost::Identifier, frost::keys::VerifyingShare> = BTreeMap::new();
+        for &pid in &signer_ids {
+            let key_share = self.key_shares.get(&pid)
+                .ok_or(FrostError::SignerNotFound(pid))?;
+            let identifier = u16_to_identifier(pid)?;
+            let verifying_share = frost::keys::VerifyingShare::deserialize(
+                key_share.public_key_shares.get(&pid)
+                    .ok_or_else(|| FrostError::SigningFailed("Missing verifying share".to_string()))?
+            ).map_err(|e| FrostError::SigningFailed(format!("Invalid verifying share: {:?}", e)))?;
+            verifying_shares.insert(identifier, verifying_share);
         }
+        
+        let pubkey_package = frost::keys::PublicKeyPackage::new(verifying_shares, verifying_key);
+
+        // Aggregate signature shares using frost-ed25519
+        let signature = frost::aggregate(&signing_package, &signature_shares, &pubkey_package)
+            .map_err(|e| FrostError::SigningFailed(format!("Aggregation failed: {:?}", e)))?;
+
+        let signature_bytes = signature.serialize()
+            .map_err(|e| FrostError::SigningFailed(format!("Serialization failed: {:?}", e)))?;
 
         tracing::info!(
-            "✅ FROST signature aggregated from {} signers",
+            "✅ FROST signature aggregated (frost-ed25519): {} signers",
             signer_ids.len()
         );
 
         Ok(FrostSignature {
-            signature,
+            signature: signature_bytes,
             signers: signer_ids,
         })
     }
 
-    /// Generate Round 1 commitment for a participant
+    /// Generate Round 1 commitment for a participant (for P2P mode)
     ///
-    /// In production, each participant runs this independently
+    /// Uses frost-ed25519 to generate cryptographically secure nonces
+    /// and commitments. Returns serialized commitment data.
     pub async fn generate_round1_commitment(
         &self,
         participant_id: ParticipantId,
-        message: &[u8],
-    ) -> Result<SigningRound1Package, FrostError> {
-        let _key_share = self
+        _message: &[u8],
+    ) -> Result<(SigningRound1Package, frost::round1::SigningNonces), FrostError> {
+        use rand::rngs::OsRng;
+        
+        let key_share = self
             .key_shares
             .get(&participant_id)
             .ok_or(FrostError::SignerNotFound(participant_id))?;
 
-        // PRODUCTION: Use frost_ed25519::round1::commit()
-        //
-        // let (nonces, commitments) = frost::round1::commit(
-        //     participant_id,
-        //     &mut rng,
-        // );
+        let mut rng = OsRng;
 
-        use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
-        use curve25519_dalek::scalar::Scalar;
-        use rand::RngCore;
+        // Reconstruct signing share from stored bytes
+        let signing_share = frost::keys::SigningShare::deserialize(&key_share.secret_key_share)
+            .map_err(|e| FrostError::SigningFailed(format!("Invalid signing share: {:?}", e)))?;
 
-        // Generate ephemeral nonce
-        let mut rng = rand::thread_rng();
-        let mut nonce_bytes = [0u8; 64];
-        rng.fill_bytes(&mut nonce_bytes);
-        let nonce = Scalar::from_bytes_mod_order_wide(&nonce_bytes);
+        // Generate nonces and commitments using frost-ed25519
+        let (nonces, commitments) = frost::round1::commit(&signing_share, &mut rng);
 
-        // Compute nonce commitment R = nonce * G
-        let r_point = &nonce * ED25519_BASEPOINT_TABLE;
-        let commitment = r_point.compress().to_bytes().to_vec();
+        // Serialize commitments for transmission
+        let commitment_data = commitments.serialize()
+            .map_err(|e| FrostError::SigningFailed(format!("Serialization failed: {:?}", e)))?;
 
-        // Store nonce securely (in production, use nonce_store)
-        // For now, include it in commitment_data for later retrieval
-
-        let mut commitment_data = Vec::with_capacity(64);
-        commitment_data.extend_from_slice(&commitment);
-        commitment_data.extend_from_slice(nonce.as_bytes());
-
-        Ok(SigningRound1Package {
+        Ok((SigningRound1Package {
             signer_id: participant_id,
             commitment_data,
-        })
+        }, nonces))
     }
 
-    /// Generate Round 2 signature share for a participant
+    /// Generate Round 2 signature share for a participant (for P2P mode)
+    /// 
+    /// Uses frost-ed25519 to generate the signature share.
     pub async fn generate_round2_share(
         &self,
         participant_id: ParticipantId,
         session_id: &str,
-        round1_package: &SigningRound1Package,
+        nonces: &frost::round1::SigningNonces,
     ) -> Result<SigningRound2Package, FrostError> {
         let key_share = self
             .key_shares
@@ -630,56 +567,46 @@ impl FrostCoordinator {
             .get(session_id)
             .ok_or_else(|| FrostError::SignerNotFound(0))?;
 
-        // PRODUCTION: Use frost_ed25519::round2::sign()
-        //
-        // let signature_share = frost::round2::sign(
-        //     &signing_package,
-        //     &nonces,
-        //     &key_package,
-        // )?;
+        // Reconstruct key package
+        let identifier = u16_to_identifier(participant_id)?;
+        
+        let signing_share = frost::keys::SigningShare::deserialize(&key_share.secret_key_share)
+            .map_err(|e| FrostError::SigningFailed(format!("Invalid signing share: {:?}", e)))?;
+        
+        let verifying_share = frost::keys::VerifyingShare::deserialize(
+            key_share.public_key_shares.get(&participant_id)
+                .ok_or_else(|| FrostError::SigningFailed("Missing verifying share".to_string()))?
+        ).map_err(|e| FrostError::SigningFailed(format!("Invalid verifying share: {:?}", e)))?;
+        
+        let verifying_key = frost::VerifyingKey::deserialize(&key_share.group_public_key)
+            .map_err(|e| FrostError::SigningFailed(format!("Invalid verifying key: {:?}", e)))?;
+        
+        let key_package = frost::keys::KeyPackage::new(
+            identifier,
+            signing_share,
+            verifying_share,
+            verifying_key,
+            self.config.min_signers,
+        );
 
-        use curve25519_dalek::scalar::Scalar;
-        use sha2::{Digest, Sha512};
-
-        // Extract nonce from round1 package
-        if round1_package.commitment_data.len() < 64 {
-            return Err(FrostError::SigningFailed(
-                "Invalid Round 1 package".to_string(),
-            ));
+        // Build commitments map from round1 packages
+        let mut commitments_map: BTreeMap<frost::Identifier, frost::round1::SigningCommitments> = BTreeMap::new();
+        for (&pid, round1_pkg) in &session.round1_packages {
+            let id = u16_to_identifier(pid)?;
+            let commitments = frost::round1::SigningCommitments::deserialize(&round1_pkg.commitment_data)
+                .map_err(|e| FrostError::SigningFailed(format!("Invalid commitments: {:?}", e)))?;
+            commitments_map.insert(id, commitments);
         }
-        let nonce_bytes: [u8; 32] = round1_package.commitment_data[32..]
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid nonce".to_string()))?;
-        let nonce = Scalar::from_canonical_bytes(nonce_bytes)
-            .into_option()
-            .ok_or(FrostError::SigningFailed("Invalid nonce scalar".to_string()))?;
 
-        let r_bytes: [u8; 32] = round1_package.commitment_data[..32]
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid R".to_string()))?;
+        // Create signing package
+        let signing_package = frost::SigningPackage::new(commitments_map, &session.message);
 
-        // Parse secret key share
-        let sk_bytes: [u8; 32] = key_share
-            .secret_key_share
-            .as_slice()
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid secret share".to_string()))?;
-        let sk = Scalar::from_bytes_mod_order(sk_bytes);
+        // Generate signature share using frost-ed25519
+        let signature_share = frost::round2::sign(&signing_package, nonces, &key_package)
+            .map_err(|e| FrostError::SigningFailed(format!("Round 2 signing failed: {:?}", e)))?;
 
-        // Compute challenge h = H(R || PK || m)
-        let mut hasher = Sha512::new();
-        hasher.update(r_bytes);
-        hasher.update(&key_share.group_public_key);
-        hasher.update(&session.message);
-        let challenge = Scalar::from_hash(hasher);
-
-        // Compute signature share: z_i = nonce + challenge * sk_i
-        let z_i = nonce + (challenge * sk);
-
-        // Construct signature share: R || z_i
-        let mut signature_share_data = Vec::with_capacity(64);
-        signature_share_data.extend_from_slice(&r_bytes);
-        signature_share_data.extend_from_slice(z_i.as_bytes());
+        // Serialize signature share for transmission
+        let signature_share_data = signature_share.serialize();
 
         Ok(SigningRound2Package {
             signer_id: participant_id,
@@ -688,8 +615,14 @@ impl FrostCoordinator {
     }
 
     /// Sign a message using FROST (full two-round protocol)
+    /// 
+    /// PRODUCTION: Uses the audited frost-ed25519 library for signing.
+    /// Implements the complete FROST signing protocol with round 1 (commitment)
+    /// and round 2 (signature share generation) followed by aggregation.
     pub async fn sign(&mut self, message: Vec<u8>) -> Result<FrostSignature, FrostError> {
-        // Select participants (in production, this is done via P2P coordination)
+        use rand::rngs::OsRng;
+
+        // Select participants (use min_signers, which is the threshold)
         let participant_ids: Vec<ParticipantId> = self
             .key_shares
             .keys()
@@ -704,31 +637,129 @@ impl FrostCoordinator {
             });
         }
 
-        // Start signing session
-        let session_id = self.start_signing(message.clone()).await?;
+        let mut rng = OsRng;
 
-        // Round 1: Generate and collect commitments
-        let mut round1_packages = Vec::new();
-        for pid in &participant_ids {
-            let package = self.generate_round1_commitment(*pid, &message).await?;
-            round1_packages.push(package.clone());
-            self.add_round1_commitment(&session_id, package).await?;
+        // Build key packages for each participant
+        let mut key_packages: BTreeMap<frost::Identifier, frost::keys::KeyPackage> = BTreeMap::new();
+        
+        for &pid in &participant_ids {
+            let key_share = self.key_shares.get(&pid)
+                .ok_or(FrostError::SignerNotFound(pid))?;
+            
+            let identifier = u16_to_identifier(pid)?;
+            
+            // Reconstruct signing share from stored bytes
+            let signing_share = frost::keys::SigningShare::deserialize(&key_share.secret_key_share)
+                .map_err(|e| FrostError::SigningFailed(format!("Invalid signing share: {:?}", e)))?;
+            
+            // Get verifying share
+            let verifying_share = frost::keys::VerifyingShare::deserialize(
+                key_share.public_key_shares.get(&pid)
+                    .ok_or_else(|| FrostError::SigningFailed("Missing verifying share".to_string()))?
+            ).map_err(|e| FrostError::SigningFailed(format!("Invalid verifying share: {:?}", e)))?;
+            
+            // Get group verifying key
+            let verifying_key = frost::VerifyingKey::deserialize(&key_share.group_public_key)
+                .map_err(|e| FrostError::SigningFailed(format!("Invalid verifying key: {:?}", e)))?;
+            
+            let key_package = frost::keys::KeyPackage::new(
+                identifier,
+                signing_share,
+                verifying_share,
+                verifying_key,
+                self.config.min_signers,
+            );
+            
+            key_packages.insert(identifier, key_package);
         }
 
-        // Round 2: Generate and collect signature shares
-        for (idx, pid) in participant_ids.iter().enumerate() {
-            let package = self
-                .generate_round2_share(*pid, &session_id, &round1_packages[idx])
-                .await?;
-            self.add_round2_share(&session_id, package).await?;
+        // ========================================
+        // Round 1: Generate nonces and commitments
+        // ========================================
+        let mut nonces_map: BTreeMap<frost::Identifier, frost::round1::SigningNonces> = BTreeMap::new();
+        let mut commitments_map: BTreeMap<frost::Identifier, frost::round1::SigningCommitments> = BTreeMap::new();
+
+        for (&identifier, key_package) in &key_packages {
+            // Generate nonces and commitments using signing share
+            let (nonces, commitments) = frost::round1::commit(
+                key_package.signing_share(),
+                &mut rng,
+            );
+            nonces_map.insert(identifier, nonces);
+            commitments_map.insert(identifier, commitments);
         }
 
-        // Aggregate signature
-        self.aggregate_signature(&session_id).await
+        // ========================================
+        // Create the signing package
+        // ========================================
+        let signing_package = frost::SigningPackage::new(commitments_map, &message);
+
+        // ========================================
+        // Round 2: Generate signature shares
+        // ========================================
+        let mut signature_shares: BTreeMap<frost::Identifier, frost::round2::SignatureShare> = BTreeMap::new();
+        
+        for (&identifier, key_package) in &key_packages {
+            let nonces = nonces_map.get(&identifier)
+                .ok_or_else(|| FrostError::SigningFailed("Missing nonces".to_string()))?;
+            
+            let signature_share = frost::round2::sign(&signing_package, nonces, key_package)
+                .map_err(|e| FrostError::SigningFailed(format!("Round 2 signing failed: {:?}", e)))?;
+            
+            signature_shares.insert(identifier, signature_share);
+        }
+
+        // ========================================
+        // Aggregate signature shares
+        // ========================================
+        let first_key_share = self.key_shares.values().next()
+            .ok_or_else(|| FrostError::SigningFailed("No key shares".to_string()))?;
+        
+        // Build verifying key
+        let verifying_key = frost::VerifyingKey::deserialize(&first_key_share.group_public_key)
+            .map_err(|e| FrostError::SigningFailed(format!("Invalid verifying key: {:?}", e)))?;
+        
+        // Build verifying shares map for all participants
+        let mut verifying_shares: BTreeMap<frost::Identifier, frost::keys::VerifyingShare> = BTreeMap::new();
+        for &pid in &participant_ids {
+            let key_share = self.key_shares.get(&pid)
+                .ok_or(FrostError::SignerNotFound(pid))?;
+            let identifier = u16_to_identifier(pid)?;
+            let verifying_share = frost::keys::VerifyingShare::deserialize(
+                key_share.public_key_shares.get(&pid)
+                    .ok_or_else(|| FrostError::SigningFailed("Missing verifying share".to_string()))?
+            ).map_err(|e| FrostError::SigningFailed(format!("Invalid verifying share: {:?}", e)))?;
+            verifying_shares.insert(identifier, verifying_share);
+        }
+        
+        // Create public key package for aggregation
+        let pubkey_package = frost::keys::PublicKeyPackage::new(verifying_shares, verifying_key);
+        
+        // Aggregate all signature shares into final signature
+        let signature = frost::aggregate(&signing_package, &signature_shares, &pubkey_package)
+            .map_err(|e| FrostError::SigningFailed(format!("Aggregation failed: {:?}", e)))?;
+
+        // Serialize signature
+        let signature_bytes = signature.serialize()
+            .map_err(|e| FrostError::SigningFailed(format!("Serialization failed: {:?}", e)))?;
+
+        tracing::info!(
+            "✅ FROST signature complete (frost-ed25519): {} signers, threshold {}",
+            participant_ids.len(),
+            self.config.min_signers
+        );
+
+        Ok(FrostSignature {
+            signature: signature_bytes,
+            signers: participant_ids,
+        })
     }
 
     /// Verify a FROST signature (standard Ed25519 verification)
-    fn verify_signature(
+    /// 
+    /// PRODUCTION: Uses frost-ed25519 verification which is compatible
+    /// with standard Ed25519 signatures.
+    pub fn verify_signature(
         &self,
         signature: &[u8],
         message: &[u8],
@@ -741,44 +772,14 @@ impl FrostCoordinator {
             return Ok(false);
         }
 
-        use curve25519_dalek::edwards::CompressedEdwardsY;
-        use curve25519_dalek::scalar::Scalar;
-        use sha2::{Digest, Sha512};
-
-        let r_bytes: [u8; 32] = signature[..32]
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid R".to_string()))?;
-        let s_bytes: [u8; 32] = signature[32..]
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid s".to_string()))?;
-
-        let r_point = CompressedEdwardsY(r_bytes)
-            .decompress()
-            .ok_or(FrostError::SigningFailed("Invalid R point".to_string()))?;
-        let s_scalar = Scalar::from_canonical_bytes(s_bytes)
-            .into_option()
-            .ok_or(FrostError::SigningFailed("Invalid s scalar".to_string()))?;
-
-        let pk_bytes: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| FrostError::SigningFailed("Invalid public key".to_string()))?;
-        let pk_point = CompressedEdwardsY(pk_bytes)
-            .decompress()
-            .ok_or(FrostError::SigningFailed("Invalid PK point".to_string()))?;
-
-        // Compute challenge
-        let mut hasher = Sha512::new();
-        hasher.update(r_bytes);
-        hasher.update(pk_bytes);
-        hasher.update(message);
-        let h = Scalar::from_hash(hasher);
-
-        // Verify: s*G = R + h*PK
-        use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
-        let left = &s_scalar * ED25519_BASEPOINT_TABLE;
-        let right = r_point + (h * pk_point);
-
-        Ok(left == right)
+        // Use frost-ed25519's verification
+        let sig = frost::Signature::deserialize(signature)
+            .map_err(|_| FrostError::SigningFailed("Invalid signature format".to_string()))?;
+        
+        let vk = frost::VerifyingKey::deserialize(public_key)
+            .map_err(|_| FrostError::SigningFailed("Invalid public key format".to_string()))?;
+        
+        Ok(vk.verify(message, &sig).is_ok())
     }
 
     fn generate_session_id(&self, message: &[u8]) -> String {
@@ -842,10 +843,16 @@ mod tests {
         };
         let mut coordinator = FrostCoordinator::new(config).unwrap();
 
-        // Only setup 2 participants (below threshold of 3)
-        let participants = vec![1, 2];
+        // Setup all 5 participants for DKG
+        let participants = vec![1, 2, 3, 4, 5];
         coordinator.perform_dkg(participants).await.unwrap();
 
+        // Remove some key shares to simulate only 2 available signers
+        coordinator.key_shares.remove(&3);
+        coordinator.key_shares.remove(&4);
+        coordinator.key_shares.remove(&5);
+
+        // Now try to sign with only 2 signers (below threshold of 3)
         let message = b"Test".to_vec();
         let result = coordinator.sign(message).await;
 
