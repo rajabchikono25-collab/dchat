@@ -9,11 +9,92 @@
 //! - Proof-of-delivery aggregation for on-chain rewards
 //! - Anti-Sybil relay verification
 
+use async_trait::async_trait;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Relay stake lock duration (30 days in seconds)
+pub const RELAY_LOCK_DURATION: u64 = 30 * 24 * 60 * 60;
+
+/// Minimum confirmations required for stake
+pub const MIN_STAKE_CONFIRMATIONS: u32 = 3;
+
+/// Trait for staking operations - allows integration with currency chain
+#[async_trait]
+pub trait StakingBackend: Send + Sync {
+    /// Lock tokens for relay staking
+    async fn stake(
+        &self,
+        operator: &UserId,
+        amount: u64,
+        lock_duration: u64,
+    ) -> Result<String>; // Returns transaction ID
+
+    /// Wait for stake confirmation
+    async fn wait_for_confirmation(
+        &self,
+        tx_id: &str,
+        min_confirmations: u32,
+    ) -> Result<bool>;
+
+    /// Unlock staked tokens (when relay unregisters)
+    async fn unstake(
+        &self,
+        operator: &UserId,
+        stake_tx_id: &str,
+    ) -> Result<String>; // Returns unstake transaction ID
+
+    /// Slash staked tokens for misbehavior
+    async fn slash(
+        &self,
+        operator: &UserId,
+        amount: u64,
+        reason: &str,
+    ) -> Result<String>; // Returns slash transaction ID
+
+    /// Distribute rewards to a relay operator
+    /// 
+    /// This should mint new tokens as relay rewards using the currency chain.
+    /// 
+    /// # Arguments
+    /// * `operator` - The relay operator to receive rewards
+    /// * `amount` - Amount of tokens to mint as rewards
+    /// * `epoch` - The epoch for which rewards are being distributed
+    /// 
+    /// # Returns
+    /// Transaction ID of the reward mint operation
+    async fn distribute_reward(
+        &self,
+        operator: &UserId,
+        amount: u64,
+        epoch: u64,
+    ) -> Result<String>;
+}
+
+/// Reward distribution record for a single relay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RewardDistribution {
+    /// Relay that received the reward
+    pub relay_id: String,
+    /// Relay operator who receives the tokens
+    pub operator: UserId,
+    /// Amount of tokens distributed
+    pub amount: u64,
+    /// Transaction ID on currency chain
+    pub tx_id: String,
+    /// Epoch for which rewards were distributed
+    pub epoch: u64,
+    /// Uptime score at time of distribution
+    pub uptime_score: f64,
+    /// Number of messages relayed during epoch
+    pub messages_relayed: u64,
+    /// Geographic region
+    pub continent: Continent,
+}
 
 /// Relay network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,8 +358,14 @@ impl ProofBatch {
 pub struct RelayNetworkManager {
     config: RelayNetworkConfig,
 
+    /// Optional staking backend for token locking
+    staking_backend: Option<Arc<dyn StakingBackend>>,
+
     /// All registered relays
     relays: HashMap<String, RelayInfo>,
+
+    /// Stake transaction IDs for each relay (for unstaking)
+    stake_tx_ids: HashMap<String, String>,
 
     /// Active relay pool (meeting requirements)
     active_pool: HashSet<String>,
@@ -299,7 +386,9 @@ impl RelayNetworkManager {
     pub fn new(config: RelayNetworkConfig) -> Self {
         Self {
             config,
+            staking_backend: None,
             relays: HashMap::new(),
+            stake_tx_ids: HashMap::new(),
             active_pool: HashSet::new(),
             pending_proofs: HashMap::new(),
             round_robin_index: 0,
@@ -308,7 +397,27 @@ impl RelayNetworkManager {
         }
     }
 
-    /// Register a new relay node
+    /// Create relay network manager with staking backend
+    pub fn with_staking(config: RelayNetworkConfig, staking: Arc<dyn StakingBackend>) -> Self {
+        Self {
+            config,
+            staking_backend: Some(staking),
+            relays: HashMap::new(),
+            stake_tx_ids: HashMap::new(),
+            active_pool: HashSet::new(),
+            pending_proofs: HashMap::new(),
+            round_robin_index: 0,
+            total_messages: 0,
+            total_bandwidth: 0,
+        }
+    }
+
+    /// Set staking backend after construction
+    pub fn set_staking_backend(&mut self, staking: Arc<dyn StakingBackend>) {
+        self.staking_backend = Some(staking);
+    }
+
+    /// Register a new relay node (synchronous, no staking verification)
     pub fn register_relay(&mut self, relay_info: RelayInfo) -> Result<()> {
         // Verify stake requirement
         if relay_info.stake < self.config.min_stake {
@@ -333,6 +442,60 @@ impl RelayNetworkManager {
         Ok(())
     }
 
+    /// Register a new relay node with on-chain staking
+    /// 
+    /// This method locks the operator's tokens on the currency chain
+    /// before registering the relay.
+    pub async fn register_relay_with_staking(&mut self, relay_info: RelayInfo) -> Result<()> {
+        // Verify stake requirement
+        if relay_info.stake < self.config.min_stake {
+            return Err(Error::network(format!(
+                "Insufficient stake: {} < {}",
+                relay_info.stake, self.config.min_stake
+            )));
+        }
+
+        // Check max relays
+        if self.relays.len() >= self.config.max_relays {
+            return Err(Error::network("Maximum relay count reached".to_string()));
+        }
+
+        let relay_id = relay_info.relay_id.clone();
+        let operator = relay_info.operator.clone();
+        let stake_amount = relay_info.stake;
+
+        // Lock tokens on currency chain if staking backend is configured
+        if let Some(ref staking) = self.staking_backend {
+            // 1. Submit stake transaction
+            let stake_tx_id = staking
+                .stake(&operator, stake_amount, RELAY_LOCK_DURATION)
+                .await
+                .map_err(|e| Error::network(format!("Failed to stake tokens: {}", e)))?;
+
+            // 2. Wait for confirmation
+            let confirmed = staking
+                .wait_for_confirmation(&stake_tx_id, MIN_STAKE_CONFIRMATIONS)
+                .await
+                .map_err(|e| Error::network(format!("Stake confirmation failed: {}", e)))?;
+
+            if !confirmed {
+                return Err(Error::network("Stake transaction not confirmed".to_string()));
+            }
+
+            // 3. Store stake transaction ID for later unstaking
+            self.stake_tx_ids.insert(relay_id.clone(), stake_tx_id);
+        }
+
+        // Register the relay
+        self.relays.insert(relay_id.clone(), relay_info);
+        self.pending_proofs.insert(relay_id.clone(), Vec::new());
+
+        // Update active pool
+        self.update_active_pool();
+
+        Ok(())
+    }
+
     /// Remove a relay node
     pub fn remove_relay(&mut self, relay_id: &str) -> Result<()> {
         if !self.relays.contains_key(relay_id) {
@@ -342,6 +505,58 @@ impl RelayNetworkManager {
         self.relays.remove(relay_id);
         self.active_pool.remove(relay_id);
         self.pending_proofs.remove(relay_id);
+        self.stake_tx_ids.remove(relay_id);
+
+        Ok(())
+    }
+
+    /// Remove a relay node with unstaking
+    /// 
+    /// This method unlocks the operator's staked tokens when unregistering.
+    pub async fn remove_relay_with_unstaking(&mut self, relay_id: &str) -> Result<()> {
+        let relay = self.relays.get(relay_id)
+            .ok_or_else(|| Error::network("Relay not found".to_string()))?
+            .clone();
+
+        // Unstake tokens if staking backend is configured
+        if let Some(ref staking) = self.staking_backend {
+            if let Some(stake_tx_id) = self.stake_tx_ids.get(relay_id) {
+                staking
+                    .unstake(&relay.operator, stake_tx_id)
+                    .await
+                    .map_err(|e| Error::network(format!("Failed to unstake tokens: {}", e)))?;
+            }
+        }
+
+        self.relays.remove(relay_id);
+        self.active_pool.remove(relay_id);
+        self.pending_proofs.remove(relay_id);
+        self.stake_tx_ids.remove(relay_id);
+
+        Ok(())
+    }
+
+    /// Slash a relay for misbehavior
+    pub async fn slash_relay(&mut self, relay_id: &str, amount: u64, reason: &str) -> Result<()> {
+        let relay = self.relays.get(relay_id)
+            .ok_or_else(|| Error::network("Relay not found".to_string()))?
+            .clone();
+
+        // Slash tokens if staking backend is configured
+        if let Some(ref staking) = self.staking_backend {
+            staking
+                .slash(&relay.operator, amount, reason)
+                .await
+                .map_err(|e| Error::network(format!("Failed to slash tokens: {}", e)))?;
+        }
+
+        // Update relay stake
+        if let Some(relay_mut) = self.relays.get_mut(relay_id) {
+            relay_mut.stake = relay_mut.stake.saturating_sub(amount);
+        }
+
+        // Update active pool (may remove relay if stake too low)
+        self.update_active_pool();
 
         Ok(())
     }
@@ -525,6 +740,114 @@ impl RelayNetworkManager {
     /// Check if relay is active
     pub fn is_relay_active(&self, relay_id: &str) -> bool {
         self.active_pool.contains(relay_id)
+    }
+
+    /// Distribute rewards to relays based on performance
+    /// 
+    /// This method calculates and mints rewards for all active relays based on:
+    /// - Messages relayed during the epoch
+    /// - Uptime percentage
+    /// - Geographic diversity bonus (underserved regions)
+    /// 
+    /// # Arguments
+    /// * `epoch` - The epoch number for which rewards are being distributed
+    /// 
+    /// # Returns
+    /// Vector of reward distributions with transaction IDs
+    pub async fn distribute_relay_rewards(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<RewardDistribution>> {
+        let staking = self.staking_backend.as_ref()
+            .ok_or_else(|| Error::network("No staking backend configured for reward distribution"))?;
+
+        let mut distributions = Vec::new();
+
+        for (relay_id, info) in &self.relays {
+            // Skip inactive relays
+            if !self.active_pool.contains(relay_id) {
+                continue;
+            }
+
+            // Calculate reward based on performance
+            let reward = self.calculate_relay_reward(info, epoch);
+
+            if reward > 0 {
+                // Use staking backend to distribute reward
+                // The staking backend should call currency_chain.mint_rewards internally
+                match staking.distribute_reward(&info.operator, reward, epoch).await {
+                    Ok(tx_id) => {
+                        distributions.push(RewardDistribution {
+                            relay_id: relay_id.clone(),
+                            operator: info.operator.clone(),
+                            amount: reward,
+                            tx_id,
+                            epoch,
+                            uptime_score: info.uptime_score(self.config.uptime_window),
+                            messages_relayed: info.messages_relayed,
+                            continent: info.continent,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to distribute reward to relay {}: {}",
+                            relay_id, e
+                        );
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            "💰 Distributed rewards for epoch {}: {} relays, {} total tokens",
+            epoch,
+            distributions.len(),
+            distributions.iter().map(|d| d.amount).sum::<u64>()
+        );
+
+        Ok(distributions)
+    }
+
+    /// Calculate relay reward based on performance metrics
+    fn calculate_relay_reward(&self, info: &RelayInfo, _epoch: u64) -> u64 {
+        // Base reward: 100 DCHAT per epoch (8 decimals)
+        let base_reward: u64 = 100_0000_0000;
+
+        // Uptime multiplier (0.0 to 1.0)
+        let uptime = info.uptime_score(self.config.uptime_window);
+        if uptime < self.config.min_uptime_score {
+            return 0; // No rewards for low uptime
+        }
+
+        // Message volume bonus: 1 DCHAT per 1000 messages
+        let message_bonus: u64 = (info.messages_relayed / 1000) * 1_0000_0000;
+
+        // Geographic diversity bonus (underserved regions get 50% extra)
+        let geo_bonus = match info.continent {
+            Continent::Africa | Continent::SouthAmerica | Continent::Antarctica => base_reward / 2,
+            _ => 0,
+        };
+
+        // Stake multiplier: bonus for higher stakes (up to 50%)
+        let stake_multiplier = if info.stake > self.config.min_stake * 10 {
+            1.5
+        } else if info.stake > self.config.min_stake * 5 {
+            1.25
+        } else {
+            1.0
+        };
+
+        let calculated = ((base_reward as f64 * uptime) as u64) + message_bonus + geo_bonus;
+        (calculated as f64 * stake_multiplier) as u64
+    }
+
+    /// Get total pending rewards for an epoch (estimate)
+    pub fn estimate_epoch_rewards(&self, epoch: u64) -> u64 {
+        self.relays
+            .values()
+            .filter(|r| self.active_pool.contains(&r.relay_id))
+            .map(|info| self.calculate_relay_reward(info, epoch))
+            .sum()
     }
 }
 

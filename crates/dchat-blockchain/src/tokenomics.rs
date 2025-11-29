@@ -70,6 +70,8 @@ pub enum MintReason {
     Airdrop,
     /// Governance proposal reward
     GovernanceReward,
+    /// Faucet drip for testnet/development
+    Faucet,
 }
 
 /// Token burn event
@@ -456,6 +458,30 @@ impl TokenomicsManager {
     pub fn get_burn_history(&self, limit: usize) -> Vec<BurnEvent> {
         let history = self.burn_history.read().unwrap();
         history.iter().rev().take(limit).cloned().collect()
+    }
+
+    /// Record a mint event for accounting purposes
+    /// This is used when tokens are minted via other mechanisms (e.g., CurrencyChainClient)
+    /// but need to be tracked in tokenomics
+    pub fn record_mint(&self, amount: u64, reason: MintReason) -> Result<()> {
+        // Update circulating supply
+        {
+            let mut supply = self.circulating_supply.write().unwrap();
+            *supply = supply.saturating_add(amount);
+        }
+
+        // Record mint event
+        let event = MintEvent {
+            id: Uuid::new_v4(),
+            amount,
+            reason,
+            recipient: None, // External mint doesn't have a specific recipient here
+            timestamp: chrono::Utc::now(),
+            block_height: *self.current_block.read().unwrap(),
+        };
+        self.mint_history.write().unwrap().push(event);
+
+        Ok(())
     }
 
     /// Get tokenomics statistics

@@ -21,6 +21,13 @@ pub mod geoip;
 pub mod oracle_network;
 pub mod vote_persistence;
 
+// Economic infrastructure (plan2.md implementation)
+pub mod faucet;
+pub mod payment_channels;
+pub mod payment_processor;
+pub mod staking_backend;
+pub mod watchtower;
+
 pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
     ValidatorSignature, WorldState,
@@ -34,7 +41,10 @@ pub use dchat_chain::{Transaction, TransactionStatus, TransactionType};
 pub use chat_chain::{ChatChainClient, ChatChainConfig};
 pub use client::{BlockchainClient, BlockchainConfig};
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};
-pub use currency_chain::{CurrencyChainClient, CurrencyChainConfig};
+pub use currency_chain::{
+    CreateStorageBondResult, CurrencyChainClient, CurrencyChainConfig,
+    StorageBondRecord, StorageBondStatus,
+};
 pub use currency_chain_block_sync::{
     BlockSyncConfig, BlockSyncManager, CurrencyBlock, CurrencyBlockHeader, ForkInfo, SyncStatus,
 };
@@ -48,9 +58,9 @@ pub use proof_of_transit::{
 };
 pub use rpc::{RpcClient, RpcConfig};
 pub use staking::{
-    SlashingEvent, SlashingSeverity, StakingManager, StakingTransaction, StakingTxType,
-    ValidatorStake, ValidatorStatus, MIN_VALIDATOR_STAKE, MAX_VALIDATOR_STAKE,
-    UNSTAKE_COOLDOWN_SECONDS, MAX_ACTIVE_VALIDATORS,
+    ClaimReceipt, SlashingEvent, SlashingSeverity, StakingManager, StakingTransaction,
+    StakingTxType, ValidatorStake, ValidatorStatus, MAX_ACTIVE_VALIDATORS,
+    MAX_VALIDATOR_STAKE, MIN_VALIDATOR_STAKE, UNSTAKE_COOLDOWN_SECONDS,
 };
 pub use state_validation::{
     MerkleNode, MerkleProof, MerkleTree, StateValidationError, StateValidator,
@@ -74,6 +84,22 @@ pub use vote_persistence::{
     PoRWVoteRecord, PoTProofRecord, TSCVoteRecord, ValidatorStats, VotePersistence,
     VotePersistenceError,
 };
+
+// Economic infrastructure exports (plan2.md implementation)
+pub use faucet::{Faucet, FaucetConfig, FaucetError, FaucetState};
+pub use payment_channels::{
+    ChannelError, ChannelState, CloseChallenge, FraudEvent, MessageCreditsChannel, PaymentChannel,
+    PaymentChannelManager, SignedStateUpdate, UnilateralCloseRequest,
+};
+pub use watchtower::{
+    AlertSeverity, AlertType, FraudAttemptRecord, WatchedChannel, WatchedChannelState,
+    Watchtower, WatchtowerAlert, WatchtowerConfig, WatchtowerError, WatchtowerMonitor,
+    WatchtowerStats,
+};
+pub use payment_processor::{
+    PaymentProcessor, PaymentProcessorConfig, PaymentReceipt, PaymentProcessorStats,
+};
+pub use staking_backend::CurrencyChainStakingBackend;
 
 // Re-export privacy trait implementations for integration
 // ChatChainClient implements dchat_privacy::zk_proofs::BlockchainClient

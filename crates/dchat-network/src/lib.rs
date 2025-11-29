@@ -63,7 +63,9 @@ pub use relay::reputation::{
 };
 // Note: RelayClient, RelayConfig, RelayNode were in old relay.rs (removed in Phase 3 migration)
 pub use relay_network::{
-    Continent, LoadStrategy, NetworkStats, ProofBatch, RelayInfo, RelayNetworkManager,
+    Continent, LoadStrategy, NetworkStats, ProofBatch, RelayInfo, RelayNetworkConfig,
+    RelayNetworkManager, RewardDistribution, StakingBackend, RELAY_LOCK_DURATION,
+    MIN_STAKE_CONFIRMATIONS,
 };
 pub use routing::{Router, RoutingTable};
 pub use swarm::{NetworkConfig, NetworkEvent, NetworkManager};

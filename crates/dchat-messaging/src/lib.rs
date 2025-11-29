@@ -7,11 +7,13 @@
 //! - Proof-of-delivery tracking
 //! - Message expiration and lifecycle
 //! - Advanced channel access control (token-gating, NFT verification)
+//! - Message fee collection and credits channels
 
 pub mod channel_access;
 pub mod delivery;
 pub mod expiration;
 pub mod media;
+pub mod message_service;
 pub mod ordering;
 pub mod queue;
 pub mod rate_limit;
@@ -25,6 +27,11 @@ pub use media::{
     Animation, Audio, Contact, Document, EnhancedBotMessage, EntityType, LinkPreview, Location,
     MediaType, MessageEntity, Photo, PhotoSize, Poll, PollOption, PollType, Sticker, StickerType,
     Video, VideoNote, Voice,
+};
+pub use message_service::{
+    CreditsChannelError, DeliveryReceipt, MessageCreditsChannel, MessageService,
+    MessageServiceConfig, MessageServiceError, MessageServiceStats, RelayNode, SignedStateUpdate,
+    MESSAGE_FEE, MIN_SEND_BALANCE,
 };
 pub use ordering::{MessageOrder, SequenceNumber};
 pub use queue::{MessageQueue, OfflineQueue};

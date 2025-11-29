@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
-use crate::tokenomics::{BurnReason, TokenomicsManager};
+use crate::tokenomics::{BurnReason, MintReason, TokenomicsManager};
 
 /// Configuration for Currency Chain client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +72,55 @@ pub struct StakePosition {
     pub rewards_earned: u64,
 }
 
+/// Storage bond record on currency chain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageBondRecord {
+    /// Unique bond identifier
+    pub bond_id: [u8; 32],
+    /// User's public key
+    pub user_key: [u8; 32],
+    /// Bond amount in smallest units (8 decimals)
+    pub amount: u64,
+    /// Storage capacity being bonded for (bytes)
+    pub storage_bytes: u64,
+    /// Duration in days
+    pub duration_days: u32,
+    /// Expiration timestamp
+    pub expires_at: i64,
+    /// Transaction ID
+    pub tx_id: Uuid,
+    /// Bond status
+    pub status: StorageBondStatus,
+    /// Created timestamp
+    pub created_at: i64,
+}
+
+/// Storage bond status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StorageBondStatus {
+    /// Bond is active
+    Active,
+    /// Bond is in unbonding period
+    Unbonding,
+    /// Bond has been withdrawn
+    Withdrawn,
+    /// Bond was slashed
+    Slashed,
+}
+
+/// Result of creating a storage bond
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateStorageBondResult {
+    /// Transaction ID
+    pub tx_id: Uuid,
+    /// Bond ID
+    pub bond_id: [u8; 32],
+    /// Amount locked
+    pub amount_locked: u64,
+    /// Expiration timestamp
+    pub expires_at: i64,
+}
+
 /// Currency Chain client for payments, staking, rewards, and economics
 pub struct CurrencyChainClient {
     config: CurrencyChainConfig,
@@ -85,6 +134,8 @@ pub struct CurrencyChainClient {
     wallets: Arc<RwLock<HashMap<UserId, Wallet>>>,
     /// Staking positions
     stakes: Arc<RwLock<HashMap<UserId, StakePosition>>>,
+    /// Storage bonds
+    storage_bonds: Arc<RwLock<HashMap<[u8; 32], StorageBondRecord>>>,
     /// Tokenomics manager (optional - can be shared)
     tokenomics: Option<Arc<TokenomicsManager>>,
     /// Shutdown signal for block sync task
@@ -107,6 +158,7 @@ impl CurrencyChainClient {
             current_block: Arc::new(RwLock::new(1)),
             wallets: Arc::new(RwLock::new(HashMap::new())),
             stakes: Arc::new(RwLock::new(HashMap::new())),
+            storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
@@ -125,6 +177,7 @@ impl CurrencyChainClient {
             current_block: Arc::new(RwLock::new(1)),
             wallets: Arc::new(RwLock::new(HashMap::new())),
             stakes: Arc::new(RwLock::new(HashMap::new())),
+            storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
@@ -146,6 +199,7 @@ impl CurrencyChainClient {
             current_block: Arc::new(RwLock::new(1)),
             wallets: Arc::new(RwLock::new(HashMap::new())),
             stakes: Arc::new(RwLock::new(HashMap::new())),
+            storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: Some(tokenomics),
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
@@ -391,6 +445,65 @@ impl CurrencyChainClient {
         Ok(tx_id)
     }
 
+    /// Mint new tokens as rewards (inflationary)
+    /// Only callable by consensus for block rewards, relay rewards, etc.
+    /// 
+    /// # Arguments
+    /// * `recipient` - User to receive the minted rewards
+    /// * `amount` - Amount of tokens to mint
+    /// * `reason` - The reason for minting (for tokenomics tracking)
+    /// 
+    /// # Returns
+    /// Transaction ID for the mint operation
+    pub fn mint_rewards(&self, recipient: &UserId, amount: u64, reason: MintReason) -> Result<Uuid> {
+        if amount == 0 {
+            return Err(Error::validation("Mint amount must be greater than 0"));
+        }
+
+        // 1. Update tokenomics tracking (if available)
+        if let Some(ref tokenomics) = self.tokenomics {
+            tokenomics.record_mint(amount, reason.clone())?;
+        }
+
+        // 2. Get or create recipient wallet
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets.entry(recipient.clone()).or_insert_with(|| Wallet {
+            user_id: recipient.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+
+        // 3. Add to recipient's rewards_pending (they need to claim to move to balance)
+        wallet.rewards_pending += amount;
+
+        // 4. Create transaction record
+        let tx = CurrencyTransaction {
+            id: Uuid::new_v4(),
+            tx_type: format!("mint_{:?}", reason).to_lowercase(),
+            from: UserId::default(), // System/minting account
+            to: Some(recipient.clone()),
+            amount,
+            status: "confirmed".to_string(), // Minting is immediately confirmed
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        let tx_id = tx.id;
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "💰 Minted {} tokens to {} (reason: {:?}, tx: {})",
+            amount,
+            recipient,
+            reason,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
     /// Get transaction by ID
     pub fn get_transaction(&self, tx_id: &Uuid) -> Result<Option<CurrencyTransaction>> {
         Ok(self.transactions.read().unwrap().get(tx_id).cloned())
@@ -427,6 +540,223 @@ impl CurrencyChainClient {
             .write()
             .unwrap()
             .insert(tx_hash.to_string(), (amount, recipient.to_string(), true));
+    }
+
+    /// Create a storage bond by locking tokens
+    /// 
+    /// This deducts the bond amount from the user's wallet and locks it
+    /// for the specified duration. The bond can earn interest based on
+    /// the storage provided.
+    /// 
+    /// # Arguments
+    /// * `user_id` - The user creating the bond
+    /// * `bond_id` - Unique identifier for the bond
+    /// * `user_key` - User's public key (for verification)
+    /// * `amount` - Amount to bond in smallest units (8 decimals)
+    /// * `storage_bytes` - Storage capacity being bonded for
+    /// * `duration_days` - Lock duration in days
+    /// 
+    /// # Returns
+    /// Result containing the bond creation details
+    pub fn create_storage_bond(
+        &self,
+        user_id: &UserId,
+        bond_id: [u8; 32],
+        user_key: [u8; 32],
+        amount: u64,
+        storage_bytes: u64,
+        duration_days: u32,
+    ) -> Result<CreateStorageBondResult> {
+        // 1. Validate input
+        if amount == 0 {
+            return Err(Error::validation("Bond amount must be greater than 0"));
+        }
+        if duration_days == 0 {
+            return Err(Error::validation("Bond duration must be at least 1 day"));
+        }
+
+        // 2. Check for duplicate bond ID
+        {
+            let bonds = self.storage_bonds.read().unwrap();
+            if bonds.contains_key(&bond_id) {
+                return Err(Error::validation(format!(
+                    "Bond already exists: {}",
+                    hex::encode(bond_id)
+                )));
+            }
+        }
+
+        // 3. Deduct from user's wallet
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets
+            .get_mut(user_id)
+            .ok_or_else(|| Error::NotFound(format!("User wallet not found: {}", user_id)))?;
+
+        if wallet.balance < amount {
+            return Err(Error::InvalidInput(format!(
+                "Insufficient balance: have {}, need {}",
+                wallet.balance, amount
+            )));
+        }
+
+        wallet.balance -= amount;
+        wallet.staked += amount; // Track as staked
+
+        // 4. Calculate expiration
+        let now = Utc::now().timestamp();
+        let expires_at = now + (duration_days as i64 * 86400);
+
+        // 5. Create bond record
+        let tx_id = Uuid::new_v4();
+        let bond_record = StorageBondRecord {
+            bond_id,
+            user_key,
+            amount,
+            storage_bytes,
+            duration_days,
+            expires_at,
+            tx_id,
+            status: StorageBondStatus::Active,
+            created_at: now,
+        };
+
+        self.storage_bonds.write().unwrap().insert(bond_id, bond_record);
+
+        // 6. Create transaction record
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: "storage_bond".to_string(),
+            from: user_id.clone(),
+            to: None,
+            amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: now,
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "🔒 Created storage bond {} for {} ({} bytes, {} days, tx: {})",
+            hex::encode(bond_id),
+            user_id,
+            storage_bytes,
+            duration_days,
+            tx_id
+        );
+
+        Ok(CreateStorageBondResult {
+            tx_id,
+            bond_id,
+            amount_locked: amount,
+            expires_at,
+        })
+    }
+
+    /// Get storage bond by ID
+    pub fn get_storage_bond(&self, bond_id: &[u8; 32]) -> Option<StorageBondRecord> {
+        self.storage_bonds.read().unwrap().get(bond_id).cloned()
+    }
+
+    /// Initiate unbonding for a storage bond
+    pub fn initiate_unbonding(&self, bond_id: &[u8; 32], unbonding_period_days: u32) -> Result<Uuid> {
+        let mut bonds = self.storage_bonds.write().unwrap();
+        let bond = bonds
+            .get_mut(bond_id)
+            .ok_or_else(|| Error::NotFound(format!("Bond not found: {}", hex::encode(bond_id))))?;
+
+        if bond.status != StorageBondStatus::Active {
+            return Err(Error::validation(format!(
+                "Bond {} is not active, current status: {:?}",
+                hex::encode(bond_id),
+                bond.status
+            )));
+        }
+
+        // Update bond status
+        let now = Utc::now().timestamp();
+        bond.status = StorageBondStatus::Unbonding;
+        bond.expires_at = now + (unbonding_period_days as i64 * 86400);
+
+        let tx_id = Uuid::new_v4();
+        bond.tx_id = tx_id;
+
+        tracing::info!(
+            "⏳ Initiated unbonding for bond {}, completes in {} days (tx: {})",
+            hex::encode(bond_id),
+            unbonding_period_days,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Complete withdrawal of an unbonded storage bond
+    pub fn complete_bond_withdrawal(
+        &self,
+        user_id: &UserId,
+        bond_id: &[u8; 32],
+    ) -> Result<(u64, Uuid)> {
+        let mut bonds = self.storage_bonds.write().unwrap();
+        let bond = bonds
+            .get_mut(bond_id)
+            .ok_or_else(|| Error::NotFound(format!("Bond not found: {}", hex::encode(bond_id))))?;
+
+        if bond.status != StorageBondStatus::Unbonding {
+            return Err(Error::validation(format!(
+                "Bond {} is not in unbonding state",
+                hex::encode(bond_id)
+            )));
+        }
+
+        let now = Utc::now().timestamp();
+        if now < bond.expires_at {
+            return Err(Error::validation(format!(
+                "Unbonding period not complete, {} seconds remaining",
+                bond.expires_at - now
+            )));
+        }
+
+        let amount = bond.amount;
+        bond.status = StorageBondStatus::Withdrawn;
+
+        // Return funds to user
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets
+            .get_mut(user_id)
+            .ok_or_else(|| Error::NotFound(format!("User wallet not found: {}", user_id)))?;
+
+        wallet.staked = wallet.staked.saturating_sub(amount);
+        wallet.balance += amount;
+
+        let tx_id = Uuid::new_v4();
+
+        // Create transaction record
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: "bond_withdrawal".to_string(),
+            from: UserId::default(),
+            to: Some(user_id.clone()),
+            amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: now,
+        };
+
+        drop(bonds);
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "✅ Completed bond withdrawal {} for {}, returned {} (tx: {})",
+            hex::encode(bond_id),
+            user_id,
+            amount,
+            tx_id
+        );
+
+        Ok((amount, tx_id))
     }
 }
 
