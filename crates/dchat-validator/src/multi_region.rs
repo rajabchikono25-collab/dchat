@@ -355,14 +355,25 @@ impl MultiRegionCoordinator {
                 }
             })?;
 
-            // Verify the signature
-            let public_key =
-                VerifyingKey::from_bytes(validator.public_key.as_slice().try_into().unwrap())
-                    .map_err(|_| MultiRegionError::InvalidSignature {
-                        validator_id: sig.validator_id.clone(),
-                    })?;
+            // Verify the signature - use proper error handling for cryptographic operations
+            let public_key_bytes: [u8; 32] = validator.public_key.as_slice()
+                .try_into()
+                .map_err(|_| MultiRegionError::InvalidSignature {
+                    validator_id: sig.validator_id.clone(),
+                })?;
+            
+            let public_key = VerifyingKey::from_bytes(&public_key_bytes)
+                .map_err(|_| MultiRegionError::InvalidSignature {
+                    validator_id: sig.validator_id.clone(),
+                })?;
 
-            let signature = Signature::from_bytes(sig.signature.as_slice().try_into().unwrap());
+            let signature_bytes: [u8; 64] = sig.signature.as_slice()
+                .try_into()
+                .map_err(|_| MultiRegionError::InvalidSignature {
+                    validator_id: sig.validator_id.clone(),
+                })?;
+            
+            let signature = Signature::from_bytes(&signature_bytes);
 
             // Verify signature on block hash
             if public_key.verify(block_hash, &signature).is_ok() {

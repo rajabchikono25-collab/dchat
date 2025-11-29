@@ -18,6 +18,7 @@ Always consult these documents when working on dchat:
 
 - **`ARCHITECTURE-2.0.md`**: The authoritative architecture specification. Contains detailed component designs, security requirements, and integration patterns. Use this as the primary reference for system design decisions.
 - **`plan.md`**: The implementation plan capturing remaining work items, stubbed/placeholder code, and phased delivery. Check this before implementing any feature to understand current state and gaps.
+- **`plan2.md`**: Economic infrastructure implementation plan covering critical gaps in staking, payment channels, fee collection, and reward distribution. Contains prioritized work items (P0/P1/P2) with time estimates and specific code changes needed.
 - **`ARCHITECTURE.md`**: Legacy architecture document with component breakdown and threat model.
 
 **Priority**: When there are discrepancies, `ARCHITECTURE-2.0.md` takes precedence over `ARCHITECTURE.md`.

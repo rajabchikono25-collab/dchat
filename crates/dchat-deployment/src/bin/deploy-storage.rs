@@ -9,12 +9,58 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dchat_deployment::distributed_storage::*;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::Duration;
 use tokio::time::sleep;
+
+/// Validates a hostname to prevent command injection attacks.
+/// Only allows alphanumeric characters, dots, hyphens, and underscores.
+fn validate_hostname(host: &str) -> Result<()> {
+    let hostname_regex = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
+        .expect("Invalid regex");
+    
+    // Also check for IP addresses
+    let ipv4_regex = Regex::new(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+        .expect("Invalid regex");
+    
+    if host.is_empty() {
+        anyhow::bail!("Hostname cannot be empty");
+    }
+    
+    if host.len() > 253 {
+        anyhow::bail!("Hostname too long (max 253 characters)");
+    }
+    
+    // Check for dangerous characters that could enable command injection
+    if host.contains(';') || host.contains('|') || host.contains('&') ||
+       host.contains('$') || host.contains('`') || host.contains('\\') ||
+       host.contains('"') || host.contains('\'') || host.contains('\n') ||
+       host.contains('\r') || host.contains(' ') {
+        anyhow::bail!("Hostname contains invalid characters: {}", host);
+    }
+    
+    if !hostname_regex.is_match(host) && !ipv4_regex.is_match(host) {
+        anyhow::bail!("Invalid hostname format: {}", host);
+    }
+    
+    Ok(())
+}
+
+/// Validates a file path to prevent path traversal attacks.
+fn validate_path(path: &str) -> Result<()> {
+    if path.contains("..") {
+        anyhow::bail!("Path traversal detected in: {}", path);
+    }
+    if path.contains(';') || path.contains('|') || path.contains('&') ||
+       path.contains('$') || path.contains('`') {
+        anyhow::bail!("Path contains dangerous characters: {}", path);
+    }
+    Ok(())
+}
 
 #[derive(Parser)]
 #[command(name = "deploy-storage")]
@@ -339,8 +385,7 @@ async fn deploy_cockroachdb_node(
     // Step 4: Generate TLS certificates (for production)
     if cluster.encryption_at_rest {
         println!("  [4/8] Generating TLS certificates...");
-        // In production: use cockroach cert create-ca, create-node, create-client
-        println!("    ⚠️  Manual step: Generate certs with 'cockroach cert'");
+        generate_cockroachdb_certs(cluster, node, key).await?;
     } else {
         println!("  [4/8] Skipping TLS (insecure mode)");
     }
@@ -808,163 +853,987 @@ async fn migrate(
 
 // Helper functions for SSH and deployment
 
+/// Securely execute SSH command with proper argument handling.
+/// Validates hostname to prevent command injection.
+fn build_ssh_command(host: &str, key: Option<&Path>) -> Result<StdCommand> {
+    validate_hostname(host)?;
+    
+    let mut cmd = StdCommand::new("ssh");
+    
+    // Use strict host key checking in production
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new")
+       .arg("-o").arg("ConnectTimeout=30")
+       .arg("-o").arg("BatchMode=yes");
+    
+    if let Some(key_path) = key {
+        // Validate key path exists
+        if !key_path.exists() {
+            anyhow::bail!("SSH key file does not exist: {}", key_path.display());
+        }
+        cmd.arg("-i").arg(key_path);
+    }
+    
+    cmd.arg(format!("root@{}", host));
+    
+    Ok(cmd)
+}
+
 async fn check_ssh(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    let output = StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), "echo", "OK"])
-        .output()?;
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.args(["echo", "OK"]);
+    
+    let output = cmd.output()?;
 
     if !output.status.success() {
-        anyhow::bail!("SSH check failed for {}", host);
+        anyhow::bail!("SSH check failed for {}: {}", host, String::from_utf8_lossy(&output.stderr));
     }
     Ok(())
 }
 
 async fn install_cockroachdb(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    let script = r#"
-        curl https://binaries.cockroachdb.com/cockroach-latest.linux-amd64.tgz | tar -xz
-        cp -i cockroach-*/cockroach /usr/local/bin/
-        mkdir -p /usr/local/lib/cockroach
-        cp -i cockroach-*/lib/libgeos.so /usr/local/lib/cockroach/
-        cp -i cockroach-*/lib/libgeos_c.so /usr/local/lib/cockroach/
-    "#;
+    let script = r#"set -euo pipefail
+curl -fsSL https://binaries.cockroachdb.com/cockroach-latest.linux-amd64.tgz | tar -xz
+cp -i cockroach-*/cockroach /usr/local/bin/
+mkdir -p /usr/local/lib/cockroach
+cp -i cockroach-*/lib/libgeos.so /usr/local/lib/cockroach/
+cp -i cockroach-*/lib/libgeos_c.so /usr/local/lib/cockroach/"#;
 
-    StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), script])
-        .status()?;
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(script);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to install CockroachDB on {}", host);
+    }
 
     Ok(())
 }
 
 async fn install_redis(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    StdCommand::new("ssh")
-        .args(&[
-            &key_arg,
-            &format!("root@{}", host),
-            "apt-get update && apt-get install -y redis-server redis-tools",
-        ])
-        .status()?;
+    let script = "set -euo pipefail; apt-get update && apt-get install -y redis-server redis-tools";
+    
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(script);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to install Redis on {}", host);
+    }
     Ok(())
 }
 
 async fn install_minio(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    let script = r#"
-        wget https://dl.min.io/server/minio/release/linux-amd64/minio
-        chmod +x minio
-        mv minio /usr/local/bin/
-    "#;
+    let script = r#"set -euo pipefail
+wget -q https://dl.min.io/server/minio/release/linux-amd64/minio
+chmod +x minio
+mv minio /usr/local/bin/"#;
 
-    StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), script])
-        .status()?;
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(script);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to install MinIO on {}", host);
+    }
     Ok(())
 }
 
 async fn install_tikv(host: &str, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    let script = r#"
-        curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
-        source ~/.bash_profile
-        tiup install pd tikv
-    "#;
+    let script = r#"set -euo pipefail
+curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
+source ~/.bash_profile
+tiup install pd tikv"#;
 
-    StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), script])
-        .status()?;
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(script);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to install TiKV on {}", host);
+    }
     Ok(())
 }
 
 async fn create_directories(host: &str, dirs: &[&str], key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
+    // Validate all directory paths
+    for dir in dirs {
+        validate_path(dir)?;
+    }
+    
     let mkdir_cmd = format!("mkdir -p {}", dirs.join(" "));
 
-    StdCommand::new("ssh")
-        .args(&[&key_arg, &format!("root@{}", host), &mkdir_cmd])
-        .status()?;
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(&mkdir_cmd);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to create directories on {}", host);
+    }
+    Ok(())
+}
+
+async fn generate_cockroachdb_certs(
+    cluster: &CockroachDBConfig,
+    node: &CockroachDBNode,
+    key: Option<&Path>,
+) -> Result<()> {
+    // Validate all hostnames in the cluster
+    validate_hostname(&node.host)?;
+    for addr in &cluster.join_addresses {
+        let host = addr.split(':').next().unwrap_or(addr);
+        validate_hostname(host)?;
+    }
+    
+    let certs_dir = "/var/lib/cockroach/certs";
+    let ca_key_dir = "/var/lib/cockroach/ca-key"; // CA key stored securely
+    
+    // Build list of all node addresses for the certificate
+    let all_node_addresses: Vec<String> = cluster
+        .join_addresses
+        .iter()
+        .map(|addr| addr.split(':').next().unwrap_or(addr).to_string())
+        .collect();
+    
+    let node_addresses = all_node_addresses.join(",");
+    
+    // Check if CA already exists (first node creates it, others copy)
+    let is_first_node = node.node_id.ends_with("-1");
+    
+    if is_first_node {
+        // First node: create CA and node certificates
+        let cert_script = format!(
+            r#"
+# Create certificate directories
+mkdir -p {} {}
+chmod 700 {} {}
+
+# Create CA certificate (only on first node)
+if [ ! -f {}/ca.crt ]; then
+    cockroach cert create-ca \
+        --certs-dir={} \
+        --ca-key={}/ca.key \
+        --lifetime=87600h
+    echo "CA certificate created"
+fi
+
+# Create node certificate
+cockroach cert create-node \
+    {} localhost 127.0.0.1 {} \
+    --certs-dir={} \
+    --ca-key={}/ca.key \
+    --lifetime=8760h
+
+# Create client certificate for root user
+cockroach cert create-client root \
+    --certs-dir={} \
+    --ca-key={}/ca.key \
+    --lifetime=8760h
+
+# Set proper permissions
+chmod 644 {}/*.crt
+chmod 600 {}/*.key
+chown -R cockroach:cockroach {} {}
+
+echo "Certificates generated successfully"
+ls -la {}
+"#,
+            certs_dir, ca_key_dir,
+            certs_dir, ca_key_dir,
+            certs_dir,
+            certs_dir, ca_key_dir,
+            node.host, node_addresses,
+            certs_dir, ca_key_dir,
+            certs_dir, ca_key_dir,
+            certs_dir, certs_dir,
+            certs_dir, ca_key_dir,
+            certs_dir
+        );
+        
+        let mut cmd = build_ssh_command(&node.host, key)?;
+        cmd.arg("bash").arg("-c").arg(&cert_script);
+        
+        let status = cmd.status()?;
+        
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to generate certificates on node {}",
+                node.node_id
+            ));
+        }
+    } else {
+        // Non-first nodes: copy CA cert from first node, then generate node cert
+        let first_node_host = cluster
+            .join_addresses
+            .first()
+            .map(|addr| addr.split(':').next().unwrap_or(addr))
+            .ok_or_else(|| anyhow::anyhow!("No join addresses configured"))?;
+        
+        // Validate first_node_host before using in embedded script
+        validate_hostname(first_node_host)?;
+        
+        let cert_script = format!(
+            r#"
+# Create certificate directories
+mkdir -p {} {}
+chmod 700 {} {}
+
+# Copy CA certificate from first node (assumes SSH access between nodes)
+# Using accept-new for TOFU (Trust On First Use) model
+scp -o StrictHostKeyChecking=accept-new -o BatchMode=yes {}:{}/ca.crt {}/ 
+scp -o StrictHostKeyChecking=accept-new -o BatchMode=yes {}:{}/ca.key {}/
+
+# Create node certificate
+cockroach cert create-node \
+    {} localhost 127.0.0.1 {} \
+    --certs-dir={} \
+    --ca-key={}/ca.key \
+    --lifetime=8760h
+
+# Create client certificate for root user
+cockroach cert create-client root \
+    --certs-dir={} \
+    --ca-key={}/ca.key \
+    --lifetime=8760h
+
+# Set proper permissions
+chmod 644 {}/*.crt
+chmod 600 {}/*.key
+chown -R cockroach:cockroach {} {}
+
+echo "Certificates generated successfully"
+ls -la {}
+"#,
+            certs_dir, ca_key_dir,
+            certs_dir, ca_key_dir,
+            first_node_host, certs_dir, certs_dir,
+            first_node_host, ca_key_dir, ca_key_dir,
+            node.host, node_addresses,
+            certs_dir, ca_key_dir,
+            certs_dir, ca_key_dir,
+            certs_dir, certs_dir,
+            certs_dir, ca_key_dir,
+            certs_dir
+        );
+        
+        let mut cmd = build_ssh_command(&node.host, key)?;
+        cmd.arg("bash").arg("-c").arg(&cert_script);
+        
+        let status = cmd.status()?;
+        
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to generate certificates on node {}",
+                node.node_id
+            ));
+        }
+    }
+    
+    println!("    ✅ TLS certificates generated for node {}", node.node_id);
     Ok(())
 }
 
 async fn start_cockroachdb_node(
     cluster: &CockroachDBConfig,
-    _node: &CockroachDBNode,
-    _key: Option<&Path>,
+    node: &CockroachDBNode,
+    key: Option<&Path>,
 ) -> Result<()> {
-    // In production: use systemd or Docker
-    println!(
-        "    ⚠️  Manual step: Start with 'cockroach start --join={}'",
-        cluster.join_addresses.join(",")
+    // Validate hostnames
+    validate_hostname(&node.host)?;
+    for addr in &cluster.join_addresses {
+        let host = addr.split(':').next().unwrap_or(addr);
+        validate_hostname(host)?;
+    }
+    validate_path(&node.store_path)?;
+    
+    let join_addresses = cluster.join_addresses.join(",");
+    
+    // Build the cockroach start command
+    let mut start_cmd = format!(
+        "cockroach start --store={} --listen-addr={}:{} --http-addr={}:{} --join={}",
+        node.store_path,
+        node.host,
+        cluster.sql_port,
+        node.host,
+        cluster.http_port,
+        join_addresses
     );
+    
+    // Add TLS options if encryption is enabled
+    if cluster.encryption_at_rest {
+        start_cmd.push_str(" --certs-dir=/var/lib/cockroach/certs");
+    } else {
+        start_cmd.push_str(" --insecure");
+    }
+    
+    // Add background flag
+    start_cmd.push_str(" --background");
+    
+    // Create systemd service file for production
+    let service_content = format!(
+        r#"[Unit]
+Description=CockroachDB node {}
+After=network.target
+
+[Service]
+Type=simple
+User=cockroach
+Group=cockroach
+ExecStart=/usr/local/bin/{}
+Restart=always
+RestartSec=10
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        node.node_id, start_cmd.replace(" --background", "")
+    );
+    
+    // Write service file and start via systemd
+    let setup_script = format!(
+        r#"
+cat > /etc/systemd/system/cockroachdb.service << 'EOF'
+{}
+EOF
+systemctl daemon-reload
+systemctl enable cockroachdb
+systemctl start cockroachdb
+sleep 5
+systemctl status cockroachdb --no-pager
+"#,
+        service_content
+    );
+    
+    let mut cmd = build_ssh_command(&node.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start CockroachDB node {} via systemd",
+            node.node_id
+        ));
+    }
+    
+    println!("    ✅ CockroachDB node {} started via systemd", node.node_id);
     Ok(())
 }
 
 async fn initialize_cockroachdb(host: &str, port: u16, key: Option<&Path>) -> Result<()> {
-    let key_arg = key
-        .map(|k| format!("-i {}", k.display()))
-        .unwrap_or_default();
-    StdCommand::new("ssh")
-        .args(&[
-            &key_arg,
-            &format!("root@{}", host),
-            &format!("cockroach init --host=localhost:{}", port),
-        ])
-        .status()?;
+    validate_hostname(host)?;
+    
+    let init_cmd = format!("cockroach init --host=localhost:{}", port);
+    
+    let mut cmd = build_ssh_command(host, key)?;
+    cmd.arg("bash").arg("-c").arg(&init_cmd);
+    
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to initialize CockroachDB on {}", host);
+    }
     Ok(())
 }
 
 async fn configure_redis_node(
-    _cluster: &RedisConfig,
-    _node: &RedisNode,
-    _key: Option<&Path>,
+    cluster: &RedisConfig,
+    node: &RedisNode,
+    key: Option<&Path>,
 ) -> Result<()> {
-    println!("    ⚠️  Manual step: Configure redis.conf for cluster mode");
+    // Validate hostname
+    validate_hostname(&node.host)?;
+    
+    let port = node.address.port();
+    let max_memory = format!("{}mb", cluster.max_memory_mb);
+    
+    // Generate redis.conf for cluster mode
+    let redis_config = format!(
+        r#"# Redis Cluster Configuration
+port {}
+cluster-enabled yes
+cluster-config-file nodes-{}.conf
+cluster-node-timeout 5000
+appendonly yes
+appendfsync everysec
+maxmemory {}
+maxmemory-policy allkeys-lru
+bind 0.0.0.0
+protected-mode no
+daemonize no
+logfile /var/log/redis/redis-{}.log
+dir /var/lib/redis/{}
+
+# Performance tuning
+tcp-backlog 511
+timeout 0
+tcp-keepalive 300
+databases 16
+save 900 1
+save 300 10
+save 60 10000
+stop-writes-on-bgsave-error yes
+rdbcompression yes
+rdbchecksum yes
+dbfilename dump-{}.rdb
+"#,
+        port,
+        port,
+        max_memory,
+        port,
+        port,
+        port
+    );
+    
+    // Create config and directories on remote node
+    let setup_script = format!(
+        r#"
+mkdir -p /etc/redis /var/lib/redis/{} /var/log/redis
+cat > /etc/redis/redis-{}.conf << 'EOF'
+{}
+EOF
+chown -R redis:redis /var/lib/redis /var/log/redis /etc/redis
+"#,
+        port, port, redis_config
+    );
+    
+    let mut cmd = build_ssh_command(&node.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to configure Redis node {}:{}",
+            node.host,
+            port
+        ));
+    }
+    
+    println!("    ✅ Redis configuration created for {}:{}", node.host, port);
     Ok(())
 }
 
-async fn start_redis_node(_node: &RedisNode, _key: Option<&Path>) -> Result<()> {
-    println!("    ⚠️  Manual step: Start with 'redis-server /etc/redis/redis.conf'");
+async fn start_redis_node(node: &RedisNode, key: Option<&Path>) -> Result<()> {
+    // Validate hostname
+    validate_hostname(&node.host)?;
+    
+    let port = node.address.port();
+    
+    // Create systemd service for Redis node
+    let service_content = format!(
+        r#"[Unit]
+Description=Redis Cluster Node on port {}
+After=network.target
+
+[Service]
+Type=simple
+User=redis
+Group=redis
+ExecStart=/usr/bin/redis-server /etc/redis/redis-{}.conf
+ExecStop=/usr/bin/redis-cli -p {} shutdown
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        port, port, port
+    );
+    
+    let setup_script = format!(
+        r#"
+cat > /etc/systemd/system/redis-{}.service << 'EOF'
+{}
+EOF
+systemctl daemon-reload
+systemctl enable redis-{}
+systemctl start redis-{}
+sleep 2
+redis-cli -p {} ping
+"#,
+        port, service_content, port, port, port
+    );
+    
+    let mut cmd = build_ssh_command(&node.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start Redis node {}:{}",
+            node.host,
+            port
+        ));
+    }
+    
+    println!("    ✅ Redis node started on {}:{}", node.host, port);
     Ok(())
 }
 
-async fn create_redis_cluster(_config: &RedisConfig, _key: Option<&Path>) -> Result<()> {
-    println!("    ⚠️  Manual step: Create cluster with 'redis-cli --cluster create'");
+async fn create_redis_cluster(config: &RedisConfig, key: Option<&Path>) -> Result<()> {
+    // Validate all hostnames
+    for m in &config.masters {
+        validate_hostname(&m.host)?;
+    }
+    for r in &config.replicas {
+        validate_hostname(&r.host)?;
+    }
+    
+    // Build the list of master nodes for cluster creation
+    let master_nodes: Vec<String> = config
+        .masters
+        .iter()
+        .map(|m| format!("{}:{}", m.host, m.address.port()))
+        .collect();
+    
+    if master_nodes.is_empty() {
+        return Err(anyhow::anyhow!("No master nodes configured for Redis cluster"));
+    }
+    
+    // Use the first master to initiate cluster creation
+    let first_master = &config.masters[0];
+    let first_port = first_master.address.port();
+    
+    // Create cluster with all masters
+    let cluster_create_cmd = format!(
+        "redis-cli --cluster create {} --cluster-replicas 0 --cluster-yes",
+        master_nodes.join(" ")
+    );
+    
+    let mut cmd = build_ssh_command(&first_master.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&cluster_create_cmd);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to create Redis cluster with masters"));
+    }
+    
+    println!("    ✅ Redis cluster created with {} masters", master_nodes.len());
+    
+    // Add replicas to the cluster
+    for replica in &config.replicas {
+        let replica_port = replica.address.port();
+        
+        // Find the master this replica should follow based on master_of field
+        let master = if let Some(ref master_id) = replica.master_of {
+            config.masters.iter().find(|m| &m.node_id == master_id)
+        } else {
+            // Fallback: round-robin assignment
+            let master_idx = config.replicas.iter().position(|r| r.node_id == replica.node_id).unwrap_or(0)
+                % config.masters.len();
+            Some(&config.masters[master_idx])
+        };
+        
+        if let Some(master) = master {
+            let master_port = master.address.port();
+        
+            // Get the master node ID
+            let get_master_id_cmd = format!(
+                "redis-cli -h {} -p {} cluster nodes | grep myself | cut -d' ' -f1",
+                master.host, master_port
+            );
+            
+            let mut id_cmd = build_ssh_command(&first_master.host, key)?;
+            id_cmd.arg("bash").arg("-c").arg(&get_master_id_cmd);
+            
+            let master_id_output = id_cmd.output()?;
+            
+            let master_id = String::from_utf8_lossy(&master_id_output.stdout)
+                .trim()
+                .to_string();
+            
+            if !master_id.is_empty() {
+                // Add replica to cluster
+                let add_replica_cmd = format!(
+                    "redis-cli --cluster add-node {}:{} {}:{} --cluster-slave --cluster-master-id {}",
+                    replica.host, replica_port, master.host, master_port, master_id
+                );
+                
+                let mut add_cmd = build_ssh_command(&first_master.host, key)?;
+                add_cmd.arg("bash").arg("-c").arg(&add_replica_cmd);
+                
+                let add_status = add_cmd.status()?;
+                
+                if add_status.success() {
+                    println!("    ✅ Added replica {}:{} -> master {}:{}", 
+                        replica.host, replica_port, master.host, master_port);
+                }
+            }
+        }
+    }
+    
+    // Verify cluster health
+    let check_cmd = format!(
+        "redis-cli -h {} -p {} cluster info | grep cluster_state",
+        first_master.host, first_port
+    );
+    
+    let mut verify_cmd = build_ssh_command(&first_master.host, key)?;
+    verify_cmd.arg("bash").arg("-c").arg(&check_cmd);
+    
+    let check_output = verify_cmd.output()?;
+    
+    let cluster_state = String::from_utf8_lossy(&check_output.stdout);
+    if cluster_state.contains("cluster_state:ok") {
+        println!("    ✅ Redis cluster is healthy");
+    } else {
+        println!("    ⚠️  Redis cluster state: {}", cluster_state.trim());
+    }
+    
     Ok(())
 }
 
 async fn start_minio_node(
-    _cluster: &MinIOConfig,
-    _node: &MinIONode,
-    _key: Option<&Path>,
+    cluster: &MinIOConfig,
+    node: &MinIONode,
+    key: Option<&Path>,
 ) -> Result<()> {
-    println!("    ⚠️  Manual step: Start with 'minio server <drives>'");
+    // Validate hostnames and paths
+    validate_hostname(&node.host)?;
+    for vol in &node.data_volumes {
+        validate_path(vol)?;
+    }
+    for n in &cluster.nodes {
+        validate_hostname(&n.host)?;
+    }
+    
+    let api_port = node.api_address.port();
+    
+    // Build the drives list for distributed mode
+    let drives: Vec<String> = cluster
+        .nodes
+        .iter()
+        .flat_map(|n| {
+            let n_port = n.api_address.port();
+            n.data_volumes.iter().map(move |d| format!("http://{}:{}{}", n.host, n_port, d))
+        })
+        .collect();
+    
+    let drives_arg = drives.join(" ");
+    
+    // Create MinIO systemd service - use environment variables for credentials
+    let service_content = format!(
+        r#"[Unit]
+Description=MinIO Object Storage
+After=network.target
+
+[Service]
+Type=simple
+User=minio
+Group=minio
+Environment="MINIO_ROOT_USER={}"
+Environment="MINIO_ROOT_PASSWORD=$(cat /etc/minio/minio-secret)"
+Environment="MINIO_VOLUMES={}"
+ExecStart=/usr/local/bin/minio server --console-address :{} $MINIO_VOLUMES
+Restart=always
+RestartSec=10
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        cluster.root_user,
+        drives_arg,
+        cluster.console_port
+    );
+    
+    // Create directories for all drives on this node
+    let mkdir_cmds: Vec<String> = node
+        .data_volumes
+        .iter()
+        .map(|d| format!("mkdir -p {}", d))
+        .collect();
+    
+    let setup_script = format!(
+        r#"
+# Create minio user if not exists
+id -u minio &>/dev/null || useradd -r -s /sbin/nologin minio
+
+# Create drive directories
+{}
+
+# Set ownership
+chown -R minio:minio {}
+
+# Install systemd service
+cat > /etc/systemd/system/minio.service << 'EOF'
+{}
+EOF
+
+systemctl daemon-reload
+systemctl enable minio
+systemctl start minio
+sleep 3
+systemctl status minio --no-pager
+"#,
+        mkdir_cmds.join("\n"),
+        node.data_volumes.join(" "),
+        service_content
+    );
+    
+    let mut cmd = build_ssh_command(&node.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start MinIO node on {}",
+            node.host
+        ));
+    }
+    
+    println!("    ✅ MinIO node started on {}:{}", node.host, api_port);
     Ok(())
 }
 
-async fn start_tikv_pd(_cluster: &TiKVConfig, _pd: &TiKVPDNode, _key: Option<&Path>) -> Result<()> {
-    println!("    ⚠️  Manual step: Start with 'tiup pd:v6 --config=pd.toml'");
+async fn start_tikv_pd(cluster: &TiKVConfig, pd: &TiKVPDNode, key: Option<&Path>) -> Result<()> {
+    // Validate hostnames and paths
+    validate_hostname(&pd.host)?;
+    validate_path(&pd.data_dir)?;
+    for p in &cluster.pd_nodes {
+        validate_hostname(&p.host)?;
+    }
+    
+    let client_port = pd.client_address.port();
+    let peer_port = pd.peer_address.port();
+    
+    // Build initial cluster string for PD nodes
+    let initial_cluster: Vec<String> = cluster
+        .pd_nodes
+        .iter()
+        .map(|p| format!("{}=http://{}:{}", p.node_id, p.host, p.peer_address.port()))
+        .collect();
+    
+    // Generate PD configuration
+    let pd_config = format!(
+        r#"# TiKV PD Configuration
+name = "{}"
+data-dir = "{}"
+client-urls = "http://{}:{}"
+peer-urls = "http://{}:{}"
+initial-cluster = "{}"
+initial-cluster-state = "new"
+
+[log]
+level = "info"
+
+[schedule]
+max-store-down-time = "30m"
+leader-schedule-limit = 4
+region-schedule-limit = 2048
+replica-schedule-limit = 64
+"#,
+        pd.node_id,
+        pd.data_dir,
+        pd.host,
+        client_port,
+        pd.host,
+        peer_port,
+        initial_cluster.join(",")
+    );
+    
+    // Create systemd service for PD
+    let service_content = format!(
+        r#"[Unit]
+Description=TiKV PD Server {}
+After=network.target
+
+[Service]
+Type=simple
+User=tikv
+Group=tikv
+ExecStart=/usr/local/bin/pd-server --config=/etc/tikv/pd.toml
+Restart=always
+RestartSec=10
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        pd.node_id
+    );
+    
+    let setup_script = format!(
+        r#"
+# Create tikv user if not exists
+id -u tikv &>/dev/null || useradd -r -s /sbin/nologin tikv
+
+# Create directories
+mkdir -p /etc/tikv {} /var/log/tikv
+chown -R tikv:tikv {} /var/log/tikv
+
+# Write PD config
+cat > /etc/tikv/pd.toml << 'EOF'
+{}
+EOF
+
+# Install systemd service
+cat > /etc/systemd/system/tikv-pd.service << 'EOF'
+{}
+EOF
+
+systemctl daemon-reload
+systemctl enable tikv-pd
+systemctl start tikv-pd
+sleep 5
+systemctl status tikv-pd --no-pager
+"#,
+        pd.data_dir,
+        pd.data_dir,
+        pd_config,
+        service_content
+    );
+    
+    let mut cmd = build_ssh_command(&pd.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start TiKV PD node {}",
+            pd.node_id
+        ));
+    }
+    
+    println!("    ✅ TiKV PD node {} started on {}:{}", pd.node_id, pd.host, client_port);
     Ok(())
 }
 
 async fn start_tikv_storage(
-    _cluster: &TiKVConfig,
-    _tikv: &TiKVStorageNode,
-    _key: Option<&Path>,
+    cluster: &TiKVConfig,
+    tikv: &TiKVStorageNode,
+    key: Option<&Path>,
 ) -> Result<()> {
-    println!("    ⚠️  Manual step: Start with 'tiup tikv:v6 --config=tikv.toml'");
+    // Validate hostnames and paths
+    validate_hostname(&tikv.host)?;
+    validate_path(&tikv.data_dir)?;
+    for p in &cluster.pd_nodes {
+        validate_hostname(&p.host)?;
+    }
+    
+    let tikv_port = tikv.address.port();
+    let status_port = tikv.status_address.port();
+    
+    // Build PD endpoints string
+    let pd_endpoints: Vec<String> = cluster
+        .pd_nodes
+        .iter()
+        .map(|p| format!("http://{}:{}", p.host, p.client_address.port()))
+        .collect();
+    
+    // Generate TiKV configuration
+    let tikv_config = format!(
+        r#"# TiKV Storage Configuration
+[server]
+addr = "{}:{}"
+status-addr = "{}:{}"
+
+[storage]
+data-dir = "{}"
+
+[pd]
+endpoints = [{}]
+
+[raftstore]
+capacity = "100GB"
+raft-base-tick-interval = "1s"
+raft-heartbeat-ticks = 2
+raft-election-timeout-ticks = 10
+
+[rocksdb]
+max-open-files = 40960
+
+[rocksdb.defaultcf]
+block-cache-size = "1GB"
+
+[rocksdb.writecf]
+block-cache-size = "256MB"
+
+[rocksdb.raftcf]
+block-cache-size = "128MB"
+
+[raftdb]
+max-open-files = 40960
+"#,
+        tikv.host,
+        tikv_port,
+        tikv.host,
+        status_port,
+        tikv.data_dir,
+        pd_endpoints.iter().map(|e| format!("\"{}\"", e)).collect::<Vec<_>>().join(", ")
+    );
+    
+    // Create systemd service for TiKV
+    let service_content = format!(
+        r#"[Unit]
+Description=TiKV Storage Server {}:{}
+After=network.target tikv-pd.service
+
+[Service]
+Type=simple
+User=tikv
+Group=tikv
+ExecStart=/usr/local/bin/tikv-server --config=/etc/tikv/tikv.toml
+Restart=always
+RestartSec=10
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        tikv.host, tikv_port
+    );
+    
+    let setup_script = format!(
+        r#"
+# Create tikv user if not exists
+id -u tikv &>/dev/null || useradd -r -s /sbin/nologin tikv
+
+# Create directories
+mkdir -p /etc/tikv {} /var/log/tikv
+chown -R tikv:tikv {} /var/log/tikv
+
+# Write TiKV config
+cat > /etc/tikv/tikv.toml << 'EOF'
+{}
+EOF
+
+# Install systemd service
+cat > /etc/systemd/system/tikv-storage.service << 'EOF'
+{}
+EOF
+
+systemctl daemon-reload
+systemctl enable tikv-storage
+systemctl start tikv-storage
+sleep 5
+systemctl status tikv-storage --no-pager
+"#,
+        tikv.data_dir,
+        tikv.data_dir,
+        tikv_config,
+        service_content
+    );
+    
+    let mut cmd = build_ssh_command(&tikv.host, key)?;
+    cmd.arg("bash").arg("-c").arg(&setup_script);
+    
+    let status = cmd.status()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start TiKV storage node on {}:{}",
+            tikv.host,
+            tikv_port
+        ));
+    }
+    
+    println!("    ✅ TiKV storage node started on {}:{}", tikv.host, tikv_port);
     Ok(())
 }
 

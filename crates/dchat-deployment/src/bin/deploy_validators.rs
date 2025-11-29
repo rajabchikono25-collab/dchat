@@ -4,10 +4,89 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dchat_deployment::MultiRegionConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
+
+/// Validates hostname/IP to prevent command injection attacks
+fn validate_hostname(host: &str) -> Result<()> {
+    // Strict hostname validation per RFC 1123
+    let hostname_regex = regex::Regex::new(
+        r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+    ).expect("Invalid regex");
+    
+    // Also allow IPv4 addresses
+    let ipv4_regex = regex::Regex::new(
+        r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+    ).expect("Invalid regex");
+    
+    if !hostname_regex.is_match(host) && !ipv4_regex.is_match(host) {
+        anyhow::bail!("Invalid hostname/IP format: {}", host);
+    }
+    
+    if host.len() > 253 {
+        anyhow::bail!("Hostname exceeds maximum length of 253 characters");
+    }
+    
+    // Reject dangerous patterns
+    if host.contains(';') || host.contains('|') || host.contains('&') || 
+       host.contains('$') || host.contains('`') || host.contains('\'') || 
+       host.contains('"') || host.contains('\n') || host.contains('\r') {
+        anyhow::bail!("Hostname contains forbidden characters");
+    }
+    
+    Ok(())
+}
+
+/// Validates username to prevent injection
+fn validate_username(user: &str) -> Result<()> {
+    let username_regex = regex::Regex::new(r"^[a-z_][a-z0-9_-]{0,31}$").expect("Invalid regex");
+    if !username_regex.is_match(user) {
+        anyhow::bail!("Invalid username format: {}", user);
+    }
+    Ok(())
+}
+
+/// Builds a secure SSH command with proper security options
+fn build_ssh_command(host: &str, user: &str, key: Option<&Path>) -> Result<Command> {
+    validate_hostname(host)?;
+    validate_username(user)?;
+    
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new")
+       .arg("-o").arg("ConnectTimeout=30")
+       .arg("-o").arg("BatchMode=yes")
+       .arg("-o").arg("UserKnownHostsFile=~/.ssh/known_hosts");
+    
+    if let Some(key_path) = key {
+        if !key_path.exists() {
+            anyhow::bail!("SSH key file does not exist: {:?}", key_path);
+        }
+        cmd.arg("-i").arg(key_path);
+    }
+    
+    cmd.arg(format!("{}@{}", user, host));
+    
+    Ok(cmd)
+}
+
+/// Builds a secure SCP command with proper security options
+fn build_scp_command(key: Option<&Path>) -> Result<Command> {
+    let mut cmd = Command::new("scp");
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new")
+       .arg("-o").arg("ConnectTimeout=30")
+       .arg("-o").arg("BatchMode=yes");
+    
+    if let Some(key_path) = key {
+        if !key_path.exists() {
+            anyhow::bail!("SSH key file does not exist: {:?}", key_path);
+        }
+        cmd.arg("-i").arg(key_path);
+    }
+    
+    Ok(cmd)
+}
 
 #[derive(Parser)]
 #[command(name = "deploy-validators")]
@@ -433,17 +512,7 @@ async fn generate_k8s(config_path: &PathBuf, output: PathBuf) -> Result<()> {
 // Helper functions
 
 async fn check_ssh_connectivity(server: &str, user: &str, key: Option<&PathBuf>) -> Result<()> {
-    let mut cmd = Command::new("ssh");
-    cmd.arg(format!("{}@{}", user, server))
-        .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("-o")
-        .arg("StrictHostKeyChecking=no");
-
-    if let Some(key_path) = key {
-        cmd.arg("-i").arg(key_path);
-    }
-
+    let mut cmd = build_ssh_command(server, user, key.map(|p| p.as_path()))?;
     cmd.arg("echo 'OK'");
 
     let output = cmd.output().context("SSH connection failed")?;
@@ -475,11 +544,17 @@ async fn copy_config(
     config_path: &PathBuf,
     validator_id: &str,
 ) -> Result<()> {
-    let mut cmd = Command::new("scp");
-    if let Some(key_path) = key {
-        cmd.arg("-i").arg(key_path);
+    // Validate inputs to prevent command injection
+    validate_hostname(server)?;
+    validate_username(user)?;
+    
+    // Validate validator_id to prevent path traversal
+    if validator_id.contains('/') || validator_id.contains('\\') || 
+       validator_id.contains("..") || validator_id.contains(';') {
+        anyhow::bail!("Invalid validator_id format: {}", validator_id);
     }
-
+    
+    let mut cmd = build_scp_command(key.map(|p| p.as_path()))?;
     cmd.arg(config_path)
         .arg(format!("{}@{}:/data/{}.toml", user, server, validator_id));
 
@@ -551,13 +626,7 @@ async fn execute_remote_command(
     key: Option<&PathBuf>,
     script: &str,
 ) -> Result<()> {
-    let mut cmd = Command::new("ssh");
-    cmd.arg(format!("{}@{}", user, server));
-
-    if let Some(key_path) = key {
-        cmd.arg("-i").arg(key_path);
-    }
-
+    let mut cmd = build_ssh_command(server, user, key.map(|p| p.as_path()))?;
     cmd.arg(script);
 
     let output = cmd.output()?;

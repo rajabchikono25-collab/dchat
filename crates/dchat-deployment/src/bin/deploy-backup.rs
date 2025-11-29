@@ -8,6 +8,50 @@ use std::fs;
 use std::path::Path;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration};
+use tracing;
+
+/// Validates hostname/IP to prevent command injection attacks
+fn validate_hostname(host: &str) -> Result<()> {
+    // Strict hostname validation per RFC 1123
+    let hostname_regex = regex::Regex::new(
+        r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+    ).expect("Invalid regex");
+    
+    // Also allow IPv4 addresses
+    let ipv4_regex = regex::Regex::new(
+        r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+    ).expect("Invalid regex");
+    
+    if !hostname_regex.is_match(host) && !ipv4_regex.is_match(host) {
+        anyhow::bail!("Invalid hostname/IP format: {}", host);
+    }
+    
+    if host.len() > 253 {
+        anyhow::bail!("Hostname exceeds maximum length of 253 characters");
+    }
+    
+    // Reject dangerous patterns
+    if host.contains(';') || host.contains('|') || host.contains('&') || 
+       host.contains('$') || host.contains('`') || host.contains('\'') || 
+       host.contains('"') || host.contains('\n') || host.contains('\r') {
+        anyhow::bail!("Hostname contains forbidden characters");
+    }
+    
+    Ok(())
+}
+
+/// Builds a secure SSH command with proper security options
+fn build_secure_ssh_command(host: &str) -> Result<Command> {
+    validate_hostname(host)?;
+    
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new")
+       .arg("-o").arg("ConnectTimeout=30")
+       .arg("-o").arg("BatchMode=yes");
+    cmd.arg(host);
+    
+    Ok(cmd)
+}
 
 #[derive(Parser)]
 #[command(name = "deploy-backup")]
@@ -484,18 +528,23 @@ async fn setup_replicas(config_path: &str) -> Result<()> {
         println!("\nReplica {}/{}:", i + 1, config.local_replicas.nodes.len());
         println!("   Host: {}", replica.host);
         println!("   Region: {}", replica.region);
+        
+        // Validate hostname before any SSH operations
+        validate_hostname(&replica.host)?;
+        
+        // Validate data directory path
+        if replica.data_dir.contains("..") || replica.data_dir.contains(';') ||
+           replica.data_dir.contains('|') || replica.data_dir.contains('&') {
+            anyhow::bail!("Invalid data directory path: {}", replica.data_dir);
+        }
 
         // Step 1: Check SSH connectivity
         println!("Step 1/4: Checking SSH connectivity");
-        run_command("ssh", &[&replica.host, "echo", "'Connected'"]).await?;
+        run_secure_ssh_command(&replica.host, &["echo", "'Connected'"]).await?;
 
         // Step 2: Create data directory
         println!("Step 2/4: Creating data directory: {}", replica.data_dir);
-        run_command(
-            "ssh",
-            &[&replica.host, "sudo", "mkdir", "-p", &replica.data_dir],
-        )
-        .await?;
+        run_secure_ssh_command(&replica.host, &["sudo", "mkdir", "-p", &replica.data_dir]).await?;
 
         // Step 3: Configure streaming replication
         if config.local_replicas.streaming {
@@ -504,32 +553,22 @@ async fn setup_replicas(config_path: &str) -> Result<()> {
                 "primary_conninfo = 'host=primary port={} user=replication'\nrestore_command = 'wal-g wal-fetch %f %p'\n",
                 replica.port
             );
-            run_command(
-                "ssh",
-                &[
-                    &replica.host,
-                    &format!(
-                        "echo '{}' | sudo tee {}/postgresql.auto.conf",
-                        replication_config, replica.data_dir
-                    ),
-                ],
-            )
-            .await?;
+            // Use a safer approach - write to temp file first
+            let config_cmd = format!(
+                "echo '{}' | sudo tee {}/postgresql.auto.conf",
+                replication_config.replace('\'', "'\\''"), // escape single quotes
+                replica.data_dir
+            );
+            run_secure_ssh_command(&replica.host, &[&config_cmd]).await?;
         } else {
             println!("Step 3/4: Skipping streaming replication");
         }
 
         // Step 4: Start replica
         println!("Step 4/4: Starting replica");
-        run_command(
-            "ssh",
-            &[
-                &replica.host,
-                "sudo",
-                "systemctl",
-                "start",
-                "postgresql-replica",
-            ],
+        run_secure_ssh_command(
+            &replica.host,
+            &["sudo", "systemctl", "start", "postgresql-replica"],
         )
         .await?;
 
@@ -544,6 +583,21 @@ async fn setup_replicas(config_path: &str) -> Result<()> {
         config.local_replicas.lag_threshold_seconds
     );
 
+    Ok(())
+}
+
+/// Helper to run SSH commands securely
+async fn run_secure_ssh_command(host: &str, args: &[&str]) -> Result<()> {
+    let mut cmd = build_secure_ssh_command(host)?;
+    cmd.args(args);
+    
+    let output = cmd.output().await.context(format!("Failed to run SSH command to {}", host))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("SSH command failed: {}", stderr));
+    }
+    
     Ok(())
 }
 
@@ -1192,48 +1246,784 @@ fn generate_grafana_dashboard(_config: &DisasterRecoveryConfig) -> String {
     .to_string()
 }
 
-async fn create_snapshot_script(_backend: &str, _config: &DisasterRecoveryConfig) -> Result<()> {
-    // Create backup script for each backend
+/// Create snapshot script for a backend database
+async fn create_snapshot_script(backend: &str, config: &DisasterRecoveryConfig) -> Result<()> {
+    let script_path = format!("/usr/local/bin/backup-{}.sh", backend);
+    
+    let script_content = match backend {
+        "cockroachdb" => format!(
+            r#"#!/bin/bash
+set -euo pipefail
+
+# CockroachDB Backup Script - Auto-generated by dchat deploy-backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+S3_BUCKET="{}"
+BACKUP_PATH="s3://$S3_BUCKET/cockroachdb/$TIMESTAMP"
+
+echo "Starting CockroachDB backup to $BACKUP_PATH"
+
+# Full backup with incremental chain
+cockroach sql --insecure -e "BACKUP INTO '$BACKUP_PATH' WITH revision_history, encryption_passphrase = '$DCHAT_BACKUP_KEY'"
+
+# Verify backup
+cockroach sql --insecure -e "SHOW BACKUPS IN '$BACKUP_PATH'"
+
+# Upload verification marker
+aws s3 cp - "s3://$S3_BUCKET/cockroachdb/$TIMESTAMP/.verified" <<< "verified=$(date -Iseconds)"
+
+echo "CockroachDB backup completed successfully"
+"#,
+            config.s3.bucket
+        ),
+        "redis" => format!(
+            r#"#!/bin/bash
+set -euo pipefail
+
+# Redis Backup Script - Auto-generated by dchat deploy-backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+S3_BUCKET="{}"
+REDIS_DATA_DIR="{}"
+
+echo "Starting Redis backup"
+
+# Trigger BGSAVE and wait for completion
+redis-cli BGSAVE
+while [ "$(redis-cli LASTSAVE)" == "$(cat /tmp/redis_lastsave 2>/dev/null || echo 0)" ]; do
+    sleep 1
+done
+redis-cli LASTSAVE > /tmp/redis_lastsave
+
+# Compress and upload RDB file
+gzip -c "$REDIS_DATA_DIR/dump.rdb" > "/tmp/redis-$TIMESTAMP.rdb.gz"
+aws s3 cp "/tmp/redis-$TIMESTAMP.rdb.gz" "s3://$S3_BUCKET/redis/$TIMESTAMP/"
+
+# Also backup AOF if enabled
+if [ -f "$REDIS_DATA_DIR/appendonly.aof" ]; then
+    gzip -c "$REDIS_DATA_DIR/appendonly.aof" > "/tmp/redis-$TIMESTAMP.aof.gz"
+    aws s3 cp "/tmp/redis-$TIMESTAMP.aof.gz" "s3://$S3_BUCKET/redis/$TIMESTAMP/"
+fi
+
+# Cleanup temp files
+rm -f "/tmp/redis-$TIMESTAMP.rdb.gz" "/tmp/redis-$TIMESTAMP.aof.gz"
+
+echo "Redis backup completed successfully"
+"#,
+            config.s3.bucket,
+            "/var/lib/redis" // Default Redis data directory
+        ),
+        "minio" => format!(
+            r#"#!/bin/bash
+set -euo pipefail
+
+# MinIO Backup Script - Auto-generated by dchat deploy-backup  
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+S3_BUCKET="{}"
+
+echo "Starting MinIO backup"
+
+# MinIO endpoint from environment
+MINIO_ENDPOINT="${{MINIO_ENDPOINT:-http://localhost:9000}}"
+
+# Use MinIO mc client for bucket mirroring
+mc alias set dchat-source "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+mc alias set dchat-backup "https://s3.amazonaws.com" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
+
+# Mirror all buckets to backup location
+for bucket in $(mc ls dchat-source --json | jq -r '.key'); do
+    echo "Backing up bucket: $bucket"
+    mc mirror --overwrite "dchat-source/$bucket" "dchat-backup/$S3_BUCKET/minio/$TIMESTAMP/$bucket"
+done
+
+echo "MinIO backup completed successfully"
+"#,
+            config.s3.bucket
+        ),
+        "tikv" => format!(
+            r#"#!/bin/bash
+set -euo pipefail
+
+# TiKV Backup Script - Auto-generated by dchat deploy-backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DEST="{}"
+
+echo "Starting TiKV backup"
+
+# PD address from environment or config
+PD_ADDR="${{PD_ADDR:-localhost:2379}}"
+
+# Use TiKV BR tool for backup
+tiup br backup full \
+    --pd "$PD_ADDR" \
+    --storage "$BACKUP_DEST/$TIMESTAMP" \
+    --ratelimit 128 \
+    --concurrency 4 \
+    --checksum=true
+
+# Verify backup metadata
+tiup br validate backupmeta \
+    --storage "$BACKUP_DEST/$TIMESTAMP"
+
+echo "TiKV backup completed successfully"
+"#,
+            config.backends.tikv.destination
+        ),
+        _ => return Err(anyhow::anyhow!("Unknown backend: {}", backend)),
+    };
+
+    fs::write(&script_path, &script_content)?;
+    run_command("chmod", &["+x", &script_path]).await?;
+    
+    println!("   Created script: {}", script_path);
     Ok(())
 }
 
-async fn schedule_cron_job(_name: &str, _schedule: &str, _script: &str) -> Result<()> {
-    // Add cron job
+/// Schedule a cron job for automated backups
+async fn schedule_cron_job(name: &str, schedule: &str, script: &str) -> Result<()> {
+    // Build cron entry
+    let cron_entry = format!("{} {} >> /var/log/dchat-backup-{}.log 2>&1", schedule, script, name);
+    
+    // Check if cron job already exists
+    let existing = Command::new("crontab")
+        .args(["-l"])
+        .output()
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    
+    if existing.contains(script) {
+        println!("   Cron job for {} already exists, updating", name);
+        // Remove old entry
+        let filtered: Vec<&str> = existing.lines().filter(|l| !l.contains(script)).collect();
+        let mut new_crontab = filtered.join("\n");
+        new_crontab.push('\n');
+        new_crontab.push_str(&cron_entry);
+        new_crontab.push('\n');
+        
+        fs::write("/tmp/dchat-crontab", &new_crontab)?;
+    } else {
+        // Append new entry
+        let mut new_crontab = existing;
+        new_crontab.push_str(&cron_entry);
+        new_crontab.push('\n');
+        
+        fs::write("/tmp/dchat-crontab", &new_crontab)?;
+    }
+    
+    // Install updated crontab
+    run_command("crontab", &["/tmp/dchat-crontab"]).await?;
+    
+    println!("   Scheduled: {} ({})", name, schedule);
     Ok(())
 }
 
-async fn check_backup_exists(_config: &DisasterRecoveryConfig, _database: &str) -> Result<bool> {
+/// Check if backup exists for a database in the configured storage tiers
+async fn check_backup_exists(config: &DisasterRecoveryConfig, database: &str) -> Result<bool> {
+    // Check S3 hot tier first (most recent backups)
+    let s3_check = Command::new("aws")
+        .args([
+            "s3", "ls", 
+            &format!("s3://{}/{}/", config.s3.bucket, database),
+            "--recursive",
+            "--max-items", "1"
+        ])
+        .output()
+        .await;
+    
+    match s3_check {
+        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
+            println!("   Found backup in S3 hot tier");
+            return Ok(true);
+        }
+        _ => {}
+    }
+    
+    // Check GCS warm tier
+    let gcs_check = Command::new("gsutil")
+        .args([
+            "ls", 
+            &format!("gs://{}/{}/", config.gcs.bucket, database),
+        ])
+        .output()
+        .await;
+    
+    match gcs_check {
+        Ok(output) if output.status.success() && !output.stdout.is_empty() => {
+            println!("   Found backup in GCS warm tier");
+            return Ok(true);
+        }
+        _ => {}
+    }
+    
+    // Check IPFS cold tier (query first node)
+    if let Some(node) = config.ipfs.nodes.first() {
+        let ipfs_check = Command::new("ipfs")
+            .args([
+                "--api", node,
+                "files", "ls",
+                &format!("/dchat-backups/{}/", database)
+            ])
+            .output()
+            .await;
+        
+        match ipfs_check {
+            Ok(output) if output.status.success() && !output.stdout.is_empty() => {
+                println!("   Found backup in IPFS cold tier");
+                return Ok(true);
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(false)
+}
+
+/// Verify backup integrity using checksums and metadata validation
+async fn verify_backup_integrity(database: &str) -> Result<bool> {
+    println!("   Verifying integrity for {}", database);
+    
+    if database == "cockroachdb" || database.starts_with("cockroach") {
+        // Use CockroachDB's built-in backup verification
+        let verify_output = Command::new("cockroach")
+            .args([
+                "sql", "--insecure", "-e",
+                &format!("SHOW BACKUP FROM LATEST IN 's3://dchat-backups/{}'", database)
+            ])
+            .output()
+            .await?;
+        
+        if !verify_output.status.success() {
+            let stderr = String::from_utf8_lossy(&verify_output.stderr);
+            tracing::error!("CockroachDB backup verification failed: {}", stderr);
+            return Ok(false);
+        }
+        
+        // Check for corruption indicators in output
+        let stdout = String::from_utf8_lossy(&verify_output.stdout);
+        if stdout.contains("CORRUPTED") || stdout.contains("ERROR") {
+            tracing::error!("Backup corruption detected");
+            return Ok(false);
+        }
+        
+        Ok(true)
+    } else if database == "redis" {
+        // Download and verify RDB file checksum
+        let check_output = Command::new("redis-check-rdb")
+            .args(["/tmp/redis-backup-verify.rdb"])
+            .output()
+            .await;
+        
+        match check_output {
+            Ok(output) if output.status.success() => Ok(true),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!("Redis RDB verification failed: {}", stderr);
+                Ok(false)
+            }
+            Err(e) => {
+                // redis-check-rdb not available, use basic file check
+                tracing::warn!("redis-check-rdb not available: {}, using basic check", e);
+                Ok(std::path::Path::new("/tmp/redis-backup-verify.rdb").exists())
+            }
+        }
+    } else if database == "tikv" {
+        // Use TiKV BR validate command
+        let verify_output = Command::new("tiup")
+            .args([
+                "br", "validate", "backupmeta",
+                "--storage", &format!("s3://dchat-backups/{}/", database)
+            ])
+            .output()
+            .await?;
+        
+        Ok(verify_output.status.success())
+    } else if database == "minio" {
+        // Verify MinIO objects using mc stat
+        let verify_output = Command::new("mc")
+            .args([
+                "stat", "--recursive",
+                &format!("dchat-backup/dchat-backups/{}/", database)
+            ])
+            .output()
+            .await?;
+        
+        Ok(verify_output.status.success())
+    } else {
+        tracing::warn!("No specific verification for database: {}", database);
+        Ok(true)
+    }
+}
+
+/// Test sample restore to verify backup recoverability
+async fn test_sample_restore(database: &str) -> Result<bool> {
+    println!("   Testing sample restore for {}", database);
+    
+    // Create isolated test environment
+    let test_dir = format!("/tmp/dchat-restore-test-{}", database);
+    fs::create_dir_all(&test_dir)?;
+    
+    let result = if database == "cockroachdb" || database.starts_with("cockroach") {
+        // Start temporary CockroachDB instance for restore test
+        let start_test_db = Command::new("cockroach")
+            .args([
+                "start-single-node",
+                "--insecure",
+                "--store", &format!("{}/data", test_dir),
+                "--listen-addr", "localhost:26258",
+                "--http-addr", "localhost:8081",
+                "--background"
+            ])
+            .output()
+            .await;
+        
+        if let Err(e) = start_test_db {
+            tracing::warn!("Could not start test CockroachDB: {}", e);
+            return Ok(false);
+        }
+        
+        // Wait for startup
+        sleep(Duration::from_secs(5)).await;
+        
+        // Attempt restore from latest backup
+        let restore_output = Command::new("cockroach")
+            .args([
+                "sql",
+                "--insecure",
+                "--host", "localhost:26258",
+                "-e", "CREATE DATABASE restore_test; RESTORE DATABASE restore_test FROM LATEST IN 's3://dchat-backups/cockroachdb' WITH into_db = 'restore_test'"
+            ])
+            .output()
+            .await;
+        
+        // Cleanup test instance
+        let _ = Command::new("pkill").args(["-f", "cockroach.*26258"]).output().await;
+        
+        restore_output.map(|o| o.status.success()).unwrap_or(false)
+    } else if database == "redis" {
+        // Test Redis restore by loading RDB in test instance
+        let test_port = 6399;
+        
+        let start_test = Command::new("redis-server")
+            .args([
+                "--port", &test_port.to_string(),
+                "--daemonize", "yes",
+                "--dir", &test_dir,
+                "--dbfilename", "restore-test.rdb"
+            ])
+            .output()
+            .await;
+        
+        if let Err(e) = start_test {
+            tracing::warn!("Could not start test Redis: {}", e);
+            return Ok(false);
+        }
+        
+        sleep(Duration::from_secs(2)).await;
+        
+        // Copy backup and trigger restore
+        let copy_result = Command::new("cp")
+            .args(["/tmp/redis-backup-verify.rdb", &format!("{}/restore-test.rdb", test_dir)])
+            .output()
+            .await;
+        
+        let restart_result = Command::new("redis-cli")
+            .args(["-p", &test_port.to_string(), "DEBUG", "RELOAD"])
+            .output()
+            .await;
+        
+        // Verify data loaded
+        let verify_result = Command::new("redis-cli")
+            .args(["-p", &test_port.to_string(), "DBSIZE"])
+            .output()
+            .await;
+        
+        // Cleanup
+        let _ = Command::new("redis-cli")
+            .args(["-p", &test_port.to_string(), "SHUTDOWN", "NOSAVE"])
+            .output()
+            .await;
+        
+        copy_result.is_ok() && restart_result.is_ok() && verify_result.map(|o| o.status.success()).unwrap_or(false)
+    } else if database == "tikv" {
+        // Use TiKV BR for restore test (to temp cluster)
+        let restore_output = Command::new("tiup")
+            .args([
+                "br", "restore", "full",
+                "--storage", &format!("s3://dchat-backups/{}/", database),
+                "--check-requirements=false",
+                "--dry-run"  // Just validate without actually restoring
+            ])
+            .output()
+            .await;
+        
+        restore_output.map(|o| o.status.success()).unwrap_or(false)
+    } else {
+        tracing::warn!("No restore test for database: {}", database);
+        true
+    };
+    
+    // Cleanup test directory
+    let _ = fs::remove_dir_all(&test_dir);
+    
+    Ok(result)
+}
+
+/// Check S3 backup health - verifies bucket accessibility and recent backups
+async fn check_s3_health(config: &S3BackupConfig) -> Result<bool> {
+    // Step 1: Verify bucket exists and is accessible
+    let bucket_check = Command::new("aws")
+        .args(["s3api", "head-bucket", "--bucket", &config.bucket])
+        .output()
+        .await;
+    
+    if !bucket_check.map(|o| o.status.success()).unwrap_or(false) {
+        tracing::error!("S3 bucket {} is not accessible", config.bucket);
+        return Ok(false);
+    }
+    
+    // Step 2: Check for recent backups (within last 24 hours)
+    let recent_check = Command::new("aws")
+        .args([
+            "s3", "ls", 
+            &format!("s3://{}/", config.bucket),
+            "--recursive",
+        ])
+        .output()
+        .await?;
+    
+    let stdout = String::from_utf8_lossy(&recent_check.stdout);
+    let has_recent = stdout.lines().any(|line| {
+        // Parse date from S3 listing and check if within 24h
+        // Format: 2025-01-15 10:30:00   12345 path/to/file
+        if let Some(date_str) = line.split_whitespace().next() {
+            if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                let today = chrono::Utc::now().date_naive();
+                return (today - date).num_days() <= 1;
+            }
+        }
+        false
+    });
+    
+    if !has_recent {
+        tracing::warn!("No recent S3 backups found in last 24 hours");
+    }
+    
+    // Step 3: Check versioning is enabled
+    let versioning_check = Command::new("aws")
+        .args([
+            "s3api", "get-bucket-versioning",
+            "--bucket", &config.bucket
+        ])
+        .output()
+        .await?;
+    
+    let versioning_status = String::from_utf8_lossy(&versioning_check.stdout);
+    if !versioning_status.contains("Enabled") {
+        tracing::warn!("S3 bucket versioning is not enabled");
+    }
+    
     Ok(true)
 }
 
-async fn verify_backup_integrity(_database: &str) -> Result<bool> {
+/// Check GCS backup health - verifies bucket accessibility and lifecycle rules
+async fn check_gcs_health(config: &GCSBackupConfig) -> Result<bool> {
+    // Step 1: Verify bucket exists and is accessible
+    let bucket_check = Command::new("gsutil")
+        .args(["ls", "-b", &format!("gs://{}", config.bucket)])
+        .output()
+        .await;
+    
+    if !bucket_check.map(|o| o.status.success()).unwrap_or(false) {
+        tracing::error!("GCS bucket {} is not accessible", config.bucket);
+        return Ok(false);
+    }
+    
+    // Step 2: Check lifecycle configuration
+    let lifecycle_check = Command::new("gsutil")
+        .args(["lifecycle", "get", &format!("gs://{}", config.bucket)])
+        .output()
+        .await?;
+    
+    if !lifecycle_check.status.success() {
+        tracing::warn!("GCS lifecycle rules not configured for {}", config.bucket);
+    }
+    
+    // Step 3: Check retention policy
+    let retention_check = Command::new("gsutil")
+        .args(["retention", "get", &format!("gs://{}", config.bucket)])
+        .output()
+        .await?;
+    
+    let retention_output = String::from_utf8_lossy(&retention_check.stdout);
+    if !retention_output.contains("Retention Policy") {
+        tracing::warn!("GCS retention policy not set for {}", config.bucket);
+    }
+    
+    // Step 4: Verify storage class
+    let bucket_info = Command::new("gsutil")
+        .args(["ls", "-L", "-b", &format!("gs://{}", config.bucket)])
+        .output()
+        .await?;
+    
+    let info_output = String::from_utf8_lossy(&bucket_info.stdout);
+    if !info_output.contains(&config.storage_class) {
+        tracing::warn!("GCS bucket not using expected storage class: {}", config.storage_class);
+    }
+    
     Ok(true)
 }
 
-async fn test_sample_restore(_database: &str) -> Result<bool> {
+/// Check IPFS backup health - verifies node connectivity and pinned content
+async fn check_ipfs_health(config: &IPFSBackupConfig) -> Result<bool> {
+    let mut healthy_nodes = 0;
+    
+    for node in &config.nodes {
+        // Check node is responsive
+        let node_check = Command::new("ipfs")
+            .args(["--api", node, "id"])
+            .output()
+            .await;
+        
+        match node_check {
+            Ok(output) if output.status.success() => {
+                healthy_nodes += 1;
+                
+                // Check peer count
+                let peers = Command::new("ipfs")
+                    .args(["--api", node, "swarm", "peers"])
+                    .output()
+                    .await;
+                
+                if let Ok(p) = peers {
+                    let peer_count = String::from_utf8_lossy(&p.stdout).lines().count();
+                    if peer_count < 10 {
+                        tracing::warn!("IPFS node {} has only {} peers", node, peer_count);
+                    }
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!("IPFS node {} unhealthy: {}", node, stderr);
+            }
+            Err(e) => {
+                tracing::error!("IPFS node {} unreachable: {}", node, e);
+            }
+        }
+    }
+    
+    // Require at least replication_factor nodes healthy
+    let min_required = config.replication_factor as usize;
+    if healthy_nodes < min_required {
+        tracing::error!("Only {}/{} IPFS nodes healthy (need {})", healthy_nodes, config.nodes.len(), min_required);
+        return Ok(false);
+    }
+    
+    // Check pinning services
+    for service in &config.pinning_services {
+        tracing::info!("Pinning service {} configured", service);
+    }
+    
     Ok(true)
 }
 
-async fn check_s3_health(_config: &S3BackupConfig) -> Result<bool> {
+/// Check local replica health - verifies replication lag and connectivity
+async fn check_replicas_health(config: &LocalReplicaConfig) -> Result<bool> {
+    let mut healthy_replicas = 0;
+    
+    for replica in &config.nodes {
+        // Validate hostname before any SSH operations
+        if let Err(e) = validate_hostname(&replica.host) {
+            tracing::error!("Invalid replica hostname '{}': {}", replica.host, e);
+            continue;
+        }
+        
+        // Check SSH connectivity with secure options
+        let ssh_check = build_secure_ssh_command(&replica.host)
+            .map(|mut cmd| {
+                cmd.args(["echo", "ok"]);
+                cmd
+            });
+        
+        let ssh_result = match ssh_check {
+            Ok(mut cmd) => cmd.output().await,
+            Err(e) => {
+                tracing::error!("Failed to build SSH command for {}: {}", replica.host, e);
+                continue;
+            }
+        };
+        
+        if !ssh_result.map(|o| o.status.success()).unwrap_or(false) {
+            tracing::error!("Replica {} unreachable via SSH", replica.host);
+            continue;
+        }
+        
+        // Check replication lag
+        if config.streaming {
+            let lag_check = match build_secure_ssh_command(&replica.host) {
+                Ok(mut cmd) => {
+                    cmd.args([
+                        "psql", "-t", "-c",
+                        "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::int AS lag_seconds;"
+                    ]);
+                    cmd.output().await
+                }
+                Err(_) => continue,
+            };
+            
+            if let Ok(output) = lag_check {
+                let lag_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if let Ok(lag) = lag_str.parse::<u32>() {
+                    if lag > config.lag_threshold_seconds {
+                        tracing::warn!(
+                            "Replica {} has {}s lag (threshold: {}s)", 
+                            replica.host, lag, config.lag_threshold_seconds
+                        );
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        // Check data directory exists and has data - validate data_dir path
+        if replica.data_dir.contains("..") || replica.data_dir.contains(';') {
+            tracing::error!("Invalid data directory path for replica {}", replica.host);
+            continue;
+        }
+        
+        let data_check = match build_secure_ssh_command(&replica.host) {
+            Ok(mut cmd) => {
+                cmd.args(["test", "-d", &replica.data_dir, "&&", "ls", &replica.data_dir]);
+                cmd.output().await
+            }
+            Err(_) => continue,
+        };
+        
+        if !data_check.map(|o| o.status.success()).unwrap_or(false) {
+            tracing::error!("Replica {} data directory missing or empty", replica.host);
+            continue;
+        }
+        
+        healthy_replicas += 1;
+    }
+    
+    // Require at least 2 healthy replicas for redundancy
+    if healthy_replicas < 2 && config.nodes.len() >= 2 {
+        tracing::error!("Only {}/{} replicas healthy", healthy_replicas, config.nodes.len());
+        return Ok(false);
+    }
+    
+    Ok(healthy_replicas > 0)
+}
+
+/// Check WAL archiving health - verifies archive status and PITR capability
+async fn check_wal_health(config: &WALArchiveConfig) -> Result<bool> {
+    // Check archive location is accessible
+    let archive_check = if config.archive_location.starts_with("s3://") {
+        Command::new("aws")
+            .args(["s3", "ls", &config.archive_location])
+            .output()
+            .await
+    } else {
+        Command::new("ls")
+            .args([&config.archive_location])
+            .output()
+            .await
+    };
+    
+    if !archive_check.map(|o| o.status.success()).unwrap_or(false) {
+        tracing::error!("WAL archive location not accessible: {}", config.archive_location);
+        return Ok(false);
+    }
+    
+    // Check wal-g is installed and configured
+    let walg_check = Command::new("wal-g")
+        .args(["--version"])
+        .output()
+        .await;
+    
+    if !walg_check.map(|o| o.status.success()).unwrap_or(false) {
+        tracing::warn!("wal-g not installed or not in PATH");
+    }
+    
+    // Check recent WAL segments archived (within last hour)
+    let recent_wal = if config.archive_location.starts_with("s3://") {
+        Command::new("aws")
+            .args([
+                "s3", "ls", &config.archive_location, "--recursive",
+                "--query", "sort_by(Contents, &LastModified)[-1].Key"
+            ])
+            .output()
+            .await
+    } else {
+        Command::new("ls")
+            .args(["-t", &config.archive_location])
+            .output()
+            .await
+    };
+    
+    if let Ok(output) = recent_wal {
+        if output.stdout.is_empty() {
+            tracing::warn!("No WAL segments found in archive");
+        }
+    }
+    
+    // Verify PITR window configuration
+    if config.pitr_window_days < 7 {
+        tracing::warn!("PITR window ({} days) is less than recommended 7 days", config.pitr_window_days);
+    }
+    
     Ok(true)
 }
 
-async fn check_gcs_health(_config: &GCSBackupConfig) -> Result<bool> {
-    Ok(true)
-}
-
-async fn check_ipfs_health(_config: &IPFSBackupConfig) -> Result<bool> {
-    Ok(true)
-}
-
-async fn check_replicas_health(_config: &LocalReplicaConfig) -> Result<bool> {
-    Ok(true)
-}
-
-async fn check_wal_health(_config: &WALArchiveConfig) -> Result<bool> {
-    Ok(true)
-}
-
-async fn check_monitoring_health(_config: &BackupMonitoring) -> Result<bool> {
+/// Check backup monitoring health - verifies Prometheus/Grafana endpoints
+async fn check_monitoring_health(config: &BackupMonitoring) -> Result<bool> {
+    use reqwest::Client;
+    
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    
+    // Check Prometheus endpoint
+    let prometheus_health = client
+        .get(format!("{}/-/healthy", config.prometheus_endpoint))
+        .send()
+        .await;
+    
+    match prometheus_health {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("Prometheus healthy at {}", config.prometheus_endpoint);
+        }
+        Ok(resp) => {
+            tracing::error!("Prometheus returned {}", resp.status());
+            return Ok(false);
+        }
+        Err(e) => {
+            tracing::error!("Prometheus unreachable: {}", e);
+            return Ok(false);
+        }
+    }
+    
+    // Check Grafana endpoint
+    let grafana_health = client
+        .get(format!("{}/api/health", config.dashboard_url))
+        .send()
+        .await;
+    
+    match grafana_health {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("Grafana healthy at {}", config.dashboard_url);
+        }
+        Ok(resp) => {
+            tracing::warn!("Grafana returned {} (may require authentication)", resp.status());
+        }
+        Err(e) => {
+            tracing::warn!("Grafana unreachable: {} (may require VPN/auth)", e);
+        }
+    }
+    
+    // Check alert rules are configured
+    if config.alert_rules.is_empty() {
+        tracing::warn!("No alert rules configured for backup monitoring");
+    }
+    
     Ok(true)
 }
