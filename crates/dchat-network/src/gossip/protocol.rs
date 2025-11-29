@@ -13,6 +13,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Maximum gossip message payload size (64 KB)
+/// This prevents DoS attacks via large message flooding
+pub const MAX_GOSSIP_PAYLOAD_SIZE: usize = 65536;
+
 /// Error type for gossip protocol operations
 #[derive(Debug, thiserror::Error)]
 pub enum GossipError {
@@ -27,6 +31,9 @@ pub enum GossipError {
 
     #[error("Failed to extract public key: {0}")]
     KeyExtractionFailed(String),
+    
+    #[error("Payload too large: {size} bytes exceeds maximum of {max} bytes")]
+    PayloadTooLarge { size: usize, max: usize },
 }
 
 /// Extract Ed25519 verifying key from a libp2p PeerId
@@ -344,11 +351,16 @@ impl GossipProtocol {
     /// Get or extract Ed25519 key for a peer (with caching)
     #[allow(dead_code)]
     fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
-        if !self.peer_key_cache.contains_key(peer_id) {
-            let key = extract_ed25519_key_from_peer_id(peer_id)?;
-            self.peer_key_cache.insert(*peer_id, key);
+        // Use entry API for safe cache population without double lookup
+        use std::collections::hash_map::Entry;
+        
+        match self.peer_key_cache.entry(*peer_id) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let key = extract_ed25519_key_from_peer_id(peer_id)?;
+                Ok(entry.insert(key))
+            }
         }
-        Ok(self.peer_key_cache.get(peer_id).unwrap())
     }
 
     /// Broadcast a message to the network
@@ -388,6 +400,17 @@ impl GossipProtocol {
         from: PeerId,
         mut message: GossipMessage,
     ) -> Result<()> {
+        // SECURITY: Validate payload size to prevent DoS via large messages
+        if message.payload.len() > MAX_GOSSIP_PAYLOAD_SIZE {
+            tracing::warn!(
+                "Dropping oversized message from {:?}: {} bytes exceeds {} byte limit",
+                from,
+                message.payload.len(),
+                MAX_GOSSIP_PAYLOAD_SIZE
+            );
+            return Ok(());
+        }
+        
         // Check rate limits
         if !self.flood_control.check_rate_limit(&from) {
             tracing::warn!("Rate limit exceeded for peer {:?}", from);

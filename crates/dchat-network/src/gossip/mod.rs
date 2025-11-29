@@ -12,7 +12,7 @@ pub mod protocol;
 
 pub use flood_control::{FloodControl, RateLimiter};
 pub use message_cache::{MessageCache, MessageId};
-pub use protocol::{GossipConfig, GossipMessage, GossipProtocol};
+pub use protocol::{GossipConfig, GossipMessage, GossipProtocol, MAX_GOSSIP_PAYLOAD_SIZE};
 
 use dchat_core::Result;
 use libp2p::PeerId;

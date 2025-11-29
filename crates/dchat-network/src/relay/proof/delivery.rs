@@ -31,11 +31,21 @@ impl MessageId {
         Self(bytes)
     }
 
-    /// Creates a message ID from a slice (panics if not 32 bytes).
-    pub fn from_slice(slice: &[u8]) -> Self {
+    /// Creates a message ID from a slice.
+    /// 
+    /// # Errors
+    /// Returns `None` if the slice is not exactly 32 bytes.
+    /// 
+    /// # Security
+    /// Always validate input length to prevent buffer overflows and ensure
+    /// message ID integrity.
+    pub fn from_slice(slice: &[u8]) -> Option<Self> {
+        if slice.len() != 32 {
+            return None;
+        }
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(slice);
-        Self(bytes)
+        Some(Self(bytes))
     }
 
     /// Returns the inner byte array.
@@ -412,7 +422,12 @@ mod tests {
         let msg_id = MessageId::new(bytes);
 
         assert_eq!(msg_id.as_bytes(), &bytes);
-        assert_eq!(msg_id, MessageId::from_slice(&bytes));
+        assert_eq!(Some(msg_id), MessageId::from_slice(&bytes));
+        
+        // Test invalid length returns None
+        assert_eq!(None, MessageId::from_slice(&[0u8; 31]));
+        assert_eq!(None, MessageId::from_slice(&[0u8; 33]));
+        assert_eq!(None, MessageId::from_slice(&[]));
     }
 
     #[test]

@@ -187,7 +187,10 @@ impl RelayReputationScorer {
 
     /// Register a new relay
     pub fn register_relay(&self, relay_key: VerifyingKey) {
-        let mut metrics = self.relay_metrics.write().unwrap();
+        let mut metrics = self.relay_metrics.write().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics write lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
         metrics
             .entry(relay_key)
             .or_insert_with(|| RelayMetrics::new(relay_key));
@@ -195,7 +198,10 @@ impl RelayReputationScorer {
 
     /// Update relay metrics
     pub fn update_metrics(&self, relay_key: VerifyingKey, metrics: RelayMetrics) {
-        let mut all_metrics = self.relay_metrics.write().unwrap();
+        let mut all_metrics = self.relay_metrics.write().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics write lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
         all_metrics.insert(relay_key, metrics);
     }
 
@@ -205,7 +211,10 @@ impl RelayReputationScorer {
         relay_key: VerifyingKey,
         success: bool,
     ) -> Result<(), ReputationError> {
-        let mut metrics = self.relay_metrics.write().unwrap();
+        let mut metrics = self.relay_metrics.write().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics write lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
         let relay_metrics = metrics
             .get_mut(&relay_key)
             .ok_or(ReputationError::RelayNotFound(relay_key))?;
@@ -220,7 +229,10 @@ impl RelayReputationScorer {
         relay_key: VerifyingKey,
         latency_ms: u64,
     ) -> Result<(), ReputationError> {
-        let mut metrics = self.relay_metrics.write().unwrap();
+        let mut metrics = self.relay_metrics.write().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics write lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
         let relay_metrics = metrics
             .get_mut(&relay_key)
             .ok_or(ReputationError::RelayNotFound(relay_key))?;
@@ -234,7 +246,10 @@ impl RelayReputationScorer {
         &self,
         relay_key: VerifyingKey,
     ) -> Result<RelayReputationScore, ReputationError> {
-        let metrics = self.relay_metrics.read().unwrap();
+        let metrics = self.relay_metrics.read().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics read lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
         let relay_metrics = metrics
             .get(&relay_key)
             .ok_or(ReputationError::RelayNotFound(relay_key))?;
@@ -282,10 +297,17 @@ impl RelayReputationScorer {
         };
 
         // Cache the score
-        let mut scores = self.reputation_scores.write().unwrap();
+        let mut scores = self.reputation_scores.write().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire reputation scores write lock: {}", e);
+            panic!("Reputation scores lock poisoned: {}", e)
+        });
         scores.insert(relay_key, score.clone());
 
-        *self.last_update.write().unwrap() = Instant::now();
+        if let Ok(mut last_update) = self.last_update.write() {
+            *last_update = Instant::now();
+        } else {
+            tracing::warn!("Failed to update last_update timestamp");
+        }
 
         Ok(score)
     }
@@ -294,7 +316,10 @@ impl RelayReputationScorer {
     pub fn get_score(&self, relay_key: &VerifyingKey) -> Option<RelayReputationScore> {
         self.reputation_scores
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to acquire reputation scores read lock: {}", e);
+                panic!("Reputation scores lock poisoned: {}", e)
+            })
             .get(relay_key)
             .cloned()
     }
@@ -304,12 +329,19 @@ impl RelayReputationScorer {
         let mut scores: Vec<_> = self
             .reputation_scores
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to acquire reputation scores read lock: {}", e);
+                panic!("Reputation scores lock poisoned: {}", e)
+            })
             .values()
             .cloned()
             .collect();
 
-        scores.sort_by(|a, b| b.total_score.partial_cmp(&a.total_score).unwrap());
+        scores.sort_by(|a, b| {
+            b.total_score
+                .partial_cmp(&a.total_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scores
     }
 
@@ -323,7 +355,10 @@ impl RelayReputationScorer {
     pub fn get_relays_by_tier(&self, tier: ReputationTier) -> Vec<RelayReputationScore> {
         self.reputation_scores
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to acquire reputation scores read lock: {}", e);
+                panic!("Reputation scores lock poisoned: {}", e)
+            })
             .values()
             .filter(|s| s.tier == tier)
             .cloned()
@@ -332,8 +367,14 @@ impl RelayReputationScorer {
 
     /// Get statistics
     pub fn get_stats(&self) -> ReputationStats {
-        let metrics = self.relay_metrics.read().unwrap();
-        let scores = self.reputation_scores.read().unwrap();
+        let metrics = self.relay_metrics.read().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire relay metrics read lock: {}", e);
+            panic!("Relay metrics lock poisoned: {}", e)
+        });
+        let scores = self.reputation_scores.read().unwrap_or_else(|e| {
+            tracing::error!("Failed to acquire reputation scores read lock: {}", e);
+            panic!("Reputation scores lock poisoned: {}", e)
+        });
 
         let total_relays = metrics.len();
         let scored_relays = scores.len();

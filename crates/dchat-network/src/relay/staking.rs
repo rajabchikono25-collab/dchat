@@ -194,7 +194,11 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
 
+    // Integration tests that require a running currency chain RPC
+    // Run with: CURRENCY_CHAIN_RPC=<rpc-url> cargo test relay::staking -- --ignored
+
     #[tokio::test]
+    #[ignore = "Requires running currency chain RPC endpoint"]
     async fn test_relay_stake_validation() {
         let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
             .unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -212,6 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires running currency chain RPC endpoint"]
     async fn test_relay_enforcement() {
         let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
             .unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -228,10 +233,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_functionality() {
-        let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-
-        let validator = RelayStakingValidator::new(rpc_endpoint);
+        // Use a mock RPC endpoint - this test only tests cache, not actual RPC
+        let validator = RelayStakingValidator::new("http://mock-rpc:8545".to_string());
 
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();

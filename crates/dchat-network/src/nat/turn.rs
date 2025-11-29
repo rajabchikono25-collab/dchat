@@ -166,8 +166,10 @@ impl TurnClient {
         msg[3] = (attr_len & 0xFF) as u8;
 
         // Compute HMAC-SHA1 over message
+        // SECURITY: HMAC-SHA1 new_from_slice only fails if key length is invalid for the algorithm.
+        // SHA1 HMAC accepts any key length, so this should never fail.
         let mut mac = HmacSha1::new_from_slice(server.credential.as_bytes())
-            .expect("HMAC-SHA1 initialization");
+            .expect("SECURITY INVARIANT: HMAC-SHA1 accepts any key length");
         mac.update(&msg);
         let integrity = mac.finalize().into_bytes();
 

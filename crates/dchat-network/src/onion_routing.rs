@@ -173,6 +173,23 @@ pub enum OnionRoutingResponse {
     Failed(String),
 }
 
+/// Result of handling a relay cell - indicates what action the caller should take
+#[derive(Debug, Clone)]
+pub enum RelayResult {
+    /// Message reached exit node - deliver payload to application layer
+    /// Contains the fully decrypted plaintext payload
+    ExitDelivery {
+        circuit_id: Vec<u8>,
+        payload: Vec<u8>,
+    },
+    /// Message should be forwarded to next hop
+    /// Contains the peer to forward to and the cell to send
+    Forward {
+        next_hop: PeerId,
+        cell: OnionCell,
+    },
+}
+
 /// Request-response codec for OnionCell protocol
 ///
 /// Implements the libp2p 0.54 Codec trait for encoding and decoding OnionCell messages
@@ -635,11 +652,7 @@ impl OnionRoutingManager {
             create_cell.push(0x01); // CREATE command
             create_cell.extend_from_slice(_our_public.as_bytes());
 
-            // Send CREATE cell to hop via libp2p stream
-            // In production: open stream to hop address and send CREATE cell
             tracing::debug!("Sending CREATE cell to hop: {}", hop.address);
-            // libp2p_stream.write_all(&create_cell).await?
-            // let created_response = libp2p_stream.read_exact(50).await?
 
             // Send CREATE cell via libp2p request-response
             let peer_id = hop.peer_id.as_ref().ok_or_else(|| {
@@ -781,6 +794,11 @@ impl OnionRoutingManager {
     }
 
     /// Encrypt a single layer using ChaCha20Poly1305 AEAD
+    /// 
+    /// Returns encrypted data as nonce || ciphertext, or panics on cryptographic failure.
+    /// Panics are acceptable here because:
+    /// 1. Key length is guaranteed by our circuit construction (shared secrets are always 32 bytes)
+    /// 2. ChaCha20Poly1305 encryption only fails on invalid key/nonce, which our code guarantees valid
     fn encrypt_layer(&self, data: &[u8], key: &[u8]) -> Vec<u8> {
         use chacha20poly1305::{
             aead::{Aead, KeyInit},
@@ -789,16 +807,25 @@ impl OnionRoutingManager {
         use rand::RngCore;
 
         // Derive encryption key from shared secret
-        let key_bytes: [u8; 32] = key[..32].try_into().expect("Key must be 32 bytes");
+        // SECURITY: Key length validated - shared secrets from ECDH are always 32 bytes
+        assert!(key.len() >= 32, "SECURITY: shared secret must be at least 32 bytes");
+        let key_bytes: [u8; 32] = key[..32]
+            .try_into()
+            .expect("SECURITY INVARIANT: key slice is 32 bytes after length check");
         let cipher = ChaCha20Poly1305::new(&key_bytes.into());
 
-        // Generate random nonce (12 bytes)
+        // Generate cryptographically secure random nonce (12 bytes)
+        // SECURITY: Using OS CSPRNG via OsRng would be ideal, but thread_rng is also cryptographically secure
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from(nonce_bytes);
 
         // Encrypt with AEAD
-        let ciphertext = cipher.encrypt(&nonce, data).expect("Encryption failed");
+        // SECURITY: ChaCha20Poly1305 encrypt only fails if key/nonce are wrong size,
+        // which we guarantee above. Panic is appropriate for invariant violation.
+        let ciphertext = cipher
+            .encrypt(&nonce, data)
+            .expect("SECURITY INVARIANT: ChaCha20Poly1305 encryption with valid key/nonce cannot fail");
 
         // Return nonce || ciphertext for decryption
         let mut result = nonce_bytes.to_vec();
@@ -1228,9 +1255,27 @@ impl OnionRoutingManager {
     /// 1. Look up circuit state by circuit_id
     /// 2. Decrypt one layer using stored shared secret
     /// 3. Extract next hop from decrypted header or circuit state
-    /// 4. Forward remaining encrypted layers to next hop
+    /// 4. Return RelayResult indicating what action the caller should take
     /// 5. Update circuit activity timestamp
-    pub fn handle_relay_cell(&mut self, circuit_id: Vec<u8>, encrypted_payload: Vec<u8>) -> Result<OnionCell> {
+    ///
+    /// # Returns
+    /// - `RelayResult::ExitDelivery` - Message reached exit node, deliver payload to application
+    /// - `RelayResult::Forward` - Forward the cell to the specified next hop peer
+    ///
+    /// # Usage in Network Event Loop
+    /// ```rust,ignore
+    /// match onion_manager.handle_relay_cell(circuit_id, payload)? {
+    ///     RelayResult::ExitDelivery { payload, .. } => {
+    ///         // Deliver to application layer
+    ///         app_tx.send(payload).await?;
+    ///     }
+    ///     RelayResult::Forward { next_hop, cell } => {
+    ///         // Forward to next relay
+    ///         swarm.behaviour_mut().onion.send_request(&next_hop, cell);
+    ///     }
+    /// }
+    /// ```
+    pub fn handle_relay_cell(&mut self, circuit_id: Vec<u8>, encrypted_payload: Vec<u8>) -> Result<RelayResult> {
         tracing::debug!(
             "Handling RELAY cell for circuit {}: {} bytes",
             hex::encode(&circuit_id),
@@ -1276,31 +1321,31 @@ impl OnionRoutingManager {
         // Check if this is the final destination (exit node)
         if next_hop.is_none() {
             tracing::info!(
-                "Circuit {}: Exit node reached, delivering payload",
+                "Circuit {}: Exit node reached, delivering payload to application",
                 hex::encode(&circuit_id)
             );
-            // At exit node: deliver the fully decrypted payload
-            // In production: forward to application layer
-            // For now, just return the decrypted cell
-            return Ok(OnionCell::Relay {
+            // Exit node: return payload for application layer delivery
+            return Ok(RelayResult::ExitDelivery {
                 circuit_id,
-                encrypted_payload: decrypted_payload,
+                payload: decrypted_payload,
             });
         }
 
-        // Production: Forward to next hop
-        let next_hop_peer = next_hop.as_ref().unwrap();
+        // Intermediate hop: forward to next relay
+        let next_hop_peer = next_hop.unwrap(); // Safe: checked above
         tracing::debug!(
             "Circuit {}: Forwarding to next hop {:?}",
             hex::encode(&circuit_id),
             next_hop_peer
         );
 
-        // In production: Use network channel to forward to next hop
-        // For now, return the RELAY cell with decrypted payload for next hop
-        Ok(OnionCell::Relay {
-            circuit_id,
-            encrypted_payload: decrypted_payload,
+        // Return the forward instruction for the network layer to execute
+        Ok(RelayResult::Forward {
+            next_hop: next_hop_peer,
+            cell: OnionCell::Relay {
+                circuit_id,
+                encrypted_payload: decrypted_payload,
+            },
         })
     }
 
@@ -1471,6 +1516,35 @@ mod tests {
         }
     }
 
+    /// Create a mock network channel that simulates successful circuit handshakes
+    /// Returns (manager_with_channel, receiver_for_requests)
+    fn setup_mock_network_channel(mut manager: OnionRoutingManager) -> (OnionRoutingManager, mpsc::UnboundedReceiver<OnionRoutingRequest>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        manager.set_network_channel(tx);
+        (manager, rx)
+    }
+
+    /// Spawn a mock network handler that automatically responds to CREATE cells
+    fn spawn_mock_network_handler(mut rx: mpsc::UnboundedReceiver<OnionRoutingRequest>) {
+        tokio::spawn(async move {
+            while let Some(request) = rx.recv().await {
+                match request {
+                    OnionRoutingRequest::SendCell { cell, response_tx, .. } => {
+                        // Simulate successful CREATE -> CREATED response
+                        if let OnionCell::Create { circuit_id, .. } = cell {
+                            let response = OnionCell::Created {
+                                circuit_id,
+                                public_key: vec![0u8; 32], // Mock public key
+                                status: 0, // Success
+                            };
+                            let _ = response_tx.send(Ok(response));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     #[test]
     fn test_circuit_config_default() {
         let config = CircuitConfig::default();
@@ -1482,7 +1556,11 @@ mod tests {
     #[tokio::test]
     async fn test_circuit_creation() {
         let config = CircuitConfig::default();
-        let mut manager = OnionRoutingManager::new(config);
+        let manager = OnionRoutingManager::new(config);
+
+        // Setup mock network channel
+        let (mut manager, rx) = setup_mock_network_channel(manager);
+        spawn_mock_network_handler(rx);
 
         // Add relays
         for i in 0..5 {
@@ -1505,7 +1583,11 @@ mod tests {
             enforce_diversity: true,
             ..Default::default()
         };
-        let mut manager = OnionRoutingManager::new(config);
+        let manager = OnionRoutingManager::new(config);
+
+        // Setup mock network channel
+        let (mut manager, rx) = setup_mock_network_channel(manager);
+        spawn_mock_network_handler(rx);
 
         // Add relays with diverse ASNs
         manager.add_relay(create_test_relay("relay1", Some(100)));
@@ -1528,9 +1610,13 @@ mod tests {
     #[tokio::test]
     async fn test_sphinx_packet_creation() {
         let config = CircuitConfig::default();
-        let mut manager = OnionRoutingManager::new(config);
+        let manager = OnionRoutingManager::new(config);
 
-        // Setup
+        // Setup mock network channel
+        let (mut manager, rx) = setup_mock_network_channel(manager);
+        spawn_mock_network_handler(rx);
+
+        // Add relays
         for i in 0..3 {
             manager.add_relay(create_test_relay(&format!("relay{}", i), Some(i as u32)));
         }
@@ -1550,7 +1636,11 @@ mod tests {
     #[tokio::test]
     async fn test_circuit_teardown() {
         let config = CircuitConfig::default();
-        let mut manager = OnionRoutingManager::new(config);
+        let manager = OnionRoutingManager::new(config);
+
+        // Setup mock network channel
+        let (mut manager, rx) = setup_mock_network_channel(manager);
+        spawn_mock_network_handler(rx);
 
         for i in 0..3 {
             manager.add_relay(create_test_relay(&format!("relay{}", i), Some(i as u32)));
