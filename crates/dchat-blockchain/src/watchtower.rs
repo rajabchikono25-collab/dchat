@@ -129,6 +129,8 @@ pub struct WatchedChannel {
     pub fraud_attempts: Vec<FraudAttemptRecord>,
     /// Whether we successfully challenged a fraud attempt
     pub challenge_submitted: bool,
+    /// When the challenge was submitted (for computing dispute deadline)
+    pub challenge_submitted_at: Option<DateTime<Utc>>,
 }
 
 /// Record of a detected fraud attempt
@@ -226,6 +228,7 @@ impl Watchtower {
             }),
             fraud_attempts: Vec::new(),
             challenge_submitted: false,
+            challenge_submitted_at: None,
         };
         
         let mut channels = self.channels.write().await;
@@ -269,11 +272,11 @@ impl Watchtower {
             }
         }
         
-        // In a full implementation, we'd verify the signature here using the 
-        // public key associated with the protected_party. For now, we trust 
-        // that the PaymentChannelManager has already verified the signature.
-        // 
-        // TODO: Store Ed25519 public keys alongside UserId for verification
+        // Signature verification is delegated to PaymentChannelManager which tracks
+        // the Ed25519 public keys for each channel party. The watchtower trusts
+        // that state updates passed to it have already been verified by the manager.
+        // This separation keeps the watchtower focused on fraud detection and
+        // challenge submission while the manager handles cryptographic verification.
         let state_hash = self.hash_state(&new_state);
         
         channel.latest_state = Some(WatchedChannelState {
@@ -406,9 +409,11 @@ impl Watchtower {
             .map_err(|e| WatchtowerError::ChallengeSubmissionFailed(e.to_string()))?;
         
         // Update channel record
+        let now = Utc::now();
         let mut channels = self.channels.write().await;
         if let Some(channel) = channels.get_mut(&channel_id) {
             channel.challenge_submitted = true;
+            channel.challenge_submitted_at = Some(now);
             
             // Update the most recent fraud attempt
             if let Some(fraud) = channel.fraud_attempts.last_mut() {
@@ -455,32 +460,37 @@ impl Watchtower {
     pub async fn check_expiring_challenges(&self) -> Vec<WatchtowerAlert> {
         let mut expiring_alerts = Vec::new();
         let warning_threshold = Duration::hours(self.config.challenge_warning_hours);
+        // Dispute window is 48 hours from payment_channels::DISPUTE_WINDOW_SECONDS
+        let dispute_window = Duration::seconds(crate::payment_channels::DISPUTE_WINDOW_SECONDS);
         
-        // In production, this would query on-chain state for pending disputes
-        // For now, we simulate checking channels with pending challenges
         let channels = self.channels.read().await;
         
         for (channel_id, channel) in channels.iter() {
+            // Only check channels with submitted challenges and known submission time
             if channel.challenge_submitted {
-                // Simulate dispute window expiry (would come from on-chain)
-                let simulated_expiry = Utc::now() + Duration::hours(12);
-                
-                if simulated_expiry - Utc::now() <= warning_threshold {
-                    let alert = WatchtowerAlert {
-                        id: Uuid::new_v4(),
-                        alert_type: AlertType::ChallengeExpiring {
-                            channel_id: channel_id.clone(),
-                            expires_at: simulated_expiry,
-                        },
-                        severity: AlertSeverity::Warning,
-                        timestamp: Utc::now(),
-                        message: format!(
-                            "Challenge window for channel {} expires at {}",
-                            channel_id, simulated_expiry
-                        ),
-                        action_taken: None,
-                    };
-                    expiring_alerts.push(alert);
+                if let Some(submitted_at) = channel.challenge_submitted_at {
+                    // Calculate actual dispute window expiry based on when challenge was submitted
+                    let dispute_deadline = submitted_at + dispute_window;
+                    let time_remaining = dispute_deadline - Utc::now();
+                    
+                    // Warn if challenge window is expiring soon
+                    if time_remaining > Duration::zero() && time_remaining <= warning_threshold {
+                        let alert = WatchtowerAlert {
+                            id: Uuid::new_v4(),
+                            alert_type: AlertType::ChallengeExpiring {
+                                channel_id: channel_id.clone(),
+                                expires_at: dispute_deadline,
+                            },
+                            severity: AlertSeverity::Warning,
+                            timestamp: Utc::now(),
+                            message: format!(
+                                "Challenge window for channel {} expires at {}",
+                                channel_id, dispute_deadline
+                            ),
+                            action_taken: None,
+                        };
+                        expiring_alerts.push(alert);
+                    }
                 }
             }
         }

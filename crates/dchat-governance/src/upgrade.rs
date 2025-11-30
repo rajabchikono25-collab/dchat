@@ -260,6 +260,7 @@ pub struct ForkState {
 }
 
 /// Upgrade governance manager
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpgradeManager {
     /// Active upgrade proposals
     proposals: HashMap<Uuid, UpgradeProposal>,

@@ -8,6 +8,8 @@ use crate::delivery::DeliveryProof;
 use crate::types::{Message, MessageStatus, MessageType};
 use chrono::{DateTime, Utc};
 use dchat_blockchain::CurrencyChainClient;
+use ed25519_dalek::{SigningKey, Signer};
+use sha2::{Digest, Sha256};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{MessageId, UserId};
 use serde::{Deserialize, Serialize};
@@ -533,13 +535,19 @@ impl MessageCreditsChannel {
 
     /// Use one message credit (off-chain update)
     ///
-    /// Returns a signed state update that the relay can verify
-    pub fn use_credit(&mut self, _signing_key: &[u8]) -> std::result::Result<SignedStateUpdate, CreditsChannelError> {
+    /// Returns a signed state update that the relay can verify.
+    /// The signing_key must be a 32-byte Ed25519 secret key.
+    pub fn use_credit(&mut self, signing_key: &[u8]) -> std::result::Result<SignedStateUpdate, CreditsChannelError> {
         if self.sender_balance < self.fee_per_message {
             return Err(CreditsChannelError::InsufficientCredits {
                 required: self.fee_per_message,
                 available: self.sender_balance,
             });
+        }
+
+        // Validate signing key length
+        if signing_key.len() != 32 {
+            return Err(CreditsChannelError::InvalidStateUpdate);
         }
 
         // Update balances
@@ -549,13 +557,28 @@ impl MessageCreditsChannel {
         self.messages_sent += 1;
         self.last_activity = Utc::now();
 
-        // Create state update
+        // Create message to sign: hash of (channel_id || nonce || sender_balance || relay_balance || timestamp)
+        let mut hasher = Sha256::new();
+        hasher.update(self.channel_id.as_bytes());
+        hasher.update(self.nonce.to_le_bytes());
+        hasher.update(self.sender_balance.to_le_bytes());
+        hasher.update(self.relay_balance.to_le_bytes());
+        hasher.update(self.last_activity.timestamp().to_le_bytes());
+        let message_hash = hasher.finalize();
+
+        // Sign with Ed25519
+        let key_bytes: [u8; 32] = signing_key.try_into()
+            .map_err(|_| CreditsChannelError::InvalidStateUpdate)?;
+        let ed_signing_key = SigningKey::from_bytes(&key_bytes);
+        let signature = ed_signing_key.sign(&message_hash);
+
+        // Create state update with cryptographic signature
         let update = SignedStateUpdate {
             channel_id: self.channel_id.clone(),
             nonce: self.nonce,
             sender_balance: self.sender_balance,
             relay_balance: self.relay_balance,
-            sender_signature: Vec::new(), // TODO: Sign with Ed25519
+            sender_signature: signature.to_bytes().to_vec(),
             timestamp: self.last_activity,
         };
 
@@ -607,8 +630,13 @@ impl MessageCreditsChannel {
 
             Ok(tx_id)
         } else {
-            // No fees accumulated, just return dummy tx id
-            Ok(Uuid::nil())
+            // No fees accumulated - channel is already settled with zero balance
+            // Return a new UUID as settlement confirmation (no on-chain tx needed)
+            tracing::debug!(
+                "Channel {} settled with zero relay balance - no on-chain transfer needed",
+                self.channel_id
+            );
+            Ok(Uuid::new_v4())
         }
     }
 }

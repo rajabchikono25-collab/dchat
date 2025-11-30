@@ -522,11 +522,15 @@ impl PaymentChannelManager {
     }
 
     /// Process a micropayment through the channel (off-chain)
+    /// 
+    /// SECURITY: This method requires a properly signed state update.
+    /// The sender must sign the new state to authorize the payment.
+    /// 
     /// Returns a transaction ID for tracking
     pub fn process_payment(
         &self,
         channel_id: &str,
-        amount: u64,
+        signed_update: SignedStateUpdate,
     ) -> std::result::Result<String, ChannelError> {
         let mut channels = self.channels.write().unwrap();
         let channel = channels
@@ -535,21 +539,46 @@ impl PaymentChannelManager {
 
         // Verify channel is open
         if channel.status != ChannelStatus::Open {
-            return Err(ChannelError::Internal("Channel not open".to_string()));
+            return Err(ChannelError::ChannelNotOpen);
         }
 
-        // Check sufficient balance
-        if amount > channel.current_state.sender_balance {
-            return Err(ChannelError::Internal(format!(
-                "Insufficient balance: have {}, need {}",
-                channel.current_state.sender_balance, amount
-            )));
+        // Verify nonce is incrementing
+        if signed_update.state.nonce != channel.current_state.nonce + 1 {
+            return Err(ChannelError::InvalidNonce {
+                expected: channel.current_state.nonce + 1,
+                got: signed_update.state.nonce,
+            });
         }
 
-        // Update balances (off-chain state update)
-        channel.current_state.sender_balance -= amount;
-        channel.current_state.receiver_balance += amount;
-        channel.current_state.nonce += 1;
+        // Verify balance invariant
+        let total = signed_update.state.sender_balance + signed_update.state.receiver_balance;
+        if total != channel.capacity {
+            return Err(ChannelError::BalanceInvariantViolation {
+                expected: channel.capacity,
+                got: total,
+            });
+        }
+
+        // SECURITY: Verify sender signature (critical - prevents unauthorized payments)
+        let sender_key = channel
+            .get_sender_key()
+            .map_err(|e| ChannelError::Internal(e.to_string()))?;
+        signed_update
+            .verify_sender_signature(channel_id, &sender_key)
+            .map_err(|_| ChannelError::InvalidSenderSignature)?;
+
+        // Calculate payment amount for logging
+        let amount = channel.current_state.sender_balance
+            .saturating_sub(signed_update.state.sender_balance);
+
+        // Update state
+        channel.current_state = signed_update.state.clone();
+        channel.last_update = Utc::now();
+
+        // Store as latest bilateral if fully signed
+        if signed_update.is_bilateral() {
+            channel.latest_bilateral = Some(signed_update);
+        }
 
         // Generate a unique tx ID for this off-chain payment
         let tx_id = format!(
@@ -645,6 +674,11 @@ impl PaymentChannelManager {
             .clone();
         drop(pending_closes);
 
+        // SECURITY: Verify dispute period has not expired
+        if Utc::now() >= pending.dispute_deadline {
+            return Err(ChannelError::DisputePeriodExpired);
+        }
+
         // Verify challenger is the other party
         if *challenger_id == pending.initiator {
             return Err(ChannelError::CannotChallengeSelf);
@@ -660,14 +694,28 @@ impl PaymentChannelManager {
             .get_channel(channel_id)
             .map_err(|_| ChannelError::NotFound(channel_id.to_string()))?;
 
-        // Verify state signatures
+        // SECURITY: Verify BOTH signatures - state must be bilateral
+        // A valid challenge requires a state that was mutually agreed upon
         let sender_key = channel
             .get_sender_key()
+            .map_err(|e| ChannelError::Internal(e.to_string()))?;
+        let receiver_key = channel
+            .get_receiver_key()
             .map_err(|e| ChannelError::Internal(e.to_string()))?;
 
         newer_state
             .verify_sender_signature(channel_id, &sender_key)
             .map_err(|_| ChannelError::InvalidSenderSignature)?;
+
+        // Receiver signature must be present for a valid challenge
+        if newer_state.receiver_signature.is_none() {
+            return Err(ChannelError::Internal(
+                "Challenge state must be bilateral (signed by both parties)".to_string(),
+            ));
+        }
+        newer_state
+            .verify_receiver_signature(channel_id, &receiver_key)
+            .map_err(|_| ChannelError::InvalidReceiverSignature)?;
 
         // Record fraud event for slashing
         let fraud_event = FraudEvent {

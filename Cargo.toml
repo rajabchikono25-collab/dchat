@@ -67,7 +67,7 @@ dchat-accessibility = { path = "crates/dchat-accessibility" }
 dchat-testing = { path = "crates/dchat-testing" }
 dchat-bots = { path = "crates/dchat-bots" }
 dchat-sdk-rust = { path = "crates/dchat-sdk-rust" }
-dchat-deployment = { path = "crates/dchat-deployment" }
+dchat-deployment = { path = "crates/dchat-deployment", optional = true }
 
 tokio = { version = "1.40", features = ["full"] }
 tracing = "0.1"
@@ -183,6 +183,10 @@ proptest = "1.5"
 mockall = "0.13"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3.8"
+
+[features]
+default = []
+deployment = ["dchat-deployment"]
 
 [profile.release]
 opt-level = 3

@@ -5,13 +5,23 @@
 //! - Settling payment channel balances on the currency chain
 //! - Handling payment failures with retry logic
 //! - Suspending streams when funds are insufficient
+//!
+//! # Security
+//!
+//! Payment channel streaming uses **pre-signed updates** for authorization:
+//! - When creating a stream with a payment channel, the payer must provide
+//!   pre-signed state updates covering all planned payments
+//! - Each payment consumes one pre-signed update, ensuring cryptographic authorization
+//! - If pre-signed updates are exhausted, the stream falls back to on-chain transfers
+//!
+//! This prevents unauthorized token movement while enabling efficient off-chain payments.
 
 use crate::currency_chain::CurrencyChainClient;
-use crate::payment_channels::PaymentChannelManager;
+use crate::payment_channels::{PaymentChannelManager, SignedStateUpdate};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{watch, RwLock};
@@ -73,6 +83,12 @@ pub enum StreamStatus {
 }
 
 /// A micropayment stream for ongoing services (e.g., storage)
+///
+/// # Security
+///
+/// When using payment channels, streams require **pre-signed updates** to authorize
+/// off-chain payments. The payer must provide these updates when creating the stream.
+/// Each update is consumed sequentially as payments are processed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentStream {
     /// Unique stream identifier
@@ -101,10 +117,16 @@ pub struct PaymentStream {
     pub failure_count: u32,
     /// Associated payment channel (if any)
     pub channel_id: Option<String>,
+    /// Pre-signed state updates for payment channel authorization
+    /// These are consumed in order as payments are processed
+    #[serde(default, skip_serializing_if = "VecDeque::is_empty")]
+    pub pre_signed_updates: VecDeque<SignedStateUpdate>,
+    /// Count of pre-signed updates consumed
+    pub updates_consumed: u64,
 }
 
 impl PaymentStream {
-    /// Create a new payment stream
+    /// Create a new payment stream (on-chain transfers only)
     pub fn new(
         payer: UserId,
         payee: UserId,
@@ -127,7 +149,77 @@ impl PaymentStream {
             next_payment: now + ChronoDuration::seconds(interval_seconds as i64),
             failure_count: 0,
             channel_id: None,
+            pre_signed_updates: VecDeque::new(),
+            updates_consumed: 0,
         }
+    }
+
+    /// Create a payment stream with payment channel and pre-signed updates
+    ///
+    /// # Security
+    ///
+    /// The `pre_signed_updates` must be created by the payer's signing key and
+    /// cover all planned payments. Each update should:
+    /// - Have incrementing nonces starting from the current channel state + 1
+    /// - Transfer `amount_per_interval` from sender to receiver per update
+    /// - Be signed with the payer's Ed25519 key
+    ///
+    /// The number of pre-signed updates determines how many payment channel
+    /// payments can be processed before falling back to on-chain transfers.
+    pub fn new_with_channel(
+        payer: UserId,
+        payee: UserId,
+        amount_per_interval: u64,
+        interval_seconds: u64,
+        max_total: u64,
+        channel_id: String,
+        pre_signed_updates: Vec<SignedStateUpdate>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            stream_id: Uuid::new_v4().to_string(),
+            payer,
+            payee,
+            amount_per_interval,
+            interval_seconds,
+            total_paid: 0,
+            max_total,
+            status: StreamStatus::Active,
+            created_at: now,
+            last_payment: None,
+            next_payment: now + ChronoDuration::seconds(interval_seconds as i64),
+            failure_count: 0,
+            channel_id: Some(channel_id),
+            pre_signed_updates: VecDeque::from(pre_signed_updates),
+            updates_consumed: 0,
+        }
+    }
+
+    /// Check if stream has pre-signed updates available
+    pub fn has_pre_signed_updates(&self) -> bool {
+        !self.pre_signed_updates.is_empty()
+    }
+
+    /// Get the next pre-signed update (consumes it from the queue)
+    pub fn consume_pre_signed_update(&mut self) -> Option<SignedStateUpdate> {
+        let update = self.pre_signed_updates.pop_front();
+        if update.is_some() {
+            self.updates_consumed += 1;
+        }
+        update
+    }
+
+    /// Add more pre-signed updates to the stream
+    ///
+    /// Use this to extend a stream's payment channel capability without
+    /// recreating the stream.
+    pub fn add_pre_signed_updates(&mut self, updates: Vec<SignedStateUpdate>) {
+        self.pre_signed_updates.extend(updates);
+    }
+
+    /// Get remaining pre-signed update count
+    pub fn remaining_updates(&self) -> usize {
+        self.pre_signed_updates.len()
     }
 
     /// Check if payment is due
@@ -347,16 +439,27 @@ impl PaymentProcessor {
     }
 
     /// Process a single stream payment
+    /// 
+    /// # Security
+    ///
+    /// For payment channel streams, this method uses pre-authorized signed updates:
+    /// 1. If pre-signed updates are available, consume one and process via payment channel
+    /// 2. Each pre-signed update is cryptographically verified by the payment channel manager
+    /// 3. If no pre-signed updates remain, fall back to on-chain transfer
+    ///
+    /// This ensures all token movements are cryptographically authorized by the payer.
     async fn process_stream_payment(
         &self,
         stream_id: &str,
     ) -> Result<PaymentReceipt, PaymentProcessorError> {
-        let streams = self.streams.read().await;
-        let stream = streams
-            .get(stream_id)
-            .ok_or_else(|| PaymentProcessorError::StreamNotFound(stream_id.to_string()))?
-            .clone();
-        drop(streams);
+        // First, get stream info (read lock)
+        let stream = {
+            let streams = self.streams.read().await;
+            streams
+                .get(stream_id)
+                .ok_or_else(|| PaymentProcessorError::StreamNotFound(stream_id.to_string()))?
+                .clone()
+        };
 
         if stream.status != StreamStatus::Active {
             return Err(PaymentProcessorError::StreamSuspended(stream_id.to_string()));
@@ -364,16 +467,63 @@ impl PaymentProcessor {
 
         let amount = stream.amount_per_interval;
 
-        // Try to process through payment channel first (faster, lower fees)
+        // Try to use payment channel with pre-signed update
         let tx_id = if let (Some(ref channel_manager), Some(ref channel_id)) = 
             (&self.channel_manager, &stream.channel_id) 
         {
-            // Use payment channel for off-chain payment
-            channel_manager
-                .process_payment(channel_id, amount)
-                .map_err(|e| PaymentProcessorError::ChannelError(e.to_string()))?
+            // Try to consume a pre-signed update
+            let pre_signed_update = {
+                let mut streams = self.streams.write().await;
+                if let Some(stream_mut) = streams.get_mut(stream_id) {
+                    stream_mut.consume_pre_signed_update()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(signed_update) = pre_signed_update {
+                // SECURITY: Use payment channel with cryptographically signed update
+                // The payment channel manager will verify:
+                // - Ed25519 signature from the payer
+                // - Correct nonce progression
+                // - Balance invariant (total = capacity)
+                match channel_manager.process_payment(channel_id, signed_update) {
+                    Ok(tx_id) => {
+                        tracing::debug!(
+                            "Stream {} payment via payment channel (remaining pre-signed: {})",
+                            stream_id,
+                            {
+                                let streams = self.streams.read().await;
+                                streams.get(stream_id).map(|s| s.remaining_updates()).unwrap_or(0)
+                            }
+                        );
+                        tx_id
+                    }
+                    Err(e) => {
+                        // Payment channel failed - log and fall back to on-chain
+                        tracing::warn!(
+                            "Payment channel failed for stream {}: {}, falling back to on-chain",
+                            stream_id, e
+                        );
+                        self.currency_chain
+                            .transfer(&stream.payer, &stream.payee, amount)
+                            .map_err(|e| PaymentProcessorError::CurrencyChainError(e.to_string()))?
+                            .to_string()
+                    }
+                }
+            } else {
+                // No pre-signed updates available - fall back to on-chain transfer
+                tracing::debug!(
+                    "Stream {} has no pre-signed updates, using on-chain transfer",
+                    stream_id
+                );
+                self.currency_chain
+                    .transfer(&stream.payer, &stream.payee, amount)
+                    .map_err(|e| PaymentProcessorError::CurrencyChainError(e.to_string()))?
+                    .to_string()
+            }
         } else {
-            // Fall back to on-chain transfer
+            // No payment channel configured - use on-chain transfer
             self.currency_chain
                 .transfer(&stream.payer, &stream.payee, amount)
                 .map_err(|e| PaymentProcessorError::CurrencyChainError(e.to_string()))?
@@ -420,7 +570,9 @@ impl PaymentProcessor {
         Ok(receipt)
     }
 
-    /// Create a new payment stream
+    /// Create a new payment stream (on-chain transfers only)
+    ///
+    /// For payment channel streams with pre-signed updates, use `create_channel_stream` instead.
     pub async fn create_stream(
         &self,
         payer: UserId,
@@ -428,16 +580,14 @@ impl PaymentProcessor {
         amount_per_interval: u64,
         interval_seconds: u64,
         max_total: u64,
-        channel_id: Option<String>,
     ) -> Result<String, PaymentProcessorError> {
-        let mut stream = PaymentStream::new(
+        let stream = PaymentStream::new(
             payer,
             payee,
             amount_per_interval,
             interval_seconds,
             max_total,
         );
-        stream.channel_id = channel_id;
 
         let stream_id = stream.stream_id.clone();
 
@@ -445,11 +595,128 @@ impl PaymentProcessor {
         streams.insert(stream_id.clone(), stream);
 
         tracing::info!(
-            "Created payment stream {}: {} tokens every {}s",
+            "Created on-chain payment stream {}: {} tokens every {}s",
             stream_id, amount_per_interval, interval_seconds
         );
 
         Ok(stream_id)
+    }
+
+    /// Create a payment stream with payment channel and pre-signed updates
+    ///
+    /// # Security
+    ///
+    /// The payer must provide pre-signed state updates that:
+    /// - Cover all planned payments (or as many as desired for off-chain processing)
+    /// - Have incrementing nonces starting from the current channel state
+    /// - Are signed with the payer's Ed25519 signing key
+    ///
+    /// Each payment will consume one pre-signed update. When exhausted, the stream
+    /// falls back to on-chain transfers.
+    ///
+    /// # Arguments
+    ///
+    /// * `payer` - The paying user ID
+    /// * `payee` - The receiving user ID  
+    /// * `amount_per_interval` - Amount to transfer each interval
+    /// * `interval_seconds` - Time between payments
+    /// * `max_total` - Maximum total to pay (0 = unlimited)
+    /// * `channel_id` - Payment channel ID
+    /// * `pre_signed_updates` - Pre-signed state updates from the payer
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Payer creates pre-signed updates covering 10 payments
+    /// let updates = (0..10).map(|i| {
+    ///     let state = ChannelState {
+    ///         nonce: current_nonce + i + 1,
+    ///         sender_balance: current_sender_balance - (amount * (i + 1)),
+    ///         receiver_balance: current_receiver_balance + (amount * (i + 1)),
+    ///     };
+    ///     SignedStateUpdate::new_from_sender(state, &channel_id, &signing_key)
+    /// }).collect();
+    ///
+    /// processor.create_channel_stream(
+    ///     payer_id, payee_id, amount, interval, max_total, channel_id, updates
+    /// ).await?;
+    /// ```
+    pub async fn create_channel_stream(
+        &self,
+        payer: UserId,
+        payee: UserId,
+        amount_per_interval: u64,
+        interval_seconds: u64,
+        max_total: u64,
+        channel_id: String,
+        pre_signed_updates: Vec<SignedStateUpdate>,
+    ) -> Result<String, PaymentProcessorError> {
+        // Validate that we have a payment channel manager
+        if self.channel_manager.is_none() {
+            return Err(PaymentProcessorError::InternalError(
+                "Payment channel manager not configured".to_string()
+            ));
+        }
+
+        // Validate pre-signed updates exist
+        if pre_signed_updates.is_empty() {
+            return Err(PaymentProcessorError::InternalError(
+                "At least one pre-signed update is required for channel streams".to_string()
+            ));
+        }
+
+        let update_count = pre_signed_updates.len();
+        let stream = PaymentStream::new_with_channel(
+            payer,
+            payee,
+            amount_per_interval,
+            interval_seconds,
+            max_total,
+            channel_id.clone(),
+            pre_signed_updates,
+        );
+
+        let stream_id = stream.stream_id.clone();
+
+        let mut streams = self.streams.write().await;
+        streams.insert(stream_id.clone(), stream);
+
+        tracing::info!(
+            "Created payment channel stream {}: {} tokens every {}s via channel {} ({} pre-signed updates)",
+            stream_id, amount_per_interval, interval_seconds, channel_id, update_count
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Add more pre-signed updates to an existing stream
+    ///
+    /// Use this to extend a stream's payment channel capability without recreating it.
+    pub async fn add_stream_updates(
+        &self,
+        stream_id: &str,
+        updates: Vec<SignedStateUpdate>,
+    ) -> Result<usize, PaymentProcessorError> {
+        let mut streams = self.streams.write().await;
+        let stream = streams
+            .get_mut(stream_id)
+            .ok_or_else(|| PaymentProcessorError::StreamNotFound(stream_id.to_string()))?;
+
+        if stream.channel_id.is_none() {
+            return Err(PaymentProcessorError::InternalError(
+                "Cannot add pre-signed updates to non-channel stream".to_string()
+            ));
+        }
+
+        let added_count = updates.len();
+        stream.add_pre_signed_updates(updates);
+
+        tracing::info!(
+            "Added {} pre-signed updates to stream {} (total remaining: {})",
+            added_count, stream_id, stream.remaining_updates()
+        );
+
+        Ok(stream.remaining_updates())
     }
 
     /// Suspend a payment stream
