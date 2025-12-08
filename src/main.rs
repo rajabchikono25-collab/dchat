@@ -3229,14 +3229,22 @@ async fn run_user_node(
         for peer_addr in &bootstrap_peers {
             match peer_addr.parse::<Multiaddr>() {
                 Ok(multiaddr) => {
-                    // Extract peer ID from multiaddr if present, otherwise use a random one
-                    // (the DHT will learn the correct peer ID during connection)
-                    let peer_id = PeerId::random(); // Will be replaced by actual peer ID during handshake
+                    // Extract peer ID from multiaddr if present
+                    let peer_id = multiaddr
+                        .iter()
+                        .find_map(|proto| {
+                            if let libp2p::multiaddr::Protocol::P2p(peer_id) = proto {
+                                Some(peer_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(PeerId::random);
                     network_config
                         .discovery
                         .bootstrap_nodes
                         .push((peer_id, multiaddr));
-                    info!("✓ Added bootstrap node: {}", peer_addr);
+                    info!("✓ Added bootstrap node: {} (peer_id: {})", peer_addr, peer_id);
                 }
                 Err(e) => warn!("⚠ Invalid multiaddr {}: {}", peer_addr, e),
             }

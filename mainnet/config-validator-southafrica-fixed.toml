@@ -1,0 +1,47 @@
+# dchat Mainnet Configuration - Validator 2 (South Africa)
+# Server: validator.southafrica.schikuno.top
+
+[network]
+listen_addresses = ["/ip4/0.0.0.0/tcp/7070"]
+bootstrap_peers = [
+    "/dns4/validator.india.schikuno.top/tcp/7070",
+    "/dns4/validator.uae.schikuno.top/tcp/7070",
+    "/dns4/relay.ohio.schikuno.top/tcp/7070",
+    "/dns4/relay.stockholm.schikuno.top/tcp/7070",
+    "/dns4/relay.saopaulo.schikuno.top/tcp/7070"
+]
+max_connections = 100
+connection_timeout_ms = 30000
+enable_mdns = false
+enable_upnp = true
+
+[storage]
+data_dir = "/opt/dchat/data"
+max_message_cache_size = 50000
+message_retention_days = 365
+enable_backup = true
+backup_interval_hours = 24
+db_pool_size = 50
+db_connection_timeout_secs = 30
+db_idle_timeout_secs = 600
+db_max_lifetime_secs = 1800
+db_enable_wal = true
+
+[crypto]
+key_rotation_interval_hours = 168
+max_messages_per_key = 100000
+enable_post_quantum = true
+noise_protocol_pattern = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
+
+[governance]
+voting_period_hours = 336
+minimum_stake_for_proposal = 1000
+quorum_threshold = 0.67
+enable_anonymous_voting = true
+
+[relay]
+enable_relay = false
+max_relay_connections = 50
+relay_reward_threshold = 100
+uptime_reporting_interval_minutes = 15
+stake_amount = 5000
