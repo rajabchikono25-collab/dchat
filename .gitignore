@@ -22,7 +22,7 @@ Thumbs.db
 *.log
 
 # Deployment infrastructure
-foundation-servers/
+foundation servers/
 
 # Database
 *.db

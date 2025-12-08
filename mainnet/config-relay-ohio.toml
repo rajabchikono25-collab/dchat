@@ -1,0 +1,82 @@
+# dchat Mainnet Configuration - Relay 1 (Ohio)
+# Server: relay.ohio.schikuno.top (13.58.182.122)
+
+[network]
+listen_addresses = ["0.0.0.0:7070", "/ip4/0.0.0.0/tcp/7070"]
+max_connections = 200
+connection_timeout_ms = 30000
+enable_mdns = false
+enable_upnp = true
+enable_dht = true
+
+# Bootstrap peers - All validators and other relays
+bootstrap_peers = [
+    # Validators (connect to all for message routing)
+    "/dns4/validator.india.schikuno.top/tcp/7070",
+    "/dns4/validator.southafrica.schikuno.top/tcp/7070",
+    "/dns4/validator.uae.schikuno.top/tcp/7070",
+    # Other relay nodes
+    "/dns4/relay.stockholm.schikuno.top/tcp/7070",
+    "/dns4/relay.saopaulo.schikuno.top/tcp/7070",
+]
+
+validator_hostnames = [
+    "validator.india.schikuno.top",
+    "validator.southafrica.schikuno.top",
+    "validator.uae.schikuno.top",
+]
+
+[storage]
+data_dir = "/opt/dchat/data"
+db_pool_size = 25
+db_connection_timeout_secs = 30
+db_idle_timeout_secs = 300
+db_max_lifetime_secs = 600
+db_enable_wal = true
+
+[blockchain]
+chat_chain_id = "dchat-mainnet-1"
+chat_chain_rpc = "http://validator.india.schikuno.top:26657"
+chat_chain_validators = 3
+chat_chain_block_time_ms = 6000
+chat_chain_finality_blocks = 2
+
+currency_chain_id = "dchat-currency-1"
+currency_chain_rpc = "http://validator.india.schikuno.top:26657"
+currency_chain_validators = 3
+
+bridge_enabled = true
+bridge_relayers = 3
+
+[crypto]
+key_rotation_interval_hours = 168
+enable_post_quantum = true
+noise_protocol_pattern = "XX"
+
+[relay]
+min_stake = 1000
+reward_per_message = 1
+uptime_reward_per_hour = 10
+
+[observability]
+metrics_enabled = true
+metrics_addr = "0.0.0.0:9090"
+health_check_addr = "0.0.0.0:8080"
+tracing_enabled = true
+
+prometheus_job_name = "dchat-mainnet-relay-ohio"
+prometheus_scrape_interval_secs = 30
+
+[security]
+enable_rate_limiting = true
+max_requests_per_minute = 200
+enable_ddos_protection = true
+require_mutual_tls = false
+
+[deployment]
+environment = "production"
+deployment_date = "2025-12-08"
+network_name = "dchat-foundation-mainnet"
+version = "1.0.0"
+node_role = "relay"
+node_name = "relay-ohio"
