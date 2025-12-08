@@ -578,6 +578,15 @@ impl ValidatorKeyType {
         }
     }
     
+    /// Get private key bytes (only available for local keys)
+    /// Returns None for KMS keys as private key never leaves the HSM
+    fn private_key_bytes(&self) -> Option<[u8; 32]> {
+        match self {
+            ValidatorKeyType::Local(keypair) => Some(keypair.private_key().to_bytes()),
+            ValidatorKeyType::Kms(_) => None,
+        }
+    }
+    
     /// Sign data (async for KMS support)
     async fn sign_async(&self, message: &[u8]) -> std::result::Result<CryptoSignature, Error> {
         match self {
@@ -3856,6 +3865,26 @@ async fn run_validator_node(
 
     info!("📡 Total bootstrap peers: {}", bootstrap_nodes.len());
 
+    // Derive libp2p keypair from validator key for persistent peer ID
+    let libp2p_keypair = if let Some(private_key_bytes) = validator_key.private_key_bytes() {
+        info!("🔑 Deriving persistent libp2p keypair from validator key...");
+        match libp2p::identity::Keypair::ed25519_from_bytes(private_key_bytes.to_vec()) {
+            Ok(kp) => {
+                let peer_id = kp.public().to_peer_id();
+                info!("✓ Derived persistent peer ID: {}", peer_id);
+                Some(kp)
+            }
+            Err(e) => {
+                warn!("Failed to derive libp2p keypair from validator key: {}", e);
+                warn!("Falling back to random keypair (peer ID will change on restart)");
+                None
+            }
+        }
+    } else {
+        warn!("KMS keys do not expose private key - using random libp2p keypair");
+        None
+    };
+
     // Parse listen addresses
     let mut listen_addrs = Vec::new();
     for addr_str in &config.network.listen_addresses {
@@ -3891,8 +3920,8 @@ async fn run_validator_node(
         },
     };
 
-    // Initialize network manager
-    let mut network = NetworkManager::new(network_config).await?;
+    // Initialize network manager with persistent keypair if available
+    let mut network = NetworkManager::with_keypair(network_config, libp2p_keypair).await?;
     let peer_id = network.peer_id();
 
     network.start().await?;

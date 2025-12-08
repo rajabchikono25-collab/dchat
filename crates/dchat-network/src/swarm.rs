@@ -71,10 +71,16 @@ pub struct NetworkManager {
 }
 
 impl NetworkManager {
-    /// Create a new network manager
+    /// Create a new network manager with a random identity
     pub async fn new(config: NetworkConfig) -> Result<Self> {
-        // Generate local keypair
-        let local_key = libp2p::identity::Keypair::generate_ed25519();
+        Self::with_keypair(config, None).await
+    }
+
+    /// Create a new network manager with an optional keypair
+    /// If keypair is None, a random one is generated
+    pub async fn with_keypair(config: NetworkConfig, keypair: Option<libp2p::identity::Keypair>) -> Result<Self> {
+        // Use provided keypair or generate a random one
+        let local_key = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
         let local_peer_id = local_key.public().to_peer_id();
 
         tracing::info!("Local peer ID: {}", local_peer_id);
