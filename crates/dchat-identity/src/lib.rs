@@ -7,16 +7,19 @@
 //! - Burner identities
 //! - Guardian-based account recovery
 //! - User profiles and status
+//! - CAPTCHA verification for bot protection
 //! 
 //! # Production Security
 //! 
 //! This crate is production-ready with the following security features:
 //! - FROST threshold signatures using audited frost-ed25519 library (NCC Group audited)
 //! - Platform-specific device attestation (iOS App Attest, Android Play Integrity)
+//! - CAPTCHA verification support (hCaptcha, Cloudflare Turnstile)
 //! - Simulated/testing code is compile-time excluded from release builds
 
 pub mod biometric; // Phase 7 Sprint 6: Keyless UX - Biometric authentication
 pub mod burner;
+pub mod captcha; // CAPTCHA verification for bot protection
 pub mod derivation;
 pub mod device;
 pub mod enclave; // Phase 7 Sprint 6: Keyless UX - Secure enclave integration
@@ -34,6 +37,10 @@ pub mod attestation; // Device attestation verification (platform-specific)
 
 pub use biometric::{BiometricAuthResult, BiometricAuthenticator, BiometricConfig, BiometricType};
 pub use burner::BurnerIdentity;
+pub use captcha::{
+    CaptchaConfig, CaptchaProvider, CaptchaRequirementChecker, CaptchaVerificationResult,
+    verify_captcha,
+};
 pub use derivation::{IdentityDerivation, KeyPath};
 // Re-export mnemonic types for wallet-style recovery
 pub use dchat_crypto::{Mnemonic, MnemonicLength, Seed};

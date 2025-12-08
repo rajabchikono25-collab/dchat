@@ -2163,6 +2163,7 @@ dependencies = [
  "dchat-network",
  "dchat-storage",
  "ed25519-dalek",
+ "getrandom 0.2.16",
  "hex",
  "hmac",
  "libp2p",
@@ -2173,6 +2174,7 @@ dependencies = [
  "sha2",
  "snow",
  "sqlx",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2363,6 +2365,7 @@ dependencies = [
  "dchat-crypto",
  "ed25519-dalek",
  "frost-ed25519",
+ "getrandom 0.2.16",
  "hex",
  "jni",
  "libp2p",
@@ -2376,6 +2379,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
  "zeroize",
 ]
@@ -2413,6 +2417,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

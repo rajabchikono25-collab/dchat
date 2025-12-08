@@ -405,24 +405,34 @@ impl WebhookVerifier {
     }
 
     /// Verify webhook signature
+    /// 
+    /// # Security Note
+    /// This uses constant-time comparison from the `subtle` crate to prevent
+    /// timing side-channel attacks. An attacker observing response times cannot
+    /// learn information about the expected signature.
     pub fn verify_signature(
         &self,
         payload: &[u8],
         provided_signature: &str,
     ) -> Result<(), TokenError> {
+        use subtle::ConstantTimeEq;
+        
         let expected_signature = self.compute_signature(payload);
 
-        // Constant-time comparison to prevent timing attacks
-        if expected_signature.len() != provided_signature.len() {
-            return Err(TokenError::WebhookVerificationFailed);
-        }
-
-        let mut diff = 0u8;
-        for (a, b) in expected_signature.bytes().zip(provided_signature.bytes()) {
-            diff |= a ^ b;
-        }
-
-        if diff == 0 {
+        // SECURITY FIX: Use constant-time comparison to prevent timing attacks
+        // The subtle crate's ConstantTimeEq ensures the comparison takes the
+        // same amount of time regardless of where the first mismatch occurs.
+        //
+        // Note: We compare the bytes directly. Even the length comparison is
+        // handled safely because ct_eq returns 0 for different-length slices.
+        let expected_bytes = expected_signature.as_bytes();
+        let provided_bytes = provided_signature.as_bytes();
+        
+        // Constant-time comparison - this will return false for different lengths
+        // but won't leak which position differs
+        let is_equal = expected_bytes.ct_eq(provided_bytes);
+        
+        if bool::from(is_equal) {
             Ok(())
         } else {
             Err(TokenError::WebhookVerificationFailed)

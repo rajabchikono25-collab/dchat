@@ -24,11 +24,25 @@ pub const MESSAGE_FEE: u64 = 1000_0000;
 /// Minimum balance to send a message (fee + small buffer)
 pub const MIN_SEND_BALANCE: u64 = MESSAGE_FEE + 100_0000; // 0.11 DCHAT
 
+/// Minimum stake required to send messages (anti-bot protection)
+/// 100 DCHAT = 100_0000_0000 units
+/// 
+/// # Security Note
+/// This prevents sybil attacks where an attacker creates many accounts
+/// to spam the network. With a stake requirement:
+/// - Each spamming account requires capital at risk
+/// - Misbehaving accounts can be slashed, losing their stake
+/// - Economic cost deters large-scale bot networks
+pub const MINIMUM_STAKE_FOR_MESSAGING: u64 = 100_0000_0000;
+
 /// Error types for message service
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum MessageServiceError {
     #[error("Insufficient funds: required {required}, available {available}")]
     InsufficientFunds { required: u64, available: u64 },
+
+    #[error("Insufficient stake: required {required}, staked {staked}")]
+    InsufficientStake { required: u64, staked: u64 },
 
     #[error("No relay available for routing")]
     NoRelayAvailable,
@@ -251,11 +265,12 @@ impl MessageService {
     ///
     /// This method:
     /// 1. Validates the message
-    /// 2. Checks sender's balance
-    /// 3. Selects a relay for routing
-    /// 4. Deducts the message fee (transferred to relay)
-    /// 5. Routes the message
-    /// 6. Returns a receipt with fee information
+    /// 2. Verifies sender has minimum stake (anti-bot protection)
+    /// 3. Checks sender's balance
+    /// 4. Selects a relay for routing
+    /// 5. Deducts the message fee (transferred to relay)
+    /// 6. Routes the message
+    /// 7. Returns a receipt with fee information
     pub async fn send_message(&self, mut message: Message) -> Result<DeliveryReceipt> {
         // 1. Validate message
         self.validate_message(&message)?;
@@ -265,19 +280,35 @@ impl MessageService {
             .sender()
             .ok_or_else(|| MessageServiceError::ValidationFailed("Message has no sender".into()))?;
 
-        // 2. Calculate fee
+        // 2. SECURITY FIX: Verify sender has minimum stake (anti-bot protection)
+        // This prevents sybil attacks by requiring capital at risk for each sender
+        let sender_stake = self.currency_chain.get_staked_amount(&sender_id)?;
+        if sender_stake < MINIMUM_STAKE_FOR_MESSAGING {
+            tracing::warn!(
+                "Sender {} has insufficient stake: {} < {} required",
+                sender_id,
+                sender_stake,
+                MINIMUM_STAKE_FOR_MESSAGING
+            );
+            return Err(MessageServiceError::InsufficientStake {
+                required: MINIMUM_STAKE_FOR_MESSAGING,
+                staked: sender_stake,
+            }.into());
+        }
+
+        // 3. Calculate fee
         let fee = self.calculate_fee(&message);
 
-        // 3. Check sender's balance
+        // 4. Check sender's balance
         self.check_balance(&sender_id, fee)?;
 
-        // 4. Select relay for routing
+        // 5. Select relay for routing
         let relay = self.select_relay(&message).await?;
 
-        // 5. Deduct fee and transfer to relay
+        // 6. Deduct fee and transfer to relay
         let fee_tx_id = self.deduct_fee(&sender_id, &relay.user_id, fee).await?;
 
-        // 6. Route message (update status)
+        // 7. Route message (update status)
         message.status = MessageStatus::Sent;
 
         // Update statistics
@@ -287,7 +318,7 @@ impl MessageService {
             stats.total_fees_collected += fee;
         }
 
-        // 7. Create and return receipt
+        // 8. Create and return receipt
         Ok(DeliveryReceipt {
             message_id: message.id.clone(),
             delivered_at: Utc::now(),

@@ -305,6 +305,22 @@ impl CurrencyChainClient {
         let wallets = self.wallets.read().unwrap();
         Ok(wallets.get(user_id).map(|w| w.balance).unwrap_or(0))
     }
+    
+    /// Get user's staked amount
+    /// 
+    /// Returns the total amount of tokens this user has staked.
+    /// Used for anti-bot verification (minimum stake requirements).
+    pub fn get_staked_amount(&self, user_id: &UserId) -> Result<u64> {
+        // First check the stakes HashMap for active stake positions
+        let stakes = self.stakes.read().unwrap();
+        if let Some(stake_position) = stakes.get(user_id) {
+            return Ok(stake_position.amount);
+        }
+        
+        // Also check wallet's staked field as fallback
+        let wallets = self.wallets.read().unwrap();
+        Ok(wallets.get(user_id).map(|w| w.staked).unwrap_or(0))
+    }
 
     /// Transfer tokens between users
     pub fn transfer(&self, from: &UserId, to: &UserId, amount: u64) -> Result<Uuid> {

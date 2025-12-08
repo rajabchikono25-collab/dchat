@@ -316,18 +316,34 @@ impl Bot {
         })
     }
 
-    /// Generate a secure authentication token
+    /// Generate a secure authentication token with 256 bits of entropy
+    /// 
+    /// # Security Note
+    /// This uses the system's cryptographically secure random number generator
+    /// to generate 32 bytes (256 bits) of random data, providing strong security
+    /// against brute-force attacks.
+    /// 
+    /// The token format is: `dchat_bot_<base64url(32_random_bytes)>`
+    /// This provides approximately 256 bits of entropy, compared to UUID v4's 122 bits.
     fn generate_token() -> String {
-        use sha2::{Digest, Sha256};
-        let uuid = uuid::Uuid::new_v4();
-        let random_bytes = uuid.as_bytes();
-        let mut hasher = Sha256::new();
-        hasher.update(random_bytes);
-        let result = hasher.finalize();
+        // SECURITY FIX: Use 32 bytes of CSPRNG directly for 256-bit entropy
+        // Previously used UUID (only 122 bits) which is insufficient for authentication tokens
+        let mut random_bytes = [0u8; 32];
+        
+        // Use getrandom for CSPRNG - this will work on all platforms
+        if let Err(e) = getrandom::getrandom(&mut random_bytes) {
+            // Fall back to rand if getrandom fails (shouldn't happen in normal operation)
+            tracing::warn!("getrandom failed, using rand fallback: {}", e);
+            use rand::RngCore;
+            let mut rng = rand::thread_rng();
+            rng.fill_bytes(&mut random_bytes);
+        }
+        
+        // Use URL-safe base64 encoding (no padding) for the token
         use base64::Engine;
         format!(
             "dchat_bot_{}",
-            base64::engine::general_purpose::STANDARD.encode(result)
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes)
         )
     }
 

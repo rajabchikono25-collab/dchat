@@ -400,7 +400,13 @@ pub struct StakingManager {
     slashing_history: Arc<RwLock<Vec<SlashingEvent>>>,
     /// Currency chain client for on-chain token operations (production mode)
     currency_chain: Option<Arc<CurrencyChainClient>>,
+    /// Governance council public keys for slashing verification (7 members)
+    /// SECURITY: These MUST be loaded from secure configuration in production
+    governance_council_keys: Vec<VerifyingKey>,
 }
+
+/// Minimum number of council signatures required for slashing (5-of-7)
+pub const MIN_COUNCIL_SIGNATURES: usize = 5;
 
 impl StakingManager {
     /// Create new staking manager without currency chain integration (testing only)
@@ -411,6 +417,7 @@ impl StakingManager {
             active_set: Arc::new(RwLock::new(BTreeMap::new())),
             slashing_history: Arc::new(RwLock::new(Vec::new())),
             currency_chain: None,
+            governance_council_keys: Vec::new(), // Must be set via set_governance_council
         }
     }
 
@@ -425,7 +432,104 @@ impl StakingManager {
             active_set: Arc::new(RwLock::new(BTreeMap::new())),
             slashing_history: Arc::new(RwLock::new(Vec::new())),
             currency_chain: Some(currency_chain),
+            governance_council_keys: Vec::new(), // Must be set via set_governance_council
         }
+    }
+    
+    /// Set governance council public keys for slashing verification
+    /// 
+    /// # Security Note
+    /// This MUST be called during initialization with the correct council keys.
+    /// The keys should be loaded from a secure, auditable configuration source.
+    /// Without valid council keys, slashing operations will fail.
+    pub fn set_governance_council(&mut self, keys: Vec<VerifyingKey>) {
+        if keys.len() != 7 {
+            tracing::warn!(
+                "Governance council should have exactly 7 members, got {}",
+                keys.len()
+            );
+        }
+        self.governance_council_keys = keys;
+    }
+    
+    /// Verify council signatures for a slashing event
+    /// 
+    /// # Security Note
+    /// This performs ACTUAL cryptographic verification of Ed25519 signatures.
+    /// Each signature must be from a unique council member.
+    fn verify_council_signatures(
+        &self,
+        validator_id: &UserId,
+        severity: &SlashingSeverity,
+        reason: &str,
+        evidence: &[u8],
+        signatures: &[Signature],
+    ) -> Result<()> {
+        use ed25519_dalek::Verifier;
+        
+        // Check we have enough council keys configured
+        if self.governance_council_keys.is_empty() {
+            return Err(Error::validation(
+                "Governance council keys not configured - cannot verify slashing".to_string(),
+            ));
+        }
+        
+        // Check minimum signature count
+        if signatures.len() < MIN_COUNCIL_SIGNATURES {
+            return Err(Error::validation(format!(
+                "Insufficient council signatures: {} provided, {} required",
+                signatures.len(),
+                MIN_COUNCIL_SIGNATURES
+            )));
+        }
+        
+        // Construct the message that was signed
+        // Format: validator_id || severity || reason || evidence_hash
+        let mut message = Vec::new();
+        message.extend_from_slice(validator_id.to_string().as_bytes());
+        message.extend_from_slice(&[*severity as u8]);
+        message.extend_from_slice(reason.as_bytes());
+        // Hash evidence to prevent message length issues
+        let evidence_hash = blake3::hash(evidence);
+        message.extend_from_slice(evidence_hash.as_bytes());
+        
+        // Track which council members have signed (prevent duplicate signatures)
+        let mut signed_by: Vec<usize> = Vec::new();
+        let mut valid_count = 0;
+        
+        for signature in signatures {
+            // Try to verify against each council member's key
+            for (idx, council_key) in self.governance_council_keys.iter().enumerate() {
+                // Skip if this council member already signed
+                if signed_by.contains(&idx) {
+                    continue;
+                }
+                
+                // Verify the signature
+                if council_key.verify(&message, signature).is_ok() {
+                    valid_count += 1;
+                    signed_by.push(idx);
+                    break;
+                }
+            }
+        }
+        
+        // Check if we have enough valid, unique signatures
+        if valid_count < MIN_COUNCIL_SIGNATURES {
+            return Err(Error::validation(format!(
+                "Only {} valid council signatures verified, {} required",
+                valid_count,
+                MIN_COUNCIL_SIGNATURES
+            )));
+        }
+        
+        tracing::info!(
+            "Slashing signatures verified: {}/{} council members approved",
+            valid_count,
+            self.governance_council_keys.len()
+        );
+        
+        Ok(())
     }
 
     /// Submit validator stake (register new validator)
@@ -686,6 +790,11 @@ impl StakingManager {
     }
 
     /// Slash validator for misbehavior
+    /// 
+    /// # Security Note
+    /// This performs ACTUAL cryptographic verification of council signatures.
+    /// Each signature is verified against the governance council's public keys.
+    /// At least 5-of-7 valid signatures are required.
     pub async fn slash_validator(
         &self,
         validator_id: &UserId,
@@ -694,12 +803,15 @@ impl StakingManager {
         evidence: Vec<u8>,
         council_signatures: Vec<Signature>,
     ) -> Result<u64> {
-        // Verify governance council signatures (5-of-7 multisig)
-        if council_signatures.len() < 5 {
-            return Err(Error::validation(
-                "Insufficient council signatures for slashing".to_string(),
-            ));
-        }
+        // SECURITY FIX: Verify governance council signatures cryptographically
+        // Previously only checked signature count, now verifies actual Ed25519 signatures
+        self.verify_council_signatures(
+            validator_id,
+            &severity,
+            &reason,
+            &evidence,
+            &council_signatures,
+        )?;
 
         let event = SlashingEvent {
             event_id: Uuid::new_v4(),

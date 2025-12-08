@@ -33,6 +33,8 @@ curve25519-dalek = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 sha2 = "0.10"
+# CSPRNG for secure challenge generation
+getrandom = "0.2"
 sqlx = { workspace = true }
 
 # FROST threshold signatures (audited by NCC Group, 2023)
@@ -44,6 +46,12 @@ ciborium = "0.2"
 # Base64 encoding for attestation challenges
 base64 = "0.21"
 
+# Unicode normalization for homoglyph protection
+unicode-normalization = "0.1"
+
+# HTTP client for CAPTCHA verification
+reqwest = { version = "0.11", features = ["json"], default-features = false, optional = true }
+
 # Platform-specific dependencies for biometric/enclave support
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "2.9"
@@ -54,3 +62,8 @@ jni = "0.21"
 [dev-dependencies]
 tokio-test = "0.4"
 proptest = { workspace = true }
+
+[features]
+default = []
+# Enable CAPTCHA verification support (requires reqwest)
+captcha = ["reqwest"]

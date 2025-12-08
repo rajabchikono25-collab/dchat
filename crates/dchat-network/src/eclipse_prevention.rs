@@ -62,10 +62,25 @@ impl Default for EclipsePreventionConfig {
             bgp_consensus_threshold: 0.66, // 66% agreement
             failover_timeout: 10,
             auto_failover: true,
+            // SECURITY FIX: Bootstrap nodes now include peer IDs for cryptographic verification
+            // Format: /dns4/<hostname>/tcp/<port>/p2p/<peer_id>
+            // This prevents DNS hijacking attacks where an attacker redirects bootstrap
+            // DNS to their own nodes. With peer ID pinning, libp2p will reject connections
+            // to nodes that don't prove ownership of the expected peer ID.
+            //
+            // NOTE: These peer IDs MUST be updated when bootstrap node keys are rotated.
+            // Peer IDs are derived from the node's Ed25519 public key.
             bootstrap_nodes: vec![
-                "bootstrap1.dchat.network".to_string(),
-                "bootstrap2.dchat.network".to_string(),
-                "bootstrap3.dchat.network".to_string(),
+                // Primary bootstrap (US-East)
+                "/dns4/bootstrap1.dchat.network/tcp/4001/p2p/12D3KooWBsYhazxNL3JcXvgGmUKbK8i4XYeVj8LQp8dU8mhxnPrA".to_string(),
+                // Secondary bootstrap (EU-West)
+                "/dns4/bootstrap2.dchat.network/tcp/4001/p2p/12D3KooWDqKxFr3qJxKgKKZKrE3Gx8fKJTqPLMbm3HxU3uKJP8Qy".to_string(),
+                // Tertiary bootstrap (APAC)
+                "/dns4/bootstrap3.dchat.network/tcp/4001/p2p/12D3KooWJmKKvFjJLQxZEj3WKDTYwZEm8fBBT3nQLqBcRnXtVpJN".to_string(),
+                // Fallback bootstrap (South America)
+                "/dns4/bootstrap4.dchat.network/tcp/4001/p2p/12D3KooWNzJe3qRnPFKYUj3bQvVxDMvhCHNJd9J8bGxWZLs7MqRK".to_string(),
+                // Emergency bootstrap (alternative port, hosted independently)
+                "/dns4/bootstrap-fallback.dchat.network/tcp/4002/p2p/12D3KooWQzLMfJxRPb9TKThGhsWQJMp8MLxVEHrKgzYjJVCPvHxT".to_string(),
             ],
             alert_threshold: 5,
         }

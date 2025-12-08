@@ -5,6 +5,46 @@ use ed25519_dalek::{SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519Veri
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+/// Generate cryptographically secure random bytes
+/// 
+/// # Arguments
+/// * `len` - Number of random bytes to generate
+/// 
+/// # Returns
+/// * `Ok(Vec<u8>)` - Vector of cryptographically secure random bytes
+/// * `Err(KeyGenerationError)` - If the system CSPRNG fails
+/// 
+/// # Security Note
+/// This function uses the system's cryptographic random number generator
+/// (e.g., /dev/urandom on Unix, CryptGenRandom on Windows). It will fail
+/// gracefully instead of panicking if entropy is unavailable.
+pub fn generate_random_bytes(len: usize) -> std::result::Result<Vec<u8>, KeyGenerationError> {
+    let mut bytes = vec![0u8; len];
+    getrandom::getrandom(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Generate random bytes into an existing buffer
+/// 
+/// # Arguments
+/// * `buffer` - Mutable slice to fill with random bytes
+/// 
+/// # Returns
+/// * `Ok(())` - Buffer filled with cryptographically secure random bytes
+/// * `Err(KeyGenerationError)` - If the system CSPRNG fails
+pub fn fill_random_bytes(buffer: &mut [u8]) -> std::result::Result<(), KeyGenerationError> {
+    getrandom::getrandom(buffer)?;
+    Ok(())
+}
+
+/// Error type for key generation failures
+#[derive(Debug, thiserror::Error)]
+pub enum KeyGenerationError {
+    /// Random number generation failed - system entropy source unavailable
+    #[error("Failed to generate random bytes: {0}")]
+    RandomGenerationFailed(#[from] getrandom::Error),
+}
+
 /// A private key that automatically zeros itself when dropped
 #[derive(Clone, ZeroizeOnDrop, Zeroize)]
 pub struct PrivateKey {
@@ -13,10 +53,37 @@ pub struct PrivateKey {
 
 impl PrivateKey {
     /// Generate a new random private key
-    pub fn generate() -> Self {
+    /// 
+    /// # Errors
+    /// Returns `KeyGenerationError::RandomGenerationFailed` if the system's
+    /// cryptographic random number generator fails or is unavailable.
+    /// This can happen on:
+    /// - Early boot before entropy is available
+    /// - Virtualized environments without proper RNG passthrough
+    /// - Systems with broken CSPRNG
+    /// 
+    /// # Security Note
+    /// This method returns a Result instead of panicking to allow graceful
+    /// error handling in production systems. Callers MUST handle this error
+    /// appropriately - typically by logging and retrying, or failing safely.
+    pub fn try_generate() -> std::result::Result<Self, KeyGenerationError> {
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes).expect("Failed to generate random bytes");
-        Self { bytes }
+        getrandom::getrandom(&mut bytes)?;
+        Ok(Self { bytes })
+    }
+    
+    /// Generate a new random private key (panics on RNG failure)
+    /// 
+    /// # Panics
+    /// Panics if the system's CSPRNG fails. Use `try_generate()` for
+    /// production code that needs to handle RNG failures gracefully.
+    /// 
+    /// # Deprecated
+    /// This method is provided for backward compatibility. New code should
+    /// use `try_generate()` instead.
+    #[deprecated(since = "0.2.0", note = "Use try_generate() instead for proper error handling")]
+    pub fn generate() -> Self {
+        Self::try_generate().expect("CSPRNG failure - system entropy unavailable")
     }
 
     /// Create from existing bytes
@@ -101,6 +168,29 @@ pub struct KeyPair {
 
 impl KeyPair {
     /// Generate a new random keypair
+    /// 
+    /// # Errors
+    /// Returns `KeyGenerationError` if the system CSPRNG fails.
+    pub fn try_generate() -> std::result::Result<Self, KeyGenerationError> {
+        let private_key = PrivateKey::try_generate()?;
+        let public_key = private_key.public_key();
+
+        Ok(Self {
+            private_key,
+            public_key,
+        })
+    }
+    
+    /// Generate a new random keypair (panics on RNG failure)
+    /// 
+    /// # Panics
+    /// Panics if the system's CSPRNG fails.
+    /// 
+    /// # Deprecated
+    /// This method is provided for backward compatibility. New code should
+    /// use `try_generate()` instead.
+    #[deprecated(since = "0.2.0", note = "Use try_generate() instead for proper error handling")]
+    #[allow(deprecated)]
     pub fn generate() -> Self {
         let private_key = PrivateKey::generate();
         let public_key = private_key.public_key();
@@ -136,18 +226,43 @@ impl KeyPair {
     }
 }
 
-/// Derive keys using BIP-32 style hierarchical deterministic key derivation
+/// Derive keys using HKDF-based hierarchical deterministic key derivation
+/// 
+/// # Security
+/// This implementation uses HKDF (RFC 5869) instead of simple hashing for proper
+/// key derivation with domain separation. This provides:
+/// - Proper cryptographic key expansion
+/// - Domain separation via salt and info parameters
+/// - Resistance to related-key attacks
 pub struct KeyDerivation;
 
-impl KeyDerivation {
-    /// Derive a child private key from a parent key and index
-    pub fn derive_private_key(parent_key: &PrivateKey, index: u32) -> Result<PrivateKey> {
-        let mut input = Vec::with_capacity(36);
-        input.extend_from_slice(parent_key.as_bytes());
-        input.extend_from_slice(&index.to_be_bytes());
+/// Domain separation salt for dchat key derivation
+const KEY_DERIVATION_SALT: &[u8] = b"dchat-key-derivation-v1";
 
-        let derived = crate::hash(&input);
-        Ok(PrivateKey::from_bytes(derived))
+impl KeyDerivation {
+    /// Derive a child private key from a parent key and index using HKDF
+    /// 
+    /// # Security
+    /// Uses HKDF-SHA256 with domain separation to derive child keys safely.
+    /// The salt provides domain separation, and the index is included in
+    /// the info parameter to ensure unique keys for each derivation path.
+    pub fn derive_private_key(parent_key: &PrivateKey, index: u32) -> Result<PrivateKey> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        
+        // Create HKDF instance with domain-separated salt
+        let hkdf = Hkdf::<Sha256>::new(
+            Some(KEY_DERIVATION_SALT),
+            parent_key.as_bytes(),
+        );
+        
+        // Derive key with index in info parameter for uniqueness
+        let info = format!("dchat-child-key-{}", index);
+        let mut okm = [0u8; 32];
+        hkdf.expand(info.as_bytes(), &mut okm)
+            .map_err(|e| dchat_core::Error::crypto(format!("HKDF expansion failed: {}", e)))?;
+        
+        Ok(PrivateKey::from_bytes(okm))
     }
 
     /// Derive multiple child keys from a parent key

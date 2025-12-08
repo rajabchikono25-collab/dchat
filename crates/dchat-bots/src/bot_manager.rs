@@ -7,6 +7,93 @@ use dchat_core::types::UserId;
 use dchat_core::{Error, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+/// Rate limiter for token regeneration
+/// 
+/// Prevents brute-force token theft attacks by limiting how often
+/// a token can be regenerated for a given bot.
+#[derive(Debug)]
+struct TokenRegenerationLimiter {
+    /// Maximum regenerations allowed per window
+    max_regenerations: usize,
+    /// Time window duration
+    window_duration: Duration,
+    /// Map of bot_id to (regeneration_count, window_start)
+    state: RwLock<HashMap<BotId, (usize, Instant)>>,
+}
+
+impl TokenRegenerationLimiter {
+    /// Create a new rate limiter
+    /// 
+    /// # Arguments
+    /// * `max_regenerations` - Maximum regenerations allowed per window
+    /// * `window_duration` - Duration of the rate limit window
+    fn new(max_regenerations: usize, window_duration: Duration) -> Self {
+        Self {
+            max_regenerations,
+            window_duration,
+            state: RwLock::new(HashMap::new()),
+        }
+    }
+    
+    /// Create production limiter: 3 regenerations per hour
+    fn production() -> Self {
+        Self::new(3, Duration::from_secs(3600))
+    }
+    
+    /// Check if regeneration is allowed and record the attempt
+    /// 
+    /// Returns `Ok(())` if allowed, `Err` with remaining wait time if rate limited
+    fn check_and_record(&self, bot_id: &BotId) -> std::result::Result<(), Duration> {
+        let mut state = self.state.write().unwrap();
+        let now = Instant::now();
+        
+        let entry = state.entry(*bot_id).or_insert((0, now));
+        
+        // Check if window has expired
+        if now.duration_since(entry.1) >= self.window_duration {
+            // Reset window
+            entry.0 = 1;
+            entry.1 = now;
+            return Ok(());
+        }
+        
+        // Check if we've exceeded the limit
+        if entry.0 >= self.max_regenerations {
+            let remaining = self.window_duration - now.duration_since(entry.1);
+            return Err(remaining);
+        }
+        
+        // Record the regeneration
+        entry.0 += 1;
+        Ok(())
+    }
+    
+    /// Get remaining regenerations for a bot
+    #[allow(dead_code)]
+    fn remaining_regenerations(&self, bot_id: &BotId) -> usize {
+        let state = self.state.read().unwrap();
+        let now = Instant::now();
+        
+        match state.get(bot_id) {
+            Some((count, window_start)) => {
+                if now.duration_since(*window_start) >= self.window_duration {
+                    self.max_regenerations
+                } else {
+                    self.max_regenerations.saturating_sub(*count)
+                }
+            }
+            None => self.max_regenerations,
+        }
+    }
+}
+
+impl Default for TokenRegenerationLimiter {
+    fn default() -> Self {
+        Self::production()
+    }
+}
 
 /// BotFather - Central bot management system
 pub struct BotFather {
@@ -21,6 +108,9 @@ pub struct BotFather {
 
     /// Owner to bot IDs mapping
     owner_index: Arc<RwLock<HashMap<UserId, Vec<BotId>>>>,
+    
+    /// Rate limiter for token regeneration
+    token_regen_limiter: TokenRegenerationLimiter,
 }
 
 /// Bot Manager provides high-level bot operations
@@ -36,6 +126,7 @@ impl BotFather {
             username_index: Arc::new(RwLock::new(HashMap::new())),
             token_index: Arc::new(RwLock::new(HashMap::new())),
             owner_index: Arc::new(RwLock::new(HashMap::new())),
+            token_regen_limiter: TokenRegenerationLimiter::production(),
         }
     }
 
@@ -208,7 +299,23 @@ impl BotFather {
     }
 
     /// Regenerate bot token
+    /// 
+    /// # Security Note
+    /// Token regeneration is rate-limited to prevent brute-force attacks.
+    /// Maximum 3 regenerations per hour per bot to mitigate:
+    /// - Token theft through rapid regeneration
+    /// - DoS attacks on bot availability  
+    /// - Credential stuffing attempts
     pub fn regenerate_token(&self, bot_id: &BotId, owner_id: &UserId) -> Result<String> {
+        // SECURITY FIX: Check rate limit before proceeding
+        if let Err(remaining) = self.token_regen_limiter.check_and_record(bot_id) {
+            let minutes = remaining.as_secs() / 60;
+            return Err(Error::validation(format!(
+                "Token regeneration rate limit exceeded. Try again in {} minutes.",
+                minutes + 1
+            )));
+        }
+        
         let mut bots = self.bots.write().unwrap();
         let bot = bots
             .get_mut(bot_id)

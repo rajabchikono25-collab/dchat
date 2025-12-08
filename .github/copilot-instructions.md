@@ -20,6 +20,7 @@ Always consult these documents when working on dchat:
 - **`plan.md`**: The implementation plan capturing remaining work items, stubbed/placeholder code, and phased delivery. Check this before implementing any feature to understand current state and gaps.
 - **`plan2.md`**: Economic infrastructure implementation plan covering critical gaps in staking, payment channels, fee collection, and reward distribution. Contains prioritized work items (P0/P1/P2) with time estimates and specific code changes needed.
 - **`ARCHITECTURE.md`**: Legacy architecture document with component breakdown and threat model.
+- **`SECURITY_AUDIT_2025-12-08.md`**: Comprehensive security audit report identifying 16 vulnerabilities (2 critical, 4 high, 6 medium, 4 low) with detailed patches, anti-bot protection gaps, and missing CLI commands. Must be consulted for all security-related changes.
 
 **Priority**: When there are discrepancies, `ARCHITECTURE-2.0.md` takes precedence over `ARCHITECTURE.md`.
 
