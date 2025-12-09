@@ -2750,6 +2750,14 @@ async fn run_relay_node(
             .map_err(|e| Error::network(format!("Failed to create multiaddr: {}", e)))?
     };
 
+    // Parse external address if configured
+    let external_address = config.network.external_address.as_ref().and_then(|addr_str| {
+        addr_str.parse().ok().map(|addr| {
+            info!("📡 External address configured: {}", addr_str);
+            addr
+        })
+    });
+
     // Create network config with DNS-discovered peers
     let network_config = NetworkConfig {
         listen_addrs: vec![listen_multiaddr.clone()],
@@ -2766,8 +2774,8 @@ async fn run_relay_node(
         nat: dchat_network::NatConfig {
             enable_upnp: config.network.enable_upnp,
             stun_servers: vec![
-                "stun:stun.l.google.com:19302".to_string(),
-                "stun:stun1.l.google.com:19302".to_string(),
+                "stun.l.google.com:19302".to_string(),
+                "stun1.l.google.com:19302".to_string(),
             ],
             enable_hole_punching: true,
             turn_servers: vec![],
@@ -2775,6 +2783,7 @@ async fn run_relay_node(
             lease_duration: std::time::Duration::from_secs(3600),
             port_range: (49152, 65535),
         },
+        external_address,
     };
 
     info!("Network will listen on: {:?}", network_config.listen_addrs);
@@ -3893,6 +3902,14 @@ async fn run_validator_node(
         }
     }
 
+    // Parse external address if configured
+    let external_address = config.network.external_address.as_ref().and_then(|addr_str| {
+        addr_str.parse().ok().map(|addr| {
+            info!("📡 External address configured: {}", addr_str);
+            addr
+        })
+    });
+
     // Create network config with discovered peers
     let network_config = dchat_network::NetworkConfig {
         listen_addrs,
@@ -3909,8 +3926,8 @@ async fn run_validator_node(
         nat: dchat_network::NatConfig {
             enable_upnp: config.network.enable_upnp,
             stun_servers: vec![
-                "stun:stun.l.google.com:19302".to_string(),
-                "stun:stun1.l.google.com:19302".to_string(),
+                "stun.l.google.com:19302".to_string(),
+                "stun1.l.google.com:19302".to_string(),
             ],
             enable_hole_punching: true, // Enable for NAT traversal
             turn_servers: vec![],
@@ -3918,6 +3935,7 @@ async fn run_validator_node(
             lease_duration: std::time::Duration::from_secs(3600),
             port_range: (49152, 65535),
         },
+        external_address,
     };
 
     // Initialize network manager with persistent keypair if available

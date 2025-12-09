@@ -26,6 +26,10 @@ pub struct NetworkConfig {
 
     /// NAT traversal configuration
     pub nat: NatConfig,
+
+    /// External/public address to announce (bypasses NAT detection)
+    /// Format: "/ip4/<public_ip>/tcp/<port>"
+    pub external_address: Option<Multiaddr>,
 }
 
 impl Default for NetworkConfig {
@@ -37,6 +41,7 @@ impl Default for NetworkConfig {
             ],
             discovery: DiscoveryConfig::default(),
             nat: NatConfig::default(),
+            external_address: None,
         }
     }
 }
@@ -111,55 +116,61 @@ impl NetworkManager {
 
     /// Start the network manager
     pub async fn start(&mut self) -> Result<()> {
-        // PRODUCTION: Perform NAT detection and establish connectivity
-        tracing::info!("🔍 Detecting NAT type and external address...");
-        
-        match self.nat.detect().await {
-            Ok((nat_type, external_addr)) => {
-                tracing::info!("✓ NAT detection complete");
-                tracing::info!("  NAT Type: {:?}", nat_type);
-                if let Some(addr) = external_addr {
-                    tracing::info!("  External Address: {}", addr);
-                }
-                
-                // Establish connectivity using best strategy for detected NAT type
-                let local_port = self.config.listen_addrs[0]
-                    .iter()
-                    .find_map(|proto| {
-                        if let libp2p::multiaddr::Protocol::Tcp(port) = proto {
-                            Some(port)
-                        } else {
-                            None
+        // Check if external address is manually configured (bypasses NAT detection)
+        if let Some(ref external_addr) = self.config.external_address {
+            tracing::info!("📡 Using manually configured external address: {}", external_addr);
+            self.swarm.add_external_address(external_addr.clone());
+        } else {
+            // PRODUCTION: Perform NAT detection and establish connectivity
+            tracing::info!("🔍 Detecting NAT type and external address...");
+            
+            match self.nat.detect().await {
+                Ok((nat_type, external_addr)) => {
+                    tracing::info!("✓ NAT detection complete");
+                    tracing::info!("  NAT Type: {:?}", nat_type);
+                    if let Some(addr) = external_addr {
+                        tracing::info!("  External Address: {}", addr);
+                    }
+                    
+                    // Establish connectivity using best strategy for detected NAT type
+                    let local_port = self.config.listen_addrs[0]
+                        .iter()
+                        .find_map(|proto| {
+                            if let libp2p::multiaddr::Protocol::Tcp(port) = proto {
+                                Some(port)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    
+                    match self.nat.establish_connectivity(local_port).await {
+                        Ok(connectivity) => {
+                            tracing::info!("✅ NAT traversal successful!");
+                            tracing::info!("  Method: {:?}", connectivity.method);
+                            tracing::info!("  External: {}", connectivity.external_addr);
+                            tracing::info!("  Local: {}", connectivity.local_addr);
+                            
+                            // Add external address to swarm for advertising
+                            let external_multiaddr = format!("/ip4/{}/tcp/{}", 
+                                connectivity.external_addr.ip(),
+                                connectivity.external_addr.port()
+                            ).parse::<Multiaddr>()
+                            .map_err(|e| Error::network(format!("Invalid external address: {}", e)))?;
+                            
+                            self.swarm.add_external_address(external_multiaddr);
                         }
-                    })
-                    .unwrap_or(0);
-                
-                match self.nat.establish_connectivity(local_port).await {
-                    Ok(connectivity) => {
-                        tracing::info!("✅ NAT traversal successful!");
-                        tracing::info!("  Method: {:?}", connectivity.method);
-                        tracing::info!("  External: {}", connectivity.external_addr);
-                        tracing::info!("  Local: {}", connectivity.local_addr);
-                        
-                        // Add external address to swarm for advertising
-                        let external_multiaddr = format!("/ip4/{}/tcp/{}", 
-                            connectivity.external_addr.ip(),
-                            connectivity.external_addr.port()
-                        ).parse::<Multiaddr>()
-                        .map_err(|e| Error::network(format!("Invalid external address: {}", e)))?;
-                        
-                        self.swarm.add_external_address(external_multiaddr);
-                    }
-                    Err(e) => {
-                        tracing::warn!("⚠️ NAT traversal failed: {}", e);
-                        tracing::warn!("  Continuing with local connectivity only");
-                        tracing::warn!("  This node may not be reachable from outside the local network");
+                        Err(e) => {
+                            tracing::warn!("⚠️ NAT traversal failed: {}", e);
+                            tracing::warn!("  Continuing with local connectivity only");
+                            tracing::warn!("  This node may not be reachable from outside the local network");
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ NAT detection failed: {}", e);
-                tracing::warn!("  Continuing without NAT traversal");
+                Err(e) => {
+                    tracing::warn!("⚠️ NAT detection failed: {}", e);
+                    tracing::warn!("  Continuing without NAT traversal");
+                }
             }
         }
         

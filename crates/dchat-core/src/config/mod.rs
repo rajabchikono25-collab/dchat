@@ -27,6 +27,10 @@ pub struct NetworkConfig {
     pub connection_timeout_ms: u64,
     pub enable_mdns: bool,
     pub enable_upnp: bool,
+    /// External/public address to announce (optional, for NAT traversal)
+    /// Format: "/ip4/<public_ip>/tcp/<port>"
+    #[serde(default)]
+    pub external_address: Option<String>,
 }
 
 /// Storage configuration
@@ -87,6 +91,7 @@ impl Default for Config {
                 connection_timeout_ms: 10000,
                 enable_mdns: true,
                 enable_upnp: true,
+                external_address: None,
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("./dchat_data"),
