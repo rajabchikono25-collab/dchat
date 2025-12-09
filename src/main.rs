@@ -3067,36 +3067,52 @@ async fn run_relay_node(
                         NetworkEvent::PeerConnected(peer) => {
                             info!("🆕 New peer joined: {}", peer);
 
-                            // Add to registry and perform handshake
-                            let multiaddr = {
-                                let net = network_arc.lock().await;
-                                net.listeners().first().cloned().unwrap_or_else(|| "/ip4/0.0.0.0/tcp/0".parse().unwrap())
-                            };
+                            // Check if peer is already registered (e.g., as a bootstrap validator)
+                            let existing_peer = peer_registry_arc.get_peer(&peer).await;
+                            
+                            if let Some(existing) = existing_peer {
+                                // Peer already registered - update last_seen and mark as connected
+                                info!("  ✓ Recognized as existing {} peer", match existing.node_type {
+                                    NodeType::Validator => "validator",
+                                    NodeType::Relay => "relay",
+                                    NodeType::Client => "client",
+                                });
+                                peer_registry_arc.update_peer_quality(&peer, 1.0).await;
+                            } else {
+                                // New peer - add to registry (default to Relay, will be updated by handshake)
+                                let multiaddr = {
+                                    let net = network_arc.lock().await;
+                                    net.listeners().first().cloned().unwrap_or_else(|| "/ip4/0.0.0.0/tcp/0".parse().unwrap())
+                                };
 
-                            let peer_info = PeerInfo {
-                                peer_id: peer,
-                                multiaddr,
-                                node_type: NodeType::Relay,
-                                geographic_region: None,
-                                last_seen: SystemTime::now(),
-                                connection_quality: 1.0,
-                                capabilities: vec![],
-                                is_bootstrap: false,
-                                rtt_ms: None,
-                                packet_loss: 0.0,
-                                jitter_ms: None,
-                                total_messages_sent: 0,
-                                total_messages_received: 0,
-                                handshake_success: false,
-                                connected_since: SystemTime::now(),
-                            };
-                            peer_registry_arc.add_peer(peer_info).await;
+                                let peer_info = PeerInfo {
+                                    peer_id: peer,
+                                    multiaddr,
+                                    node_type: NodeType::Relay,
+                                    geographic_region: None,
+                                    last_seen: SystemTime::now(),
+                                    connection_quality: 1.0,
+                                    capabilities: vec![],
+                                    is_bootstrap: false,
+                                    rtt_ms: None,
+                                    packet_loss: 0.0,
+                                    jitter_ms: None,
+                                    total_messages_sent: 0,
+                                    total_messages_received: 0,
+                                    handshake_success: false,
+                                    connected_since: SystemTime::now(),
+                                };
+                                peer_registry_arc.add_peer(peer_info).await;
+                            }
+
+                            // Determine our node type for handshake (this is relay/client path)
+                            let our_node_type = NodeType::Relay;
 
                             let _ = perform_peer_handshake(
                                 peer,
                                 &mut *network_arc.lock().await,
                                 &peer_registry_arc,
-                                NodeType::Relay,
+                                our_node_type,
                                 geographic_region.clone(),
                             ).await;
                         }
@@ -3995,6 +4011,49 @@ async fn run_validator_node(
                 };
                 peer_registry.add_bootstrap_peer(peer_info.clone()).await;
                 peer_registry.add_peer(peer_info).await;
+            }
+        }
+    }
+
+    // Also register manual bootstrap peers from config as validators
+    // This is critical when DNS discovery fails or is not configured
+    for peer_str in &config.network.bootstrap_peers {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            let multiaddr_str = multiaddr.to_string();
+            if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+                if let Ok(pid) = peer_id_part.parse::<PeerId>() {
+                    // Extract region from DNS name if present (e.g., validator.india.schikuno.top -> india)
+                    let region = multiaddr_str
+                        .split("/dns4/")
+                        .nth(1)
+                        .and_then(|s| s.split('/').next())
+                        .and_then(|domain| {
+                            // Parse "validator.india.schikuno.top" -> "india"
+                            domain.split('.').nth(1).map(|r| r.to_string())
+                        });
+                    
+                    let peer_info = PeerInfo {
+                        peer_id: pid,
+                        multiaddr: multiaddr.clone(),
+                        node_type: NodeType::Validator,
+                        geographic_region: region,
+                        last_seen: SystemTime::now(),
+                        connection_quality: 1.0,
+                        capabilities: vec!["consensus".to_string(), "block_production".to_string()],
+                        is_bootstrap: true,
+                        rtt_ms: None,
+                        packet_loss: 0.0,
+                        jitter_ms: None,
+                        total_messages_sent: 0,
+                        total_messages_received: 0,
+                        handshake_success: false,
+                        connected_since: SystemTime::now(),
+                    };
+                    let region_for_log = peer_info.geographic_region.clone();
+                    peer_registry.add_bootstrap_peer(peer_info.clone()).await;
+                    peer_registry.add_peer(peer_info).await;
+                    info!("  + Registered manual bootstrap validator: {} (region: {:?})", pid, region_for_log);
+                }
             }
         }
     }

@@ -1,0 +1,95 @@
+# dchat Mainnet Configuration - Validator 2 (South Africa)
+# Server: validator.southafrica.schikuno.top (4.221.211.71)
+# Production Config with Full Storage
+
+[network]
+listen_addresses = ["/ip4/0.0.0.0/tcp/7070", "/ip4/0.0.0.0/udp/7070/quic-v1"]
+bootstrap_peers = [
+    "/dns4/validator.india.schikuno.top/tcp/7070",
+    "/dns4/validator.uae.schikuno.top/tcp/7070",
+    "/dns4/relay.ohio.schikuno.top/tcp/7070",
+    "/dns4/relay.saopaulo.schikuno.top/tcp/7070"
+]
+max_connections = 100
+connection_timeout_ms = 30000
+enable_mdns = false
+enable_upnp = true
+enable_dht = true
+
+[storage]
+data_dir = "/opt/dchat/data"
+max_message_cache_size = 50000
+message_retention_days = 365
+enable_backup = true
+backup_interval_hours = 24
+db_pool_size = 50
+db_connection_timeout_secs = 30
+db_idle_timeout_secs = 600
+db_max_lifetime_secs = 1800
+db_enable_wal = true
+
+# Redis configuration (local + cluster)
+redis_url = "redis://127.0.0.1:6379"
+redis_cluster = [
+    "validator.india.schikuno.top:6379",
+    "validator.southafrica.schikuno.top:6379",
+    "validator.uae.schikuno.top:6379"
+]
+
+# TiKV distributed KV store (PD endpoints)
+tikv_pd_endpoints = [
+    "validator.india.schikuno.top:2379",
+    "validator.southafrica.schikuno.top:2379",
+    "validator.uae.schikuno.top:2379"
+]
+
+# MinIO object storage
+minio_endpoint = "http://127.0.0.1:9000"
+minio_bucket = "dchat-mainnet"
+minio_access_key = "dchat_admin"
+# minio_secret_key via DCHAT_MINIO_SECRET_KEY env var
+
+# CockroachDB for structured data
+cockroachdb_url = "postgresql://dchat@127.0.0.1:26257/dchat?sslmode=disable"
+cockroachdb_max_connections = 100
+
+[blockchain]
+chat_chain_id = "dchat-mainnet-1"
+chat_chain_rpc = "http://127.0.0.1:26657"
+currency_chain_id = "dchat-currency-1"
+currency_chain_rpc = "http://127.0.0.1:26658"
+
+[crypto]
+key_rotation_interval_hours = 168
+max_messages_per_key = 100000
+enable_post_quantum = true
+noise_protocol_pattern = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
+
+[governance]
+voting_period_hours = 336
+minimum_stake_for_proposal = 1000
+quorum_threshold = 0.67
+enable_anonymous_voting = true
+
+[relay]
+enable_relay = false
+max_relay_connections = 50
+relay_reward_threshold = 100
+uptime_reporting_interval_minutes = 15
+stake_amount = 5000
+
+[validator]
+enabled = true
+stake_amount = 10000
+producer = true
+
+[observability]
+metrics_enabled = true
+metrics_addr = "0.0.0.0:9090"
+health_check_addr = "0.0.0.0:8080"
+log_level = "info"
+
+[deployment]
+environment = "production"
+network_name = "dchat-foundation-mainnet"
+node_name = "validator-southafrica"

@@ -4,11 +4,10 @@
 [network]
 listen_addresses = ["/ip4/0.0.0.0/tcp/7070"]
 bootstrap_peers = [
-    "/dns4/validator.india.schikuno.top/tcp/7070",
-    "/dns4/validator.southafrica.schikuno.top/tcp/7070",
-    "/dns4/relay.ohio.schikuno.top/tcp/7070",
-    "/dns4/relay.stockholm.schikuno.top/tcp/7070",
-    "/dns4/relay.saopaulo.schikuno.top/tcp/7070"
+    "/dns4/validator.india.schikuno.top/tcp/7070/p2p/12D3KooWBGdbfRwSAAygJzT8hzC2zR4z9S78pooXZWimpZipT1Y9",
+    "/dns4/validator.southafrica.schikuno.top/tcp/7070/p2p/12D3KooWJBNA46xQpvcV4Lc3jEDSxrmoSazK1i7ejYoiShFz2H4x",
+    "/dns4/relay.ohio.schikuno.top/tcp/7070/p2p/12D3KooWC9yiCEWZpHqr7yVQgnZeQsFE8hsR5HHfsNyfgrvDn7h9",
+    "/dns4/relay.saopaulo.schikuno.top/tcp/7070/p2p/12D3KooWQFYWbmcvLvBKwYNcnbFaiQQDkwPXEV78M3byEi1hZdXw"
 ]
 max_connections = 100
 connection_timeout_ms = 30000

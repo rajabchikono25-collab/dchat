@@ -2,13 +2,10 @@
 # Server: validator.india.schikuno.top (74.225.183.196)
 
 [network]
-listen_addresses = ["/ip4/0.0.0.0/tcp/7070", "/ip4/0.0.0.0/udp/7070/quic-v1"]
+listen_addresses = ["/ip4/0.0.0.0/tcp/7070"]
 bootstrap_peers = [
-    "/dns4/validator.southafrica.schikuno.top/tcp/7070",
-    "/dns4/validator.uae.schikuno.top/tcp/7070",
-    "/dns4/relay.ohio.schikuno.top/tcp/7070",
-    "/dns4/relay.stockholm.schikuno.top/tcp/7070",
-    "/dns4/relay.saopaulo.schikuno.top/tcp/7070"
+    "/dns4/validator.southafrica.schikuno.top/tcp/7070/p2p/12D3KooWJBNA46xQpvcV4Lc3jEDSxrmoSazK1i7ejYoiShFz2H4x",
+    "/dns4/validator.uae.schikuno.top/tcp/7070/p2p/12D3KooWJ8PKzPvowJWsRJmMXe8T3fS4TsyQT6jwDwVYEiSW29TS"
 ]
 max_connections = 100
 connection_timeout_ms = 30000
