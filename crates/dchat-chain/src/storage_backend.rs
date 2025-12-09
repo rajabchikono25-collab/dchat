@@ -135,6 +135,7 @@ impl From<&Transaction> for StoredTransaction {
 /// 
 /// Provides a unified interface to store and retrieve blockchain transactions
 /// across multiple distributed storage systems for high availability.
+#[allow(dead_code)]
 #[cfg(feature = "storage-integration")]
 pub struct ChainStorageBackend {
     /// TiKV for consensus state (strong consistency)

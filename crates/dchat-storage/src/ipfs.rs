@@ -173,7 +173,7 @@ impl IpfsClient {
         // POST /api/v0/add with multipart form data
         let url = format!("{}/api/v0/add", self.config.api_url);
 
-        let form = reqwest::multipart::Form::new().part(
+        let _form = reqwest::multipart::Form::new().part(
             "file",
             reqwest::multipart::Part::bytes(data.clone())
                 .file_name(filename.clone())

@@ -3,7 +3,7 @@
 //! Brings chat chain, currency chain, and bridge online when first validator stakes and starts
 
 use dchat_core::error::{Error, Result};
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -359,6 +359,7 @@ impl BootstrapCoordinator {
     }
 
     /// Handle bootstrap failure
+    #[allow(dead_code)]
     async fn handle_failure(&self, error: &str) {
         error!("❌ Bootstrap failed: {}", error);
         self.send_event(BootstrapEvent::BootstrapFailed(error.to_string()));

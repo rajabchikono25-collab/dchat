@@ -13,7 +13,7 @@
 //! Implements Section 23 (Data Lifecycle & Storage Economics) from ARCHITECTURE-2.0.md
 
 use chrono::{DateTime, Duration, Utc};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

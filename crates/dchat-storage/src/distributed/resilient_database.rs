@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::distributed::database::{DatabaseConfig, DatabaseStats, DistributedDatabase, MessageRow};
@@ -78,6 +78,7 @@ impl Default for ResilientDatabaseConfig {
 }
 
 /// Cached message for local fallback
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedMessage {
     message: MessageRow,
@@ -85,6 +86,7 @@ struct CachedMessage {
 }
 
 /// Pending write operation
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PendingWrite {
     message: MessageRow,
@@ -94,6 +96,7 @@ struct PendingWrite {
 }
 
 /// Resilient database with fault tolerance
+#[allow(dead_code)]
 pub struct ResilientDatabase {
     /// Underlying CockroachDB connection
     inner: Option<DistributedDatabase>,

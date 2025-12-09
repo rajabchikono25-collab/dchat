@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::{StorageError, StorageResult};
 
@@ -286,6 +286,7 @@ impl Default for LocalCacheConfig {
 }
 
 /// A cached entry with metadata
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CacheEntry<T> {
     value: T,
@@ -559,6 +560,7 @@ impl RetryExecutor {
 // ============================================================================
 
 /// Fallback storage for graceful degradation
+#[allow(dead_code)]
 pub struct FallbackManager<T: Clone> {
     /// Local cache for when remote is unavailable
     local_cache: LocalCache<T>,

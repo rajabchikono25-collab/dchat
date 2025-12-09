@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::distributed::cache::{CacheConfig, CacheStats, DistributedCache};
+use crate::distributed::cache::{CacheConfig, DistributedCache};
 use crate::error::{StorageError, StorageResult};
 use crate::resilience::{
     CircuitBreaker, CircuitBreakerConfig, CircuitState, HealthMonitor, HealthMonitorConfig,
@@ -71,6 +71,7 @@ impl Default for ResilientCacheConfig {
 }
 
 /// Cached entry for local fallback
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedEntry {
     value: String,
@@ -79,6 +80,7 @@ struct CachedEntry {
 }
 
 /// Resilient cache with fault tolerance
+#[allow(dead_code)]
 pub struct ResilientCache {
     /// Underlying Redis cache (optional - may not be connected)
     inner: Option<DistributedCache>,

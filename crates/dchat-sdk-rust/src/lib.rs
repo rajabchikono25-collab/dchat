@@ -45,6 +45,7 @@ pub async fn init() -> Result<()> {
 
 /// Generate a new identity keypair
 pub fn generate_keypair() -> KeyPair {
+    #[allow(deprecated)]
     KeyPair::generate()
 }
 

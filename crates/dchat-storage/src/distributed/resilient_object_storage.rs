@@ -15,10 +15,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use crate::distributed::object_storage::{
-    DistributedObjectStorage, ObjectMetadata, ObjectStorageConfig, StorageTier,
+    DistributedObjectStorage, ObjectMetadata, ObjectStorageConfig,
 };
 use crate::error::{StorageError, StorageResult};
 use crate::resilience::{
@@ -80,6 +80,7 @@ impl Default for ResilientObjectStorageConfig {
 }
 
 /// Cached object metadata
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedObject {
     local_path: PathBuf,
@@ -89,6 +90,7 @@ struct CachedObject {
 }
 
 /// Queued upload
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct QueuedUpload {
     local_path: PathBuf,
@@ -99,6 +101,7 @@ struct QueuedUpload {
 }
 
 /// Resilient object storage with fault tolerance
+#[allow(dead_code)]
 pub struct ResilientObjectStorage {
     /// Underlying S3/MinIO storage
     inner: Option<DistributedObjectStorage>,

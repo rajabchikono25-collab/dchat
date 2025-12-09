@@ -11,7 +11,6 @@ use dchat_core::error::{Error, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use subtle::ConstantTimeEq;
 
 /// Guardian identifier (anonymous to prevent correlation)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

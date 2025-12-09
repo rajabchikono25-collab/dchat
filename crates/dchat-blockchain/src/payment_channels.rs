@@ -77,7 +77,7 @@ pub struct SignedStateUpdate {
 
 /// Helper module for Option<Vec<u8>> serialization
 mod option_bytes {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
     where

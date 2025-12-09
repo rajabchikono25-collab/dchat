@@ -14,7 +14,6 @@
 //! - Maximum daily distribution limit
 
 use chrono::{DateTime, Duration, Utc};
-use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -440,7 +439,7 @@ impl Faucet {
     ) -> std::result::Result<String, FaucetError> {
         // Check if wallet exists
         match self.currency_chain.get_wallet(recipient_id) {
-            Ok(Some(mut wallet)) => {
+            Ok(Some(wallet)) => {
                 // Wallet exists - we need to add balance
                 // Note: In production, this should go through a proper transaction
                 // For now, we create a new wallet with updated balance

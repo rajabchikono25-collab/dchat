@@ -4,12 +4,12 @@
 //! Provides load-based triggers for rebalancing: CPU >80%, memory >75%, throughput >1000 msg/s.
 
 use crate::sharding::ShardId;
-use dchat_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Message throughput tracker with rolling averages
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MessageThroughputTracker {
     shard_id: ShardId,
@@ -113,6 +113,7 @@ impl MessageThroughputTracker {
 }
 
 /// Storage size monitor with growth prediction
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StorageSizeMonitor {
     shard_id: ShardId,
@@ -213,6 +214,7 @@ impl StorageSizeMonitor {
 }
 
 /// CPU and memory usage monitor
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CpuMemoryMonitor {
     shard_id: ShardId,

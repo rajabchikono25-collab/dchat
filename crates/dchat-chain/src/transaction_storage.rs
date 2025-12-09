@@ -65,6 +65,7 @@ impl Default for TransactionStorageConfig {
 }
 
 /// Pending transaction for async writes
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PendingTransaction {
     tx: Transaction,

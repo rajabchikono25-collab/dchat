@@ -3232,6 +3232,7 @@ async fn run_user_node(
         load_identity_from_file(&path).await?
     } else {
         info!("Generating new ephemeral identity");
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         Identity::new(display_name.clone(), &keypair)
     };
@@ -3583,6 +3584,7 @@ async fn run_testnet(
     info!("Generating validator keys...");
     let mut validator_keys = Vec::new();
     for i in 0..num_validators {
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         let key_path = validators_dir.join(format!("validator_{}.key", i));
         save_validator_key(&key_path, &keypair).await?;
@@ -5055,6 +5057,7 @@ async fn generate_keys(output: PathBuf, burner: bool) -> Result<()> {
 
     if burner {
         info!("Creating burner/ephemeral identity");
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         let burner_identity = BurnerIdentity::new(&keypair, None);
         info!("✓ Burner identity created: {}", burner_identity.burner_id);
@@ -5063,6 +5066,7 @@ async fn generate_keys(output: PathBuf, burner: bool) -> Result<()> {
         save_burner_identity_unencrypted(&output, &burner_identity).await?;
     } else {
         info!("Generating permanent identity...");
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         let identity = Identity::new("user".to_string(), &keypair);
         info!("✓ Identity created: {}", identity.user_id);
@@ -8191,6 +8195,7 @@ async fn run_wallet_command(_config: Config, action: WalletCommand) -> Result<()
             println!("💰 Creating new wallet: {}", name);
 
             // Generate new keypair for wallet
+            #[allow(deprecated)]
             let keypair = KeyPair::generate();
             let public_key = keypair.public_key();
             let user_id = UserId(Uuid::new_v4());

@@ -9,12 +9,12 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::distributed::tikv_backend::{BlockMetadata, ChainState, TiKVConfig, TiKVStorage};
 use crate::error::{StorageError, StorageResult};
 use crate::resilience::{
-    BackendHealth, CircuitBreaker, CircuitBreakerConfig, CircuitState, FallbackManager,
+    BackendHealth, CircuitBreaker, CircuitBreakerConfig, CircuitState,
     HealthMonitor, HealthMonitorConfig, HealthStatus, LocalCache, LocalCacheConfig,
     RetryConfig, RetryExecutor,
 };
@@ -71,6 +71,7 @@ impl Default for ResilientTiKVConfig {
 }
 
 /// Cached chain state with serialization support
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedChainState {
     state: ChainState,
@@ -78,6 +79,7 @@ struct CachedChainState {
 }
 
 /// Cached block metadata
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CachedBlockMetadata {
     metadata: BlockMetadata,
@@ -85,6 +87,7 @@ struct CachedBlockMetadata {
 }
 
 /// Resilient TiKV storage with fault tolerance
+#[allow(dead_code)]
 pub struct ResilientTiKVStorage {
     /// Underlying TiKV storage (wrapped in Option for initialization)
     inner: Option<TiKVStorage>,

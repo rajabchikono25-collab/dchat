@@ -11,7 +11,7 @@ use crate::sharding::{ChannelId, ShardId};
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Default chunk size for streaming transfer (10 MB)
 const CHUNK_SIZE_BYTES: usize = 10 * 1024 * 1024;
@@ -328,6 +328,7 @@ impl TransferStats {
 }
 
 /// Streaming transfer manager
+#[allow(dead_code)]
 pub struct StreamingTransfer {
     chunk_size: usize,
     num_parallel_streams: usize,

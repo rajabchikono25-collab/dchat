@@ -433,6 +433,7 @@ impl SyncManager {
     }
 
     /// Check if two sync messages are conflicting
+    #[allow(dead_code)]
     fn is_conflicting(&self, a: &SyncMessage, b: &SyncMessage) -> bool {
         // Same message type and concurrent (neither causally before the other)
         std::mem::discriminant(&a.message_type) == std::mem::discriminant(&b.message_type)
@@ -440,6 +441,7 @@ impl SyncManager {
     }
 
     /// Resolve a conflict between two sync messages
+    #[allow(dead_code)]
     fn resolve_conflict(&self, a: &SyncMessage, b: &SyncMessage) -> Option<SyncMessage> {
         // Convert SyncMessage to SyncUpdate for resolution
         let update_a = SyncUpdate {
@@ -471,6 +473,7 @@ impl SyncManager {
     }
 
     /// Convert SyncMessage to SyncData for conflict resolution
+    #[allow(dead_code)]
     fn message_to_sync_data(&self, message: &SyncMessage) -> SyncData {
         // Decode the sync payload from encrypted_payload
         // The payload format is: type_byte + payload_data

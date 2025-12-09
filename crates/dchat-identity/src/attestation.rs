@@ -275,11 +275,11 @@ impl AttestationVerifier {
         // clientDataJSON = { challenge: base64(challenge) }
         use base64::{Engine as _, engine::general_purpose};
         let client_data = format!(r#"{{"challenge":"{}"}}"#, general_purpose::STANDARD.encode(challenge));
-        let client_data_hash = Sha256::digest(client_data.as_bytes());
+        let _client_data_hash = Sha256::digest(client_data.as_bytes());
         
         let mut nonce_input = auth_data.to_vec();
-        nonce_input.extend_from_slice(&client_data_hash);
-        let expected_nonce = Sha256::digest(&nonce_input);
+        nonce_input.extend_from_slice(&_client_data_hash);
+        let _expected_nonce = Sha256::digest(&nonce_input);
         
         // 8. Verify nonce is in leaf certificate extension (OID 1.2.840.113635.100.8.2)
         // Production: Parse leaf certificate and extract extension
@@ -492,7 +492,7 @@ impl AttestationVerifier {
         }
         
         // 4. Compute clientDataHash
-        let client_data_hash = Sha256::digest(&data.client_data_json);
+        let _client_data_hash = Sha256::digest(&data.client_data_json);
         
         // 5. Parse attestationObject (CBOR)
         let attestation: ciborium::Value = ciborium::from_reader(&data.attestation_object[..])
@@ -609,7 +609,7 @@ pub fn verify_device_attestation(attestation: &str) -> Result<AttestationResult>
 /// 
 /// SECURITY: In release builds, simulated attestation is NEVER accepted.
 #[cfg(not(debug_assertions))]
-pub fn verify_device_attestation(attestation: &str) -> Result<AttestationResult> {
+pub fn verify_device_attestation(_attestation: &str) -> Result<AttestationResult> {
     // In release builds, reject ALL legacy attestation formats
     // Production clients MUST use platform-specific attestation (iOS App Attest, Play Integrity, etc.)
     Err(Error::unauthenticated(

@@ -214,6 +214,7 @@ impl ShardLoad {
 }
 
 /// Rebalancing scheduler
+#[allow(dead_code)]
 pub struct RebalancingScheduler {
     /// Current hash ring
     hash_ring: ConsistentHashRing,
@@ -366,7 +367,7 @@ impl RebalancingScheduler {
         let mut migrations = Vec::new();
 
         // Build load map
-        let load_map: HashMap<ShardId, f64> = shard_loads
+        let _load_map: HashMap<ShardId, f64> = shard_loads
             .iter()
             .map(|s| (s.shard_id.clone(), s.load_score()))
             .collect();

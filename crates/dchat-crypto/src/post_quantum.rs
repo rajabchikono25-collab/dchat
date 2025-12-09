@@ -284,6 +284,7 @@ pub struct HybridSigner {
 impl HybridSigner {
     /// Create a new hybrid signer
     pub fn new() -> Self {
+        #[allow(deprecated)]
         let classical_key = crate::keys::PrivateKey::generate();
         let (pq_public, pq_key) = falcon::keypair();
 

@@ -209,6 +209,7 @@ pub enum NullifierType {
 }
 
 /// Guardian registration stored on-chain
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct GuardianRegistration {
     guardian_id: String,
@@ -219,6 +220,7 @@ struct GuardianRegistration {
 }
 
 /// Recovery request state on-chain
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct RecoveryRequestState {
     identity_id: String,
@@ -232,6 +234,7 @@ struct RecoveryRequestState {
 }
 
 /// On-chain recovery status
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum OnChainRecoveryStatus {
     Pending,  // Waiting for timelock
@@ -432,7 +435,7 @@ impl GuardianChainState {
     }
 
     /// Process recovery initiation transaction
-    pub fn initiate_recovery(&mut self, tx: InitiateRecoveryTx, block_height: u64) -> Result<()> {
+    pub fn initiate_recovery(&mut self, tx: InitiateRecoveryTx, _block_height: u64) -> Result<()> {
         // Compute recovery nullifier to prevent duplicate requests
         let recovery_nullifier = {
             let mut hasher = Hasher::new();
@@ -641,6 +644,7 @@ impl GuardianChainState {
         guardian_id: &str,
     ) -> Result<()> {
         use dchat_privacy::zk_proofs::{ContactProof, ZkVerifier, Groth16Keys};
+        #[allow(unused_imports)]
         use dchat_core::UserId;
         use once_cell::sync::Lazy;
         
@@ -723,6 +727,7 @@ impl GuardianChainState {
     }
 
     /// Create recovery message for guardian signing
+    #[allow(dead_code)]
     fn create_recovery_message(&self, request: &RecoveryRequestState) -> Result<Vec<u8>> {
         let message = format!(
             "RECOVERY:{}:{}:{}",

@@ -36,6 +36,7 @@
 
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "captcha")]
 use std::time::Duration;
 
 // =============================================================================
@@ -193,6 +194,7 @@ impl CaptchaVerificationResult {
 // =============================================================================
 
 /// hCaptcha verification response
+#[cfg(feature = "captcha")]
 #[derive(Debug, Deserialize)]
 struct HCaptchaResponse {
     success: bool,
@@ -259,6 +261,7 @@ async fn verify_hcaptcha(
 // =============================================================================
 
 /// Turnstile verification response
+#[cfg(feature = "captcha")]
 #[derive(Debug, Deserialize)]
 struct TurnstileResponse {
     success: bool,

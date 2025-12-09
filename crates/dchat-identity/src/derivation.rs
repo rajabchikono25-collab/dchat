@@ -193,7 +193,6 @@ impl Drop for DerivedKeys {
     fn drop(&mut self) {
         // Securely zero key material from memory
         // Note: KeyPair should also implement zeroize internally
-        use zeroize::Zeroize;
         // The actual zeroization happens in KeyPair's Drop implementation
         // This ensures keys don't linger in memory after use
     }

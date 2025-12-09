@@ -122,6 +122,7 @@ impl UserManager {
         info!("Creating new user: {}", username);
 
         // Generate new keypair
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         let public_key_bytes = keypair.public_key().as_bytes();
         let public_key_hex = hex::encode(public_key_bytes);

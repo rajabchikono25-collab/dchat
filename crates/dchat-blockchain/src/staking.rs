@@ -389,6 +389,7 @@ impl ClaimReceipt {
 }
 
 /// Staking manager for validator stake lifecycle
+#[allow(dead_code)]
 pub struct StakingManager {
     /// Active validator stakes (validator_id -> stake)
     validators: Arc<RwLock<HashMap<UserId, ValidatorStake>>>,
@@ -682,7 +683,7 @@ impl StakingManager {
         }
 
         // PRODUCTION: Lock additional tokens on currency chain
-        let currency_chain_tx_id = if let Some(ref currency_chain) = self.currency_chain {
+        let _currency_chain_tx_id = if let Some(ref currency_chain) = self.currency_chain {
             let tx_id = currency_chain.stake(validator_id, additional_amount, UNSTAKE_COOLDOWN_SECONDS)?;
             tracing::info!(
                 "Currency chain additional stake transaction: {} for {} tokens",

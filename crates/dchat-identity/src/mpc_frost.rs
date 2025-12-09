@@ -194,6 +194,7 @@ pub struct FrostCoordinator {
 }
 
 /// State for an active FROST signing session
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FrostSigningSession {
     session_id: String,
@@ -204,6 +205,7 @@ struct FrostSigningSession {
     status: SessionStatus,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionStatus {
     WaitingForRound1,

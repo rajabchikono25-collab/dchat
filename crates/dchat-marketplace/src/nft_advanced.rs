@@ -566,7 +566,7 @@ impl AdvancedNftManager {
         }
 
         // Get collection trait schema if available
-        let trait_weights = if let Some(coll_id) = nft.collection_id {
+        let _trait_weights = if let Some(coll_id) = nft.collection_id {
             self.collections.get(&coll_id)
                 .map(|c| &c.traits_schema)
         } else {

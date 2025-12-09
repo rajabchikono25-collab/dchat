@@ -89,6 +89,7 @@ impl DchatBehaviour {
     /// Create a new behaviour
     pub fn new(local_peer_id: PeerId) -> Self {
         // Configure Kademlia
+        #[allow(deprecated)]
         let mut kad_config = KademliaConfig::default();
         kad_config.set_query_timeout(Duration::from_secs(60));
         kad_config.set_replication_factor(std::num::NonZeroUsize::new(20).unwrap());
@@ -364,7 +365,7 @@ async fn run_network_loop(
                     }
                     
                     NetworkCommand::FindPeers { key, response } => {
-                        let record_key = kad::RecordKey::new(&key);
+                        let _record_key = kad::RecordKey::new(&key);
                         let query_id = swarm.behaviour_mut().kademlia.get_closest_peers(PeerId::random());
                         pending_queries.insert(query_id, response);
                     }

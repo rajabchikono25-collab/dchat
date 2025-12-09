@@ -31,6 +31,7 @@ impl Client {
 
     /// Create a client with custom configuration
     pub async fn with_config(config: ClientConfig) -> Result<Self> {
+        #[allow(deprecated)]
         let keypair = KeyPair::generate();
         let identity = Identity::new(config.name.clone(), &keypair);
 
