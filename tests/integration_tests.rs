@@ -22,8 +22,10 @@ async fn test_full_message_flow() {
     identity_manager.register_identity(bob_identity).unwrap();
 
     // Create a message
+    let sender_id = alice_id.clone();
+    let recipient_id = bob_id.clone();
     let message = MessageBuilder::new()
-        .direct(alice_id, bob_id)
+        .direct(sender_id, recipient_id.clone())
         .content(MessageContent::Text("Hello Bob!".to_string()))
         .encrypted_payload(vec![1, 2, 3, 4])
         .build()
@@ -43,9 +45,12 @@ async fn test_full_message_flow() {
     let proof = DeliveryProof {
         message_id: message.id,
         relay_peer_id: "relay-1".to_string(),
+        recipient_id: recipient_id.clone(),
+        content_hash: String::new(), // Empty for backwards compat
         recipient_signature: Some(Signature::new(vec![4, 5, 6])),
         timestamp: std::time::SystemTime::now(),
         chain_tx_hash: None,
+        reward_amount: 10_000,
     };
     delivery_tracker.store_proof(proof);
 
@@ -100,6 +105,7 @@ async fn test_multi_device_sync() {
         message_type: dchat_identity::sync::SyncMessageType::IdentityUpdate,
         encrypted_payload: vec![1, 2, 3],
         timestamp: chrono::Utc::now(),
+        vector_clock: dchat_identity::sync::VectorClock::default(),
     };
 
     sync_manager.add_sync_message(sync_msg.clone()).unwrap();

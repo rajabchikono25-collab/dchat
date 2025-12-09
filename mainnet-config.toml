@@ -1,0 +1,77 @@
+# DChat Mainnet Configuration
+# This file configures the mainnet deployment for foundation servers
+
+# Chain Configuration
+chain_id = "dchat-mainnet-1"
+currency_chain_rpc = "http://localhost:26657"
+chat_chain_rpc = "http://localhost:26658"
+initial_supply = 1000000000  # 1 billion tokens
+
+# Foundation Servers
+# These are the initial validators and relays for mainnet launch
+# Each server needs to be funded with stake from genesis allocation
+
+[[foundation_servers]]
+name = "validator-india"
+dns = "validator.india.schikuno.top"
+ip = "74.225.183.196"
+node_type = "validator"
+stake = 10000000  # 10M tokens
+port = 7070
+
+[[foundation_servers]]
+name = "validator-southafrica"
+dns = "validator.southafrica.schikuno.top"
+ip = "4.221.211.71"
+node_type = "validator"
+stake = 10000000
+port = 7070
+
+[[foundation_servers]]
+name = "validator-uae"
+dns = "validator.uae.schikuno.top"
+ip = "4.161.34.228"
+node_type = "validator"
+stake = 10000000
+port = 7070
+
+[[foundation_servers]]
+name = "relay-ohio"
+dns = "relay.ohio.schikuno.top"
+ip = "18.223.119.189"
+node_type = "relay"
+stake = 1000000  # 1M tokens
+port = 7070
+
+[[foundation_servers]]
+name = "relay-saopaulo"
+dns = "relay.saopaulo.schikuno.top"
+ip = "18.231.117.182"
+node_type = "relay"
+stake = 1000000
+port = 7070
+
+[[foundation_servers]]
+name = "relay-stockholm"
+dns = "relay.stockholm.schikuno.top"
+ip = "13.50.105.166"
+node_type = "relay"
+stake = 1000000
+port = 7070
+
+[[foundation_servers]]
+name = "user-singapore"
+dns = "user.singapore.schikuno.top"
+ip = "18.140.247.242"
+node_type = "user"
+stake = 0
+port = 7070
+
+# Pool Configuration
+# Initial token allocation for protocol pools
+[pools]
+staking_initial = 300000000    # 30% - Validator/Relay staking rewards
+rewards_initial = 200000000    # 20% - User and delivery rewards
+liquidity_initial = 100000000  # 10% - Exchange liquidity
+foundation_initial = 200000000 # 20% - Foundation treasury
+# Remaining 20% distributed to validators as initial stake

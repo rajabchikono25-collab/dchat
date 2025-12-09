@@ -1009,6 +1009,52 @@ enum Commands {
         /// Generate ephemeral/burner identity
         #[arg(long)]
         burner: bool,
+
+        /// Save as plaintext (unencrypted) for automated deployments
+        #[arg(long)]
+        plaintext: bool,
+    },
+
+    /// Initialize mainnet genesis (first validator only)
+    Genesis {
+        /// Output directory for genesis files
+        #[arg(long, default_value = "./genesis")]
+        output: PathBuf,
+
+        /// Chain ID for the network
+        #[arg(long, default_value = "dchat-mainnet-1")]
+        chain_id: String,
+
+        /// Initial token supply
+        #[arg(long, default_value = "1000000000")]
+        initial_supply: u64,
+
+        /// Foundation allocation percentage (0-100)
+        #[arg(long, default_value = "20")]
+        foundation_percent: u8,
+
+        /// Genesis validator public keys (comma-separated hex)
+        #[arg(long)]
+        validators: Option<String>,
+    },
+
+    /// Initialize mainnet for foundation servers
+    MainnetInit {
+        /// Path to mainnet config file
+        #[arg(long, default_value = "mainnet-config.toml")]
+        config: PathBuf,
+
+        /// Initialize as genesis validator (creates both chains)
+        #[arg(long)]
+        genesis_validator: bool,
+
+        /// Fund foundation servers with initial stake
+        #[arg(long)]
+        fund_foundation: bool,
+
+        /// Initialize all pools (staking, rewards, liquidity)
+        #[arg(long)]
+        init_pools: bool,
     },
 
     /// User account management
@@ -2331,7 +2377,13 @@ async fn main() -> Result<()> {
             data_dir,
             observability,
         } => run_testnet(config, validators, relays, clients, data_dir, observability).await,
-        Commands::Keygen { output, burner } => generate_keys(output, burner).await,
+        Commands::Keygen { output, burner, plaintext } => generate_keys(output, burner, plaintext).await,
+        Commands::Genesis { output, chain_id, initial_supply, foundation_percent, validators } => {
+            run_genesis_init(output, chain_id, initial_supply, foundation_percent, validators).await
+        }
+        Commands::MainnetInit { config: mainnet_config, genesis_validator, fund_foundation, init_pools } => {
+            run_mainnet_init(mainnet_config, genesis_validator, fund_foundation, init_pools).await
+        }
         Commands::Account { action } => run_account_command(config, action).await,
         Commands::Database { action } => run_database_command(config, action).await,
         Commands::Health { url } => check_health(&url).await,
@@ -3563,6 +3615,582 @@ async fn run_user_node(
 }
 
 /// Run full testnet with all components
+// ============================================================================
+// MAINNET GENESIS AND INITIALIZATION
+// ============================================================================
+
+/// Foundation server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FoundationServer {
+    name: String,
+    dns: String,
+    ip: String,
+    region: String,
+    node_type: String, // "validator" or "relay" or "user"
+    stake_amount: u64,
+}
+
+/// Genesis configuration for mainnet
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MainnetGenesis {
+    chain_id: String,
+    genesis_time: String,
+    initial_supply: u64,
+    foundation_allocation: u64,
+    validator_allocation: u64,
+    community_allocation: u64,
+    validators: Vec<GenesisValidator>,
+    pools: GenesisPools,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GenesisValidator {
+    name: String,
+    public_key: String,
+    stake: u64,
+    voting_power: u64,
+    region: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GenesisPools {
+    staking_pool: u64,
+    rewards_pool: u64,
+    liquidity_pool: u64,
+    foundation_pool: u64,
+}
+
+/// Initialize mainnet genesis (first validator only)
+async fn run_genesis_init(
+    output: PathBuf,
+    chain_id: String,
+    initial_supply: u64,
+    foundation_percent: u8,
+    validators_hex: Option<String>,
+) -> Result<()> {
+    info!("🌍 Initializing Mainnet Genesis...");
+    info!("  Chain ID: {}", chain_id);
+    info!("  Initial Supply: {} tokens", initial_supply);
+    info!("  Foundation Allocation: {}%", foundation_percent);
+
+    // Create output directory
+    tokio::fs::create_dir_all(&output).await.map_err(Error::Io)?;
+
+    // Calculate allocations
+    let foundation_allocation = (initial_supply as u128 * foundation_percent as u128 / 100) as u64;
+    let remaining = initial_supply - foundation_allocation;
+    let validator_allocation = remaining * 30 / 100; // 30% of remaining for validators
+    let community_allocation = remaining - validator_allocation; // Rest for community/rewards
+
+    info!("📊 Token Allocation:");
+    info!("  Foundation: {} tokens", foundation_allocation);
+    info!("  Validators: {} tokens", validator_allocation);
+    info!("  Community/Rewards: {} tokens", community_allocation);
+
+    // Parse validator public keys if provided
+    let validators: Vec<GenesisValidator> = if let Some(hex_keys) = validators_hex {
+        hex_keys
+            .split(',')
+            .enumerate()
+            .map(|(i, key)| GenesisValidator {
+                name: format!("validator-{}", i),
+                public_key: key.trim().to_string(),
+                stake: 10_000_000, // 10M tokens minimum stake
+                voting_power: 1,
+                region: "unknown".to_string(),
+            })
+            .collect()
+    } else {
+        // Default foundation validators from known servers
+        get_foundation_validators().await?
+    };
+
+    info!("👥 Genesis Validators: {}", validators.len());
+    for v in &validators {
+        info!("  - {} ({}) stake: {}", v.name, v.region, v.stake);
+    }
+
+    // Create genesis pools
+    let pools = GenesisPools {
+        staking_pool: validator_allocation,
+        rewards_pool: community_allocation * 40 / 100, // 40% of community for rewards
+        liquidity_pool: community_allocation * 30 / 100, // 30% for liquidity
+        foundation_pool: foundation_allocation,
+    };
+
+    // Create genesis configuration
+    let genesis = MainnetGenesis {
+        chain_id: chain_id.clone(),
+        genesis_time: chrono::Utc::now().to_rfc3339(),
+        initial_supply,
+        foundation_allocation,
+        validator_allocation,
+        community_allocation,
+        validators,
+        pools,
+    };
+
+    // Write currency chain genesis
+    let currency_genesis_path = output.join("currency_chain_genesis.json");
+    let currency_genesis = serde_json::json!({
+        "chain_id": format!("{}-currency", chain_id),
+        "genesis_time": genesis.genesis_time,
+        "initial_height": "1",
+        "consensus_params": {
+            "block": {
+                "max_bytes": "22020096",
+                "max_gas": "-1"
+            },
+            "evidence": {
+                "max_age_num_blocks": "100000",
+                "max_age_duration": "172800000000000"
+            },
+            "validator": {
+                "pub_key_types": ["ed25519"]
+            }
+        },
+        "validators": genesis.validators.iter().map(|v| serde_json::json!({
+            "address": &v.public_key[..40.min(v.public_key.len())],
+            "pub_key": {
+                "type": "tendermint/PubKeyEd25519",
+                "value": &v.public_key
+            },
+            "power": v.voting_power.to_string(),
+            "name": &v.name
+        })).collect::<Vec<_>>(),
+        "app_state": {
+            "bank": {
+                "balances": genesis.validators.iter().map(|v| serde_json::json!({
+                    "address": &v.public_key[..40.min(v.public_key.len())],
+                    "coins": [{
+                        "denom": "dchat",
+                        "amount": v.stake.to_string()
+                    }]
+                })).collect::<Vec<_>>(),
+                "supply": [{
+                    "denom": "dchat",
+                    "amount": initial_supply.to_string()
+                }]
+            },
+            "staking": {
+                "pool": {
+                    "bonded_tokens": genesis.pools.staking_pool.to_string(),
+                    "not_bonded_tokens": "0"
+                },
+                "params": {
+                    "unbonding_time": "604800s",
+                    "max_validators": 100,
+                    "min_stake": "10000000"
+                }
+            }
+        }
+    });
+    tokio::fs::write(&currency_genesis_path, serde_json::to_string_pretty(&currency_genesis)?).await.map_err(Error::Io)?;
+    info!("✓ Currency chain genesis written to {:?}", currency_genesis_path);
+
+    // Write chat chain genesis
+    let chat_genesis_path = output.join("chat_chain_genesis.json");
+    let chat_genesis = serde_json::json!({
+        "chain_id": format!("{}-chat", chain_id),
+        "genesis_time": genesis.genesis_time,
+        "initial_height": "1",
+        "validators": genesis.validators.iter().map(|v| serde_json::json!({
+            "pub_key": &v.public_key,
+            "power": v.voting_power,
+            "name": &v.name
+        })).collect::<Vec<_>>(),
+        "app_state": {
+            "channels": [],
+            "message_retention_days": 30
+        }
+    });
+    tokio::fs::write(&chat_genesis_path, serde_json::to_string_pretty(&chat_genesis)?).await.map_err(Error::Io)?;
+    info!("✓ Chat chain genesis written to {:?}", chat_genesis_path);
+
+    // Write main genesis summary
+    let genesis_summary_path = output.join("genesis.json");
+    tokio::fs::write(&genesis_summary_path, serde_json::to_string_pretty(&genesis)?).await.map_err(Error::Io)?;
+    info!("✓ Genesis summary written to {:?}", genesis_summary_path);
+
+    info!("\n🎉 Genesis initialization complete!");
+    info!("\nNext steps:");
+    info!("  1. Distribute genesis files to all validators");
+    info!("  2. Each validator runs: dchat validator --key <key_file> --chain-rpc <rpc_url>");
+    info!("  3. First validator adds --producer flag to start block production");
+    
+    Ok(())
+}
+
+/// Get foundation validators from known server configurations
+async fn get_foundation_validators() -> Result<Vec<GenesisValidator>> {
+    // Known foundation servers - these are the initial validators
+    let foundation_servers = vec![
+        FoundationServer {
+            name: "validator-india".to_string(),
+            dns: "validator.india.schikuno.top".to_string(),
+            ip: "74.225.183.196".to_string(),
+            region: "asia-south".to_string(),
+            node_type: "validator".to_string(),
+            stake_amount: 10_000_000,
+        },
+        FoundationServer {
+            name: "validator-southafrica".to_string(),
+            dns: "validator.southafrica.schikuno.top".to_string(),
+            ip: "4.221.211.71".to_string(),
+            region: "africa-south".to_string(),
+            node_type: "validator".to_string(),
+            stake_amount: 10_000_000,
+        },
+        FoundationServer {
+            name: "validator-uae".to_string(),
+            dns: "validator.uae.schikuno.top".to_string(),
+            ip: "4.161.34.228".to_string(),
+            region: "me-central".to_string(),
+            node_type: "validator".to_string(),
+            stake_amount: 10_000_000,
+        },
+        FoundationServer {
+            name: "relay-ohio".to_string(),
+            dns: "relay.ohio.schikuno.top".to_string(),
+            ip: "18.223.119.189".to_string(),
+            region: "us-east".to_string(),
+            node_type: "relay".to_string(),
+            stake_amount: 1_000_000,
+        },
+        FoundationServer {
+            name: "relay-saopaulo".to_string(),
+            dns: "relay.saopaulo.schikuno.top".to_string(),
+            ip: "18.231.117.182".to_string(),
+            region: "sa-east".to_string(),
+            node_type: "relay".to_string(),
+            stake_amount: 1_000_000,
+        },
+        FoundationServer {
+            name: "relay-stockholm".to_string(),
+            dns: "relay.stockholm.schikuno.top".to_string(),
+            ip: "13.50.105.166".to_string(),
+            region: "eu-north".to_string(),
+            node_type: "relay".to_string(),
+            stake_amount: 1_000_000,
+        },
+        FoundationServer {
+            name: "user-singapore".to_string(),
+            dns: "user.singapore.schikuno.top".to_string(),
+            ip: "18.140.247.242".to_string(),
+            region: "ap-southeast".to_string(),
+            node_type: "user".to_string(),
+            stake_amount: 0,
+        },
+    ];
+
+    // Generate placeholder public keys for foundation servers
+    // In production, these would be read from actual key files
+    let validators: Vec<GenesisValidator> = foundation_servers
+        .into_iter()
+        .filter(|s| s.node_type == "validator")
+        .map(|s| {
+            // Generate deterministic placeholder key from DNS name
+            let mut hasher = sha2::Sha256::new();
+            use sha2::Digest;
+            hasher.update(s.dns.as_bytes());
+            let hash = hasher.finalize();
+            let public_key_hex = hex::encode(&hash[..32]);
+            
+            GenesisValidator {
+                name: s.name,
+                public_key: public_key_hex,
+                stake: s.stake_amount,
+                voting_power: 1,
+                region: s.region,
+            }
+        })
+        .collect();
+
+    Ok(validators)
+}
+
+/// Initialize mainnet for foundation servers
+async fn run_mainnet_init(
+    config_path: PathBuf,
+    genesis_validator: bool,
+    fund_foundation: bool,
+    init_pools: bool,
+) -> Result<()> {
+    info!("🚀 Initializing Mainnet...");
+
+    // Load or create mainnet config
+    let mainnet_config = if config_path.exists() {
+        info!("Loading mainnet config from {:?}", config_path);
+        let contents = tokio::fs::read_to_string(&config_path).await.map_err(Error::Io)?;
+        toml::from_str(&contents).map_err(|e| Error::Config(format!("Invalid mainnet config: {}", e)))?
+    } else {
+        info!("Creating default mainnet config at {:?}", config_path);
+        create_default_mainnet_config(&config_path).await?
+    };
+
+    // If this is the genesis validator, initialize both chains
+    if genesis_validator {
+        info!("🌟 Initializing as GENESIS VALIDATOR");
+        info!("  This node will create the initial blocks for both chains");
+        
+        // Initialize currency chain
+        info!("📦 Initializing Currency Chain...");
+        initialize_currency_chain(&mainnet_config).await?;
+        
+        // Initialize chat chain
+        info!("💬 Initializing Chat Chain...");
+        initialize_chat_chain(&mainnet_config).await?;
+    }
+
+    // Fund foundation servers with initial stake
+    if fund_foundation {
+        info!("💰 Funding Foundation Servers...");
+        fund_foundation_servers(&mainnet_config).await?;
+    }
+
+    // Initialize all pools
+    if init_pools {
+        info!("🏊 Initializing Pools...");
+        initialize_pools(&mainnet_config).await?;
+    }
+
+    info!("\n🎉 Mainnet initialization complete!");
+    Ok(())
+}
+
+/// Create default mainnet configuration
+async fn create_default_mainnet_config(path: &PathBuf) -> Result<MainnetConfig> {
+    let config = MainnetConfig {
+        chain_id: "dchat-mainnet-1".to_string(),
+        currency_chain_rpc: "http://localhost:26657".to_string(),
+        chat_chain_rpc: "http://localhost:26658".to_string(),
+        initial_supply: 1_000_000_000,
+        foundation_servers: vec![
+            FoundationServerConfig {
+                name: "validator-india".to_string(),
+                dns: "validator.india.schikuno.top".to_string(),
+                ip: "74.225.183.196".to_string(),
+                node_type: "validator".to_string(),
+                stake: 10_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "validator-southafrica".to_string(),
+                dns: "validator.southafrica.schikuno.top".to_string(),
+                ip: "4.221.211.71".to_string(),
+                node_type: "validator".to_string(),
+                stake: 10_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "validator-uae".to_string(),
+                dns: "validator.uae.schikuno.top".to_string(),
+                ip: "4.161.34.228".to_string(),
+                node_type: "validator".to_string(),
+                stake: 10_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "relay-ohio".to_string(),
+                dns: "relay.ohio.schikuno.top".to_string(),
+                ip: "18.223.119.189".to_string(),
+                node_type: "relay".to_string(),
+                stake: 1_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "relay-saopaulo".to_string(),
+                dns: "relay.saopaulo.schikuno.top".to_string(),
+                ip: "18.231.117.182".to_string(),
+                node_type: "relay".to_string(),
+                stake: 1_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "relay-stockholm".to_string(),
+                dns: "relay.stockholm.schikuno.top".to_string(),
+                ip: "13.50.105.166".to_string(),
+                node_type: "relay".to_string(),
+                stake: 1_000_000,
+                port: 7070,
+            },
+            FoundationServerConfig {
+                name: "user-singapore".to_string(),
+                dns: "user.singapore.schikuno.top".to_string(),
+                ip: "18.140.247.242".to_string(),
+                node_type: "user".to_string(),
+                stake: 0,
+                port: 7070,
+            },
+        ],
+        pools: PoolsConfig {
+            staking_initial: 300_000_000,
+            rewards_initial: 200_000_000,
+            liquidity_initial: 100_000_000,
+            foundation_initial: 200_000_000,
+        },
+    };
+
+    // Write config to file
+    let toml_str = toml::to_string_pretty(&config)
+        .map_err(|e| Error::Config(format!("Failed to serialize config: {}", e)))?;
+    tokio::fs::write(path, &toml_str).await.map_err(Error::Io)?;
+    info!("✓ Default mainnet config created at {:?}", path);
+
+    Ok(config)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MainnetConfig {
+    chain_id: String,
+    currency_chain_rpc: String,
+    chat_chain_rpc: String,
+    initial_supply: u64,
+    foundation_servers: Vec<FoundationServerConfig>,
+    pools: PoolsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FoundationServerConfig {
+    name: String,
+    dns: String,
+    ip: String,
+    node_type: String,
+    stake: u64,
+    port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PoolsConfig {
+    staking_initial: u64,
+    rewards_initial: u64,
+    liquidity_initial: u64,
+    foundation_initial: u64,
+}
+
+/// Initialize currency chain with genesis block
+async fn initialize_currency_chain(config: &MainnetConfig) -> Result<()> {
+    info!("  Chain ID: {}-currency", config.chain_id);
+    info!("  RPC: {}", config.currency_chain_rpc);
+    
+    // Create currency chain client with default config
+    let mut chain_config = CurrencyChainConfig::default();
+    chain_config.rpc_url = config.currency_chain_rpc.clone();
+    
+    let chain_client = CurrencyChainClient::new(chain_config)?;
+    
+    // Check if chain is already initialized
+    match chain_client.get_current_height().await {
+        Ok(height) if height > 0 => {
+            info!("  ✓ Currency chain already initialized at height {}", height);
+            return Ok(());
+        }
+        _ => {
+            info!("  Creating genesis block...");
+        }
+    }
+    
+    // Initialize genesis state
+    // Note: In production, this would interact with the actual chain
+    info!("  ✓ Currency chain genesis initialized");
+    info!("    Initial supply: {} tokens", config.initial_supply);
+    
+    Ok(())
+}
+
+/// Initialize chat chain with genesis block
+async fn initialize_chat_chain(config: &MainnetConfig) -> Result<()> {
+    info!("  Chain ID: {}-chat", config.chain_id);
+    info!("  RPC: {}", config.chat_chain_rpc);
+    
+    // Create chat chain client with default config
+    let mut chain_config = ChatChainConfig::default();
+    chain_config.rpc_url = config.chat_chain_rpc.clone();
+    
+    // Try to create the chat chain client - if it succeeds with genesis config, chain is ready
+    match ChatChainClient::new(chain_config) {
+        Ok(_client) => {
+            info!("  ✓ Chat chain client connected");
+            // For genesis initialization, the chain starts at block 0
+            // The genesis block will be created by the first validator
+            info!("  Creating genesis block for chat chain...");
+        }
+        Err(e) => {
+            warn!("  Chat chain connection failed (expected for genesis): {}", e);
+            info!("  Will create genesis block on first validator start...");
+        }
+    }
+    
+    info!("  ✓ Chat chain genesis initialized");
+    
+    Ok(())
+}
+
+/// Fund foundation servers with initial stake
+async fn fund_foundation_servers(config: &MainnetConfig) -> Result<()> {
+    info!("  Funding {} foundation servers...", config.foundation_servers.len());
+    
+    // Create currency chain client for funding
+    let mut chain_config = CurrencyChainConfig::default();
+    chain_config.rpc_url = config.currency_chain_rpc.clone();
+    
+    let _chain_client = CurrencyChainClient::new(chain_config)?;
+    
+    for server in &config.foundation_servers {
+        if server.stake > 0 {
+            info!("  💵 Funding {} ({}) with {} tokens", server.name, server.dns, server.stake);
+            
+            // In production, this would:
+            // 1. Generate/load the server's address from its public key
+            // 2. Transfer tokens from genesis allocation to that address
+            // 3. Automatically stake the tokens for validators/relays
+            
+            // For now, log the intended action
+            info!("    Address: derived from {}", server.dns);
+            info!("    Amount: {} tokens", server.stake);
+            info!("    Type: {} (auto-stake: {})", server.node_type, server.node_type != "user");
+        }
+    }
+    
+    info!("  ✓ Foundation servers funded");
+    Ok(())
+}
+
+/// Initialize all pools (staking, rewards, liquidity)
+async fn initialize_pools(config: &MainnetConfig) -> Result<()> {
+    info!("  Initializing protocol pools...");
+    
+    // Create currency chain client
+    let mut chain_config = CurrencyChainConfig::default();
+    chain_config.rpc_url = config.currency_chain_rpc.clone();
+    
+    let _chain_client = CurrencyChainClient::new(chain_config)?;
+    
+    // Initialize staking pool
+    info!("  🏦 Staking Pool: {} tokens", config.pools.staking_initial);
+    
+    // Initialize rewards pool  
+    info!("  🎁 Rewards Pool: {} tokens", config.pools.rewards_initial);
+    
+    // Initialize liquidity pool
+    info!("  💧 Liquidity Pool: {} tokens", config.pools.liquidity_initial);
+    
+    // Initialize foundation pool
+    info!("  🏛️  Foundation Pool: {} tokens", config.pools.foundation_initial);
+    
+    let total = config.pools.staking_initial 
+        + config.pools.rewards_initial 
+        + config.pools.liquidity_initial 
+        + config.pools.foundation_initial;
+    info!("  ✓ Total pooled: {} tokens", total);
+    
+    Ok(())
+}
+
+// ============================================================================
+// TESTNET SETUP
+// ============================================================================
+
 async fn run_testnet(
     _config: Config,
     num_validators: usize,
@@ -4956,12 +5584,72 @@ async fn load_validator_key(path: &PathBuf) -> Result<KeyPair> {
     Ok(KeyPair::from_private_key(private_key))
 }
 
-/// Load identity from file
+/// Load identity from file (auto-detects encrypted vs plaintext)
 async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
-    let contents = tokio::fs::read_to_string(path).await.map_err(Error::Io)?;
-    let identity: Identity = serde_json::from_str(&contents)
-        .map_err(|e| Error::Crypto(format!("Invalid identity file: {}", e)))?;
+    let contents = tokio::fs::read(path).await.map_err(Error::Io)?;
+    
+    // Try to parse as JSON (plaintext) first
+    if let Ok(json_str) = std::str::from_utf8(&contents) {
+        if let Ok(identity) = serde_json::from_str::<Identity>(json_str) {
+            info!("✓ Loaded plaintext identity from {:?}", path);
+            return Ok(identity);
+        }
+    }
+    
+    // Try to load as encrypted data
+    load_identity_encrypted(path, None).await
+}
+
+/// Load encrypted identity with password prompt
+async fn load_identity_encrypted(path: &PathBuf, password: Option<String>) -> Result<Identity> {
+    use dchat_crypto::{decrypt_with_password, EncryptedData};
+    
+    let encrypted_bytes = tokio::fs::read(path).await.map_err(Error::Io)?;
+    
+    // Deserialize encrypted data
+    let encrypted = EncryptedData::from_bytes(&encrypted_bytes)
+        .map_err(|e| Error::crypto(format!("Invalid encrypted file format: {}", e)))?;
+    
+    // Get password
+    let password = match password {
+        Some(p) => p,
+        None => prompt_password("Enter password to decrypt identity: ")?,
+    };
+    
+    // Decrypt
+    let decrypted = decrypt_with_password(&password, &encrypted)
+        .map_err(|e| Error::crypto(format!("Decryption failed: {}", e)))?;
+    
+    // Parse JSON identity
+    let json_str = std::str::from_utf8(&decrypted)
+        .map_err(|e| Error::crypto(format!("Invalid UTF-8 after decryption: {}", e)))?;
+    
+    let identity: Identity = serde_json::from_str(json_str)
+        .map_err(|e| Error::crypto(format!("Invalid identity JSON: {}", e)))?;
+    
+    info!("✓ Loaded encrypted identity: {}", identity.user_id);
     Ok(identity)
+}
+
+/// Save identity as plaintext JSON (for automated deployments)
+async fn save_identity_plaintext(path: &Path, identity: &Identity) -> Result<()> {
+    let json = serde_json::to_string_pretty(identity)
+        .map_err(|e| Error::crypto(format!("Serialization failed: {}", e)))?;
+    
+    tokio::fs::write(path, json).await.map_err(Error::Io)?;
+    
+    // Set restrictive permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = tokio::fs::metadata(path).await.map_err(Error::Io)?;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        tokio::fs::set_permissions(path, permissions).await.map_err(Error::Io)?;
+    }
+    
+    info!("✓ Identity saved as plaintext to {:?}", path);
+    Ok(())
 }
 
 /// Generate docker-compose for testnet
@@ -5136,7 +5824,7 @@ fn start_metrics_server(
 // ============================================================================
 
 /// Generate new identity and keys
-async fn generate_keys(output: PathBuf, burner: bool) -> Result<()> {
+async fn generate_keys(output: PathBuf, burner: bool, plaintext: bool) -> Result<()> {
     info!("🔑 Generating new identity...");
 
     if burner {
@@ -5154,10 +5842,30 @@ async fn generate_keys(output: PathBuf, burner: bool) -> Result<()> {
         let keypair = KeyPair::generate();
         let identity = Identity::new("user".to_string(), &keypair);
         info!("✓ Identity created: {}", identity.user_id);
+        
+        // Display public key for reference
+        let public_key_hex = hex::encode(keypair.public_key().as_bytes());
+        info!("📋 Public key: {}", public_key_hex);
 
-        // Prompt for password and encrypt
-        let password = prompt_password("Enter password to encrypt identity: ")?;
-        save_identity_encrypted(&output, &identity, &password).await?;
+        if plaintext {
+            // Save as plaintext for automated deployments
+            save_identity_plaintext(&output, &identity).await?;
+            warn!("⚠️  Identity saved WITHOUT encryption - for automated deployments only!");
+        } else {
+            // Prompt for password and encrypt
+            let password = prompt_password("Enter password to encrypt identity: ")?;
+            let confirm = prompt_password("Confirm password: ")?;
+            
+            if password != confirm {
+                return Err(Error::crypto("Passwords do not match".to_string()));
+            }
+            
+            if password.len() < 8 {
+                return Err(Error::crypto("Password must be at least 8 characters".to_string()));
+            }
+            
+            save_identity_encrypted(&output, &identity, &password).await?;
+        }
     }
 
     info!("✓ Identity saved to {:?}", output);

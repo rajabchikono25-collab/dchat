@@ -3,6 +3,7 @@
 use dchat::prelude::*;
 use dchat_crypto::keys::PrivateKey;
 use dchat_messaging::delivery::DeliveryStatus;
+use sha2::Digest;
 use std::time::SystemTime;
 
 #[tokio::test]
@@ -12,12 +13,12 @@ async fn test_complete_system_initialization() {
     let _event_bus = EventBus::new(1000);
 
     // Core components
-    let keypair = KeyPair::generate();
+    let keypair = KeyPair::try_generate().expect("CSPRNG available");
     let _identity_manager = IdentityManager::new();
     let _device_manager = DeviceManager::new();
 
     // Crypto components
-    let master_key = PrivateKey::generate();
+    let master_key = PrivateKey::try_generate().expect("CSPRNG available");
     let _handshake_manager = HandshakeManager::new(master_key.clone(), 30);
     let rotation_policy = RotationPolicy {
         max_age_hours: 168,
@@ -42,8 +43,8 @@ async fn test_end_to_end_encrypted_message() {
     use dchat_crypto::noise::{NoiseHandshake, NoisePattern};
 
     // Alice and Bob keypairs
-    let alice_keypair = KeyPair::generate();
-    let bob_keypair = KeyPair::generate();
+    let alice_keypair = KeyPair::try_generate().expect("CSPRNG available");
+    let bob_keypair = KeyPair::try_generate().expect("CSPRNG available");
 
     // Perform Noise XX handshake
     let mut alice_handshake =
@@ -107,7 +108,7 @@ async fn test_multi_user_conversation() {
 
 #[test]
 fn test_hierarchical_key_derivation() {
-    let master_key = PrivateKey::generate();
+    let master_key = PrivateKey::try_generate().expect("CSPRNG available");
 
     // Derive device keys
     let device1_key = IdentityDerivation::derive_device_key(&master_key, 0).unwrap();
@@ -165,7 +166,7 @@ async fn test_event_bus_pub_sub() {
     let mut subscriber = event_bus.subscribe();
 
     // Publish events
-    let alice_keypair = KeyPair::generate();
+    let alice_keypair = KeyPair::try_generate().expect("CSPRNG available");
     event_bus
         .publish(Event::UserRegistered {
             user_id: UserId(uuid::Uuid::new_v4()),
@@ -319,9 +320,12 @@ async fn test_simple_message_send() {
     let proof = DeliveryProof {
         message_id: message.id,
         relay_peer_id: "relay-001".to_string(),
+        recipient_id: recipient_id.clone(),
+        content_hash: hex::encode(sha2::Sha256::digest(b"Hello, World!")),
         recipient_signature: Some(Signature::new(vec![1, 2, 3])),
         timestamp: SystemTime::now(),
         chain_tx_hash: Some("0xabc123".to_string()),
+        reward_amount: 10_000, // 0.01 tokens in scaled units
     };
 
     // Store proof
@@ -371,7 +375,7 @@ async fn test_storage_and_persistence() {
     // Create a user
     let user_id = UserId::new();
     let username = "alice";
-    let public_key = KeyPair::generate().public_key().as_bytes().to_vec();
+    let public_key = KeyPair::try_generate().expect("CSPRNG available").public_key().as_bytes().to_vec();
 
     db.insert_user(&user_id.to_string(), username, &public_key)
         .await
