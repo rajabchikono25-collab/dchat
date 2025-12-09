@@ -3967,16 +3967,41 @@ async fn run_validator_node(
     network.subscribe_validators()?;
     info!("✓ Subscribed to validator consensus network");
 
-    // Compute dynamic BFT thresholds based on discovered validators
-    let total_validators = discovered_validators.len() + 1; // +1 for this node
+    // Count all unique validators: discovered via DNS + manual bootstrap peers from config
+    let mut unique_validator_peers = std::collections::HashSet::new();
+    
+    // Add discovered validators
+    for validator in &discovered_validators {
+        let multiaddr_str = validator.multiaddr.to_string();
+        if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+            if let Ok(pid) = peer_id_part.parse::<PeerId>() {
+                unique_validator_peers.insert(pid);
+            }
+        }
+    }
+    
+    // Add manual bootstrap peers from config
+    for peer_str in &config.network.bootstrap_peers {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            let multiaddr_str = multiaddr.to_string();
+            if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+                if let Ok(pid) = peer_id_part.parse::<PeerId>() {
+                    unique_validator_peers.insert(pid);
+                }
+            }
+        }
+    }
+    
+    // Compute dynamic BFT thresholds based on ALL validators (discovered + manual + self)
+    let total_validators = unique_validator_peers.len() + 1; // +1 for this node
     use dchat_validator::BftConfig;
     let bft_config = BftConfig::from_validator_count(total_validators, 3, 0.40);
     let f = bft_config.byzantine_tolerance();
     let required_signatures = bft_config.required_signatures;
 
     info!(
-        "🔐 BFT Configuration: N={}, f={}, required_signatures={}",
-        total_validators, f, required_signatures
+        "🔐 BFT Configuration: N={} (discovered={}, manual={}, +self), f={}, required_signatures={}",
+        total_validators, discovered_validators.len(), unique_validator_peers.len() - discovered_validators.len(), f, required_signatures
     );
     info!(
         "   Byzantine tolerance: can tolerate {} faulty validators",
