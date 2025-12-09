@@ -582,7 +582,7 @@ impl ValidatorKeyType {
     /// Returns None for KMS keys as private key never leaves the HSM
     fn private_key_bytes(&self) -> Option<[u8; 32]> {
         match self {
-            ValidatorKeyType::Local(keypair) => Some(keypair.private_key().to_bytes()),
+            ValidatorKeyType::Local(keypair) => Some(*keypair.private_key().as_bytes()),
             ValidatorKeyType::Kms(_) => None,
         }
     }
