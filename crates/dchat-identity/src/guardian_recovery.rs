@@ -81,8 +81,7 @@ const MAX_FAILED_ATTEMPTS: u32 = 5;
 /// Lockout duration in seconds after max failed attempts
 const LOCKOUT_DURATION_SECS: i64 = 3600; // 1 hour
 /// Maximum concurrent recovery requests per identity
-#[allow(dead_code)]
-const MAX_CONCURRENT_RECOVERIES: usize = 3;
+pub const MAX_CONCURRENT_RECOVERIES: usize = 3;
 
 /// Rate limiting state for guardian operations
 #[derive(Debug, Clone)]

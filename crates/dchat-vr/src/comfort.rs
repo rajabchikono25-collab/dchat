@@ -6,7 +6,7 @@
 //! - Teleportation system
 //! - Field of view reduction during fast movement
 
-use crate::{Transform, Vector3};
+use crate::Vector3;
 use serde::{Deserialize, Serialize};
 
 /// Comfort settings for reducing motion sickness

@@ -517,12 +517,10 @@ pub struct BlockchainSubmissionResult {
 }
 
 /// Pending message delivery tracking with full production context
-struct PendingDelivery {
+pub struct PendingDelivery {
     /// Message being delivered
-    #[allow(dead_code)] // Used for retry logging and debugging
     message_id: MessageId,
     /// Target recipient user
-    #[allow(dead_code)] // Used for delivery confirmation routing
     recipient: UserId,
     /// Relay node address handling this delivery
     relay_addr: String,
@@ -530,6 +528,38 @@ struct PendingDelivery {
     sent_at: std::time::Instant,
     /// Number of retry attempts
     retries: u32,
+}
+
+impl PendingDelivery {
+    /// Get the message ID
+    pub fn message_id(&self) -> &MessageId {
+        &self.message_id
+    }
+    
+    /// Get the recipient
+    pub fn recipient(&self) -> &UserId {
+        &self.recipient
+    }
+    
+    /// Get the relay address
+    pub fn relay_addr(&self) -> &str {
+        &self.relay_addr
+    }
+    
+    /// Get elapsed time since delivery started
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.sent_at.elapsed()
+    }
+    
+    /// Get retry count
+    pub fn retries(&self) -> u32 {
+        self.retries
+    }
+    
+    /// Increment retry count
+    pub fn increment_retries(&mut self) {
+        self.retries += 1;
+    }
 }
 
 impl MessageRouter {

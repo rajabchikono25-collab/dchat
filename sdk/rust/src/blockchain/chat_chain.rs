@@ -33,10 +33,10 @@ pub struct ChatChainTransaction {
 
 #[derive(Debug, Clone)]
 pub struct ChatChainClient {
-    #[allow(dead_code)]
-    rpc_url: String,
-    #[allow(dead_code)]
-    ws_url: Option<String>,
+    /// RPC endpoint URL for chat chain
+    pub rpc_url: String,
+    /// Optional WebSocket URL for real-time updates
+    pub ws_url: Option<String>,
     transactions: Arc<RwLock<HashMap<String, ChatChainTransaction>>>,
     current_block: Arc<RwLock<u64>>,
     reputation_scores: Arc<RwLock<HashMap<String, u32>>>,

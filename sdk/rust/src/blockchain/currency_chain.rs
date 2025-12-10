@@ -45,10 +45,10 @@ pub struct CurrencyChainTransaction {
 
 #[derive(Debug, Clone)]
 pub struct CurrencyChainClient {
-    #[allow(dead_code)]
-    rpc_url: String,
-    #[allow(dead_code)]
-    ws_url: Option<String>,
+    /// RPC endpoint URL for currency chain
+    pub rpc_url: String,
+    /// Optional WebSocket URL for real-time updates
+    pub ws_url: Option<String>,
     transactions: Arc<RwLock<HashMap<String, CurrencyChainTransaction>>>,
     current_block: Arc<RwLock<u64>>,
     wallets: Arc<RwLock<HashMap<String, Wallet>>>,

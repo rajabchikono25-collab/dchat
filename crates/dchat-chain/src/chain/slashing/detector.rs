@@ -83,17 +83,20 @@ impl SlashableOffense {
 
 /// Signature record for double-sign detection
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct SignatureRecord {
-    validator: VerifyingKey,
-    block_height: u64,
-    signature: Signature,
-    message_hash: [u8; 32],
-    timestamp: SystemTime,
+pub struct SignatureRecord {
+    /// Validator public key
+    pub validator: VerifyingKey,
+    /// Block height of the signature
+    pub block_height: u64,
+    /// The signature itself
+    pub signature: Signature,
+    /// Hash of the message that was signed
+    pub message_hash: [u8; 32],
+    /// When the signature was recorded
+    pub timestamp: SystemTime,
 }
 
 /// Slashing detector tracks validator behavior and detects offenses
-#[allow(dead_code)]
 pub struct SlashingDetector {
     /// Map of (validator, block_height) -> signature records
     seen_signatures: Arc<RwLock<HashMap<(VerifyingKey, u64), Vec<SignatureRecord>>>>,
@@ -109,6 +112,11 @@ pub struct SlashingDetector {
 }
 
 impl SlashingDetector {
+    /// Get the timestamp of the last check
+    pub fn last_check(&self) -> Instant {
+        *self.last_check.read().unwrap()
+    }
+
     /// Create a new slashing detector
     pub fn new() -> Self {
         Self {

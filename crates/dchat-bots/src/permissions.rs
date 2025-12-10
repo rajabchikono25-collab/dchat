@@ -245,7 +245,6 @@ impl Default for BotPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
     use dchat_core::types::UserId;
 
     #[test]

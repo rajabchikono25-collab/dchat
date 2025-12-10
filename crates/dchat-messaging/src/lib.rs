@@ -8,9 +8,11 @@
 //! - Message expiration and lifecycle
 //! - Advanced channel access control (token-gating, NFT verification)
 //! - Message fee collection and credits channels
+//! - Delta synchronization for efficient message syncing
 
 pub mod channel_access;
 pub mod delivery;
+pub mod delta_sync;
 pub mod expiration;
 pub mod media;
 pub mod message_service;
@@ -22,6 +24,7 @@ pub mod types;
 
 pub use channel_access::{AccessPolicy, ChannelAccessManager};
 pub use delivery::{DeliveryProof, DeliveryTracker};
+pub use delta_sync::{BloomFilter, Delta, DeltaSync, DeltaSyncConfig, SyncRequest, SyncResponse};
 pub use expiration::{ExpirationPolicy, MessageExpiration};
 pub use media::{
     Animation, Audio, Contact, Document, EnhancedBotMessage, EntityType, LinkPreview, Location,

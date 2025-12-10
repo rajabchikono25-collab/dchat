@@ -728,10 +728,10 @@ impl DeltaEncoder {
 
     /// Find longest matching substring
     ///
-    /// Reserved for future implementation of advanced delta compression algorithm.
-    /// Currently using basic content-addressable deduplication.
-    #[allow(dead_code)]
-    fn find_longest_match(
+    /// Used for advanced delta compression algorithm to find the best matching
+    /// substring between base content and new content for efficient diff encoding.
+    /// Uses O(n²) search - production could use suffix array for better performance.
+    pub fn find_longest_match(
         &self,
         base: &[u8],
         new: &[u8],
@@ -1107,8 +1107,8 @@ mod tests {
 /// - Async operations with sqlx
 pub struct DatabaseDeduplicationStore {
     pool: PgPool,
-    #[allow(dead_code)]
-    delta_encoder: DeltaEncoder,
+    /// Delta encoder for computing content differences
+    pub delta_encoder: DeltaEncoder,
     compression_config: CompressionConfig,
     // LRU cache: (content, metadata)
     cache: HashMap<Blake3Hash, (Vec<u8>, ContentMetadata)>,

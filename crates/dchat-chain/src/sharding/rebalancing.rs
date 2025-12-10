@@ -214,7 +214,6 @@ impl ShardLoad {
 }
 
 /// Rebalancing scheduler
-#[allow(dead_code)]
 pub struct RebalancingScheduler {
     /// Current hash ring
     hash_ring: ConsistentHashRing,
@@ -234,6 +233,11 @@ impl RebalancingScheduler {
             min_interval_secs: 3600, // 1 hour minimum between rebalances
             pending_plan: None,
         }
+    }
+
+    /// Get read access to the consistent hash ring for shard routing
+    pub fn hash_ring(&self) -> &ConsistentHashRing {
+        &self.hash_ring
     }
 
     /// Check if rebalancing is needed based on load

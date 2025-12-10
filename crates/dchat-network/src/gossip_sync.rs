@@ -224,7 +224,6 @@ impl BloomFilter {
 }
 
 /// Gossip sync manager
-#[allow(dead_code)]
 pub struct GossipSyncManager {
     config: GossipSyncConfig,
 
@@ -284,8 +283,7 @@ impl GossipSyncManager {
     }
 
     /// Check if rate limit allows sending
-    #[allow(dead_code)]
-    fn check_rate_limit(&mut self) -> bool {
+    pub fn check_rate_limit(&mut self) -> bool {
         let now = SystemTime::now();
         let one_second_ago = now - Duration::from_secs(1);
 

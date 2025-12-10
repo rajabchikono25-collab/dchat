@@ -39,7 +39,6 @@ impl Default for ChatChainConfig {
 }
 
 /// Chat Chain client for on-chain operations: identity, messaging, channels, governance
-#[allow(dead_code)]
 pub struct ChatChainClient {
     config: ChatChainConfig,
     /// Transaction cache with hash mapping
@@ -67,6 +66,11 @@ pub struct ChannelMetadata {
 }
 
 impl ChatChainClient {
+    /// Get the chat chain configuration
+    pub fn config(&self) -> &ChatChainConfig {
+        &self.config
+    }
+
     /// Create new chat chain client with production RPC
     pub fn new(config: ChatChainConfig) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;

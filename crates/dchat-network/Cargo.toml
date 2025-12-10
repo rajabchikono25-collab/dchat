@@ -34,7 +34,9 @@ libp2p = { version = "0.54", features = [
     "kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr", 
     "mdns", "identify", "ping", "gossipsub", "yamux", "tokio",
     "request-response",  # For onion routing cell protocol
-    "macros"  # Enable NetworkBehaviour derive macro
+    "macros",  # Enable NetworkBehaviour derive macro
+    "quic",   # QUIC transport for 0-RTT connections
+    "rendezvous"  # Faster channel discovery
 ] }
 libp2p-request-response = { version = "0.27", features = ["cbor"] }
 
@@ -60,6 +62,7 @@ prometheus = { version = "0.13", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 quick-xml = { version = "0.31", features = ["serialize"] }
 local-ip-address = "0.6"
+regex = "1.10"  # For robust XML/SOAP parsing in UPnP
 
 # DNS resolution for mainnet peer discovery
 trust-dns-resolver = { version = "0.23", features = ["tokio-runtime"] }

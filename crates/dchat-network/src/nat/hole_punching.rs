@@ -215,11 +215,13 @@ pub struct HolePunchCoordinator {
 
 /// Pending hole punch request
 #[derive(Clone)]
-#[allow(dead_code)]
-struct PunchRequest {
-    peer_id: String,
-    external_addr: SocketAddr,
-    timestamp: std::time::Instant,
+pub struct PunchRequest {
+    /// Peer ID requesting punch
+    pub peer_id: String,
+    /// External address to punch to
+    pub external_addr: SocketAddr,
+    /// When request was made
+    pub timestamp: std::time::Instant,
 }
 
 impl Default for HolePunchCoordinator {

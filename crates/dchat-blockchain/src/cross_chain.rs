@@ -196,6 +196,55 @@ impl CrossChainBridge {
         Ok(self.transactions.read().unwrap().get(bridge_tx_id).cloned())
     }
 
+    /// Initiate a cross-chain transfer to another chain
+    /// 
+    /// Locks tokens on the source chain and creates a bridge transaction
+    /// that can be claimed on the target chain.
+    pub async fn initiate_transfer(
+        &self,
+        user_id: &UserId,
+        amount: u64,
+        target_chain: &str,
+    ) -> Result<Uuid, String> {
+        let bridge_tx_id = Uuid::new_v4();
+        
+        // Lock tokens on currency chain
+        let currency_tx = self.currency_chain.transfer(
+            user_id,
+            &UserId(Uuid::nil()), // Bridge escrow address
+            amount,
+        ).map_err(|e| e.to_string())?;
+        
+        // Record bridge transaction
+        let cross_tx = CrossChainTransaction {
+            id: bridge_tx_id,
+            operation: format!("bridge_to_{}", target_chain),
+            user_id: user_id.clone(),
+            chat_chain_tx: None,
+            currency_chain_tx: Some(currency_tx),
+            status: CrossChainStatus::Pending,
+            created_at: Utc::now().timestamp(),
+            finalized_at: None,
+        };
+        
+        self.transactions.write().unwrap().insert(bridge_tx_id, cross_tx);
+        
+        // Register with synchronizer for finality tracking
+        if let Some(ref synchronizer) = self.synchronizer {
+            synchronizer.register_cross_chain_tx(bridge_tx_id).await;
+        }
+        
+        Ok(bridge_tx_id)
+    }
+
+    /// Get the status of a cross-chain transaction by ID
+    pub async fn get_transaction_status(&self, tx_id: &Uuid) -> Result<CrossChainStatus, String> {
+        let txs = self.transactions.read().unwrap();
+        txs.get(tx_id)
+            .map(|tx| tx.status.clone())
+            .ok_or_else(|| format!("Transaction {} not found", tx_id))
+    }
+
     /// Wait for cross-chain transaction to achieve finality on both chains
     /// Uses the chain synchronizer for accurate finality tracking
     pub async fn wait_for_atomic_finality(

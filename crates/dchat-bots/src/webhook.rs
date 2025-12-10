@@ -245,10 +245,6 @@ impl Default for WebhookConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
-    use crate::BotFather;
-    #[allow(unused_imports)]
-    use dchat_core::types::UserId;
 
     #[tokio::test]
     async fn test_webhook_config() {

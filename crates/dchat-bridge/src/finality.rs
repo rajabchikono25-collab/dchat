@@ -152,7 +152,9 @@ impl AggregatedFinalityProof {
 }
 
 /// Finality tracking manager with validator consensus
-#[allow(dead_code)]
+/// 
+/// Manages cross-chain finality proofs with M-of-N validator signatures
+/// for secure bridge operations between chat and currency chains.
 pub struct FinalityTracker {
     /// Pending finality proofs awaiting signatures
     pending_proofs: HashMap<String, AggregatedFinalityProof>,
@@ -199,6 +201,16 @@ impl FinalityTracker {
 
         self.validator_pubkeys.insert(validator_id, pubkey);
         Ok(())
+    }
+
+    /// Get the total number of validators in the network
+    pub fn total_validators(&self) -> usize {
+        self.total_validators
+    }
+
+    /// Get the required number of signatures for finality
+    pub fn required_signatures(&self) -> usize {
+        self.required_signatures
     }
 
     /// Initiate finality proof for a transaction

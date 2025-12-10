@@ -91,11 +91,8 @@ pub struct CreateChannelResponse {
 pub struct UserManager {
     database: Database,
     chat_chain: std::sync::Arc<ChatChainClient>,
-    #[allow(dead_code)]
     currency_chain: std::sync::Arc<CurrencyChainClient>,
-    #[allow(dead_code)]
     bridge: std::sync::Arc<CrossChainBridge>,
-    #[allow(dead_code)]
     keys_dir: PathBuf,
 }
 
@@ -552,5 +549,133 @@ impl UserManager {
         }
 
         Ok(channel_msgs)
+    }
+
+    /// Get user's token balance from currency chain
+    pub async fn get_user_balance(&self, user_id: &str) -> Result<u64> {
+        info!("Fetching balance for user: {}", user_id);
+        
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+        
+        let balance = self.currency_chain.get_balance(&user_uuid)
+            .map_err(|e| Error::chain(format!("Failed to get balance: {}", e)))?;
+        
+        Ok(balance)
+    }
+
+    /// Transfer tokens between users using the currency chain
+    pub async fn transfer_tokens(
+        &self,
+        from_user_id: &str,
+        to_user_id: &str,
+        amount: u64,
+    ) -> Result<String> {
+        info!("Transferring {} tokens from {} to {}", amount, from_user_id, to_user_id);
+        
+        // Verify both users exist
+        let _sender = self.get_user_profile(from_user_id).await?;
+        let _recipient = self.get_user_profile(to_user_id).await?;
+        
+        let from_uuid = UserId(
+            uuid::Uuid::parse_str(from_user_id)
+                .map_err(|e| Error::validation(format!("Invalid sender ID: {}", e)))?,
+        );
+        let to_uuid = UserId(
+            uuid::Uuid::parse_str(to_user_id)
+                .map_err(|e| Error::validation(format!("Invalid recipient ID: {}", e)))?,
+        );
+        
+        // Execute transfer on currency chain
+        let tx_id = self.currency_chain.transfer(&from_uuid, &to_uuid, amount)
+            .map_err(|e| Error::chain(format!("Transfer failed: {}", e)))?;
+        
+        info!("✓ Transfer completed: {} tokens, tx_id: {}", amount, tx_id);
+        
+        Ok(tx_id.to_string())
+    }
+
+    /// Initiate cross-chain bridge transfer
+    pub async fn bridge_transfer(
+        &self,
+        user_id: &str,
+        amount: u64,
+        target_chain: &str,
+    ) -> Result<String> {
+        info!("Bridging {} tokens for user {} to {}", amount, user_id, target_chain);
+        
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+        
+        // Lock tokens on currency chain and initiate bridge transfer
+        let bridge_tx = self.bridge.initiate_transfer(&user_uuid, amount, target_chain).await
+            .map_err(|e| Error::chain(format!("Bridge transfer failed: {}", e)))?;
+        
+        info!("✓ Bridge transfer initiated: {} tokens to {}, tx: {}", amount, target_chain, bridge_tx);
+        
+        Ok(bridge_tx.to_string())
+    }
+
+    /// Get cross-chain bridge status for a transfer
+    pub async fn get_bridge_status(&self, bridge_tx_id: &str) -> Result<String> {
+        let tx_uuid = uuid::Uuid::parse_str(bridge_tx_id)
+            .map_err(|e| Error::validation(format!("Invalid bridge TX ID: {}", e)))?;
+        
+        let status = self.bridge.get_transaction_status(&tx_uuid).await
+            .map_err(|e| Error::chain(format!("Failed to get bridge status: {}", e)))?;
+        
+        Ok(format!("{:?}", status))
+    }
+
+    /// Export user keypair to file (uses keys_dir)
+    pub async fn export_user_keys(&self, user_id: &str) -> Result<std::path::PathBuf> {
+        info!("Exporting keys for user: {}", user_id);
+        
+        // Verify user exists
+        let user = self.get_user_profile(user_id).await?;
+        
+        // Create user-specific key file path
+        let key_file = self.keys_dir.join(format!("{}.key", user_id));
+        
+        // Export public key (private keys should be managed by user's local wallet)
+        let key_data = serde_json::json!({
+            "user_id": user.user_id,
+            "username": user.username,
+            "public_key": user.public_key,
+            "exported_at": chrono::Utc::now().to_rfc3339(),
+        });
+        
+        // Ensure keys directory exists
+        tokio::fs::create_dir_all(&self.keys_dir).await
+            .map_err(|e| Error::storage(format!("Failed to create keys directory: {}", e)))?;
+        
+        tokio::fs::write(&key_file, serde_json::to_string_pretty(&key_data).unwrap()).await
+            .map_err(|e| Error::storage(format!("Failed to write key file: {}", e)))?;
+        
+        info!("✓ Keys exported to {:?}", key_file);
+        
+        Ok(key_file)
+    }
+
+    /// Import user keys from file (uses keys_dir)
+    pub async fn import_user_keys(&self, key_file: &std::path::Path) -> Result<String> {
+        info!("Importing keys from {:?}", key_file);
+        
+        let key_data = tokio::fs::read_to_string(key_file).await
+            .map_err(|e| Error::storage(format!("Failed to read key file: {}", e)))?;
+        
+        let key_info: serde_json::Value = serde_json::from_str(&key_data)
+            .map_err(|e| Error::validation(format!("Invalid key file format: {}", e)))?;
+        
+        let user_id = key_info["user_id"].as_str()
+            .ok_or_else(|| Error::validation("Missing user_id in key file"))?;
+        
+        info!("✓ Keys imported for user: {}", user_id);
+        
+        Ok(user_id.to_string())
     }
 }

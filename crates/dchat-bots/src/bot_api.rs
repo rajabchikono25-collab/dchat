@@ -26,9 +26,38 @@ pub struct BotApi {
 
 /// Bot API client builder
 pub struct BotClient {
-    #[allow(dead_code)]
     token: String,
     base_url: String,
+}
+
+impl BotClient {
+    /// Create a new bot client with the given token
+    pub fn new(token: String) -> Self {
+        Self {
+            token,
+            base_url: "https://api.dchat.network/bot".to_string(),
+        }
+    }
+    
+    /// Create a new bot client with custom base URL
+    pub fn with_base_url(token: String, base_url: String) -> Self {
+        Self { token, base_url }
+    }
+    
+    /// Get the authentication token for API requests
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+    
+    /// Get the base URL for API requests
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+    
+    /// Build the authorization header value
+    pub fn authorization_header(&self) -> String {
+        format!("Bearer {}", self.token)
+    }
 }
 
 /// Send message request
@@ -669,20 +698,6 @@ impl BotApi {
 }
 
 impl BotClient {
-    /// Create a new bot client
-    pub fn new(token: String) -> Self {
-        Self {
-            token,
-            base_url: "https://api.dchat.network".to_string(),
-        }
-    }
-
-    /// Set custom API base URL
-    pub fn with_base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
-        self
-    }
-
     /// Send message
     pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid> {
         let url = format!("{}/bot/sendMessage", self.base_url);

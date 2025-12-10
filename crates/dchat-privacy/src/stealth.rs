@@ -33,14 +33,12 @@ pub struct StealthPayload {
 }
 
 /// Generator for stealth addresses and payloads
-#[allow(dead_code)]
 pub struct StealthGenerator {
     /// Sender's private key
     private_key: Scalar,
 }
 
 /// Scanner for detecting stealth messages
-#[allow(dead_code)]
 pub struct StealthScanner {
     /// Recipient's view key (for scanning)
     view_key: Scalar,
@@ -79,6 +77,11 @@ impl StealthGenerator {
         Self {
             private_key: Scalar::from_bytes_mod_order(bytes),
         }
+    }
+
+    /// Get the private key scalar for advanced cryptographic operations
+    pub fn private_key(&self) -> &Scalar {
+        &self.private_key
     }
 
     /// Create a stealth payload for a recipient
@@ -195,6 +198,16 @@ impl StealthScanner {
             view_key,
             spend_key,
         }
+    }
+
+    /// Get the view key for scanning operations
+    pub fn view_key(&self) -> &Scalar {
+        &self.view_key
+    }
+
+    /// Get the spend key for decryption operations
+    pub fn spend_key(&self) -> &Scalar {
+        &self.spend_key
     }
 
     /// Check if a payload is for this recipient

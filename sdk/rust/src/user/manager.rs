@@ -12,8 +12,8 @@ use uuid::Uuid;
 /// User manager for user operations
 pub struct UserManager {
     blockchain: BlockchainClient,
-    #[allow(dead_code)]
-    base_url: String,
+    /// Base URL for user management API
+    pub base_url: String,
 }
 
 impl UserManager {

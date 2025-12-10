@@ -230,8 +230,7 @@ pub struct TemporalStakeConsensus {
     /// Active TSC votes for blocks
     active_votes: Arc<RwLock<HashMap<Hash, TSCBlockVotes>>>,
 
-    /// Predictive oracles
-    #[allow(dead_code)]
+    /// Predictive oracles for consensus optimization
     oracles: Arc<RwLock<HashMap<VerifyingKey, PredictiveOracle>>>,
 
     /// Total network stake (for calculating percentages)
@@ -241,11 +240,20 @@ pub struct TemporalStakeConsensus {
     finality_threshold: f64,
 
     /// Oracle consensus weight requirement (default 60%)
-    #[allow(dead_code)]
     oracle_threshold: f64,
 }
 
 impl TemporalStakeConsensus {
+    /// Get the predictive oracles
+    pub fn oracles(&self) -> &Arc<RwLock<HashMap<VerifyingKey, PredictiveOracle>>> {
+        &self.oracles
+    }
+
+    /// Get the oracle consensus weight requirement
+    pub fn oracle_threshold(&self) -> f64 {
+        self.oracle_threshold
+    }
+
     pub fn new() -> Self {
         Self {
             validator_stakes: Arc::new(RwLock::new(HashMap::new())),

@@ -297,7 +297,7 @@ impl HybridSigner {
 
     /// Sign a message with both classical and post-quantum algorithms
     pub fn sign(&self, message: &[u8]) -> HybridSignature {
-        let classical_sig = crate::signatures::sign(&self.classical_key, message);
+        let classical_sig = crate::signatures::sign_with_private_key(&self.classical_key, message);
         let pq_sig = falcon::detached_sign(message, &self.pq_key);
 
         HybridSignature {
@@ -327,7 +327,7 @@ pub fn verify_hybrid_signature(
     pq_public: &falcon::PublicKey,
 ) -> Result<()> {
     // Verify classical signature
-    crate::signatures::verify(classical_public, message, &signature.classical)?;
+    crate::signatures::verify_with_public_key(classical_public, message, &signature.classical)?;
 
     // Verify post-quantum signature
     let pq_sig = falcon::DetachedSignature::from_bytes(&signature.post_quantum)

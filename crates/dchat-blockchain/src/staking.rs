@@ -389,7 +389,6 @@ impl ClaimReceipt {
 }
 
 /// Staking manager for validator stake lifecycle
-#[allow(dead_code)]
 pub struct StakingManager {
     /// Active validator stakes (validator_id -> stake)
     validators: Arc<RwLock<HashMap<UserId, ValidatorStake>>>,
@@ -410,6 +409,11 @@ pub struct StakingManager {
 pub const MIN_COUNCIL_SIGNATURES: usize = 5;
 
 impl StakingManager {
+    /// Get read access to the active validator set (sorted by stake, descending)
+    pub fn active_set(&self) -> &Arc<RwLock<BTreeMap<u64, Vec<UserId>>>> {
+        &self.active_set
+    }
+
     /// Create new staking manager without currency chain integration (testing only)
     pub fn new() -> Self {
         Self {

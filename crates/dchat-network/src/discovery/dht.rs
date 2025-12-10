@@ -57,7 +57,6 @@ pub enum DhtError {
 }
 
 /// Kademlia DHT implementation
-#[allow(dead_code)]
 pub struct Dht {
     config: DhtConfig,
     routing_table: RoutingTable,
@@ -66,6 +65,11 @@ pub struct Dht {
 }
 
 impl Dht {
+    /// Get read access to pending queries for monitoring
+    pub fn pending_queries(&self) -> &HashMap<QueryId, Query> {
+        &self.pending_queries
+    }
+
     /// Create a new DHT instance
     pub async fn new(config: DhtConfig) -> Result<Self> {
         let routing_table = RoutingTable::new(config.local_peer_id, config.k_bucket_size);
@@ -185,8 +189,7 @@ impl Dht {
     }
 
     /// Create a query ID
-    #[allow(dead_code)]
-    fn next_query_id(&mut self) -> QueryId {
+    pub fn next_query_id(&mut self) -> QueryId {
         let id = QueryId(self.next_query_id);
         self.next_query_id += 1;
         id
@@ -230,17 +233,21 @@ impl Dht {
     }
 }
 
-/// Query identifier
+/// Query identifier for tracking DHT lookups
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct QueryId(u64);
+pub struct QueryId(pub u64);
 
-/// DHT query state
+/// DHT query state for tracking in-progress queries
 #[derive(Debug)]
-struct Query {
-    _id: QueryId,
-    _target: PeerId,
-    _queried_peers: Vec<PeerId>,
-    _pending_responses: usize,
+pub struct Query {
+    /// Query identifier
+    pub id: QueryId,
+    /// Target peer being searched for
+    pub target: PeerId,
+    /// Peers that have been queried
+    pub queried_peers: Vec<PeerId>,
+    /// Number of pending responses
+    pub pending_responses: usize,
 }
 
 #[cfg(test)]

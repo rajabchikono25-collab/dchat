@@ -2,8 +2,7 @@
 //!
 //! Optimizations to achieve 90fps+ in VR with minimal latency
 
-use crate::{Vector3, Transform};
-use std::collections::HashMap;
+use crate::Vector3;
 
 /// Performance metrics
 #[derive(Debug, Clone)]

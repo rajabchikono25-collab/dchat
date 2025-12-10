@@ -45,7 +45,6 @@ pub enum DataTier {
 }
 
 /// Lifecycle manager for data
-#[allow(dead_code)]
 pub struct LifecycleManager {
     config: TtlConfig,
 
@@ -69,6 +68,11 @@ impl LifecycleManager {
             tiers: HashMap::new(),
             expirations: HashMap::new(),
         }
+    }
+
+    /// Get the TTL configuration
+    pub fn config(&self) -> &TtlConfig {
+        &self.config
     }
 
     /// Register data access

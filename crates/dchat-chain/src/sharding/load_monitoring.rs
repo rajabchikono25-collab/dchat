@@ -9,7 +9,6 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Message throughput tracker with rolling averages
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MessageThroughputTracker {
     shard_id: ShardId,
@@ -32,6 +31,11 @@ impl MessageThroughputTracker {
             samples_15min: VecDeque::new(),
             total_messages: 0,
         }
+    }
+
+    /// Get the shard ID this tracker monitors
+    pub fn shard_id(&self) -> ShardId {
+        self.shard_id
     }
 
     /// Record a new message
@@ -97,8 +101,7 @@ impl MessageThroughputTracker {
     }
     
     /// Prune samples older than window
-    #[allow(dead_code)]
-    fn prune_samples(&mut self, samples: &mut VecDeque<(u64, u64)>, window_secs: u64) {
+    pub fn prune_samples(&mut self, samples: &mut VecDeque<(u64, u64)>, window_secs: u64) {
         let now = Self::now_timestamp();
         Self::prune_samples_static(samples, window_secs, now);
     }
@@ -113,7 +116,6 @@ impl MessageThroughputTracker {
 }
 
 /// Storage size monitor with growth prediction
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StorageSizeMonitor {
     shard_id: ShardId,
@@ -133,6 +135,11 @@ impl StorageSizeMonitor {
             size_history: VecDeque::new(),
             growth_rate_bytes_per_hour: 0.0,
         }
+    }
+
+    /// Get the shard ID this monitor tracks
+    pub fn shard_id(&self) -> ShardId {
+        self.shard_id
     }
 
     /// Update storage size
@@ -214,7 +221,6 @@ impl StorageSizeMonitor {
 }
 
 /// CPU and memory usage monitor
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CpuMemoryMonitor {
     shard_id: ShardId,
@@ -234,6 +240,11 @@ impl CpuMemoryMonitor {
             memory_rss_bytes: 0,
             last_update: MessageThroughputTracker::now_timestamp(),
         }
+    }
+
+    /// Get the shard ID this monitor tracks
+    pub fn shard_id(&self) -> ShardId {
+        self.shard_id
     }
 
     /// Update CPU and memory metrics

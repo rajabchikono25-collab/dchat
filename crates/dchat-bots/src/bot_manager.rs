@@ -71,8 +71,7 @@ impl TokenRegenerationLimiter {
     }
     
     /// Get remaining regenerations for a bot
-    #[allow(dead_code)]
-    fn remaining_regenerations(&self, bot_id: &BotId) -> usize {
+    pub fn remaining_regenerations(&self, bot_id: &BotId) -> usize {
         let state = self.state.read().unwrap();
         let now = Instant::now();
         
@@ -341,6 +340,14 @@ impl BotFather {
         drop(token_index);
 
         Ok(new_token)
+    }
+
+    /// Get remaining token regenerations allowed for a bot within the current rate limit window
+    /// 
+    /// This allows users to check how many token regenerations they have left
+    /// before hitting the rate limit (3 per hour by default).
+    pub fn get_remaining_token_regenerations(&self, bot_id: &BotId) -> usize {
+        self.token_regen_limiter.remaining_regenerations(bot_id)
     }
 
     /// Set bot active/inactive

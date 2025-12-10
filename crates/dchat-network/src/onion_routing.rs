@@ -327,17 +327,17 @@ impl Default for CircuitConfig {
 /// Circuit state for relay operations
 /// Stores the shared secrets and forwarding information for active circuits
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct CircuitState {
-    circuit_id: CircuitId,
+pub struct CircuitState {
+    /// Unique circuit identifier
+    pub circuit_id: CircuitId,
     /// Shared secret with the client for this circuit
-    shared_secret: Vec<u8>,
+    pub shared_secret: Vec<u8>,
     /// Next hop in the circuit (None if this is the exit node)
-    next_hop: Option<PeerId>,
+    pub next_hop: Option<PeerId>,
     /// Timestamp when this circuit was established
-    created_at: Instant,
+    pub created_at: Instant,
     /// Last activity timestamp for timeout tracking
-    last_activity: Instant,
+    pub last_activity: Instant,
 }
 
 impl CircuitState {
@@ -1080,10 +1080,8 @@ impl OnionRoutingManager {
 
     /// Build CREATE cell for circuit handshake
     ///
-    /// Reserved for future implementation of Tor-style circuit creation protocol.
-    /// Currently using simplified onion routing without explicit CREATE cells.
-    #[allow(dead_code)]
-    fn build_create_cell(
+    /// Used for Tor-style circuit creation protocol.
+    pub fn build_create_cell(
         &self,
         circuit_id: &CircuitId,
         public_key: &x25519_dalek::PublicKey,

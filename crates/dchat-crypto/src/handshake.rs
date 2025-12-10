@@ -34,7 +34,9 @@ pub enum HandshakeState {
 }
 
 /// Manages handshakes with multiple peers
-#[allow(dead_code)]
+/// 
+/// Provides key rotation, timeout handling, and state management
+/// for cryptographic handshakes with network peers.
 pub struct HandshakeManager {
     local_keypair: KeyPair,
     rotation_manager: KeyRotationManager,
@@ -43,6 +45,11 @@ pub struct HandshakeManager {
 }
 
 impl HandshakeManager {
+    /// Get the local keypair used for handshakes
+    pub fn local_keypair(&self) -> &KeyPair {
+        &self.local_keypair
+    }
+
     /// Create a new handshake manager
     pub fn new(master_key: PrivateKey, handshake_timeout_seconds: u64) -> Self {
         let local_keypair = KeyPair::from_private_key(master_key.clone());

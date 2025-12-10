@@ -7,6 +7,7 @@
 //! - Message routing and gossip protocols
 //! - Relay node infrastructure
 //! - Eclipse attack prevention
+//! - Handshake rate limiting for DoS protection
 
 pub mod behavior;
 pub mod connection; // Sprint 9: Connection lifecycle management
@@ -15,6 +16,7 @@ pub mod dns_discovery; // Mainnet: DNS-based peer discovery via subdomains
 pub mod eclipse_prevention; // Phase 3: Eclipse attack prevention
 pub mod gossip; // Sprint 9: Gossip protocol for message propagation
 pub mod gossip_sync; // Phase 3: Gossip-based synchronization
+pub mod handshake_rate_limit; // Phase 3: Handshake DoS protection
 pub mod keystore; // Mainnet: Persistent relay X25519 keys
 pub mod nat;
 pub mod nat_traversal; // Phase 2: Enhanced NAT traversal (UPnP/TURN)
@@ -48,6 +50,10 @@ pub use eclipse_prevention::{
 };
 pub use gossip::{Gossip, GossipConfig, GossipMessage as GossipProtoMessage, MessageId};
 pub use gossip_sync::{ConflictResolution, GossipMessage, GossipSyncManager, VectorClock};
+pub use handshake_rate_limit::{
+    HandshakeRateLimitConfig, HandshakeRateLimiter, RateLimitReason, RateLimitResult,
+    RateLimitToken, RateLimiterStats,
+};
 pub use keystore::{default_keystore_path, RelayKeystore};
 pub use nat::{NatConfig, NatTraversal};
 pub use nat_traversal::{NatStrategy, NatTraversalManager, NatType};

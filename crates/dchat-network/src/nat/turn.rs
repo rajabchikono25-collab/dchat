@@ -30,22 +30,21 @@ pub struct TurnClient {
 
 /// Active TURN relay allocation
 #[derive(Clone)]
-#[allow(dead_code)]
-struct RelayAllocation {
+pub struct RelayAllocation {
     /// Relay address allocated by TURN server
-    relay_addr: SocketAddr,
+    pub relay_addr: SocketAddr,
 
     /// TURN server address
-    server_addr: SocketAddr,
+    pub server_addr: SocketAddr,
 
     /// Username for this allocation
-    username: String,
+    pub username: String,
 
     /// Allocation lifetime (seconds)
-    lifetime: u64,
+    pub lifetime: u64,
 
     /// Bound peer addresses (channel bindings)
-    peers: Vec<SocketAddr>,
+    pub peers: Vec<SocketAddr>,
 }
 
 impl TurnClient {

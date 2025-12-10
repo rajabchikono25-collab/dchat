@@ -268,7 +268,6 @@ impl Default for BlockchainConfig {
 }
 
 /// Blockchain client for interacting with the chat chain
-#[allow(dead_code)]
 pub struct BlockchainClient {
     config: BlockchainConfig,
     /// Transaction cache with hash mapping
@@ -278,6 +277,11 @@ pub struct BlockchainClient {
 }
 
 impl BlockchainClient {
+    /// Get the blockchain configuration
+    pub fn config(&self) -> &BlockchainConfig {
+        &self.config
+    }
+
     /// Create a new blockchain client with production RPC
     pub fn new(config: BlockchainConfig) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
@@ -624,9 +628,11 @@ impl BlockchainClient {
         self.rpc_client.get_current_height().await
     }
 
-    /// Submit transaction to blockchain (internal)
-    #[allow(dead_code)]
-    async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
+    /// Submit transaction to blockchain using direct HTTP RPC
+    /// 
+    /// This is a fallback method when the RPC client interface is not sufficient.
+    /// For most operations, use the dedicated methods like `register_user`, `create_channel`, etc.
+    pub async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
         use reqwest::Client as HttpClient;
         use serde_json::json;
 

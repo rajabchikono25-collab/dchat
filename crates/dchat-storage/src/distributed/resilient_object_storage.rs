@@ -79,29 +79,41 @@ impl Default for ResilientObjectStorageConfig {
     }
 }
 
-/// Cached object metadata
-#[allow(dead_code)]
+/// Cached object metadata for local object cache
+/// Tracks downloaded objects for offline access
 #[derive(Debug, Clone)]
-struct CachedObject {
-    local_path: PathBuf,
-    metadata: ObjectMetadata,
-    cached_at: Instant,
-    size_bytes: u64,
+pub struct CachedObject {
+    /// Path to the locally cached object file
+    pub local_path: PathBuf,
+    /// Object metadata from S3/MinIO
+    pub metadata: ObjectMetadata,
+    /// When the object was cached locally
+    pub cached_at: Instant,
+    /// Size of the cached object in bytes
+    pub size_bytes: u64,
 }
 
-/// Queued upload
-#[allow(dead_code)]
+/// Queued upload pending S3/MinIO availability
+/// Stored locally and synced when connection recovers
 #[derive(Debug, Clone)]
-struct QueuedUpload {
-    local_path: PathBuf,
-    object_key: String,
-    content_type: String,
-    queued_at: Instant,
-    retry_count: u32,
+pub struct QueuedUpload {
+    /// Path to the local file to upload
+    pub local_path: PathBuf,
+    /// Target object key in S3/MinIO
+    pub object_key: String,
+    /// MIME content type of the file
+    pub content_type: String,
+    /// When the upload was queued
+    pub queued_at: Instant,
+    /// Number of upload retry attempts
+    pub retry_count: u32,
 }
 
 /// Resilient object storage with fault tolerance
-#[allow(dead_code)]
+/// 
+/// Provides automatic failover to local storage, circuit breaker pattern,
+/// queued uploads, and LRU caching for S3/MinIO operations to ensure
+/// high availability during network issues or object storage maintenance.
 pub struct ResilientObjectStorage {
     /// Underlying S3/MinIO storage
     inner: Option<DistributedObjectStorage>,
@@ -218,6 +230,11 @@ impl ResilientObjectStorage {
     /// Get health status
     pub fn health_status(&self) -> HealthStatus {
         self.health_monitor.overall_status()
+    }
+
+    /// Get the retry executor for custom retry operations
+    pub fn retry_executor(&self) -> &Arc<RetryExecutor> {
+        &self.retry_executor
     }
 
     /// Upload file with resilience

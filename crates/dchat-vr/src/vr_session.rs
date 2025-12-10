@@ -2,7 +2,7 @@
 //!
 //! Manages active VR/AR sessions for users
 
-use crate::{avatar::Avatar, environment::VirtualEnvironment, DeviceType, Transform, Vector3};
+use crate::{DeviceType, Transform, Vector3};
 use chrono::{DateTime, Utc};
 use dchat_core::{types::UserId, Result};
 use serde::{Deserialize, Serialize};

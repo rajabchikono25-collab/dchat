@@ -2,8 +2,9 @@
 
 use crate::keys::{PrivateKey, PublicKey};
 use dchat_core::error::{Error, Result};
+pub use ed25519_dalek::Signature as Ed25519Signature;
 use ed25519_dalek::{
-    Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey, Verifier,
+    Signer, SigningKey as Ed25519SigningKey, Verifier,
     VerifyingKey as Ed25519VerifyingKey,
 };
 
@@ -17,6 +18,18 @@ impl SigningKey {
     /// Create from a private key
     pub fn from_private_key(private_key: &PrivateKey) -> Self {
         let inner = Ed25519SigningKey::from_bytes(private_key.as_bytes());
+        Self { inner }
+    }
+    
+    /// Generate a new random signing key
+    pub fn generate<R: rand::CryptoRng + rand::RngCore>(csprng: &mut R) -> Self {
+        let inner = Ed25519SigningKey::generate(csprng);
+        Self { inner }
+    }
+    
+    /// Create from raw bytes
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let inner = Ed25519SigningKey::from_bytes(bytes);
         Self { inner }
     }
 
@@ -50,6 +63,13 @@ impl VerifyingKey {
 
         Ok(Self { inner })
     }
+    
+    /// Create from raw bytes
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
+        let inner = Ed25519VerifyingKey::from_bytes(bytes)
+            .map_err(|e| Error::crypto(format!("Invalid verifying key: {}", e)))?;
+        Ok(Self { inner })
+    }
 
     /// Verify a signature
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
@@ -62,6 +82,11 @@ impl VerifyingKey {
     /// Get the raw bytes of the public key
     pub fn to_bytes(&self) -> [u8; 32] {
         self.inner.to_bytes()
+    }
+    
+    /// Get a reference to the raw bytes
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.inner.as_bytes()
     }
 }
 
@@ -102,14 +127,26 @@ impl TryFrom<&dchat_core::types::Signature> for Signature {
     }
 }
 
-/// Sign a message using a private key
-pub fn sign(private_key: &PrivateKey, message: &[u8]) -> Signature {
+/// Sign a message using a private key (convenience wrapper)
+pub fn sign_with_private_key(private_key: &PrivateKey, message: &[u8]) -> Signature {
     let signing_key = SigningKey::from_private_key(private_key);
     signing_key.sign(message)
 }
 
-/// Verify a signature using a public key
-pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> Result<()> {
+/// Sign a message using a signing key
+pub fn sign(message: &[u8], signing_key: &SigningKey) -> Ed25519Signature {
+    signing_key.inner.sign(message)
+}
+
+/// Verify a signature using an ed25519 signature and verifying key
+pub fn verify(message: &[u8], signature: &Ed25519Signature, verifying_key: &VerifyingKey) -> Result<()> {
+    verifying_key.inner
+        .verify(message, signature)
+        .map_err(|e| Error::crypto(format!("Signature verification failed: {}", e)))
+}
+
+/// Verify a signature using a public key (convenience wrapper)
+pub fn verify_with_public_key(public_key: &PublicKey, message: &[u8], signature: &Signature) -> Result<()> {
     let verifying_key = VerifyingKey::from_public_key(public_key)?;
     verifying_key.verify(message, signature)
 }
@@ -143,7 +180,7 @@ impl BatchVerifier {
     /// Verify all signatures in the batch
     pub fn verify_all(self) -> Result<()> {
         for (public_key, message, signature) in self.verifications {
-            verify(&public_key, &message, &signature)?;
+            verify_with_public_key(&public_key, &message, &signature)?;
         }
         Ok(())
     }
@@ -171,26 +208,28 @@ mod tests {
     use crate::keys::KeyPair;
 
     #[test]
+    #[allow(deprecated)]
     fn test_sign_and_verify() {
         let keypair = KeyPair::generate();
         let message = b"Hello, world!";
 
         // Sign message
-        let signature = sign(keypair.private_key(), message);
+        let signature = sign_with_private_key(keypair.private_key(), message);
 
         // Verify signature
-        assert!(verify(keypair.public_key(), message, &signature).is_ok());
+        assert!(verify_with_public_key(keypair.public_key(), message, &signature).is_ok());
 
         // Verify with wrong message should fail
         let wrong_message = b"Wrong message";
-        assert!(verify(keypair.public_key(), wrong_message, &signature).is_err());
+        assert!(verify_with_public_key(keypair.public_key(), wrong_message, &signature).is_err());
 
         // Verify with wrong key should fail
         let wrong_keypair = KeyPair::generate();
-        assert!(verify(wrong_keypair.public_key(), message, &signature).is_err());
+        assert!(verify_with_public_key(wrong_keypair.public_key(), message, &signature).is_err());
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_batch_verification() {
         let mut batch = BatchVerifier::new();
 
@@ -198,7 +237,7 @@ mod tests {
         for i in 0..5 {
             let keypair = KeyPair::generate();
             let message = format!("Message {}", i).into_bytes();
-            let signature = sign(keypair.private_key(), &message);
+            let signature = sign_with_private_key(keypair.private_key(), &message);
 
             batch.add(keypair.public_key().clone(), message, signature);
         }
@@ -208,10 +247,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_signature_serialization() {
         let keypair = KeyPair::generate();
         let message = b"Test message";
-        let signature = sign(keypair.private_key(), message);
+        let signature = sign_with_private_key(keypair.private_key(), message);
 
         // Convert to core type and back
         let core_sig = signature.to_core_signature();
@@ -220,6 +260,6 @@ mod tests {
         assert_eq!(signature, recovered_sig);
 
         // Verify recovered signature
-        assert!(verify(keypair.public_key(), message, &recovered_sig).is_ok());
+        assert!(verify_with_public_key(keypair.public_key(), message, &recovered_sig).is_ok());
     }
 }

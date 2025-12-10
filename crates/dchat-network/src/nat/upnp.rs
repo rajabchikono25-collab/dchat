@@ -274,39 +274,60 @@ impl UpnpClient {
     async fn get_external_ip(&self) -> Result<IpAddr> {
         // Try SOAP request to UPnP gateway first
         if let Some(control_url) = &self.control_url {
+            // Construct proper control URL for WANIPConnection service
+            let wan_control_url = Self::derive_wan_control_url(control_url);
+            
             let soap_request = r#"<?xml version="1.0"?>
-                <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" 
-                           s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-                <s:Body>
-                <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
-                </u:GetExternalIPAddress>
-                </s:Body>
-                </s:Envelope>"#;
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" 
+            s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+    <s:Body>
+        <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"/>
+    </s:Body>
+</s:Envelope>"#;
 
-            let client = reqwest::Client::new();
-            if let Ok(response) = client
-                .post(control_url)
-                .header("Content-Type", "text/xml; charset=\"utf-8\"")
-                .header(
-                    "SOAPAction",
-                    "\"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress\"",
-                )
-                .body(soap_request)
-                .send()
-                .await
-            {
-                if let Ok(body) = response.text().await {
-                    // Parse XML response to extract IP address
-                    if let Some(ip_str) = Self::parse_external_ip_from_soap(&body) {
-                        if let Ok(ip) = ip_str.parse() {
-                            return Ok(ip);
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .map_err(|e| dchat_core::Error::network(format!("HTTP client creation failed: {}", e)))?;
+            
+            // Try WANIPConnection first, then WANPPPConnection (for DSL routers)
+            for service in &["WANIPConnection", "WANPPPConnection"] {
+                let soap_action = format!(
+                    "\"urn:schemas-upnp-org:service:{}:1#GetExternalIPAddress\"",
+                    service
+                );
+                
+                if let Ok(response) = client
+                    .post(&wan_control_url)
+                    .header("Content-Type", "text/xml; charset=\"utf-8\"")
+                    .header("SOAPAction", &soap_action)
+                    .body(soap_request.to_string())
+                    .send()
+                    .await
+                {
+                    if let Ok(body) = response.text().await {
+                        // Parse XML response to extract IP address
+                        if let Some(ip_str) = Self::parse_external_ip_from_soap(&body) {
+                            // Validate this is actually an external IP (not private range)
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                if !Self::is_private_ip(&ip) {
+                                    return Ok(ip);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Fallback: Query external IP service (ipify.org)
+        // Fallback: Query multiple external IP services for reliability
+        let services = [
+            "https://api.ipify.org?format=text",
+            "https://icanhazip.com",
+            "https://api.ip.sb/ip",
+            "https://ipinfo.io/ip",
+        ];
+        
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -314,31 +335,101 @@ impl UpnpClient {
                 dchat_core::Error::network(format!("HTTP client creation failed: {}", e))
             })?;
 
-        if let Ok(response) = client.get("https://api.ipify.org?format=text").send().await {
-            if let Ok(ip_text) = response.text().await {
-                if let Ok(ip) = ip_text.trim().parse() {
-                    return Ok(ip);
+        for service in services {
+            if let Ok(response) = client.get(service).send().await {
+                if let Ok(ip_text) = response.text().await {
+                    if let Ok(ip) = ip_text.trim().parse::<IpAddr>() {
+                        if !Self::is_private_ip(&ip) {
+                            return Ok(ip);
+                        }
+                    }
                 }
             }
         }
 
-        // Last resort: return local IP
-        self.get_local_ip().await
+        Err(dchat_core::Error::network(
+            "Failed to determine external IP address - all methods failed"
+        ))
     }
 
-    /// Parse external IP address from SOAP XML response
-    fn parse_external_ip_from_soap(xml: &str) -> Option<String> {
-        // Simple XML parsing for <NewExternalIPAddress> tag
-        for line in xml.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("<NewExternalIPAddress>") {
-                return trimmed
-                    .trim_start_matches("<NewExternalIPAddress>")
-                    .trim_end_matches("</NewExternalIPAddress>")
-                    .to_string()
-                    .into();
+    /// Derive the WANIPConnection control URL from the root description URL
+    fn derive_wan_control_url(root_url: &str) -> String {
+        // If the URL already contains a control path, use it directly
+        if root_url.contains("/ctl/") || root_url.contains("/upnp/control/") {
+            return root_url.to_string();
+        }
+        
+        // Extract base URL and append common control paths
+        if let Some(base_end) = root_url.rfind('/') {
+            let base = &root_url[..base_end];
+            // Common UPnP control paths for different router vendors
+            format!("{}/upnp/control/WANIPConn1", base)
+        } else {
+            root_url.to_string()
+        }
+    }
+    
+    /// Check if an IP address is in private/reserved range
+    fn is_private_ip(ip: &IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                ipv4.is_private() 
+                    || ipv4.is_loopback() 
+                    || ipv4.is_link_local()
+                    || ipv4.octets()[0] == 100 && (ipv4.octets()[1] >= 64 && ipv4.octets()[1] <= 127) // CGNAT
+            }
+            IpAddr::V6(ipv6) => {
+                ipv6.is_loopback() 
+                    || ipv6.is_unspecified()
+                    // Check for link-local (fe80::/10)
+                    || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+                    // Check for unique local (fc00::/7)  
+                    || (ipv6.segments()[0] & 0xfe00) == 0xfc00
             }
         }
+    }
+
+    /// Parse external IP address from SOAP XML response with robust regex parsing
+    fn parse_external_ip_from_soap(xml: &str) -> Option<String> {
+        // Use regex for robust XML parsing that handles different formatting
+        // Pattern matches <NewExternalIPAddress>IP_ADDRESS</NewExternalIPAddress>
+        let patterns = [
+            r"<NewExternalIPAddress>([^<]+)</NewExternalIPAddress>",
+            r"<NewExternalIPAddress>\s*([0-9.]+)\s*</NewExternalIPAddress>",
+            // Some routers use different casing
+            r"(?i)<newexternalipaddress>([^<]+)</newexternalipaddress>",
+        ];
+        
+        for pattern in patterns {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if let Some(captures) = re.captures(xml) {
+                    if let Some(ip_match) = captures.get(1) {
+                        let ip_str = ip_match.as_str().trim();
+                        // Validate it looks like an IP
+                        if ip_str.parse::<IpAddr>().is_ok() {
+                            return Some(ip_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Simple string search
+        for line in xml.lines() {
+            let trimmed = line.trim();
+            if trimmed.to_lowercase().contains("newexternalipaddress") {
+                // Extract content between > and <
+                if let Some(start) = trimmed.find('>') {
+                    if let Some(end) = trimmed[start+1..].find('<') {
+                        let ip_str = trimmed[start+1..start+1+end].trim();
+                        if ip_str.parse::<IpAddr>().is_ok() {
+                            return Some(ip_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
         None
     }
 

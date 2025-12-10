@@ -100,14 +100,19 @@ pub enum NegotiationError {
 }
 
 /// Tracks version negotiation state for a peer
+/// Stores the protocol version negotiation lifecycle and results.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct NegotiationState {
-    peer_id: PeerId,
-    started_at: Instant,
-    local_version: ProtocolVersion,
-    remote_version: Option<ProtocolVersion>,
-    result: Option<NegotiationResult>,
+pub struct NegotiationState {
+    /// Peer identifier for this negotiation
+    pub peer_id: PeerId,
+    /// When the negotiation was started
+    pub started_at: Instant,
+    /// Local protocol version offered
+    pub local_version: ProtocolVersion,
+    /// Remote protocol version received (if any)
+    pub remote_version: Option<ProtocolVersion>,
+    /// Negotiation result (if complete)
+    pub result: Option<NegotiationResult>,
 }
 
 /// Metrics for version negotiation

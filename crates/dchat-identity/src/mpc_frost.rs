@@ -194,23 +194,32 @@ pub struct FrostCoordinator {
 }
 
 /// State for an active FROST signing session
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct FrostSigningSession {
-    session_id: String,
-    message: Vec<u8>,
-    round1_packages: BTreeMap<ParticipantId, SigningRound1Package>,
-    round2_packages: BTreeMap<ParticipantId, SigningRound2Package>,
-    started_at: i64,
-    status: SessionStatus,
+pub struct FrostSigningSession {
+    /// Unique session identifier
+    pub session_id: String,
+    /// Message to be signed
+    pub message: Vec<u8>,
+    /// Round 1 packages from participants
+    pub round1_packages: BTreeMap<ParticipantId, SigningRound1Package>,
+    /// Round 2 packages from participants
+    pub round2_packages: BTreeMap<ParticipantId, SigningRound2Package>,
+    /// When the session started
+    pub started_at: i64,
+    /// Current session status
+    pub status: SessionStatus,
 }
 
-#[allow(dead_code)]
+/// FROST signing session status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SessionStatus {
+pub enum SessionStatus {
+    /// Waiting for round 1 packages
     WaitingForRound1,
+    /// Waiting for round 2 packages  
     WaitingForRound2,
+    /// Session completed successfully
     Complete,
+    /// Session failed
     Failed,
 }
 

@@ -19,11 +19,7 @@ pub mod platforms;
 pub mod spatial_audio;
 pub mod vr_session;
 
-use chrono::{DateTime, Utc};
-use dchat_core::{types::UserId, Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use uuid::Uuid;
 
 // Re-export key types from new modules
 pub use accessibility::{AccessibilityManager, AccessibilitySettings, ColorblindMode, Subtitle, TtsMessage, TtsPriority};

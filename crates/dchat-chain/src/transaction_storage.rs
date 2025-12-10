@@ -65,12 +65,14 @@ impl Default for TransactionStorageConfig {
 }
 
 /// Pending transaction for async writes
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct PendingTransaction {
-    tx: Transaction,
-    sender_key: Option<String>,
-    queued_at: DateTime<Utc>,
+pub struct PendingTransaction {
+    /// The transaction to write
+    pub tx: Transaction,
+    /// Optional sender key for indexing
+    pub sender_key: Option<String>,
+    /// When this was queued
+    pub queued_at: DateTime<Utc>,
 }
 
 /// Service statistics

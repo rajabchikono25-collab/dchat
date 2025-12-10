@@ -95,8 +95,7 @@ pub struct CrossChainBridge {
     /// Pending transactions
     pending_txs: Arc<RwLock<HashMap<String, CrossChainTransaction>>>,
     /// RPC endpoint for bridge service
-    #[allow(dead_code)]
-    bridge_rpc_url: String,
+    pub bridge_rpc_url: String,
 }
 
 impl CrossChainBridge {

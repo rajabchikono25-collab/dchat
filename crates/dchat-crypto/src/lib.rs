@@ -19,6 +19,7 @@ pub mod noise;
 pub mod post_quantum;
 pub mod rotation;
 pub mod signatures;
+pub mod typed_handshake; // Typed state machine handshake with identity binding
 
 // Re-export crypto submodule contents
 pub use crypto::handshake as crypto_handshake;
@@ -28,12 +29,16 @@ pub use encryption::{
     decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
     generate_encryption_key, EncryptedData, KEY_SIZE, NONCE_SIZE,
 };
-pub use keys::{KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
+pub use keys::{Address, KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
 pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
 pub use mnemonic::{Mnemonic, MnemonicLength, Seed}; // BIP-39 mnemonic exports
 pub use noise::{NoiseHandshake, NoiseSession};
 pub use rotation::{KeyRotationManager, RotationPolicy};
-pub use signatures::{sign, verify, SigningKey, VerifyingKey};
+pub use signatures::{sign, sign_with_private_key, verify, verify_with_public_key, SigningKey, VerifyingKey};
+pub use typed_handshake::{
+    HandshakeFailure, HandshakeMessage, HandshakePhase, HandshakeRejectReason, HandshakeRole,
+    IdentityClaim, ProtocolVersion, TimeoutAwareHandshake, TypedHandshake, VerifiedPeerIdentity,
+};
 
 use dchat_core::error::{Error, Result};
 

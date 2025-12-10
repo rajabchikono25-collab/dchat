@@ -6,7 +6,6 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 /// K-bucket based routing table for Kademlia DHT
-#[allow(dead_code)]
 pub struct RoutingTable {
     local_id: PeerId,
     buckets: Vec<KBucket>,
@@ -24,6 +23,11 @@ impl RoutingTable {
             buckets,
             k,
         }
+    }
+
+    /// Get the k bucket size (max peers per bucket)
+    pub fn k(&self) -> usize {
+        self.k
     }
 
     /// Add a peer to the routing table

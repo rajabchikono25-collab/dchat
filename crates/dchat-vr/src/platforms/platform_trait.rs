@@ -1,6 +1,6 @@
 //! Platform abstraction trait for VR/AR systems
 
-use crate::{DeviceType, Transform, Vector3, gesture::{Hand, FingerJoints, FingerPositions}};
+use crate::{DeviceType, Transform, gesture::{Hand, FingerPositions}};
 use async_trait::async_trait;
 use std::error::Error;
 use std::fmt;

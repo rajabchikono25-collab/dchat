@@ -328,7 +328,6 @@ impl TransferStats {
 }
 
 /// Streaming transfer manager
-#[allow(dead_code)]
 pub struct StreamingTransfer {
     chunk_size: usize,
     num_parallel_streams: usize,
@@ -347,6 +346,11 @@ impl StreamingTransfer {
             chunk_size,
             num_parallel_streams,
         }
+    }
+
+    /// Get the number of parallel streams for data transfer
+    pub fn num_parallel_streams(&self) -> usize {
+        self.num_parallel_streams
     }
 
     /// Split data into chunks

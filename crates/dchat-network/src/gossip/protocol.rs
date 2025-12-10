@@ -298,7 +298,6 @@ impl GossipMessage {
 }
 
 /// Gossip protocol implementation
-#[allow(dead_code)]
 pub struct GossipProtocol {
     config: GossipConfig,
     message_cache: MessageCache,
@@ -310,16 +309,15 @@ pub struct GossipProtocol {
 
 /// Per-peer state
 #[derive(Debug)]
-#[allow(dead_code)]
-struct PeerState {
+pub struct PeerState {
     /// Last seen timestamp
-    last_seen: SystemTime,
+    pub last_seen: SystemTime,
 
     /// Latency estimate
-    latency: Option<Duration>,
+    pub latency: Option<Duration>,
 
     /// Number of messages forwarded to this peer
-    messages_sent: u64,
+    pub messages_sent: u64,
 }
 
 impl PeerState {
@@ -349,8 +347,7 @@ impl GossipProtocol {
     }
 
     /// Get or extract Ed25519 key for a peer (with caching)
-    #[allow(dead_code)]
-    fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
+    pub fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
         // Use entry API for safe cache population without double lookup
         use std::collections::hash_map::Entry;
         

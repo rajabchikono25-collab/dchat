@@ -1,9 +1,13 @@
 //! Network behavior combining multiple libp2p protocols
+//!
+//! Includes full Relay v2 support with DCUtR for NAT traversal
 
 use dchat_core::types::UserId;
 use libp2p::{
+    dcutr,
     gossipsub::{self, MessageId},
     identify, kad, mdns, ping,
+    relay,
     request_response::{self, OutboundRequestId, ProtocolSupport},
     swarm::NetworkBehaviour,
     PeerId, StreamProtocol,
@@ -80,6 +84,12 @@ pub struct DchatBehavior {
     
     /// Request-response for peer handshakes
     pub req_resp: cbor::Behaviour<HandshakeData, HandshakeData>,
+    
+    /// Relay client for NAT traversal (connect through relays)
+    pub relay_client: relay::client::Behaviour,
+    
+    /// DCUtR for direct connection upgrade (hole punching)
+    pub dcutr: dcutr::Behaviour,
 }
 
 impl DchatBehavior {
@@ -136,6 +146,13 @@ impl DchatBehavior {
         let req_resp_config = request_response::Config::default()
             .with_request_timeout(Duration::from_secs(30));
         let req_resp = cbor::Behaviour::new(protocols, req_resp_config);
+        
+        // Relay client for NAT traversal (allows connecting through relay nodes)
+        // relay::client::new() returns (Transport, Behaviour) tuple
+        let (_relay_transport, relay_client) = relay::client::new(local_peer_id);
+        
+        // DCUtR for direct connection upgrade after relay (hole punching)
+        let dcutr = dcutr::Behaviour::new(local_peer_id);
 
         Ok(Self {
             kademlia,
@@ -144,6 +161,8 @@ impl DchatBehavior {
             identify,
             ping,
             req_resp,
+            relay_client,
+            dcutr,
         })
     }
 

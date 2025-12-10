@@ -243,12 +243,15 @@ pub mod client {
     use tokio::sync::RwLock;
 
     /// High-level dchat client for user applications
-    #[allow(dead_code)]
     pub struct DchatClient {
-        identity: Arc<Identity>,
-        network: Arc<NetworkManager>,
-        database: Arc<Database>,
-        message_queue: Arc<RwLock<MessageQueue>>,
+        /// User identity for authentication and signing
+        pub identity: Arc<Identity>,
+        /// Network manager for peer communication
+        pub network: Arc<NetworkManager>,
+        /// Database for persistent storage
+        pub database: Arc<Database>,
+        /// Message queue for outbound messages
+        pub message_queue: Arc<RwLock<MessageQueue>>,
     }
 
     impl DchatClient {

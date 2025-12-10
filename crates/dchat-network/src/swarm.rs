@@ -66,7 +66,6 @@ pub enum NetworkEvent {
 }
 
 /// Network manager
-#[allow(dead_code)]
 pub struct NetworkManager {
     swarm: Swarm<DchatBehavior>,
     config: NetworkConfig,
@@ -112,6 +111,11 @@ impl NetworkManager {
             nat,
             router,
         })
+    }
+
+    /// Get the message router for direct routing operations
+    pub fn router(&self) -> &Router {
+        &self.router
     }
 
     /// Start the network manager
@@ -325,6 +329,16 @@ impl NetworkManager {
             .behaviour_mut()
             .send_handshake(peer_id, handshake_data);
         tracing::debug!("Sent handshake to peer: {}", peer_id);
+        Ok(())
+    }
+
+    /// Disconnect from a peer
+    /// 
+    /// Closes all connections to the specified peer.
+    pub fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<()> {
+        let _ = self.swarm.disconnect_peer_id(*peer_id);
+        self.discovery.peer_disconnected(peer_id);
+        tracing::info!("🔌 Disconnected from peer: {}", peer_id);
         Ok(())
     }
 

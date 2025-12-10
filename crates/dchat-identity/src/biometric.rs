@@ -133,12 +133,16 @@ pub struct BiometricAuthResult {
 }
 
 /// Platform-agnostic biometric authenticator
-#[allow(dead_code)]
 pub struct BiometricAuthenticator {
     config: BiometricConfig,
 }
 
 impl BiometricAuthenticator {
+    /// Get the biometric configuration
+    pub fn config(&self) -> &BiometricConfig {
+        &self.config
+    }
+
     /// Create a new biometric authenticator
     pub fn new(config: BiometricConfig) -> Self {
         Self { config }

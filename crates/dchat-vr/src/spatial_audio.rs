@@ -3,8 +3,8 @@
 //! Provides positional 3D audio for immersive voice chat with HRTF,
 //! reverb, Doppler effect, and room acoustics simulation.
 
-use crate::{Transform, Vector3};
-use dchat_core::{types::UserId, Result};
+use crate::Vector3;
+use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::f32::consts::PI;

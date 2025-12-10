@@ -215,13 +215,11 @@ impl Default for PrivacySettings {
 }
 
 /// Maximum number of statuses per user
-#[allow(dead_code)]
-const MAX_STATUSES_PER_USER: usize = 30;
+pub const MAX_STATUSES_PER_USER: usize = 30;
 /// Maximum status caption length
-#[allow(dead_code)]
-const MAX_CAPTION_LENGTH: usize = 500;
+pub const MAX_CAPTION_LENGTH: usize = 500;
 /// Maximum viewers tracked per status
-const MAX_VIEWERS_PER_STATUS: usize = 10000;
+pub const MAX_VIEWERS_PER_STATUS: usize = 10000;
 /// Maximum profiles to return in search
 const MAX_SEARCH_RESULTS: usize = 50;
 

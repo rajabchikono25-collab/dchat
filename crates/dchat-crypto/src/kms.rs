@@ -417,7 +417,6 @@ impl AwsKmsClient {
 /// # Storage
 /// The encrypted key can be stored locally, in S3, or any secure storage.
 /// The key remains protected by the KMS CMK.
-#[allow(dead_code)]
 pub struct Ed25519KmsWrapper {
     kms: AwsKmsClient,
     /// KMS key ID used for envelope encryption
@@ -429,6 +428,11 @@ pub struct Ed25519KmsWrapper {
 }
 
 impl Ed25519KmsWrapper {
+    /// Get the KMS key ID used for envelope encryption
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
     /// Create a new Ed25519 wrapper using KMS for envelope encryption
     ///
     /// The Ed25519 private key is encrypted using a KMS key and stored locally.

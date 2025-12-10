@@ -186,7 +186,6 @@ impl Default for RateLimitConfig {
 }
 
 /// Peer rate limiter
-#[allow(dead_code)]
 pub struct PeerRateLimiter {
     peer_id: String,
     bucket: TokenBucket,
@@ -214,6 +213,11 @@ impl PeerRateLimiter {
             message_history: Vec::new(),
             spam_detected: false,
         }
+    }
+
+    /// Get the peer ID this rate limiter is tracking
+    pub fn peer_id(&self) -> &str {
+        &self.peer_id
     }
 
     /// Attempt to send a message

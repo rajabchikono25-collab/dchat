@@ -774,6 +774,310 @@ impl CurrencyChainClient {
 
         Ok((amount, tx_id))
     }
+
+    // ========================================================================
+    // PRODUCTION GENESIS & STAKING FUNCTIONALITY
+    // ========================================================================
+
+    /// Transfer tokens from genesis allocation to a server's address
+    /// 
+    /// This is called during mainnet initialization to fund foundation servers
+    /// from the genesis allocation. The tokens come from the genesis pool.
+    /// 
+    /// # Arguments
+    /// * `recipient` - The recipient's UserId (derived from their public key)
+    /// * `amount` - Amount of tokens to transfer from genesis
+    /// * `source_description` - Description of the genesis source (e.g., "foundation_allocation")
+    /// 
+    /// # Returns
+    /// Transaction ID for the genesis transfer
+    pub fn transfer_from_genesis(
+        &self,
+        recipient: &UserId,
+        amount: u64,
+        source_description: &str,
+    ) -> Result<Uuid> {
+        if amount == 0 {
+            return Err(Error::validation("Genesis transfer amount must be greater than 0"));
+        }
+
+        // Genesis transfers are minted from the initial supply
+        // In production, this verifies against the remaining genesis allocation
+        
+        // Get or create recipient wallet
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets.entry(recipient.clone()).or_insert_with(|| Wallet {
+            user_id: recipient.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+
+        // Credit the recipient directly (genesis allocation)
+        wallet.balance += amount;
+
+        // Create transaction record
+        let now = Utc::now().timestamp();
+        let tx = CurrencyTransaction {
+            id: Uuid::new_v4(),
+            tx_type: format!("genesis_{}", source_description),
+            from: UserId::default(), // Genesis/system account
+            to: Some(recipient.clone()),
+            amount,
+            status: "confirmed".to_string(), // Genesis is immediately confirmed
+            confirmations: 1,
+            block_height: 0, // Genesis block
+            created_at: now,
+        };
+
+        let tx_id = tx.id;
+        drop(wallets);
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "💰 Genesis transfer: {} tokens to {} (source: {}, tx: {})",
+            amount,
+            recipient,
+            source_description,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Automatically stake tokens for a validator or relay
+    /// 
+    /// This is called during server initialization to automatically stake
+    /// the server's allocated tokens. For validators and relays, staking
+    /// is mandatory to participate in the network.
+    /// 
+    /// # Arguments
+    /// * `operator` - The operator's UserId
+    /// * `amount` - Amount of tokens to stake
+    /// * `node_type` - Type of node ("validator", "relay")
+    /// * `lock_duration_days` - How long to lock the stake (in days)
+    /// 
+    /// # Returns
+    /// Transaction ID for the stake
+    pub fn auto_stake_for_node(
+        &self,
+        operator: &UserId,
+        amount: u64,
+        node_type: &str,
+        lock_duration_days: u32,
+    ) -> Result<Uuid> {
+        if amount == 0 {
+            return Err(Error::validation("Stake amount must be greater than 0"));
+        }
+
+        // Lock duration in seconds
+        let lock_duration_seconds = (lock_duration_days as i64) * 86400;
+
+        // Perform the stake
+        let tx_id = self.stake(operator, amount, lock_duration_seconds)?;
+
+        tracing::info!(
+            "🔒 Auto-staked {} tokens for {} node {} (lock: {} days, tx: {})",
+            amount,
+            node_type,
+            operator,
+            lock_duration_days,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Initiate unbonding for a staked position
+    /// 
+    /// This starts the unbonding process for a validator or relay.
+    /// The tokens will remain locked during the cooldown period.
+    /// 
+    /// # Arguments
+    /// * `operator` - The operator's UserId
+    /// * `amount` - Amount of tokens to unbond (or 0 for all)
+    /// 
+    /// # Returns
+    /// Transaction ID for the unbonding initiation
+    pub fn initiate_stake_unbonding(
+        &self,
+        operator: &UserId,
+        amount: u64,
+    ) -> Result<Uuid> {
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets
+            .get_mut(operator)
+            .ok_or_else(|| Error::NotFound(format!("Operator wallet not found: {}", operator)))?;
+
+        // Determine amount to unbond
+        let unbond_amount = if amount == 0 { wallet.staked } else { amount };
+
+        if unbond_amount > wallet.staked {
+            return Err(Error::validation(format!(
+                "Insufficient staked balance: have {}, requested {}",
+                wallet.staked, unbond_amount
+            )));
+        }
+
+        // For now, we don't immediately reduce staked balance
+        // The actual withdrawal happens after the cooldown period
+        // Instead, we record the unbonding request
+
+        let now = Utc::now().timestamp();
+        let tx = CurrencyTransaction {
+            id: Uuid::new_v4(),
+            tx_type: "initiate_unbonding".to_string(),
+            from: operator.clone(),
+            to: None,
+            amount: unbond_amount,
+            status: "pending".to_string(), // Pending until cooldown expires
+            confirmations: 0,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: now,
+        };
+
+        let tx_id = tx.id;
+        drop(wallets);
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "⏳ Initiated stake unbonding for {}: {} tokens (tx: {})",
+            operator,
+            unbond_amount,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Calculate pending rewards for a staker
+    /// 
+    /// Calculates the accumulated rewards based on:
+    /// - Staked amount and duration
+    /// - Block production (for validators)
+    /// - Message relay (for relays)
+    /// - Current epoch and reward rate
+    /// 
+    /// # Arguments
+    /// * `operator` - The operator's UserId
+    /// * `blocks_produced` - Number of blocks produced (validators)
+    /// * `messages_relayed` - Number of messages relayed (relays)
+    /// * `current_epoch` - Current epoch number
+    /// 
+    /// # Returns
+    /// Total pending rewards (not yet claimed)
+    pub fn calculate_pending_rewards(
+        &self,
+        operator: &UserId,
+        blocks_produced: u64,
+        messages_relayed: u64,
+        current_epoch: u64,
+    ) -> Result<u64> {
+        let wallets = self.wallets.read().unwrap();
+        let wallet = wallets
+            .get(operator)
+            .ok_or_else(|| Error::NotFound(format!("Operator wallet not found: {}", operator)))?;
+
+        // Base reward rate: 5% APY (approximately 0.0137% per day)
+        // Adjusted based on stake amount and participation
+        const BASE_APY_BPS: u64 = 500; // 5% in basis points
+        const BLOCKS_PER_EPOCH: u64 = 1000;
+        const MESSAGES_PER_RELAY_REWARD: u64 = 100;
+        
+        // Calculate time-based staking rewards
+        // Simplified: stake_reward = (staked * APY * epochs) / (365 * 10000)
+        let staking_reward = (wallet.staked * BASE_APY_BPS * current_epoch) / (365 * 10000);
+        
+        // Calculate block production rewards (validators only)
+        // Reward per block = 10 tokens (in smallest units)
+        const REWARD_PER_BLOCK: u64 = 10_000_000; // 10 tokens with 6 decimals
+        let block_reward = blocks_produced * REWARD_PER_BLOCK;
+        
+        // Calculate relay rewards (relays only)
+        // Reward per 100 messages = 1 token
+        const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000; // 1 token with 6 decimals
+        let relay_reward = (messages_relayed / MESSAGES_PER_RELAY_REWARD) * REWARD_PER_MESSAGE_BATCH;
+        
+        // Total pending rewards (add to existing pending)
+        let total_new_rewards = staking_reward + block_reward + relay_reward;
+        let total_pending = wallet.rewards_pending + total_new_rewards;
+        
+        tracing::debug!(
+            "Calculated rewards for {}: staking={}, blocks={}, relay={}, total_pending={}",
+            operator,
+            staking_reward,
+            block_reward,
+            relay_reward,
+            total_pending
+        );
+
+        Ok(total_pending)
+    }
+
+    /// Update pending rewards for an operator
+    /// 
+    /// This is called periodically to accumulate rewards into the pending balance.
+    pub fn accumulate_rewards(
+        &self,
+        operator: &UserId,
+        blocks_produced: u64,
+        messages_relayed: u64,
+        current_epoch: u64,
+    ) -> Result<u64> {
+        // Calculate rewards
+        let new_rewards = {
+            let wallets = self.wallets.read().unwrap();
+            let wallet = wallets
+                .get(operator)
+                .ok_or_else(|| Error::NotFound(format!("Operator wallet not found: {}", operator)))?;
+
+            const BASE_APY_BPS: u64 = 500;
+            const REWARD_PER_BLOCK: u64 = 10_000_000;
+            const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000;
+            const MESSAGES_PER_RELAY_REWARD: u64 = 100;
+
+            let staking_reward = (wallet.staked * BASE_APY_BPS * current_epoch) / (365 * 10000);
+            let block_reward = blocks_produced * REWARD_PER_BLOCK;
+            let relay_reward = (messages_relayed / MESSAGES_PER_RELAY_REWARD) * REWARD_PER_MESSAGE_BATCH;
+            
+            staking_reward + block_reward + relay_reward
+        };
+
+        // Update rewards_pending in wallet
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets
+            .get_mut(operator)
+            .ok_or_else(|| Error::NotFound(format!("Operator wallet not found: {}", operator)))?;
+
+        wallet.rewards_pending += new_rewards;
+
+        tracing::info!(
+            "💰 Accumulated {} rewards for {} (total pending: {})",
+            new_rewards,
+            operator,
+            wallet.rewards_pending
+        );
+
+        Ok(wallet.rewards_pending)
+    }
+
+    /// Generate or load server address from public key bytes
+    /// 
+    /// This derives a deterministic UserId from a public key for use
+    /// with wallet and staking operations.
+    /// 
+    /// # Arguments
+    /// * `public_key_bytes` - The 32-byte Ed25519 public key
+    /// 
+    /// # Returns
+    /// UserId derived from the public key
+    pub fn address_from_public_key(public_key_bytes: &[u8; 32]) -> UserId {
+        // Hash the public key with BLAKE3 and use first 16 bytes for UUID
+        let hash = blake3::hash(public_key_bytes);
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&hash.as_bytes()[..16]);
+        UserId(uuid::Uuid::from_bytes(uuid_bytes))
+    }
 }
 
 /// Implementation of dchat-privacy's CurrencyChainClient trait

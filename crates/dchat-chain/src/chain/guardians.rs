@@ -209,37 +209,49 @@ pub enum NullifierType {
 }
 
 /// Guardian registration stored on-chain
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct GuardianRegistration {
-    guardian_id: String,
-    public_key: VerifyingKey,
-    stake_amount: u64,
-    registered_at_block: u64,
-    active: bool,
+pub struct GuardianRegistration {
+    /// Guardian's unique identifier
+    pub guardian_id: String,
+    /// Guardian's public key for signature verification
+    pub public_key: VerifyingKey,
+    /// Amount staked by this guardian
+    pub stake_amount: u64,
+    /// Block height when guardian was registered
+    pub registered_at_block: u64,
+    /// Whether guardian is currently active
+    pub active: bool,
 }
 
 /// Recovery request state on-chain
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct RecoveryRequestState {
-    identity_id: String,
-    new_device_public_key: Vec<u8>,
-    timelock_expires_at_block: u64,
-    required_signatures: usize,
-    signatures: HashMap<String, Vec<u8>>,
-    status: OnChainRecoveryStatus,
+pub struct RecoveryRequestState {
+    /// Identity being recovered
+    pub identity_id: String,
+    /// New device's public key
+    pub new_device_public_key: Vec<u8>,
+    /// Block height when timelock expires
+    pub timelock_expires_at_block: u64,
+    /// Number of signatures required
+    pub required_signatures: usize,
+    /// Collected guardian signatures
+    pub signatures: HashMap<String, Vec<u8>>,
+    /// Current status of recovery
+    pub status: OnChainRecoveryStatus,
     /// Nullifier to prevent duplicate recovery requests
-    nullifier: [u8; 32],
+    pub nullifier: [u8; 32],
 }
 
 /// On-chain recovery status
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
-enum OnChainRecoveryStatus {
-    Pending,  // Waiting for timelock
-    Active,   // Collecting signatures
+pub enum OnChainRecoveryStatus {
+    /// Waiting for timelock
+    Pending,
+    /// Collecting signatures
+    Active,
+    /// Successfully completed
     Completed,
+    /// Cancelled by user or guardians
     Cancelled,
 }
 
@@ -644,8 +656,6 @@ impl GuardianChainState {
         guardian_id: &str,
     ) -> Result<()> {
         use dchat_privacy::zk_proofs::{ContactProof, ZkVerifier, Groth16Keys};
-        #[allow(unused_imports)]
-        use dchat_core::UserId;
         use once_cell::sync::Lazy;
         
         // Static Groth16 keys (initialized once)
@@ -727,8 +737,7 @@ impl GuardianChainState {
     }
 
     /// Create recovery message for guardian signing
-    #[allow(dead_code)]
-    fn create_recovery_message(&self, request: &RecoveryRequestState) -> Result<Vec<u8>> {
+    pub fn create_recovery_message(&self, request: &RecoveryRequestState) -> Result<Vec<u8>> {
         let message = format!(
             "RECOVERY:{}:{}:{}",
             request.identity_id,

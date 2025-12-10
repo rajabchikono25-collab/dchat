@@ -135,7 +135,6 @@ impl From<&Transaction> for StoredTransaction {
 /// 
 /// Provides a unified interface to store and retrieve blockchain transactions
 /// across multiple distributed storage systems for high availability.
-#[allow(dead_code)]
 #[cfg(feature = "storage-integration")]
 pub struct ChainStorageBackend {
     /// TiKV for consensus state (strong consistency)
@@ -154,6 +153,11 @@ pub struct ChainStorageBackend {
 
 #[cfg(feature = "storage-integration")]
 impl ChainStorageBackend {
+    /// Get the local fallback cache
+    pub fn local_cache(&self) -> &Arc<RwLock<std::collections::HashMap<String, StoredTransaction>>> {
+        &self.local_cache
+    }
+
     /// Create new chain storage backend with all distributed systems
     pub async fn new(config: ChainStorageConfig) -> Result<Self> {
         info!("Initializing chain storage backend with distributed systems");

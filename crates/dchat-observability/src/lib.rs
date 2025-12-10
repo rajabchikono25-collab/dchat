@@ -6,10 +6,17 @@
 //! - Health check endpoints
 //! - Network health dashboards
 //! - Alert rule evaluation and routing
+//! - Handshake-specific metrics
 
 pub mod alerting;
 pub mod distributed_tracing;
+pub mod handshake_metrics;
 pub mod observability;
+
+pub use handshake_metrics::{
+    FailureReason, HandshakeHealthSummary, HandshakeMetrics, HandshakeOutcome, 
+    HandshakeRole, HandshakeTimer, NoisePhaseTimer, HANDSHAKE_METRICS,
+};
 
 use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result};

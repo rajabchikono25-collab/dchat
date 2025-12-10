@@ -114,6 +114,60 @@ impl std::fmt::Debug for PrivateKey {
     }
 }
 
+/// A blockchain address derived from a public key
+/// Uses the first 20 bytes of BLAKE3 hash of the public key (Ethereum-style)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Address {
+    bytes: [u8; 20],
+}
+
+impl Address {
+    /// Create from existing bytes
+    pub fn from_bytes(bytes: [u8; 20]) -> Self {
+        Self { bytes }
+    }
+
+    /// Get the raw bytes
+    pub fn as_bytes(&self) -> &[u8; 20] {
+        &self.bytes
+    }
+
+    /// Convert to hex string with 0x prefix
+    pub fn to_hex(&self) -> String {
+        format!("0x{}", hex::encode(self.bytes))
+    }
+
+    /// Parse from hex string (with or without 0x prefix)
+    pub fn from_hex(s: &str) -> Result<Self> {
+        let s = s.strip_prefix("0x").unwrap_or(s);
+        let bytes = hex::decode(s)
+            .map_err(|e| Error::crypto(format!("Invalid hex address: {}", e)))?;
+        if bytes.len() != 20 {
+            return Err(Error::crypto(format!(
+                "Invalid address length: expected 20, got {}",
+                bytes.len()
+            )));
+        }
+        let mut arr = [0u8; 20];
+        arr.copy_from_slice(&bytes);
+        Ok(Self { bytes: arr })
+    }
+
+    /// Convert to UserId for wallet operations
+    pub fn to_user_id(&self) -> dchat_core::types::UserId {
+        // Create a deterministic UUID from the address bytes
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes[..16].copy_from_slice(&self.bytes[..16]);
+        dchat_core::types::UserId(uuid::Uuid::from_bytes(uuid_bytes))
+    }
+}
+
+impl std::fmt::Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex())
+    }
+}
+
 /// A public key
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicKey {
@@ -134,6 +188,20 @@ impl PublicKey {
     /// Convert to dchat-core PublicKey type
     pub fn to_core_public_key(&self) -> dchat_core::types::PublicKey {
         dchat_core::types::PublicKey::new(self.bytes.to_vec())
+    }
+
+    /// Derive blockchain address from this public key
+    /// Uses BLAKE3 hash of the public key, taking first 20 bytes
+    pub fn to_address(&self) -> Address {
+        let hash = blake3::hash(&self.bytes);
+        let mut addr_bytes = [0u8; 20];
+        addr_bytes.copy_from_slice(&hash.as_bytes()[..20]);
+        Address::from_bytes(addr_bytes)
+    }
+
+    /// Convert to UserId for wallet/staking operations
+    pub fn to_user_id(&self) -> dchat_core::types::UserId {
+        self.to_address().to_user_id()
     }
 }
 
@@ -218,6 +286,16 @@ impl KeyPair {
     /// Get the public key
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    /// Derive blockchain address from this keypair's public key
+    pub fn to_address(&self) -> Address {
+        self.public_key.to_address()
+    }
+
+    /// Convert to UserId for wallet/staking operations
+    pub fn to_user_id(&self) -> dchat_core::types::UserId {
+        self.public_key.to_user_id()
     }
 
     /// Split into private and public keys

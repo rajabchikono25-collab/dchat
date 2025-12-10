@@ -85,15 +85,12 @@ pub struct DeviceAttestation {
 }
 
 /// Maximum key ID length
-#[allow(dead_code)]
 const MAX_KEY_ID_LENGTH: usize = 128;
 /// Allowed characters in key IDs
-#[allow(dead_code)]
 const KEY_ID_PATTERN: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
 
 /// Validates a key ID to prevent path traversal and injection attacks
-#[allow(dead_code)]
-fn validate_key_id(key_id: &str) -> Result<(), EnclaveError> {
+pub fn validate_key_id(key_id: &str) -> Result<(), EnclaveError> {
     if key_id.is_empty() {
         return Err(EnclaveError::KeyNotFound("Key ID cannot be empty".to_string()));
     }
@@ -119,12 +116,16 @@ fn validate_key_id(key_id: &str) -> Result<(), EnclaveError> {
 }
 
 /// Secure enclave manager
-#[allow(dead_code)]
 pub struct SecureEnclave {
     config: EnclaveConfig,
 }
 
 impl SecureEnclave {
+    /// Get the enclave configuration
+    pub fn config(&self) -> &EnclaveConfig {
+        &self.config
+    }
+
     /// Create a new secure enclave instance
     pub fn new(config: EnclaveConfig) -> Self {
         Self { config }

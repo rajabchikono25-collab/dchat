@@ -141,13 +141,17 @@ pub trait InlineQueryHandler {
 
 /// Simple text inline query handler
 pub struct TextInlineQueryHandler {
-    #[allow(dead_code)]
     bot_name: String,
 }
 
 impl TextInlineQueryHandler {
     pub fn new(bot_name: String) -> Self {
         Self { bot_name }
+    }
+    
+    /// Get the bot name
+    pub fn bot_name(&self) -> &str {
+        &self.bot_name
     }
 }
 
@@ -157,11 +161,11 @@ impl InlineQueryHandler for TextInlineQueryHandler {
             return Ok(vec![InlineResult {
                 result_type: InlineResultType::Article,
                 id: "help".to_string(),
-                title: "Type something...".to_string(),
-                description: Some("Start typing to search".to_string()),
+                title: format!("@{} - Type something...", self.bot_name),
+                description: Some(format!("Start typing to search with @{}", self.bot_name)),
                 thumbnail_url: None,
                 content: InlineContent::Text {
-                    text: "Please type something to search".to_string(),
+                    text: format!("Please type something to search with @{}", self.bot_name),
                     parse_mode: None,
                 },
             }]);

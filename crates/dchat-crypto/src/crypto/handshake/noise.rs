@@ -92,12 +92,15 @@ pub struct HandshakeMetrics {
 }
 
 /// Handshake metadata for tracking lifecycle.
+/// Stores peer identification and timing information for handshake monitoring.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct HandshakeMetadata {
-    peer_id: PeerId,
-    started_at: Instant,
-    pattern: NoisePattern,
+pub struct HandshakeMetadata {
+    /// Peer identifier for this handshake
+    pub peer_id: PeerId,
+    /// When the handshake was initiated
+    pub started_at: Instant,
+    /// Noise protocol pattern being used
+    pub pattern: NoisePattern,
 }
 
 /// Manages Noise Protocol handshakes with PeerId mapping and metrics.

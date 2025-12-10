@@ -155,12 +155,15 @@ impl Router {
     }
 }
 
+/// A pending message awaiting delivery
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct PendingMessage {
-    recipient: UserId,
-    payload: Vec<u8>,
-    timestamp: std::time::SystemTime,
+pub struct PendingMessage {
+    /// Target recipient
+    pub recipient: UserId,
+    /// Message payload
+    pub payload: Vec<u8>,
+    /// When the message was queued
+    pub timestamp: std::time::SystemTime,
 }
 
 /// Onion routing for metadata resistance

@@ -93,22 +93,28 @@ pub struct NatTraversalManager {
 
 /// UPnP gateway information
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct UpnpGateway {
-    gateway_addr: SocketAddr,
-    external_ip: IpAddr,
-    mapped_port: u16,
-    internal_port: u16,
+pub struct UpnpGateway {
+    /// Gateway socket address
+    pub gateway_addr: SocketAddr,
+    /// External IP as reported by gateway
+    pub external_ip: IpAddr,
+    /// Mapped external port
+    pub mapped_port: u16,
+    /// Internal port on local machine
+    pub internal_port: u16,
 }
 
 /// TURN server connection
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct TurnConnection {
-    server_addr: String,
-    allocated_addr: Option<SocketAddr>,
-    username: String,
-    credential: String,
+pub struct TurnConnection {
+    /// TURN server address
+    pub server_addr: String,
+    /// Allocated relay address (if allocated)
+    pub allocated_addr: Option<SocketAddr>,
+    /// TURN username
+    pub username: String,
+    /// TURN credential
+    pub credential: String,
 }
 
 impl NatTraversalManager {
@@ -418,21 +424,18 @@ impl NatTraversalManager {
         use serde::Deserialize;
 
         #[derive(Deserialize, Debug)]
-        #[allow(dead_code)]
         struct Envelope {
             #[serde(rename = "Body")]
             body: Body,
         }
 
         #[derive(Deserialize, Debug)]
-        #[allow(dead_code)]
         struct Body {
             #[serde(rename = "GetExternalIPAddressResponse")]
             response: GetExternalIPAddressResponse,
         }
 
         #[derive(Deserialize, Debug)]
-        #[allow(dead_code)]
         struct GetExternalIPAddressResponse {
             #[serde(rename = "NewExternalIPAddress")]
             external_ip: String,

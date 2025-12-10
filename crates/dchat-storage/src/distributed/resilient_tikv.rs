@@ -71,23 +71,30 @@ impl Default for ResilientTiKVConfig {
 }
 
 /// Cached chain state with serialization support
-#[allow(dead_code)]
+/// Used for local fallback during TiKV unavailability
 #[derive(Debug, Clone)]
-struct CachedChainState {
-    state: ChainState,
-    cached_at: Instant,
+pub struct CachedChainState {
+    /// The cached chain state
+    pub state: ChainState,
+    /// When the state was cached
+    pub cached_at: Instant,
 }
 
-/// Cached block metadata
-#[allow(dead_code)]
+/// Cached block metadata for local fallback
+/// Used for read-through caching of frequently accessed blocks
 #[derive(Debug, Clone)]
-struct CachedBlockMetadata {
-    metadata: BlockMetadata,
-    cached_at: Instant,
+pub struct CachedBlockMetadata {
+    /// The cached block metadata
+    pub metadata: BlockMetadata,
+    /// When the metadata was cached
+    pub cached_at: Instant,
 }
 
 /// Resilient TiKV storage with fault tolerance
-#[allow(dead_code)]
+/// 
+/// Provides automatic failover to local cache, circuit breaker pattern,
+/// and write-behind sync for TiKV operations to ensure high availability
+/// during network partitions or TiKV cluster maintenance.
 pub struct ResilientTiKVStorage {
     /// Underlying TiKV storage (wrapped in Option for initialization)
     inner: Option<TiKVStorage>,
@@ -112,6 +119,11 @@ pub struct ResilientTiKVStorage {
 }
 
 impl ResilientTiKVStorage {
+    /// Get the retry executor for external use
+    pub fn retry_executor(&self) -> &Arc<RetryExecutor> {
+        &self.retry_executor
+    }
+
     /// Create a new resilient TiKV storage
     pub async fn new(config: ResilientTiKVConfig) -> StorageResult<Self> {
         info!("Initializing resilient TiKV storage");

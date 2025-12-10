@@ -359,8 +359,7 @@ impl BootstrapCoordinator {
     }
 
     /// Handle bootstrap failure
-    #[allow(dead_code)]
-    async fn handle_failure(&self, error: &str) {
+    pub async fn handle_failure(&self, error: &str) {
         error!("❌ Bootstrap failed: {}", error);
         self.send_event(BootstrapEvent::BootstrapFailed(error.to_string()));
         self.update_status(BootstrapStatus::Failed(error.to_string())).await;

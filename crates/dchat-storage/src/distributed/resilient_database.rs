@@ -77,26 +77,35 @@ impl Default for ResilientDatabaseConfig {
     }
 }
 
-/// Cached message for local fallback
-#[allow(dead_code)]
+/// Cached message for local fallback during database outages
+/// Used by ResilientDatabase for read-through caching
 #[derive(Debug, Clone)]
-struct CachedMessage {
-    message: MessageRow,
-    cached_at: Instant,
+pub struct CachedMessage {
+    /// The cached message data
+    pub message: MessageRow,
+    /// When the message was cached
+    pub cached_at: Instant,
 }
 
-/// Pending write operation
-#[allow(dead_code)]
+/// Pending write operation queued during database unavailability
+/// Synced to database when connection recovers
 #[derive(Debug, Clone)]
-struct PendingWrite {
-    message: MessageRow,
-    region: String,
-    queued_at: Instant,
-    retry_count: u32,
+pub struct PendingWrite {
+    /// The message to write
+    pub message: MessageRow,
+    /// Target region for the write
+    pub region: String,
+    /// When the write was queued
+    pub queued_at: Instant,
+    /// Number of retry attempts
+    pub retry_count: u32,
 }
 
 /// Resilient database with fault tolerance
-#[allow(dead_code)]
+/// 
+/// Provides automatic failover, circuit breaker pattern, and local caching
+/// for CockroachDB operations to ensure high availability during network
+/// partitions or database maintenance.
 pub struct ResilientDatabase {
     /// Underlying CockroachDB connection
     inner: Option<DistributedDatabase>,
@@ -227,6 +236,11 @@ impl ResilientDatabase {
     /// Get health status
     pub fn health_status(&self) -> HealthStatus {
         self.health_monitor.overall_status()
+    }
+
+    /// Get the retry executor for custom retry operations
+    pub fn retry_executor(&self) -> &Arc<RetryExecutor> {
+        &self.retry_executor
     }
 
     /// Insert message with resilience

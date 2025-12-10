@@ -80,8 +80,7 @@ impl ReconnectManager {
     }
 
     /// Calculate backoff duration
-    #[allow(dead_code)]
-    fn calculate_backoff(&self, attempt: u32) -> Duration {
+    pub fn calculate_backoff(&self, attempt: u32) -> Duration {
         Self::calculate_backoff_static(&self.policy.backoff_strategy, attempt)
     }
 

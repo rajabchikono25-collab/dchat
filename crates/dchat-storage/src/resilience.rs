@@ -286,13 +286,16 @@ impl Default for LocalCacheConfig {
 }
 
 /// A cached entry with metadata
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct CacheEntry<T> {
-    value: T,
-    created_at: Instant,
-    ttl: Duration,
-    access_count: u64,
+pub struct CacheEntry<T> {
+    /// The cached value
+    pub value: T,
+    /// When this entry was created
+    pub created_at: Instant,
+    /// Time-to-live duration
+    pub ttl: Duration,
+    /// Number of times this entry has been accessed
+    pub access_count: u64,
 }
 
 impl<T> CacheEntry<T> {
@@ -560,7 +563,6 @@ impl RetryExecutor {
 // ============================================================================
 
 /// Fallback storage for graceful degradation
-#[allow(dead_code)]
 pub struct FallbackManager<T: Clone> {
     /// Local cache for when remote is unavailable
     local_cache: LocalCache<T>,
@@ -589,6 +591,11 @@ impl<T: Clone + Send + Sync + 'static> FallbackManager<T> {
             pending_writes: RwLock::new(Vec::new()),
             max_pending_writes: 1000,
         }
+    }
+
+    /// Get the retry executor for custom retry operations
+    pub fn retry_executor(&self) -> &RetryExecutor {
+        &self.retry_executor
     }
 
     /// Get a value, falling back to local cache if remote fails

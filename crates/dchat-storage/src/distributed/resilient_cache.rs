@@ -70,17 +70,23 @@ impl Default for ResilientCacheConfig {
     }
 }
 
-/// Cached entry for local fallback
-#[allow(dead_code)]
+/// Cached entry for local fallback during Redis outages
+/// Stores string values with TTL for expiration handling
 #[derive(Debug, Clone)]
-struct CachedEntry {
-    value: String,
-    cached_at: Instant,
-    ttl: Duration,
+pub struct CachedEntry {
+    /// The cached value
+    pub value: String,
+    /// When the entry was cached
+    pub cached_at: Instant,
+    /// Time-to-live for this entry
+    pub ttl: Duration,
 }
 
 /// Resilient cache with fault tolerance
-#[allow(dead_code)]
+/// 
+/// Provides automatic failover to local cache, circuit breaker pattern,
+/// and write-behind sync for Redis operations to ensure high availability
+/// during network issues or Redis cluster maintenance.
 pub struct ResilientCache {
     /// Underlying Redis cache (optional - may not be connected)
     inner: Option<DistributedCache>,
@@ -166,6 +172,11 @@ impl ResilientCache {
     /// Get health status
     pub fn health_status(&self) -> HealthStatus {
         self.health_monitor.overall_status()
+    }
+
+    /// Get the retry executor for custom retry operations
+    pub fn retry_executor(&self) -> &Arc<RetryExecutor> {
+        &self.retry_executor
     }
 
     /// Cache a value with default TTL
