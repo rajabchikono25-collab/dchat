@@ -1004,12 +1004,11 @@ impl Default for StakingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Keypair;
+    use ed25519_dalek::{SigningKey, Signer};
     use rand::rngs::OsRng;
 
-    fn create_test_keypair() -> Keypair {
-        let mut csprng = OsRng;
-        Keypair::generate(&mut csprng)
+    fn create_test_keypair() -> SigningKey {
+        SigningKey::generate(&mut OsRng)
     }
 
     #[tokio::test]
@@ -1022,7 +1021,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 MIN_VALIDATOR_STAKE,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();
@@ -1044,7 +1043,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id,
                 MIN_VALIDATOR_STAKE - 1,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await;
 
@@ -1061,7 +1060,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 MIN_VALIDATOR_STAKE,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();
@@ -1083,7 +1082,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 MIN_VALIDATOR_STAKE,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();
@@ -1112,7 +1111,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 MIN_VALIDATOR_STAKE,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();
@@ -1140,12 +1139,12 @@ mod tests {
             30_000_000_000,
         ];
 
-        for (i, stake) in stakes.iter().enumerate() {
+        for (_i, stake) in stakes.iter().enumerate() {
             let keypair = create_test_keypair();
-            let validator_id = UserId::from(format!("validator-{}", i));
+            let validator_id = UserId::new();
 
             manager
-                .submit_validator_stake(validator_id.clone(), *stake, keypair.public)
+                .submit_validator_stake(validator_id.clone(), *stake, keypair.verifying_key())
                 .await
                 .unwrap();
 
@@ -1173,7 +1172,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 initial_stake,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();
@@ -1209,7 +1208,7 @@ mod tests {
             .submit_validator_stake(
                 validator_id.clone(),
                 MIN_VALIDATOR_STAKE,
-                keypair.public,
+                keypair.verifying_key(),
             )
             .await
             .unwrap();

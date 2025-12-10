@@ -901,6 +901,7 @@ mod tests {
             pot_finalized: true,
             tsc_finalized: true,
             confidence: 0.95,
+            validator_signatures: vec![vec![1, 2, 3]],
         };
         synchronizer
             .update_chat_chain_state(100, Hash::from([1u8; 32]), chat_finality, 50)
@@ -912,6 +913,7 @@ mod tests {
             pot_finalized: true,
             tsc_finalized: true,
             confidence: 0.90,
+            validator_signatures: vec![vec![4, 5, 6]],
         };
         synchronizer
             .update_currency_chain_state(98, Hash::from([2u8; 32]), currency_finality, 30)
@@ -994,6 +996,7 @@ mod tests {
             pot_finalized: true,
             tsc_finalized: true,
             confidence: 0.95,
+            validator_signatures: vec![vec![1, 2, 3], vec![4, 5, 6]],
         };
         synchronizer
             .update_chat_chain_state(100, Hash::from([1u8; 32]), finality.clone(), 0)
