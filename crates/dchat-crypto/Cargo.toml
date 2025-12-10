@@ -11,6 +11,7 @@ pq-crypto = [] # Post-quantum cryptography (future feature)
 
 [dependencies]
 dchat-core = { path = "../dchat-core" }
+uuid = { workspace = true }
 
 # Cryptography
 snow = { workspace = true }

@@ -481,6 +481,7 @@ impl Default for StateValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_hierarchy::{Block, Subblock, Hash};
     use std::time::SystemTime;
 
     #[test]
@@ -526,9 +527,10 @@ mod tests {
             timestamp: SystemTime::now(),
             miniblocks: vec![miniblock],
             execution_result: crate::block_hierarchy::ExecutionResult {
-                total_gas: 1000,
-                failed_transactions: 0,
-                state_changes: vec![],
+                success_count: 0,
+                failure_count: 0,
+                total_gas_used: 1000,
+                state_delta: vec![],
             },
             merkle_root: Hash::from([0u8; 32]),
         };
@@ -550,11 +552,7 @@ mod tests {
             subblocks: vec![subblock],
             validator_signatures: vec![],
             relay_votes: vec![],
-            finality_proof: crate::block_hierarchy::FinalityProof {
-                chat_finality_height: 0,
-                currency_finality_height: 0,
-                consensus_timestamp: SystemTime::now(),
-            },
+            finality_proof: crate::block_hierarchy::FinalityProof::default(),
         };
 
         let result = validator.validate_block(&block);
@@ -567,10 +565,11 @@ mod tests {
 
         validator.verified_roots.insert(100, vec![1, 2, 3, 4]);
 
-        let validator_id = vec![0xaa, 0xbb, 0xcc];
+        let validator_id_str = "validator_abc";
         let wrong_root = vec![5, 6, 7, 8];
+        let block_height_bytes = 100u64.to_le_bytes();
 
-        let result = validator.detect_byzantine_fault(100, validator_id.clone(), wrong_root);
+        let result = validator.detect_byzantine_fault(&block_height_bytes, validator_id_str, &wrong_root);
 
         assert!(result.is_err());
         assert_eq!(validator.byzantine_faults.len(), 1);

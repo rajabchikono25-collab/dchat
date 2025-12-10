@@ -2284,6 +2284,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "unicode-normalization",
+ "uuid",
  "x25519-dalek",
  "zeroize",
 ]
