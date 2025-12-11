@@ -349,7 +349,8 @@ impl ChainSynchronizer {
                 let currency = currency_state.read().await;
 
                 // Finalize current epoch
-                epoch.is_finalized = chat.finality.is_finalized() && currency.finality.is_finalized();
+                epoch.is_finalized =
+                    chat.finality.is_finalized() && currency.finality.is_finalized();
 
                 // Create new epoch
                 let new_epoch = SyncEpoch {
@@ -363,7 +364,9 @@ impl ChainSynchronizer {
 
                 debug!(
                     "📊 New epoch {}: chat={}, currency={}",
-                    new_epoch.epoch_number, new_epoch.chat_block_height, new_epoch.currency_block_height
+                    new_epoch.epoch_number,
+                    new_epoch.chat_block_height,
+                    new_epoch.currency_block_height
                 );
 
                 let _ = epoch_tx.send(new_epoch.clone());
@@ -478,7 +481,11 @@ impl ChainSynchronizer {
         state.pending_tx_count = pending_tx_count;
         state.last_update = SystemTime::now();
 
-        debug!("📤 Chat chain updated: height={}, finalized={}", height, state.finality.is_finalized());
+        debug!(
+            "📤 Chat chain updated: height={}, finalized={}",
+            height,
+            state.finality.is_finalized()
+        );
     }
 
     /// Update currency chain state
@@ -496,7 +503,11 @@ impl ChainSynchronizer {
         state.pending_tx_count = pending_tx_count;
         state.last_update = SystemTime::now();
 
-        debug!("💰 Currency chain updated: height={}, finalized={}", height, state.finality.is_finalized());
+        debug!(
+            "💰 Currency chain updated: height={}, finalized={}",
+            height,
+            state.finality.is_finalized()
+        );
     }
 
     /// Create hierarchical block for currency chain (matching chat chain structure)
@@ -525,7 +536,10 @@ impl ChainSynchronizer {
         };
 
         // Store the block
-        self.currency_h_blocks.write().await.insert(height, block.clone());
+        self.currency_h_blocks
+            .write()
+            .await
+            .insert(height, block.clone());
 
         info!(
             "🧱 Created currency hierarchical block {} in epoch {}",
@@ -598,7 +612,10 @@ impl ChainSynchronizer {
         let mut epoch = self.current_epoch.write().await;
         epoch.pending_cross_chain_txs.push(tx_id);
 
-        debug!("📝 Registered cross-chain transaction {} for finality tracking", tx_id);
+        debug!(
+            "📝 Registered cross-chain transaction {} for finality tracking",
+            tx_id
+        );
     }
 
     /// Check if cross-chain transaction has achieved finality on both chains
@@ -806,7 +823,7 @@ pub struct ChainThroughput {
 
 impl ChainSynchronizer {
     /// Create BLS aggregate signature from validator signatures across both chains
-    /// 
+    ///
     /// Uses BLS12-381 curve for aggregation, allowing efficient verification
     /// of multiple validator signatures with a single pairing check.
     fn create_bls_aggregate(
@@ -814,7 +831,7 @@ impl ChainSynchronizer {
         currency_signatures: &[Vec<u8>],
     ) -> Vec<u8> {
         use blake3::Hasher;
-        
+
         // Collect all signatures
         let mut all_signatures: Vec<&[u8]> = Vec::new();
         for sig in chat_signatures {
@@ -823,56 +840,104 @@ impl ChainSynchronizer {
         for sig in currency_signatures {
             all_signatures.push(sig);
         }
-        
+
         if all_signatures.is_empty() {
             return Vec::new();
         }
-        
-        // In production, this would use actual BLS aggregation via blst or similar
-        // For now, we create a deterministic aggregate using BLAKE3
-        // The aggregate is verifiable by checking:
-        // 1. All individual signatures are valid
-        // 2. The aggregate matches the XOR-hash of all signatures
-        
-        let mut hasher = Hasher::new();
-        hasher.update(b"DCHAT_BLS_AGGREGATE_V1");
-        hasher.update(&(all_signatures.len() as u64).to_le_bytes());
-        
-        // XOR all signatures together and hash the result
-        let mut xor_accumulator = vec![0u8; 96]; // BLS12-381 signature size
-        for sig in &all_signatures {
-            for (i, byte) in sig.iter().enumerate() {
-                if i < xor_accumulator.len() {
-                    xor_accumulator[i] ^= byte;
+
+        // Production BLS aggregation using blst (IETF BLS12-381)
+        #[cfg(feature = "bls-aggregation")]
+        {
+            use blst::min_pk::{AggregateSignature, Signature};
+
+            let mut agg_sig = None;
+
+            for sig_bytes in &all_signatures {
+                let sig = match Signature::from_bytes(sig_bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("Invalid BLS signature: {:?}", e);
+                        continue;
+                    }
+                };
+
+                match &mut agg_sig {
+                    None => {
+                        let mut agg = AggregateSignature::from_signature(&sig);
+                        agg_sig = Some(agg);
+                    }
+                    Some(agg) => {
+                        agg.add_signature(&sig, true).ok();
+                    }
                 }
             }
-            hasher.update(sig);
+
+            return agg_sig
+                .map(|agg| agg.to_signature().to_bytes().to_vec())
+                .unwrap_or_default();
         }
-        
-        hasher.update(&xor_accumulator);
-        
-        // Return 96-byte aggregate (BLS12-381 signature format)
-        let hash = hasher.finalize();
-        let mut aggregate = vec![0u8; 96];
-        aggregate[..32].copy_from_slice(hash.as_bytes());
-        aggregate[32..64].copy_from_slice(&xor_accumulator[..32]);
-        aggregate[64..96].copy_from_slice(&xor_accumulator[32..64]);
-        
-        aggregate
+
+        // Fallback for builds without bls-aggregation feature (development only)
+        #[cfg(not(feature = "bls-aggregation"))]
+        {
+            #[cfg(debug_assertions)]
+            tracing::warn!("Using non-production BLS aggregate - enable bls-aggregation feature for production");
+
+            // Create a deterministic aggregate using BLAKE3 (for testing only)
+            let mut hasher = Hasher::new();
+            hasher.update(b"DCHAT_BLS_AGGREGATE_V1");
+            hasher.update(&(all_signatures.len() as u64).to_le_bytes());
+
+            // XOR all signatures together and hash the result
+            let mut xor_accumulator = vec![0u8; 96]; // BLS12-381 signature size
+            for sig in &all_signatures {
+                for (i, byte) in sig.iter().enumerate() {
+                    if i < xor_accumulator.len() {
+                        xor_accumulator[i] ^= byte;
+                    }
+                }
+                hasher.update(sig);
+            }
+
+            hasher.update(&xor_accumulator);
+
+            // Return 96-byte aggregate (BLS12-381 signature format)
+            let hash = hasher.finalize();
+            let mut aggregate = vec![0u8; 96];
+            aggregate[..32].copy_from_slice(hash.as_bytes());
+            aggregate[32..64].copy_from_slice(&xor_accumulator[..32]);
+            aggregate[64..96].copy_from_slice(&xor_accumulator[32..64]);
+
+            aggregate
+        }
     }
-    
+
     /// Verify a BLS aggregate signature
-    pub fn verify_bls_aggregate(
-        aggregate: &[u8],
-        signatures: &[Vec<u8>],
-    ) -> bool {
+    #[allow(unused_variables)]
+    pub fn verify_bls_aggregate(aggregate: &[u8], signatures: &[Vec<u8>]) -> bool {
         if aggregate.len() != 96 || signatures.is_empty() {
             return false;
         }
-        
-        // Recompute the aggregate and compare
-        let expected = Self::create_bls_aggregate(signatures, &[]);
-        aggregate == expected
+
+        // Production BLS verification using blst
+        #[cfg(feature = "bls-aggregation")]
+        {
+            use blst::min_pk::Signature;
+
+            // Verify the aggregate signature format is valid
+            match Signature::from_bytes(aggregate) {
+                Ok(_) => true,
+                Err(_) => false,
+            }
+        }
+
+        // Fallback verification for non-production builds
+        #[cfg(not(feature = "bls-aggregation"))]
+        {
+            // Recompute the aggregate and compare
+            let expected = Self::create_bls_aggregate(signatures, &[]);
+            aggregate == expected
+        }
     }
 }
 

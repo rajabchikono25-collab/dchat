@@ -11,6 +11,10 @@ pub struct RpcConfig {
     pub url: String,
     /// Request timeout (seconds)
     pub timeout: u64,
+    /// Allow insecure HTTP connections (only for localhost/testing)
+    /// In production, this should be false to enforce HTTPS
+    #[serde(default)]
+    pub allow_insecure: bool,
 }
 
 impl Default for RpcConfig {
@@ -18,6 +22,33 @@ impl Default for RpcConfig {
         Self {
             url: "http://localhost:8545".to_string(),
             timeout: 30,
+            allow_insecure: false,
+        }
+    }
+}
+
+impl RpcConfig {
+    /// Create config for production (enforces HTTPS)
+    pub fn production(url: String) -> Result<Self> {
+        if !url.starts_with("https://") {
+            return Err(Error::validation(format!(
+                "Production RPC requires HTTPS, got: {}",
+                url
+            )));
+        }
+        Ok(Self {
+            url,
+            timeout: 30,
+            allow_insecure: false,
+        })
+    }
+
+    /// Create config for local development
+    pub fn localhost(port: u16) -> Self {
+        Self {
+            url: format!("http://localhost:{}", port),
+            timeout: 30,
+            allow_insecure: true,
         }
     }
 }
@@ -31,6 +62,23 @@ pub struct RpcClient {
 impl RpcClient {
     /// Create a new RPC client
     pub fn new(config: RpcConfig) -> Result<Self> {
+        // Enforce HTTPS in production (release builds with non-localhost URLs)
+        #[cfg(not(debug_assertions))]
+        {
+            if !config.allow_insecure && !config.url.starts_with("https://") {
+                // Allow localhost/127.0.0.1 without HTTPS
+                let is_local = config.url.starts_with("http://localhost")
+                    || config.url.starts_with("http://127.0.0.1");
+                if !is_local {
+                    return Err(Error::validation(format!(
+                        "HTTPS required for production RPC endpoints. Got: {}. \
+                         Set allow_insecure=true only for local testing.",
+                        config.url
+                    )));
+                }
+            }
+        }
+
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout))
             .build()

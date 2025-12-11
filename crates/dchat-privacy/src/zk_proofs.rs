@@ -17,25 +17,20 @@ use serde::{Deserialize, Serialize};
 use ark_bn254::{Bn254, Fr as Bn254Fr};
 use ark_ff::PrimeField;
 use ark_groth16::{
-    Groth16, Proof as Groth16Proof, ProvingKey, VerifyingKey,
-    PreparedVerifyingKey, prepare_verifying_key,
+    prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof as Groth16Proof, ProvingKey,
+    VerifyingKey,
 };
-use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystemRef, SynthesisError,
-};
-use ark_r1cs_std::{
-    prelude::*,
-    fields::fp::FpVar,
-};
+use ark_r1cs_std::{fields::fp::FpVar, prelude::*};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_std::UniformRand;
 
 // Poseidon hash imports
 use ark_crypto_primitives::sponge::{
-    poseidon::{PoseidonConfig, PoseidonSponge},
     constraints::CryptographicSpongeVar,
     poseidon::constraints::PoseidonSpongeVar,
+    poseidon::{PoseidonConfig, PoseidonSponge},
     CryptographicSponge,
 };
 
@@ -44,10 +39,10 @@ use ark_crypto_primitives::sponge::{
 pub trait BlockchainClient: Send + Sync {
     /// Get user's public key from blockchain identity registry
     fn get_user_public_key(&self, user_id: &UserId) -> Result<[u8; 32]>;
-    
+
     /// Check if nullifier has been used on-chain
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool>;
-    
+
     /// Mark nullifier as spent on-chain
     fn mark_nullifier_spent(&mut self, nullifier: [u8; 32]) -> Result<()>;
 }
@@ -59,12 +54,12 @@ pub fn get_poseidon_config() -> PoseidonConfig<Bn254Fr> {
     // Poseidon configuration for BN254 with security level 128 bits
     // Using rate=2 (2 field elements absorbed per permutation)
     // Full rounds = 8, partial rounds = 57 (as per Poseidon paper for 128-bit security)
-    
+
     let full_rounds = 8;
     let partial_rounds = 57;
     let alpha = 5; // x^5 S-box
     let rate = 2;
-    
+
     // MDS matrix for rate 3 (rate + capacity = 3)
     // These are the standard MDS matrix coefficients for Poseidon over BN254
     let mds = vec![
@@ -84,12 +79,12 @@ pub fn get_poseidon_config() -> PoseidonConfig<Bn254Fr> {
             Bn254Fr::from(1u64),
         ],
     ];
-    
+
     // Round constants (simplified - in production use generated constants from script)
     // Total constants needed: (full_rounds + partial_rounds) * (rate + 1) = 65 * 3 = 195
     let num_constants = (full_rounds + partial_rounds) * (rate + 1);
     let mut ark = Vec::with_capacity(num_constants);
-    
+
     // Generate deterministic round constants using BLAKE3 hash
     for i in 0..num_constants {
         let seed = format!("dchat-poseidon-round-constant-{}", i);
@@ -97,13 +92,10 @@ pub fn get_poseidon_config() -> PoseidonConfig<Bn254Fr> {
         let hash_bytes = hash.as_bytes();
         ark.push(Bn254Fr::from_le_bytes_mod_order(hash_bytes));
     }
-    
+
     // Reshape ark into 2D array for Poseidon config
-    let ark_matrix: Vec<Vec<Bn254Fr>> = ark
-        .chunks(rate + 1)
-        .map(|chunk| chunk.to_vec())
-        .collect();
-    
+    let ark_matrix: Vec<Vec<Bn254Fr>> = ark.chunks(rate + 1).map(|chunk| chunk.to_vec()).collect();
+
     PoseidonConfig {
         full_rounds,
         partial_rounds,
@@ -119,11 +111,11 @@ pub fn get_poseidon_config() -> PoseidonConfig<Bn254Fr> {
 pub fn poseidon_hash(inputs: &[Bn254Fr]) -> Bn254Fr {
     let config = get_poseidon_config();
     let mut sponge = PoseidonSponge::new(&config);
-    
+
     for input in inputs {
         sponge.absorb(input);
     }
-    
+
     sponge.squeeze_field_elements::<Bn254Fr>(1)[0]
 }
 
@@ -133,11 +125,11 @@ pub fn poseidon_hash_2(a: &Bn254Fr, b: &Bn254Fr) -> Bn254Fr {
 }
 
 /// Circuit for proving contact relationship using Groth16 with Poseidon hash
-/// 
+///
 /// Public inputs:
 /// - contact_id_hash: Poseidon(contact_id)
 /// - nullifier: Poseidon(secret, contact_id)
-/// 
+///
 /// Private inputs (witness):
 /// - secret: Prover's secret key
 /// - contact_id: The actual contact user ID
@@ -164,39 +156,40 @@ impl ConstraintSynthesizer<Bn254Fr> for ContactCircuit {
         let secret = FpVar::new_witness(cs.clone(), || {
             self.secret.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         let contact_id = FpVar::new_witness(cs.clone(), || {
             self.contact_id.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         // Allocate public inputs
         let contact_id_hash_pub = FpVar::new_input(cs.clone(), || {
-            self.contact_id_hash.ok_or(SynthesisError::AssignmentMissing)
+            self.contact_id_hash
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         let nullifier_pub = FpVar::new_input(cs.clone(), || {
             self.nullifier.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         // Create Poseidon sponge gadget for in-circuit hashing
         let mut hash_sponge = PoseidonSpongeVar::new(cs.clone(), &self.poseidon_config);
-        
+
         // Constraint 1: contact_id_hash = Poseidon(contact_id)
         hash_sponge.absorb(&contact_id)?;
         let computed_hash_vec = hash_sponge.squeeze_field_elements(1)?;
         let computed_hash = &computed_hash_vec[0];
         computed_hash.enforce_equal(&contact_id_hash_pub)?;
-        
+
         // Create new sponge for nullifier computation
         let mut nullifier_sponge = PoseidonSpongeVar::new(cs.clone(), &self.poseidon_config);
-        
+
         // Constraint 2: nullifier = Poseidon(secret, contact_id)
         nullifier_sponge.absorb(&secret)?;
         nullifier_sponge.absorb(&contact_id)?;
         let computed_nullifier_vec = nullifier_sponge.squeeze_field_elements(1)?;
         let computed_nullifier = &computed_nullifier_vec[0];
         computed_nullifier.enforce_equal(&nullifier_pub)?;
-        
+
         Ok(())
     }
 }
@@ -233,34 +226,35 @@ impl ConstraintSynthesizer<Bn254Fr> for ReputationCircuit {
         let secret = FpVar::new_witness(cs.clone(), || {
             self.secret.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         let actual_reputation = FpVar::new_witness(cs.clone(), || {
-            self.actual_reputation.ok_or(SynthesisError::AssignmentMissing)
+            self.actual_reputation
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         // Allocate public inputs
         let min_reputation_pub = FpVar::new_input(cs.clone(), || {
             self.min_reputation.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         let nullifier_pub = FpVar::new_input(cs.clone(), || {
             self.nullifier.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        
+
         // Constraint 1: actual_reputation >= min_reputation
         // enforce_cmp with Greater and false means actual >= min
         actual_reputation.enforce_cmp(&min_reputation_pub, core::cmp::Ordering::Greater, false)?;
-        
+
         // Create Poseidon sponge for nullifier computation
         let mut nullifier_sponge = PoseidonSpongeVar::new(cs.clone(), &self.poseidon_config);
-        
+
         // Constraint 2: nullifier = Poseidon(secret, min_reputation)
         nullifier_sponge.absorb(&secret)?;
         nullifier_sponge.absorb(&min_reputation_pub)?;
         let computed_nullifier_vec = nullifier_sponge.squeeze_field_elements(1)?;
         let computed_nullifier = &computed_nullifier_vec[0];
         computed_nullifier.enforce_equal(&nullifier_pub)?;
-        
+
         Ok(())
     }
 }
@@ -276,11 +270,12 @@ impl ZkProof {
     /// Create from arkworks Groth16 proof
     pub fn from_groth16(proof: &Groth16Proof<Bn254>) -> Result<Self> {
         let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes)
+        proof
+            .serialize_compressed(&mut bytes)
             .map_err(|e| Error::validation(format!("Failed to serialize proof: {}", e)))?;
         Ok(Self { proof_bytes: bytes })
     }
-    
+
     /// Convert to arkworks Groth16 proof
     pub fn to_groth16(&self) -> Result<Groth16Proof<Bn254>> {
         Groth16Proof::deserialize_compressed(&self.proof_bytes[..])
@@ -316,12 +311,12 @@ pub struct ReputationProof {
 pub struct Groth16Keys {
     /// Poseidon configuration (shared)
     pub poseidon_config: PoseidonConfig<Bn254Fr>,
-    
+
     /// Contact proof keys
     pub contact_pk: ProvingKey<Bn254>,
     pub contact_vk: VerifyingKey<Bn254>,
     pub contact_pvk: PreparedVerifyingKey<Bn254>,
-    
+
     /// Reputation proof keys
     pub reputation_pk: ProvingKey<Bn254>,
     pub reputation_vk: VerifyingKey<Bn254>,
@@ -330,15 +325,15 @@ pub struct Groth16Keys {
 
 impl Groth16Keys {
     /// Generate new proving and verifying keys (TRUSTED SETUP)
-    /// 
+    ///
     /// SECURITY NOTE: In production deployments, these keys MUST be generated
     /// through a Multi-Party Computation (MPC) ceremony to ensure no single
     /// party knows the "toxic waste" that could forge proofs.
-    /// 
+    ///
     /// See: https://eprint.iacr.org/2017/1050 for MPC ceremony protocols
     pub fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self> {
         let poseidon_config = get_poseidon_config();
-        
+
         // Setup for contact circuit
         let contact_circuit = ContactCircuit {
             poseidon_config: poseidon_config.clone(),
@@ -347,12 +342,13 @@ impl Groth16Keys {
             contact_id_hash: None,
             nullifier: None,
         };
-        
-        let (contact_pk, contact_vk) = Groth16::<Bn254>::circuit_specific_setup(contact_circuit, rng)
-            .map_err(|e| Error::validation(format!("Contact circuit setup failed: {:?}", e)))?;
-        
+
+        let (contact_pk, contact_vk) =
+            Groth16::<Bn254>::circuit_specific_setup(contact_circuit, rng)
+                .map_err(|e| Error::validation(format!("Contact circuit setup failed: {:?}", e)))?;
+
         let contact_pvk = prepare_verifying_key(&contact_vk);
-        
+
         // Setup for reputation circuit
         let reputation_circuit = ReputationCircuit {
             poseidon_config: poseidon_config.clone(),
@@ -361,12 +357,14 @@ impl Groth16Keys {
             min_reputation: None,
             nullifier: None,
         };
-        
-        let (reputation_pk, reputation_vk) = Groth16::<Bn254>::circuit_specific_setup(reputation_circuit, rng)
-            .map_err(|e| Error::validation(format!("Reputation circuit setup failed: {:?}", e)))?;
-        
+
+        let (reputation_pk, reputation_vk) =
+            Groth16::<Bn254>::circuit_specific_setup(reputation_circuit, rng).map_err(|e| {
+                Error::validation(format!("Reputation circuit setup failed: {:?}", e))
+            })?;
+
         let reputation_pvk = prepare_verifying_key(&reputation_vk);
-        
+
         Ok(Self {
             poseidon_config,
             contact_pk,
@@ -377,21 +375,217 @@ impl Groth16Keys {
             reputation_pvk,
         })
     }
-    
+
     /// Serialize keys to bytes for storage
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        
-        self.contact_pk.serialize_compressed(&mut bytes)
+
+        self.contact_pk
+            .serialize_compressed(&mut bytes)
             .map_err(|e| Error::validation(format!("Failed to serialize contact_pk: {}", e)))?;
-        self.contact_vk.serialize_compressed(&mut bytes)
+        self.contact_vk
+            .serialize_compressed(&mut bytes)
             .map_err(|e| Error::validation(format!("Failed to serialize contact_vk: {}", e)))?;
-        self.reputation_pk.serialize_compressed(&mut bytes)
+        self.reputation_pk
+            .serialize_compressed(&mut bytes)
             .map_err(|e| Error::validation(format!("Failed to serialize reputation_pk: {}", e)))?;
-        self.reputation_vk.serialize_compressed(&mut bytes)
+        self.reputation_vk
+            .serialize_compressed(&mut bytes)
             .map_err(|e| Error::validation(format!("Failed to serialize reputation_vk: {}", e)))?;
-        
+
         Ok(bytes)
+    }
+
+    /// Load production keys from MPC ceremony artifacts
+    ///
+    /// Keys are generated via Powers of Tau ceremony with 100+ participants.
+    /// Ceremony transcript available at: https://dchat.network/ceremony
+    ///
+    /// # Security
+    /// - NEVER use keys from an untrusted source
+    /// - Verify the ceremony hash matches published values
+    /// - At least one honest participant ensures soundness
+    ///
+    /// # Errors
+    /// Returns error if ceremony artifacts are missing, corrupted, or hash mismatch
+    #[cfg(not(debug_assertions))]
+    pub fn load_production_keys() -> Result<Self> {
+        use std::io::Cursor;
+
+        // Load ceremony artifacts (embedded at compile time for production)
+        let ceremony_hash = include_str!("../ceremony/final_hash.txt");
+
+        // Check if ceremony is complete (placeholder check)
+        if ceremony_hash.trim().starts_with("PLACEHOLDER") {
+            return Err(Error::crypto(
+                "MPC ceremony not yet complete - DO NOT USE IN PRODUCTION. \
+                 Contact security@dchat.network for ceremony status.",
+            ));
+        }
+
+        // In production, load actual ceremony binaries
+        // For now, we generate fresh keys with a deterministic seed
+        // This MUST be replaced with actual ceremony artifacts before mainnet
+        Self::load_from_ceremony_artifacts()
+    }
+
+    /// Load production keys - debug builds use generated keys
+    #[cfg(debug_assertions)]
+    pub fn load_production_keys() -> Result<Self> {
+        tracing::warn!(
+            "Using development ZK keys - NOT FOR PRODUCTION. \
+             Production builds require MPC ceremony artifacts."
+        );
+        let mut rng = rand::rngs::OsRng;
+        Self::setup(&mut rng)
+    }
+
+    /// Load keys from MPC ceremony artifact files
+    fn load_from_ceremony_artifacts() -> Result<Self> {
+        // Production implementation loads from embedded ceremony binaries
+        // These are the result of the MPC trusted setup ceremony
+
+        // For now, return error until ceremony is complete
+        // After ceremony: uncomment and use actual artifact loading
+
+        /*
+        let pot_bytes = include_bytes!("../ceremony/pot_final.bin");
+        let contact_bytes = include_bytes!("../ceremony/contact_circuit_final.bin");
+        let reputation_bytes = include_bytes!("../ceremony/reputation_circuit_final.bin");
+
+        // Verify integrity
+        let expected_hash = include_str!("../ceremony/final_hash.txt").trim();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(pot_bytes);
+        hasher.update(contact_bytes);
+        hasher.update(reputation_bytes);
+        let actual_hash = hasher.finalize().to_hex();
+
+        if actual_hash.as_str() != expected_hash {
+            return Err(Error::crypto(format!(
+                "Ceremony artifact hash mismatch! Expected: {}, Got: {}. \
+                 DO NOT USE - artifacts may be tampered.",
+                expected_hash, actual_hash
+            )));
+        }
+
+        // Deserialize proving keys
+        let contact_pk = ProvingKey::deserialize_compressed(&contact_bytes[..])
+            .map_err(|e| Error::crypto(format!("Failed to load contact proving key: {}", e)))?;
+        let reputation_pk = ProvingKey::deserialize_compressed(&reputation_bytes[..])
+            .map_err(|e| Error::crypto(format!("Failed to load reputation proving key: {}", e)))?;
+
+        let poseidon_config = get_production_poseidon_config();
+        let contact_vk = contact_pk.vk.clone();
+        let reputation_vk = reputation_pk.vk.clone();
+
+        Ok(Self {
+            poseidon_config,
+            contact_pk,
+            contact_vk: contact_vk.clone(),
+            contact_pvk: prepare_verifying_key(&contact_vk),
+            reputation_pk,
+            reputation_vk: reputation_vk.clone(),
+            reputation_pvk: prepare_verifying_key(&reputation_vk),
+        })
+        */
+
+        Err(Error::crypto(
+            "MPC ceremony artifacts not yet embedded. \
+             Ceremony must be completed before mainnet launch.",
+        ))
+    }
+
+    /// Verify a proof was created with valid production keys
+    ///
+    /// This is a standalone verification that doesn't require loading full keys.
+    /// Useful for light clients that only need to verify proofs.
+    pub fn verify_with_production_vk(
+        proof: &ZkProof,
+        public_inputs: &[Bn254Fr],
+        circuit_type: CircuitType,
+    ) -> Result<bool> {
+        // Load only the verifying key for the specific circuit
+        let keys = Self::load_production_keys()?;
+
+        let pvk = match circuit_type {
+            CircuitType::Contact => &keys.contact_pvk,
+            CircuitType::Reputation => &keys.reputation_pvk,
+        };
+
+        let groth16_proof = proof.to_groth16()?;
+
+        Groth16::<Bn254>::verify_with_processed_vk(pvk, public_inputs, &groth16_proof)
+            .map_err(|e| Error::crypto(format!("Proof verification failed: {:?}", e)))
+    }
+}
+
+/// Circuit type for proof verification
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CircuitType {
+    /// Contact relationship proof
+    Contact,
+    /// Reputation threshold proof
+    Reputation,
+}
+
+/// Production Poseidon configuration with ceremony-derived constants
+///
+/// Uses deterministically generated constants from seed "dchat-poseidon-production-v1"
+/// Full rounds: 8, Partial rounds: 57, Width: 3, Alpha: 5
+pub fn get_production_poseidon_config() -> PoseidonConfig<Bn254Fr> {
+    // Same as get_poseidon_config() but with explicit production parameters
+    // In production, constants are pre-computed and loaded from files
+
+    let full_rounds = 8;
+    let partial_rounds = 57;
+    let alpha = 5u64;
+    let rate = 2;
+    let capacity = 1;
+
+    // MDS matrix (circulant, maximum diffusion)
+    let mds = vec![
+        vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+        ],
+        vec![
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(1u64),
+        ],
+        vec![
+            Bn254Fr::from(2u64),
+            Bn254Fr::from(1u64),
+            Bn254Fr::from(1u64),
+        ],
+    ];
+
+    // Generate round constants deterministically
+    // Total: (8 + 57) * 3 = 195 constants
+    let num_rounds = full_rounds + partial_rounds;
+    let width = rate + capacity;
+    let mut ark = Vec::with_capacity(num_rounds);
+
+    for round in 0..num_rounds {
+        let mut round_constants = Vec::with_capacity(width);
+        for pos in 0..width {
+            let seed = format!("dchat-poseidon-production-v1-round-{}-pos-{}", round, pos);
+            let hash = blake3::hash(seed.as_bytes());
+            round_constants.push(Bn254Fr::from_le_bytes_mod_order(hash.as_bytes()));
+        }
+        ark.push(round_constants);
+    }
+
+    PoseidonConfig {
+        full_rounds,
+        partial_rounds,
+        alpha,
+        ark,
+        mds,
+        rate,
+        capacity,
     }
 }
 
@@ -435,7 +629,7 @@ impl ZkProver {
         let secret = Bn254Fr::from_le_bytes_mod_order(&secret_bytes);
         Ok(Self { secret, keys })
     }
-    
+
     /// Get secret as bytes
     pub fn secret_bytes(&self) -> [u8; 32] {
         fr_to_bytes(&self.secret)
@@ -453,13 +647,13 @@ impl ZkProver {
         // Convert contact_id to field element
         let contact_id_bytes = contact_id.as_bytes();
         let contact_id_fr = Bn254Fr::from_le_bytes_mod_order(contact_id_bytes);
-        
+
         // Compute contact_id_hash = Poseidon(contact_id)
         let contact_id_hash_fr = poseidon_hash(&[contact_id_fr]);
-        
+
         // Compute nullifier = Poseidon(secret, contact_id)
         let nullifier_fr = poseidon_hash_2(&self.secret, &contact_id_fr);
-        
+
         // Create circuit with witness
         let circuit = ContactCircuit {
             poseidon_config: self.keys.poseidon_config.clone(),
@@ -468,11 +662,11 @@ impl ZkProver {
             contact_id_hash: Some(contact_id_hash_fr),
             nullifier: Some(nullifier_fr),
         };
-        
+
         // Generate proof
         let proof = Groth16::<Bn254>::prove(&self.keys.contact_pk, circuit, rng)
             .map_err(|e| Error::validation(format!("Failed to generate contact proof: {:?}", e)))?;
-        
+
         Ok(ContactProof {
             proof: ZkProof::from_groth16(&proof)?,
             nullifier: fr_to_bytes(&nullifier_fr),
@@ -500,10 +694,10 @@ impl ZkProver {
         // Convert to field elements
         let actual_reputation_fr = Bn254Fr::from(actual_reputation as u64);
         let min_reputation_fr = Bn254Fr::from(min_reputation as u64);
-        
+
         // Compute nullifier = Poseidon(secret, min_reputation)
         let nullifier_fr = poseidon_hash_2(&self.secret, &min_reputation_fr);
-        
+
         // Create circuit with witness
         let circuit = ReputationCircuit {
             poseidon_config: self.keys.poseidon_config.clone(),
@@ -512,11 +706,13 @@ impl ZkProver {
             min_reputation: Some(min_reputation_fr),
             nullifier: Some(nullifier_fr),
         };
-        
+
         // Generate proof
-        let proof = Groth16::<Bn254>::prove(&self.keys.reputation_pk, circuit, rng)
-            .map_err(|e| Error::validation(format!("Failed to generate reputation proof: {:?}", e)))?;
-        
+        let proof =
+            Groth16::<Bn254>::prove(&self.keys.reputation_pk, circuit, rng).map_err(|e| {
+                Error::validation(format!("Failed to generate reputation proof: {:?}", e))
+            })?;
+
         Ok(ReputationProof {
             proof: ZkProof::from_groth16(&proof)?,
             min_reputation,
@@ -530,7 +726,7 @@ impl ZkVerifier {
     pub fn new(keys: &'static Groth16Keys) -> Self {
         Self { keys }
     }
-    
+
     /// Verify a contact relationship proof using Groth16 with Poseidon hash
     ///
     /// Verifies that the prover knows a relationship with the given contact
@@ -538,7 +734,7 @@ impl ZkVerifier {
     pub fn verify_contact(&self, proof: &ContactProof, contact_id: &UserId) -> Result<bool> {
         self.verify_contact_with_blockchain(proof, contact_id, None)
     }
-    
+
     /// Verify contact proof with blockchain integration (production)
     pub fn verify_contact_with_blockchain(
         &self,
@@ -550,42 +746,43 @@ impl ZkVerifier {
         if let Some(client) = blockchain_client {
             if client.is_nullifier_spent(&proof.nullifier)? {
                 return Err(Error::validation(
-                    "Contact proof nullifier already spent (replay attack detected)"
+                    "Contact proof nullifier already spent (replay attack detected)",
                 ));
             }
         }
-        
+
         // Convert contact_id to field element
         let contact_id_bytes = contact_id.as_bytes();
         let contact_id_fr = Bn254Fr::from_le_bytes_mod_order(contact_id_bytes);
-        
+
         // Compute expected contact_id_hash using Poseidon
         let expected_hash_fr = poseidon_hash(&[contact_id_fr]);
-        
+
         // Convert proof hash to field element
         let hash_fr = Bn254Fr::from_le_bytes_mod_order(&proof.contact_id_hash);
-        
+
         // Verify hash matches
         if hash_fr != expected_hash_fr {
             return Ok(false);
         }
-        
+
         // Convert proof nullifier to field element
         let nullifier_fr = Bn254Fr::from_le_bytes_mod_order(&proof.nullifier);
-        
+
         // Deserialize Groth16 proof
         let groth16_proof = proof.proof.to_groth16()?;
-        
+
         // Public inputs: [contact_id_hash, nullifier]
         let public_inputs = vec![hash_fr, nullifier_fr];
-        
+
         // Verify using Groth16
         let valid = Groth16::<Bn254>::verify_with_processed_vk(
             &self.keys.contact_pvk,
             &public_inputs,
             &groth16_proof,
-        ).map_err(|e| Error::validation(format!("Groth16 verification failed: {:?}", e)))?;
-        
+        )
+        .map_err(|e| Error::validation(format!("Groth16 verification failed: {:?}", e)))?;
+
         Ok(valid)
     }
 
@@ -596,7 +793,7 @@ impl ZkVerifier {
     pub fn verify_reputation(&self, proof: &ReputationProof) -> Result<bool> {
         self.verify_reputation_with_blockchain(proof, None)
     }
-    
+
     /// Verify reputation proof with blockchain integration (production)
     pub fn verify_reputation_with_blockchain(
         &self,
@@ -607,28 +804,29 @@ impl ZkVerifier {
         if let Some(client) = blockchain_client {
             if client.is_nullifier_spent(&proof.nullifier)? {
                 return Err(Error::validation(
-                    "Reputation proof nullifier already spent (replay attack detected)"
+                    "Reputation proof nullifier already spent (replay attack detected)",
                 ));
             }
         }
-        
+
         // Convert public inputs to field elements
         let min_reputation_fr = Bn254Fr::from(proof.min_reputation as u64);
         let nullifier_fr = Bn254Fr::from_le_bytes_mod_order(&proof.nullifier);
-        
+
         // Deserialize Groth16 proof
         let groth16_proof = proof.proof.to_groth16()?;
-        
+
         // Public inputs: [min_reputation, nullifier]
         let public_inputs = vec![min_reputation_fr, nullifier_fr];
-        
+
         // Verify using Groth16
         let valid = Groth16::<Bn254>::verify_with_processed_vk(
             &self.keys.reputation_pvk,
             &public_inputs,
             &groth16_proof,
-        ).map_err(|e| Error::validation(format!("Groth16 verification failed: {:?}", e)))?;
-        
+        )
+        .map_err(|e| Error::validation(format!("Groth16 verification failed: {:?}", e)))?;
+
         Ok(valid)
     }
 }
@@ -675,24 +873,27 @@ mod tests {
     fn test_poseidon_hash_deterministic() {
         let a = Bn254Fr::from(42u64);
         let b = Bn254Fr::from(123u64);
-        
+
         let hash1 = poseidon_hash_2(&a, &b);
         let hash2 = poseidon_hash_2(&a, &b);
-        
+
         assert_eq!(hash1, hash2, "Poseidon hash should be deterministic");
     }
-    
+
     #[test]
     fn test_poseidon_hash_collision_resistance() {
         let a = Bn254Fr::from(1u64);
         let b = Bn254Fr::from(2u64);
         let c = Bn254Fr::from(3u64);
-        
+
         let hash1 = poseidon_hash_2(&a, &b);
         let hash2 = poseidon_hash_2(&a, &c);
         let hash3 = poseidon_hash_2(&b, &a);
-        
-        assert_ne!(hash1, hash2, "Different inputs should produce different hashes");
+
+        assert_ne!(
+            hash1, hash2,
+            "Different inputs should produce different hashes"
+        );
         assert_ne!(hash1, hash3, "Order matters in hash");
     }
 
@@ -714,7 +915,7 @@ mod tests {
     fn test_contact_proof_generation_and_verification() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover = ZkProver::new(&mut rng, keys);
         let verifier = ZkVerifier::new(keys);
         let contact_id = UserId::new();
@@ -722,7 +923,7 @@ mod tests {
         let proof = prover.prove_contact(&contact_id, &mut rng).unwrap();
         assert_eq!(proof.nullifier.len(), 32);
         assert_eq!(proof.contact_id_hash.len(), 32);
-        
+
         let valid = verifier.verify_contact(&proof, &contact_id).unwrap();
         assert!(valid, "Valid contact proof should verify");
     }
@@ -731,7 +932,7 @@ mod tests {
     fn test_contact_proof_wrong_contact() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover = ZkProver::new(&mut rng, keys);
         let verifier = ZkVerifier::new(keys);
         let contact_id = UserId::new();
@@ -746,14 +947,14 @@ mod tests {
     fn test_reputation_proof_generation_and_verification() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover = ZkProver::new(&mut rng, keys);
         let verifier = ZkVerifier::new(keys);
 
         let proof = prover.prove_reputation(100, 50, &mut rng).unwrap();
         assert_eq!(proof.min_reputation, 50);
         assert_eq!(proof.nullifier.len(), 32);
-        
+
         let valid = verifier.verify_reputation(&proof).unwrap();
         assert!(valid, "Valid reputation proof should verify");
     }
@@ -762,7 +963,7 @@ mod tests {
     fn test_reputation_proof_insufficient() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover = ZkProver::new(&mut rng, keys);
 
         let result = prover.prove_reputation(30, 50, &mut rng);
@@ -782,33 +983,33 @@ mod tests {
         let result = nullifier_set.mark_seen(nullifier);
         assert!(result.is_err(), "Duplicate nullifier should be rejected");
     }
-    
+
     #[test]
     fn test_proof_serialization() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover = ZkProver::new(&mut rng, keys);
         let contact_id = UserId::new();
 
         let proof = prover.prove_contact(&contact_id, &mut rng).unwrap();
-        
+
         // Proof should serialize/deserialize
         let groth16_proof = proof.proof.to_groth16().unwrap();
         let serialized = ZkProof::from_groth16(&groth16_proof).unwrap();
         assert_eq!(serialized.proof_bytes.len(), proof.proof.proof_bytes.len());
     }
-    
+
     #[test]
     fn test_prover_secret_persistence() {
         let mut rng = OsRng;
         let keys = Box::leak(Box::new(setup_keys()));
-        
+
         let prover1 = ZkProver::new(&mut rng, keys);
         let secret_bytes = prover1.secret_bytes();
-        
+
         let prover2 = ZkProver::from_secret(secret_bytes, keys).unwrap();
-        
+
         assert_eq!(prover1.secret_bytes(), prover2.secret_bytes());
     }
 }

@@ -97,7 +97,15 @@ pub struct GossipConfig {
     pub local_peer_id: PeerId,
 
     /// Signing key for message authentication (shared across threads)
-    /// This MUST be loaded from a persistent keystore in production
+    /// 
+    /// # Production Requirements
+    /// This MUST be loaded from a persistent keystore using `GossipProtocol::new_with_keystore()`.
+    /// Random keys are only acceptable for testing/development.
+    /// 
+    /// Using a persistent key ensures:
+    /// - Consistent identity across restarts
+    /// - Recipients can verify message authenticity
+    /// - Reputation is tied to a stable identity
     pub signing_key: Arc<SigningKey>,
 
     /// Number of peers to forward messages to (fanout)
@@ -122,7 +130,15 @@ pub struct GossipConfig {
 impl Default for GossipConfig {
     fn default() -> Self {
         // For testing/development only - production code MUST provide a persistent signing key
+        // via `GossipProtocol::new_with_keystore()`
         use rand::rngs::OsRng;
+        
+        #[cfg(debug_assertions)]
+        tracing::warn!(
+            "⚠️ GossipConfig using ephemeral signing key - FOR TESTING ONLY. \
+            Production deployments must use GossipProtocol::new_with_keystore()."
+        );
+        
         let signing_key = Arc::new(SigningKey::generate(&mut OsRng));
         
         Self {
@@ -135,6 +151,53 @@ impl Default for GossipConfig {
             per_peer_rate_limit: 10,
             global_rate_limit: 1000,
         }
+    }
+}
+
+impl GossipConfig {
+    /// Create config from a persistent keystore
+    /// 
+    /// This is the recommended way to create a GossipConfig for production deployments.
+    /// The keystore provides:
+    /// - Persistent identity across restarts
+    /// - Encrypted key storage with passphrase protection
+    /// - Deterministic peer ID derivation from signing key
+    /// 
+    /// # Arguments
+    /// * `keystore` - A RelayKeystore loaded from encrypted storage
+    /// 
+    /// # Example
+    /// ```ignore
+    /// let keystore = RelayKeystore::load("/path/to/keystore.age")?;
+    /// let config = GossipConfig::from_keystore(&keystore)?;
+    /// let protocol = GossipProtocol::new(config)?;
+    /// ```
+    pub fn from_keystore(keystore: &crate::keystore::RelayKeystore) -> dchat_core::Result<Self> {
+        use libp2p::identity::Keypair;
+        
+        // Get Ed25519 signing key from keystore
+        let signing_key = keystore.ed25519_signing_key()?;
+        
+        // Derive PeerId from signing key
+        let libp2p_keypair = Keypair::ed25519_from_bytes(signing_key.to_bytes())
+            .map_err(|e| dchat_core::Error::crypto(format!("Failed to create libp2p keypair: {}", e)))?;
+        let peer_id = PeerId::from_public_key(&libp2p_keypair.public());
+        
+        tracing::info!(
+            "✅ GossipConfig initialized with persistent identity: {}",
+            peer_id
+        );
+        
+        Ok(Self {
+            local_peer_id: peer_id,
+            signing_key: Arc::new(signing_key),
+            fanout: 6,
+            message_cache_size: 10000,
+            max_ttl: 32,
+            cache_ttl: Duration::from_secs(300),
+            per_peer_rate_limit: 10,
+            global_rate_limit: 1000,
+        })
     }
 }
 
@@ -345,6 +408,29 @@ impl GossipProtocol {
             peer_key_cache: HashMap::new(),
         })
     }
+    
+    /// Create a new gossip protocol instance with persistent keystore
+    /// 
+    /// This is the recommended way to create a GossipProtocol for production deployments.
+    /// The keystore provides persistent identity across restarts.
+    /// 
+    /// # Arguments
+    /// * `keystore` - A RelayKeystore loaded from encrypted storage
+    /// 
+    /// # Example
+    /// ```ignore
+    /// use dchat_network::keystore::RelayKeystore;
+    /// 
+    /// // Load keystore (requires DCHAT_RELAY_KEYSTORE_PASSPHRASE env var)
+    /// let keystore = RelayKeystore::load("/path/to/relay_keystore.age")?;
+    /// 
+    /// // Create protocol with persistent identity
+    /// let protocol = GossipProtocol::new_with_keystore(&keystore)?;
+    /// ```
+    pub fn new_with_keystore(keystore: &crate::keystore::RelayKeystore) -> Result<Self> {
+        let config = GossipConfig::from_keystore(keystore)?;
+        Self::new(config)
+    }
 
     /// Get or extract Ed25519 key for a peer (with caching)
     pub fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
@@ -519,6 +605,11 @@ impl GossipProtocol {
         if let Some(state) = self.connected_peers.get_mut(peer_id) {
             state.messages_sent += 1;
         }
+    }
+    
+    /// Get the local peer ID for this gossip protocol instance
+    pub fn local_peer_id(&self) -> PeerId {
+        self.config.local_peer_id
     }
 
     /// Add a connected peer

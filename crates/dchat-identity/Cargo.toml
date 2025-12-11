@@ -43,14 +43,24 @@ frost-ed25519 = "2.0"
 # CBOR parsing for attestation (WebAuthn, App Attest)
 ciborium = "0.2"
 
+# X.509 certificate parsing for attestation verification
+x509-parser = "0.16"
+der-parser = "9.0"
+
+# RSA for Google service account JWT signing
+rsa = { version = "0.9", features = ["sha2"] }
+
 # Base64 encoding for attestation challenges
 base64 = "0.21"
 
 # Unicode normalization for homoglyph protection
 unicode-normalization = "0.1"
 
-# HTTP client for CAPTCHA verification
-reqwest = { version = "0.11", features = ["json"], default-features = false, optional = true }
+# HTTP client for CAPTCHA verification and attestation APIs
+reqwest = { version = "0.11", features = [
+  "json",
+  "rustls-tls",
+], default-features = false, optional = true }
 
 # Platform-specific dependencies for biometric/enclave support
 [target.'cfg(target_os = "ios")'.dependencies]
@@ -67,3 +77,5 @@ proptest = { workspace = true }
 default = []
 # Enable CAPTCHA verification support (requires reqwest)
 captcha = ["reqwest"]
+# Enable attestation API verification (Google Play Integrity, Apple App Attest)
+attestation-api = ["reqwest"]

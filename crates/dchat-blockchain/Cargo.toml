@@ -32,6 +32,9 @@ tracing = "0.1"
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 zeroize = { version = "1.8", features = ["derive"] }
 
+# BLS signatures for aggregate signature verification (BLS12-381)
+blst = { version = "0.3", optional = true }
+
 # Post-quantum cryptography (Gap Fix #1)
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
@@ -44,3 +47,8 @@ sqlx = { workspace = true, features = ["postgres", "chrono", "uuid"] }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+
+[features]
+default = []
+# Enable BLS signature aggregation using blst (IETF BLS12-381)
+bls-aggregation = ["blst"]

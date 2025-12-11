@@ -2124,11 +2124,14 @@ name = "dchat-blockchain"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "bincode",
  "blake3",
+ "bs58",
  "chrono",
  "dchat-chain",
  "dchat-core",
+ "dchat-crypto",
  "dchat-network",
  "dchat-privacy",
  "ed25519-dalek",
@@ -2149,6 +2152,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2192,11 +2196,18 @@ dependencies = [
 name = "dchat-bridge"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "blake3",
  "blst",
  "chrono",
+ "dchat-blockchain",
  "dchat-core",
+ "dchat-crypto",
  "ed25519-dalek",
+ "hex",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2370,6 +2381,7 @@ dependencies = [
  "curve25519-dalek",
  "dchat-core",
  "dchat-crypto",
+ "der-parser",
  "ed25519-dalek",
  "frost-ed25519",
  "getrandom 0.2.16",
@@ -2377,6 +2389,7 @@ dependencies = [
  "jni",
  "libp2p",
  "rand 0.8.5",
+ "rsa",
  "security-framework 2.11.1",
  "serde",
  "serde_json",
@@ -2388,6 +2401,7 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "uuid",
+ "x509-parser",
  "zeroize",
 ]
 
@@ -2416,6 +2430,7 @@ dependencies = [
  "dchat-crypto",
  "dchat-network",
  "ed25519-dalek",
+ "hex",
  "rand 0.8.5",
  "reqwest 0.11.27",
  "serde",
@@ -6719,6 +6734,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand_core 0.6.4",
+ "sha2",
  "signature",
  "spki",
  "subtle",

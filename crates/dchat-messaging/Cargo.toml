@@ -28,6 +28,9 @@ blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 sha2 = { workspace = true }
 
+# Hex encoding
+hex = "0.4"
+
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }

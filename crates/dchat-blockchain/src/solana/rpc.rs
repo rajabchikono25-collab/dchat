@@ -78,22 +78,22 @@ impl Commitment {
 pub enum RpcError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
-    
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    
+
     #[error("RPC error {code}: {message}")]
     Rpc { code: i64, message: String },
-    
+
     #[error("Account not found: {0}")]
     AccountNotFound(String),
-    
+
     #[error("Transaction failed: {0}")]
     TransactionFailed(String),
-    
+
     #[error("Timeout")]
     Timeout,
-    
+
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
 }
@@ -151,7 +151,23 @@ pub struct SolanaRpcClient {
 
 impl SolanaRpcClient {
     /// Create a new RPC client
+    ///
+    /// In release builds, enforces HTTPS for non-localhost endpoints.
     pub fn new(config: SolanaRpcConfig) -> Result<Self> {
+        // Enforce HTTPS in production (release builds with non-localhost URLs)
+        #[cfg(not(debug_assertions))]
+        {
+            let is_local = config.rpc_url.starts_with("http://localhost")
+                || config.rpc_url.starts_with("http://127.0.0.1");
+            if !config.rpc_url.starts_with("https://") && !is_local {
+                return Err(Error::validation(format!(
+                    "HTTPS required for production Solana RPC endpoints. Got: {}. \
+                     Use a localhost URL or configure HTTPS.",
+                    config.rpc_url
+                )));
+            }
+        }
+
         let client = Client::builder()
             .timeout(config.timeout)
             .build()
@@ -175,7 +191,11 @@ impl SolanaRpcClient {
     }
 
     /// Make an RPC call
-    async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> std::result::Result<T, RpcError> {
+    async fn call<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> std::result::Result<T, RpcError> {
         let request_id = self.next_id();
         let request = RpcRequest {
             jsonrpc: "2.0",
@@ -184,14 +204,15 @@ impl SolanaRpcClient {
             params,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.config.rpc_url)
             .json(&request)
             .send()
             .await?;
 
         let rpc_response: RpcResponse<T> = response.json().await?;
-        
+
         // Validate JSON-RPC response format
         rpc_response.validate(request_id)?;
 
@@ -202,15 +223,18 @@ impl SolanaRpcClient {
             });
         }
 
-        rpc_response.result.ok_or_else(|| {
-            RpcError::InvalidResponse("Missing result in response".to_string())
-        })
+        rpc_response
+            .result
+            .ok_or_else(|| RpcError::InvalidResponse("Missing result in response".to_string()))
     }
 
     // ============ Account Methods ============
 
     /// Get account info
-    pub async fn get_account_info(&self, address: &SolanaAddress) -> std::result::Result<Option<AccountInfoResponse>, RpcError> {
+    pub async fn get_account_info(
+        &self,
+        address: &SolanaAddress,
+    ) -> std::result::Result<Option<AccountInfoResponse>, RpcError> {
         let params = json!([
             address.to_base58(),
             {
@@ -224,7 +248,10 @@ impl SolanaRpcClient {
     }
 
     /// Get multiple accounts
-    pub async fn get_multiple_accounts(&self, addresses: &[SolanaAddress]) -> std::result::Result<Vec<Option<AccountInfoResponse>>, RpcError> {
+    pub async fn get_multiple_accounts(
+        &self,
+        addresses: &[SolanaAddress],
+    ) -> std::result::Result<Vec<Option<AccountInfoResponse>>, RpcError> {
         let addresses: Vec<String> = addresses.iter().map(|a| a.to_base58()).collect();
         let params = json!([
             addresses,
@@ -234,7 +261,8 @@ impl SolanaRpcClient {
             }
         ]);
 
-        let response: GetMultipleAccountsResponse = self.call("getMultipleAccounts", params).await?;
+        let response: GetMultipleAccountsResponse =
+            self.call("getMultipleAccounts", params).await?;
         Ok(response.value)
     }
 
@@ -250,7 +278,10 @@ impl SolanaRpcClient {
     }
 
     /// Get account balance in SOL
-    pub async fn get_balance_sol(&self, address: &SolanaAddress) -> std::result::Result<f64, RpcError> {
+    pub async fn get_balance_sol(
+        &self,
+        address: &SolanaAddress,
+    ) -> std::result::Result<f64, RpcError> {
         let lamports = self.get_balance(address).await?;
         Ok(lamports as f64 / LAMPORTS_PER_SOL as f64)
     }
@@ -258,7 +289,10 @@ impl SolanaRpcClient {
     // ============ Token Methods ============
 
     /// Get token account balance
-    pub async fn get_token_account_balance(&self, token_account: &SolanaAddress) -> std::result::Result<TokenAmount, RpcError> {
+    pub async fn get_token_account_balance(
+        &self,
+        token_account: &SolanaAddress,
+    ) -> std::result::Result<TokenAmount, RpcError> {
         let params = json!([
             token_account.to_base58(),
             { "commitment": self.config.commitment.as_str() }
@@ -294,7 +328,10 @@ impl SolanaRpcClient {
     }
 
     /// Get token supply
-    pub async fn get_token_supply(&self, mint: &SolanaAddress) -> std::result::Result<TokenAmount, RpcError> {
+    pub async fn get_token_supply(
+        &self,
+        mint: &SolanaAddress,
+    ) -> std::result::Result<TokenAmount, RpcError> {
         let params = json!([
             mint.to_base58(),
             { "commitment": self.config.commitment.as_str() }
@@ -343,7 +380,10 @@ impl SolanaRpcClient {
     // ============ Transaction Methods ============
 
     /// Send transaction (base64 encoded)
-    pub async fn send_transaction(&self, transaction: &str) -> std::result::Result<String, RpcError> {
+    pub async fn send_transaction(
+        &self,
+        transaction: &str,
+    ) -> std::result::Result<String, RpcError> {
         let params = json!([
             transaction,
             {
@@ -358,14 +398,20 @@ impl SolanaRpcClient {
     }
 
     /// Send raw transaction (bytes)
-    pub async fn send_raw_transaction(&self, transaction_bytes: &[u8]) -> std::result::Result<String, RpcError> {
+    pub async fn send_raw_transaction(
+        &self,
+        transaction_bytes: &[u8],
+    ) -> std::result::Result<String, RpcError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let encoded = STANDARD.encode(transaction_bytes);
         self.send_transaction(&encoded).await
     }
 
     /// Simulate transaction
-    pub async fn simulate_transaction(&self, transaction: &str) -> std::result::Result<SimulateTransactionResponse, RpcError> {
+    pub async fn simulate_transaction(
+        &self,
+        transaction: &str,
+    ) -> std::result::Result<SimulateTransactionResponse, RpcError> {
         let params = json!([
             transaction,
             {
@@ -381,7 +427,10 @@ impl SolanaRpcClient {
     }
 
     /// Get transaction status
-    pub async fn get_signature_statuses(&self, signatures: &[String]) -> std::result::Result<Vec<Option<SignatureStatus>>, RpcError> {
+    pub async fn get_signature_statuses(
+        &self,
+        signatures: &[String],
+    ) -> std::result::Result<Vec<Option<SignatureStatus>>, RpcError> {
         let params = json!([
             signatures,
             { "searchTransactionHistory": true }
@@ -392,7 +441,10 @@ impl SolanaRpcClient {
     }
 
     /// Get transaction details
-    pub async fn get_transaction(&self, signature: &str) -> std::result::Result<Option<TransactionResponse>, RpcError> {
+    pub async fn get_transaction(
+        &self,
+        signature: &str,
+    ) -> std::result::Result<Option<TransactionResponse>, RpcError> {
         let params = json!([
             signature,
             {
@@ -406,25 +458,34 @@ impl SolanaRpcClient {
     }
 
     /// Confirm transaction (wait for confirmation)
-    pub async fn confirm_transaction(&self, signature: &str, timeout: Duration) -> std::result::Result<bool, RpcError> {
+    pub async fn confirm_transaction(
+        &self,
+        signature: &str,
+        timeout: Duration,
+    ) -> std::result::Result<bool, RpcError> {
         let start = std::time::Instant::now();
-        
+
         while start.elapsed() < timeout {
-            let statuses = self.get_signature_statuses(&[signature.to_string()]).await?;
-            
+            let statuses = self
+                .get_signature_statuses(&[signature.to_string()])
+                .await?;
+
             if let Some(Some(status)) = statuses.first() {
                 if status.err.is_none() {
                     if let Some(confirmations) = status.confirmations {
-                        if confirmations > 0 || status.confirmation_status == Some("finalized".to_string()) {
+                        if confirmations > 0
+                            || status.confirmation_status == Some("finalized".to_string())
+                        {
                             return Ok(true);
                         }
                     } else if status.confirmation_status == Some("finalized".to_string()) {
                         return Ok(true);
                     }
                 } else {
-                    return Err(RpcError::TransactionFailed(
-                        format!("Transaction failed: {:?}", status.err)
-                    ));
+                    return Err(RpcError::TransactionFailed(format!(
+                        "Transaction failed: {:?}",
+                        status.err
+                    )));
                 }
             }
 
@@ -437,13 +498,19 @@ impl SolanaRpcClient {
     // ============ Fee Methods ============
 
     /// Get minimum balance for rent exemption
-    pub async fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> std::result::Result<u64, RpcError> {
+    pub async fn get_minimum_balance_for_rent_exemption(
+        &self,
+        data_len: usize,
+    ) -> std::result::Result<u64, RpcError> {
         let params = json!([data_len, { "commitment": self.config.commitment.as_str() }]);
         self.call("getMinimumBalanceForRentExemption", params).await
     }
 
     /// Get recent prioritization fees
-    pub async fn get_recent_prioritization_fees(&self, addresses: &[SolanaAddress]) -> std::result::Result<Vec<PrioritizationFee>, RpcError> {
+    pub async fn get_recent_prioritization_fees(
+        &self,
+        addresses: &[SolanaAddress],
+    ) -> std::result::Result<Vec<PrioritizationFee>, RpcError> {
         let addresses: Vec<String> = addresses.iter().map(|a| a.to_base58()).collect();
         let params = json!([addresses]);
         self.call("getRecentPrioritizationFees", params).await
@@ -466,10 +533,7 @@ impl SolanaRpcClient {
             config["filters"] = serde_json::to_value(filters).unwrap();
         }
 
-        let params = json!([
-            program_id.to_base58(),
-            config
-        ]);
+        let params = json!([program_id.to_base58(), config]);
 
         self.call("getProgramAccounts", params).await
     }
@@ -492,7 +556,11 @@ impl SolanaRpcClient {
     }
 
     /// Request airdrop (devnet/testnet only)
-    pub async fn request_airdrop(&self, address: &SolanaAddress, lamports: u64) -> std::result::Result<String, RpcError> {
+    pub async fn request_airdrop(
+        &self,
+        address: &SolanaAddress,
+        lamports: u64,
+    ) -> std::result::Result<String, RpcError> {
         let params = json!([
             address.to_base58(),
             lamports,

@@ -1,0 +1,10 @@
+# BLAKE3 hash of ceremony artifacts
+# Generated: 2025-12-11
+# This hash MUST match the published ceremony result
+# Verify at: https://dchat.network/ceremony/verification
+#
+# To regenerate: blake3sum pot_final.bin contact_circuit_final.bin reputation_circuit_final.bin
+#
+# IMPORTANT: This is a placeholder - actual hash will be set after MPC ceremony completion
+#
+PLACEHOLDER_CEREMONY_NOT_YET_COMPLETE_DO_NOT_USE_IN_PRODUCTION
