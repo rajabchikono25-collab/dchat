@@ -1,0 +1,77 @@
+# This file controls the behavior of Trunk: https://docs.trunk.io/cli
+# To learn more about the format of this file, see https://docs.trunk.io/reference/trunk-yaml
+version: 0.1
+cli:
+  version: 1.25.0
+
+plugins:
+  sources:
+    - id: trunk
+      ref: v1.7.4
+      uri: https://github.com/trunk-io/plugins
+
+runtimes:
+  enabled:
+    - node@22.16.0
+    - python@3.10.8
+
+lint:
+  enabled:
+    # Rust tooling
+    - clippy@1.83.0
+    - rustfmt@1.83.0
+    - taplo@0.10.0
+
+    # Config and docs
+    - yamllint@1.37.1
+    - hadolint@2.12.0
+    - markdownlint@0.45.0
+    - actionlint@1.7.7
+
+    # Shell (disabled on Windows - no native binary)
+    # - shellcheck@0.11.0
+    - shfmt@3.11.0
+
+    # Security scanning
+    - trivy@0.62.1
+    - gitleaks@8.27.0
+    - checkov@3.2.495
+    - trufflehog@3.92.2
+
+    # General
+    - prettier@3.6.2
+    - git-diff-check
+    - osv-scanner@2.0.3
+
+  disabled:
+    - oxipng
+    - svgo
+    - ktlint
+    - dart
+    - tflint
+    - bandit
+    - black
+    - isort
+    - ruff
+
+  ignore:
+    - linters: [ALL]
+      paths:
+        - target/**
+        - .git/**
+        - node_modules/**
+        - "*.lock"
+        - Cargo.lock
+        - "**/*.min.js"
+        - "**/*.min.css"
+
+actions:
+  enabled:
+    - trunk-announce
+    - trunk-check-pre-push
+    - trunk-fmt-pre-commit
+    - trunk-upgrade-available
+
+tools:
+  enabled:
+    - gh@2.72.0
