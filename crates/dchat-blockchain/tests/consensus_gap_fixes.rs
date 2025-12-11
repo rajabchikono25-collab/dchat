@@ -8,12 +8,12 @@
 
 use chrono::Utc;
 use dchat_blockchain::{
-    geoip::{GeoIPManager, GeoLocation as GeoIPLocation},
+    geoip::GeoIPManager,
     oracle_network::{OracleNetwork, OraclePrediction, PredictionType},
     proof_of_transit::{
-        Dilithium3KeyPair, Dilithium3Signature, GeoLocation, HybridSignature, TransitPath,
+        Dilithium3KeyPair, GeoLocation, HybridSignature, TransitPath,
     },
-    vote_persistence::{PoRWVoteRecord, PoTProofRecord, TSCVoteRecord, VotePersistence},
+    vote_persistence::{PoRWVoteRecord, TSCVoteRecord, VotePersistence},
 };
 use ed25519_dalek::{Signer, SigningKey};
 use pqcrypto_traits::sign::PublicKey; // For as_bytes() method

@@ -3,13 +3,15 @@
 //! This module implements atomic cross-chain operations between:
 //! - Chat chain (identity, messaging, governance)
 //! - Currency chain (payments, staking, economics)
+//! - Solana (external chain for wDCHAT bridging)
 //!
 //! Features:
 //! - Atomic swaps with rollback safety
-//! - Finality tracking
-//! - State synchronization
-//! - Bridge validator consensus
+//! - Finality tracking (block-based and slot-based for Solana)
+//! - State synchronization across all chains
+//! - Bridge validator consensus with BLS aggregation
 //! - Multi-signature validation (M-of-N)
+//! - Solana SPL token integration for wDCHAT
 
 use chrono::{DateTime, Utc};
 use dchat_core::{types::UserId, Error, Result};
@@ -18,9 +20,24 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
+pub mod crosschain_sync;
 pub mod finality;
 pub mod multisig;
 pub mod slashing;
+pub mod solana_bridge;
+
+// Re-export important types for easy access
+pub use crosschain_sync::{
+    ChainSyncAdapter, CrossChainSyncManager, DeltaSync, StateChange, SyncOperation,
+    SyncOperationType, SyncState, SyncStats,
+};
+pub use finality::{AggregatedFinalityProof, FinalityTracker, ValidatorSignature as FinalitySignature};
+pub use multisig::{MultiSigConfig, MultiSigManager, SignatureAggregator, ValidatorId};
+pub use slashing::{SlashEvent, SlashReason, SlashingManager};
+pub use solana_bridge::{
+    SolanaBridgeConfig, SolanaBridgeManager, SolanaBridgeTransfer, SolanaBridgeTransferStatus,
+    SolanaChainAdapter, SolanaCluster, ValidatorSignature as SolanaValidatorSignature,
+};
 
 // Re-export types for multisig module
 pub mod types {
@@ -96,6 +113,39 @@ pub enum ChainId {
     ChatChain,
     /// Currency chain for economics
     CurrencyChain,
+    /// Solana blockchain for wDCHAT bridging
+    Solana,
+}
+
+impl ChainId {
+    /// Get the required confirmations for finality on this chain
+    pub fn required_confirmations(&self) -> u32 {
+        match self {
+            ChainId::ChatChain => 12,
+            ChainId::CurrencyChain => 20,
+            // Solana uses ~32 slot confirmations for finality
+            ChainId::Solana => 32,
+        }
+    }
+
+    /// Get chain name for display
+    pub fn name(&self) -> &'static str {
+        match self {
+            ChainId::ChatChain => "Chat Chain",
+            ChainId::CurrencyChain => "Currency Chain",
+            ChainId::Solana => "Solana",
+        }
+    }
+
+    /// Check if this is an external (non-dchat) chain
+    pub fn is_external(&self) -> bool {
+        matches!(self, ChainId::Solana)
+    }
+
+    /// Check if this chain uses slot-based finality (vs block-based)
+    pub fn uses_slot_finality(&self) -> bool {
+        matches!(self, ChainId::Solana)
+    }
 }
 
 /// Cross-chain transaction status
@@ -193,6 +243,7 @@ impl BridgeManager {
         let mut required_confirmations = HashMap::new();
         required_confirmations.insert(ChainId::ChatChain, 12);
         required_confirmations.insert(ChainId::CurrencyChain, 20);
+        required_confirmations.insert(ChainId::Solana, 32); // Solana slot confirmations
 
         // Create default validator set (3 validators, 2-of-3 threshold)
         let validator1 = multisig::ValidatorId::new(UserId::new(), vec![1; 32]);

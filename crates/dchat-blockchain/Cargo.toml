@@ -6,11 +6,14 @@ description = "Blockchain client for parallel chain architecture (Chat Chain + C
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 blake3 = "1.5"
 bincode = "1.3"
+bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 dchat-chain = { path = "../dchat-chain" }
 dchat-core = { path = "../dchat-core" }
+dchat-crypto = { path = "../dchat-crypto" }
 dchat-network = { path = "../dchat-network" }
 dchat-privacy = { path = "../dchat-privacy" }
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
@@ -27,6 +30,7 @@ tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 futures-util = "0.3"
 tracing = "0.1"
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
+zeroize = { version = "1.8", features = ["derive"] }
 
 # Post-quantum cryptography (Gap Fix #1)
 pqcrypto-dilithium = "0.5"

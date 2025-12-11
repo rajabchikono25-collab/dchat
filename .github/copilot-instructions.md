@@ -1,6 +1,7 @@
 # Copilot Instructions for dchat
 
 ## Project Status: PRODUCTION
+
 **dchat is now in PRODUCTION. All code must be production-ready.**
 
 - Do NOT write placeholder/stub code
@@ -11,25 +12,46 @@
 - All security measures must be active
 
 ## Project Overview
+
 **dchat** is a Rust-based decentralized chat application combining end-to-end encryption, sovereign identity, and blockchain-enforced message ordering. It runs on a parallel chain (chat chain) alongside a currency chain for economics. Key differentiators: wallet-invisible UX, zero-knowledge metadata protection, relay incentives, and decentralized governance via DAO.
 
 ## Critical Reference Documents
+
 Always consult these documents when working on dchat:
 
 - **`ARCHITECTURE-2.0.md`**: The authoritative architecture specification. Contains detailed component designs, security requirements, and integration patterns. Use this as the primary reference for system design decisions.
 - **`plan.md`**: The implementation plan capturing remaining work items, stubbed/placeholder code, and phased delivery. Check this before implementing any feature to understand current state and gaps.
 - **`plan2.md`**: Economic infrastructure implementation plan covering critical gaps in staking, payment channels, fee collection, and reward distribution. Contains prioritized work items (P0/P1/P2) with time estimates and specific code changes needed.
+- **`plan4.md`**: **🚨 CRITICAL FOR MAINNET LAUNCH** - Production readiness plan identifying ~146 items requiring implementation before mainnet. Covers:
+  - 83 "In production..." placeholder comments that MUST be replaced
+  - Mock/simulation code that MUST be removed or guarded
+  - Debug-only code paths that MUST NOT reach production
+  - Hardcoded values requiring configuration
+  - Feature flags requiring production review
+  - Build verification checklist
+
+  **⚠️ HANDLE WITH EXTREME CARE**: When implementing items from plan4.md:
+  1. Never introduce new placeholder code
+  2. Always verify mock code is properly `#[cfg(test)]` or `#[cfg(debug_assertions)]` guarded
+  3. Test that release builds fail if test-mocks feature is enabled
+  4. Ensure HTTPS enforcement is active in all production RPC calls
+  5. Verify all cryptographic operations use production keys, not test keys
+  6. Run the Production Build Verification Checklist before any release
+
 - **`ARCHITECTURE.md`**: Legacy architecture document with component breakdown and threat model.
 - **`SECURITY_AUDIT_2025-12-08.md`**: Comprehensive security audit report identifying 16 vulnerabilities (2 critical, 4 high, 6 medium, 4 low) with detailed patches, anti-bot protection gaps, and missing CLI commands. Must be consulted for all security-related changes.
 
 **Priority**: When there are discrepancies, `ARCHITECTURE-2.0.md` takes precedence over `ARCHITECTURE.md`.
 
 ## Architecture (Summary)
+
 The system has two interdependent chains:
+
 - **Chat Chain**: Identity, messaging, channels, permissions, governance, reputation, account recovery
 - **Currency Chain**: Payments, staking, rewards, economics
 
 Core components (34 architectural subsystems):
+
 - **Crypto**: Noise Protocol (rotating keys), Ed25519 identity, ZK proofs, blind tokens
 - **Identity Management**: Hierarchical key derivation (BIP-32/44), multi-device sync, linkability control, Sybil resistance
 - **Messaging**: Delay-tolerant delivery, DHT routing (libp2p/Kademlia), proof-of-delivery rewards
@@ -63,12 +85,14 @@ Core components (34 architectural subsystems):
 ## Development Workflow
 
 ### Setup
+
 ```bash
 cargo build
 cargo test
 ```
 
 ### Running the Project
+
 ```bash
 # Start a relay node
 cargo run --release -- --role relay
@@ -78,6 +102,7 @@ cargo run -- --role user
 ```
 
 ### Testing
+
 ```bash
 # Run all tests
 cargo test
@@ -92,27 +117,32 @@ cargo test --test integration_tests
 ## Code Conventions
 
 ### Cryptography
+
 - All inter-node encryption uses Noise Protocol via `snow` crate
 - Ed25519 keys for identity; Curve25519 for DH
 - Key rotation: new keys after N messages or T time units (see `src/crypto/rotation.rs`)
 - Never log plaintext keys; use `std::fmt::Debug` guards
 
 ### Messaging
+
 - Message ordering enforced by chain sequence numbers in `src/messaging/order.rs`
 - Relay nodes call `deliver_proof::submit_on_chain()` after successful delivery
 - Offline messages queued in local SQLite; sync on reconnect via gossip
 
 ### Chains
+
 - Chat chain calls encapsulated in `src/chain/chat_chain/`
 - Currency chain calls encapsulated in `src/chain/currency_chain/`
 - Cross-chain calls use bridge layer in `src/bridge/` with atomicity guarantees
 
 ### Identity & Reputation
+
 - One user = multiple potential identities (main + burners)
 - Reputation stored on-chain but derived locally via `reputation::Score::from_chain_data()`
 - Burner identities have zero persistent reputation
 
 ## Key Files & Directories
+
 - **`ARCHITECTURE.md`**: Complete system specification and design rationale (34 components, threat model, roadmap)
 - **`src/crypto/`**: Noise Protocol integration, key derivation, rotating keys
 - **`src/crypto/post_quantum/`**: Kyber768, FALCON, Dilithium hybrid schemes
@@ -182,6 +212,7 @@ cargo test --test integration_tests
 - **`docs/verification/`**: Formal verification specifications (TLA+, Coq)
 
 ## Integration Points
+
 - **Blockchain RPC**: Connects to both chat and currency chain validators
 - **libp2p DHT**: Peer discovery; seeded with well-known relay node addresses
 - **IPFS**: Optional media hosting (sticker packs, digital goods)
@@ -191,6 +222,7 @@ cargo test --test integration_tests
 ## Common Tasks
 
 ### Adding a New Message Type
+
 1. Define struct in `src/messaging/types.rs`
 2. Add encryption/decryption in `src/crypto/handshake.rs`
 3. Add chain ordering entry in `src/chain/chat_chain/ordering.rs`
@@ -198,24 +230,28 @@ cargo test --test integration_tests
 5. Add tests in `tests/messaging_*`
 
 ### Implementing a New Governance Vote Type
+
 1. Define vote struct in `src/governance/voting.rs`
 2. Add vote validation in `src/governance/validators.rs`
 3. Add execution logic in `src/governance/execute.rs`
 4. Add UI integration point (document in `src/ui/`)
 
 ### Adding Relay Reward Logic
+
 1. Add reward calculation in `src/relay/rewards/calculator.rs`
 2. Update staking contract in `src/chain/currency_chain/staking.rs`
 3. Add proof-of-delivery verification in `src/relay/proof.rs`
 4. Test with local chain simulator in `tests/relay_incentives.rs`
 
 ### Cross-Chain Transaction
+
 1. Initiate on source chain via bridge in `src/bridge/initiate.rs`
 2. Wait for finality (see `src/bridge/finality.rs`)
 3. Execute on destination chain via `src/bridge/execute.rs`
 4. Verify atomicity: if either fails, both rollback
 
 ### Implementing Account Recovery via Guardians
+
 1. Define guardian struct in `src/recovery/types.rs`
 2. Add on-chain guardian registration in `src/chain/guardians/register.rs`
 3. Implement recovery initiation in `src/recovery/initiate.rs`
@@ -224,6 +260,7 @@ cargo test --test integration_tests
 6. Test social recovery fallback path
 
 ### Adding NAT Traversal Support
+
 1. Integrate UPnP in `src/network/nat/upnp.rs`
 2. Add TURN fallback in `src/network/nat/turn.rs`
 3. Implement hole punching in libp2p config
@@ -231,6 +268,7 @@ cargo test --test integration_tests
 5. Test with restricted firewall simulation
 
 ### Implementing Rate Limiting
+
 1. Define reputation scoring in `src/network/rate_limiting/peer_score.rs`
 2. Add token bucket algorithm in `src/network/rate_limiting/bucket.rs`
 3. Implement backpressure signaling in `src/network/congestion/signals.rs`
@@ -238,6 +276,7 @@ cargo test --test integration_tests
 5. Integrate with message prioritization in `src/relay/queue.rs`
 
 ### Adding Channel Sharding
+
 1. Define shard configuration in `src/chain/sharding/config.rs`
 2. Implement state partitioning in `src/chain/sharding/partition.rs`
 3. Add cross-shard gossip in `src/chain/sharding/gossip.rs`
@@ -245,6 +284,7 @@ cargo test --test integration_tests
 5. Test with high-activity threshold simulation
 
 ### Implementing Cryptographic Dispute Resolution
+
 1. Define claim struct in `src/chain/dispute_resolution/claim.rs`
 2. Add challenge logic in `src/chain/dispute_resolution/challenge.rs`
 3. Implement respond mechanism in `src/chain/dispute_resolution/respond.rs`
@@ -252,6 +292,7 @@ cargo test --test integration_tests
 5. Create fork recovery in `src/chain/fork_recovery/canonical.rs`
 
 ### Setting Up Observability & Monitoring
+
 1. Initialize Prometheus metrics in `src/observability/metrics.rs`
 2. Add distributed tracing with opentelemetry in `src/observability/tracing.rs`
 3. Create health check endpoint in `src/observability/health.rs`
@@ -259,6 +300,7 @@ cargo test --test integration_tests
 5. Set up chaos testing suite in `tests/chaos/`
 
 ### Implementing Hierarchical Key Derivation
+
 1. Define BIP-32/44 paths in `src/identity/derivation/paths.rs`
 2. Implement key derivation in `src/identity/derivation/keys.rs`
 3. Add device key generation in `src/identity/derivation/device_keys.rs`
@@ -266,6 +308,7 @@ cargo test --test integration_tests
 5. Test against vector test suite in `tests/key_derivation.rs`
 
 ### Setting Up Multi-Device Synchronization
+
 1. Define sync messages in `src/identity/sync/messages.rs`
 2. Implement gossip protocol in `src/identity/sync/gossip.rs`
 3. Add conflict resolution in `src/identity/sync/conflict_resolution.rs`
@@ -273,6 +316,7 @@ cargo test --test integration_tests
 5. Test with 3-device simulation in `tests/multi_device.rs`
 
 ### Implementing Onion Routing for Metadata Resistance
+
 1. Define Sphinx packet format in `src/network/onion_routing/sphinx.rs`
 2. Implement layered encryption in `src/network/onion_routing/encryption.rs`
 3. Create circuit management in `src/network/onion_routing/circuits.rs`
@@ -280,6 +324,7 @@ cargo test --test integration_tests
 5. Test with traffic analysis simulation in `tests/metadata_resistance.rs`
 
 ### Adding Keyless UX with Secure Enclave
+
 1. Initialize enclave SDK in `src/onboarding/enclave/init.rs`
 2. Implement biometric unlock in `src/onboarding/enclave/biometric.rs`
 3. Add attestation verification in `src/identity/attestation/verify.rs`
@@ -287,6 +332,7 @@ cargo test --test integration_tests
 5. Test enclave signing in `tests/enclave_signing.rs`
 
 ### Implementing Automatic Failover Routing
+
 1. Create fallback mechanism in `src/network/resilience/fallback.rs`
 2. Add timeout detection in `src/network/resilience/timeouts.rs`
 3. Implement peer diversity checks in `src/network/eclipse_prevention/diversity.rs`
@@ -294,6 +340,7 @@ cargo test --test integration_tests
 5. Test with network partition simulation in `tests/chaos/partitions.rs`
 
 ### Building Accessibility Compliance (WCAG 2.1 AA+)
+
 1. Create semantic HTML in `src/ui/accessibility/semantic.rs`
 2. Add ARIA labels in `src/ui/accessibility/aria.rs`
 3. Implement keyboard navigation in `src/ui/accessibility/keyboard.rs`
@@ -301,6 +348,7 @@ cargo test --test integration_tests
 5. Test with WAVE, Axe, or NVDA in `tests/accessibility/wcag.rs`
 
 ### Setting Up Privacy-Preserving Metadata Hiding
+
 1. Implement ZK contact graph proofs in `src/privacy/zk_proofs/contact_graph.rs`
 2. Add cover traffic generation in `src/privacy/cover_traffic/generator.rs`
 3. Implement timing obfuscation in `src/privacy/metadata_hiding/timing.rs`
@@ -308,6 +356,7 @@ cargo test --test integration_tests
 5. Test traffic analysis resistance in `tests/privacy/traffic_analysis.rs`
 
 ### Implementing Regulatory Compliance (Section 22)
+
 1. Define hash-proof system in `src/compliance/hash_proofs/mod.rs` (SHA-256/BLAKE3 hashing)
 2. Implement probabilistic Bloom filters in `src/compliance/hash_proofs/bloom.rs`
 3. Create ZK proof interface in `src/privacy/encrypted_analysis/zk_verify.rs`
@@ -317,6 +366,7 @@ cargo test --test integration_tests
 7. Test with encrypted analysis scenarios in `tests/compliance/`
 
 ### Adding Data Lifecycle & Storage Economics (Section 23)
+
 1. Define TTL configuration in `src/storage/lifecycle/config.rs`
 2. Implement message expiration in `src/storage/lifecycle/expiration.rs`
 3. Create deduplication in `src/storage/deduplication/content_addressable.rs`
@@ -327,6 +377,7 @@ cargo test --test integration_tests
 8. Test with various TTL scenarios in `tests/storage/lifecycle.rs`
 
 ### Implementing Protocol Upgrades & Cryptographic Agility (Section 24)
+
 1. Define semantic versioning in `src/upgrades/versioning/semver.rs`
 2. Implement version negotiation in `src/upgrades/versioning/negotiation.rs`
 3. Create algorithm suite definitions in `src/crypto/agility/suites.rs`
@@ -336,6 +387,7 @@ cargo test --test integration_tests
 7. Test upgrade paths in `tests/upgrades/`
 
 ### Building User Safety & Trust Infrastructure (Section 25)
+
 1. Implement proof-of-device in `src/identity/attestation/device_proof.rs`
 2. Add verified identity badges in `src/identity/verification/badges.rs`
 3. Create context-aware warnings in `src/ui/safety_warnings/context.rs`
@@ -345,6 +397,7 @@ cargo test --test integration_tests
 7. Test trust signal accuracy in `tests/trust_infrastructure/`
 
 ### Setting Up Developer Ecosystem & Plugins (Section 26)
+
 1. Define plugin API in `src/plugins/api/mod.rs`
 2. Create WebAssembly sandbox in `src/plugins/sandbox/wasm.rs`
 3. Implement message hooks in `src/plugins/hooks/message.rs`
@@ -355,6 +408,7 @@ cargo test --test integration_tests
 8. Test plugin loading and isolation in `tests/plugins/`
 
 ### Implementing Economic Security & Game Theory (Section 27)
+
 1. Define relay payment fairness in `src/economics/relay/fairness.rs`
 2. Add uptime reward calculations in `src/economics/relay/uptime_rewards.rs`
 3. Implement geographic distribution bonuses in `src/economics/relay/geographic_bonus.rs`
@@ -365,6 +419,7 @@ cargo test --test integration_tests
 8. Run long-term sustainability modeling in `tests/game_theory/sustainability.rs`
 
 ### Setting Up Post-Quantum Cryptography (Section 28)
+
 1. Integrate Kyber768 in `src/crypto/post_quantum/kyber.rs`
 2. Implement hybrid Curve25519+Kyber768 in `src/crypto/hybrid/combined.rs`
 3. Add FALCON or Dilithium signatures in `src/crypto/post_quantum/signatures.rs`
@@ -375,6 +430,7 @@ cargo test --test integration_tests
 8. Test PQ schemes against test vectors in `tests/post_quantum/`
 
 ### Implementing Censorship-Resistant Distribution (Section 29)
+
 1. Create F-Droid distribution in `src/distribution/f_droid/manifest.rs`
 2. Add sideloading support in `src/distribution/sideload/apk_support.rs`
 3. Implement IPFS hosting in `src/distribution/package_hosting/ipfs.rs`
@@ -385,6 +441,7 @@ cargo test --test integration_tests
 8. Test distribution paths in `tests/distribution/`
 
 ### Implementing Full-Network Disaster Recovery (Section 30)
+
 1. Create chain replay logic in `src/recovery/chain_replay/replay.rs`
 2. Implement snapshot checkpoints in `src/chain/snapshots/checkpoint.rs`
 3. Add Merkle proof verification in `src/chain/snapshots/merkle_verify.rs`
@@ -395,6 +452,7 @@ cargo test --test integration_tests
 8. Test recovery scenarios in `tests/disaster_recovery/`
 
 ### Setting Up Progressive Decentralization UX (Section 31)
+
 1. Create centralized entry portal in `src/onboarding/progressive/web_portal.rs`
 2. Implement feature unlock progression in `src/onboarding/progressive/feature_gates.rs`
 3. Add in-app education system in `src/ui/education/tutorial.rs`
@@ -405,6 +463,7 @@ cargo test --test integration_tests
 8. Test onboarding flows with new users in `tests/onboarding/progressive_flows.rs`
 
 ### Implementing Formal Verification (Section 32)
+
 1. Write TLA+ specification of consensus in `docs/verification/consensus.tla`
 2. Create Coq proofs for crypto primitives in `docs/verification/crypto.v`
 3. Set up Libfuzzer harnesses in `tests/fuzz/`
@@ -415,6 +474,7 @@ cargo test --test integration_tests
 8. Verify invariants hold in `tests/verification/invariants.rs`
 
 ### Implementing Ethical Governance Constraints (Section 33)
+
 1. Define voting power caps in `src/governance/constraints/voting_caps.rs`
 2. Implement term limits in `src/governance/ethics/term_limits.rs`
 3. Add diversity requirements in `src/governance/ethics/diversity.rs`
@@ -454,12 +514,12 @@ cargo test --test integration_tests
 
 ### 1.1 Critical TODOs Found
 
-| Location | Issue | Impact |
-|----------|-------|--------|
-| `src/main.rs:2831` | Delta deduplication not implemented | Message sync inefficiency |
-| `dchat-bots/src/telegram.rs:97` | Chat ID parsing incomplete | Bot API failures |
-| `dchat-network/src/nat.rs` | UPnP external IP returns local IP | NAT traversal broken |
-| `dchat-blockchain/src/client.rs` | Transaction logic placeholders | Blockchain integration incomplete |
+| Location                         | Issue                               | Impact                            |
+| -------------------------------- | ----------------------------------- | --------------------------------- |
+| `src/main.rs:2831`               | Delta deduplication not implemented | Message sync inefficiency         |
+| `dchat-bots/src/telegram.rs:97`  | Chat ID parsing incomplete          | Bot API failures                  |
+| `dchat-network/src/nat.rs`       | UPnP external IP returns local IP   | NAT traversal broken              |
+| `dchat-blockchain/src/client.rs` | Transaction logic placeholders      | Blockchain integration incomplete |
 
 ### 1.2 Placeholder/Mock Implementations
 
@@ -472,6 +532,7 @@ dchat-privacy/src/zk/mod.rs        - "mock" proof verification
 ### 1.3 Error Handling Issues
 
 **121+ `unwrap()` calls in production code paths**, primarily in:
+
 - `src/main.rs` - CLI handling
 - Network event processing
 - Configuration parsing
@@ -503,7 +564,7 @@ impl DeltaSync {
             .filter(|msg| !peer_bloom.might_contain(&msg.id))
             .map(|msg| msg.sequence)
             .collect();
-        
+
         Delta {
             from_sequence: peer_sequence,
             message_ids: missing_sequences,
@@ -530,7 +591,7 @@ async fn get_upnp_external_ip(gateway_url: &str) -> Result<IpAddr> {
                 <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"/>
             </s:Body>
         </s:Envelope>"#;
-    
+
     let response = reqwest::Client::new()
         .post(gateway_url)
         .header("Content-Type", "text/xml; charset=utf-8")
@@ -538,14 +599,14 @@ async fn get_upnp_external_ip(gateway_url: &str) -> Result<IpAddr> {
         .body(soap_request)
         .send()
         .await?;
-    
+
     let body = response.text().await?;
-    
+
     // Parse: <NewExternalIPAddress>1.2.3.4</NewExternalIPAddress>
     let re = regex::Regex::new(r"<NewExternalIPAddress>([^<]+)</NewExternalIPAddress>")?;
     let captures = re.captures(&body)
         .ok_or_else(|| Error::nat("No external IP in UPnP response"))?;
-    
+
     captures[1].parse::<IpAddr>()
         .map_err(|e| Error::nat(format!("Invalid IP: {}", e)))
 }
@@ -712,13 +773,13 @@ pub struct Config {
 pub struct NetworkConfig {
     #[garde(range(min = 1024, max = 65535))]
     pub port: u16,
-    
+
     #[garde(length(min = 1))]
     pub bootstrap_nodes: Vec<String>,
-    
+
     #[garde(range(min = 1, max = 1000))]
     pub max_connections: u32,
-    
+
     #[garde(custom(validate_multiaddr))]
     pub listen_address: String,
 }
@@ -760,16 +821,16 @@ proptest! {
             content: content.clone(),
             timestamp,
         };
-        
+
         let encoded = msg.encode();
         let decoded = Message::decode(&encoded).unwrap();
-        
+
         prop_assert_eq!(msg.sender, decoded.sender);
         prop_assert_eq!(msg.recipient, decoded.recipient);
         prop_assert_eq!(msg.content, decoded.content);
         prop_assert_eq!(msg.timestamp, decoded.timestamp);
     }
-    
+
     #[test]
     fn encryption_roundtrip(
         plaintext in prop::collection::vec(any::<u8>(), 0..10000),
@@ -816,7 +877,7 @@ impl DchatMetrics {
                 &["channel_type", "encryption"],
                 registry
             ).unwrap(),
-            
+
             message_processing_duration_seconds: register_histogram_vec_with_registry!(
                 "dchat_message_processing_duration_seconds",
                 "Message processing latency",
@@ -839,12 +900,14 @@ impl DchatMetrics {
 **Location**: `crates/dchat-crypto/src/noise.rs`, `crates/dchat-crypto/src/handshake.rs`
 
 **Current Stack**:
+
 - Noise Protocol XX pattern (mutual authentication)
 - X25519 key exchange
 - ChaChaPoly encryption
 - BLAKE2s hashing
 
 **Issues Identified**:
+
 1. No protocol version negotiation in handshake messages
 2. No cryptographic binding between Noise keys and peer identity
 3. Opaque `Vec<u8>` message format (no structure)
@@ -864,7 +927,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     pub const CURRENT: Self = Self { major: 2, minor: 0 };
-    
+
     pub fn is_compatible(&self, other: &Self) -> bool {
         self.major == other.major
     }
@@ -910,14 +973,14 @@ impl TypedHandshake {
             HandshakePhase::Initial => {
                 let noise = self.noise_state.as_mut()
                     .ok_or(HandshakeError::InvalidState)?;
-                
+
                 let mut msg_buf = vec![0u8; 65535];
                 let len = noise.write_message(&[], &mut msg_buf)?;
                 msg_buf.truncate(len);
-                
+
                 self.log_message(MessageDirection::Outbound, 1, &msg_buf);
                 self.phase = HandshakePhase::AwaitingMessage { expected_step: 2 };
-                
+
                 Ok(HandshakeMessage::Init {
                     version: self.protocol_version,
                     noise_payload: msg_buf,
@@ -956,14 +1019,14 @@ impl IdentityClaim {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let mut signing_data = Vec::new();
         signing_data.extend_from_slice(identity_keypair.public().as_bytes());
         signing_data.extend_from_slice(noise_static_key);
         signing_data.extend_from_slice(&timestamp.to_le_bytes());
-        
+
         let signature = identity_keypair.sign(&signing_data);
-        
+
         Self {
             peer_id: identity_keypair.peer_id(),
             noise_static_key: *noise_static_key,
@@ -972,14 +1035,14 @@ impl IdentityClaim {
             signature,
         }
     }
-    
+
     /// Verify claim and check key binding
     pub fn verify(&self, received_noise_key: &[u8; 32]) -> Result<(), IdentityError> {
         // 1. Check timestamp freshness (prevent replay)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)?
             .as_secs();
-        
+
         const MAX_CLOCK_SKEW_SECONDS: u64 = 300; // 5 minutes
         if now.saturating_sub(self.timestamp) > MAX_CLOCK_SKEW_SECONDS {
             return Err(IdentityError::StaleTimestamp {
@@ -987,7 +1050,7 @@ impl IdentityClaim {
                 current: now,
             });
         }
-        
+
         // 2. Verify the claimed Noise key matches what we received
         if self.noise_static_key != *received_noise_key {
             return Err(IdentityError::KeyMismatch {
@@ -995,16 +1058,16 @@ impl IdentityClaim {
                 received: hex::encode(received_noise_key),
             });
         }
-        
+
         // 3. Verify signature
         let mut signing_data = Vec::new();
         signing_data.extend_from_slice(self.peer_id.as_bytes());
         signing_data.extend_from_slice(&self.noise_static_key);
         signing_data.extend_from_slice(&self.timestamp.to_le_bytes());
-        
+
         let public_key = PublicKey::from_peer_id(&self.peer_id)?;
         public_key.verify(&signing_data, &self.signature)?;
-        
+
         Ok(())
     }
 }
@@ -1022,27 +1085,27 @@ pub enum HandshakeMessage {
         supported_patterns: Vec<NoisePattern>,
         psk_hint: Option<[u8; 16]>,
     },
-    
+
     Response {
         version: ProtocolVersion,
         selected_pattern: NoisePattern,
         noise_payload: Vec<u8>,
     },
-    
+
     Final {
         noise_payload: Vec<u8>,
         encrypted_identity: Vec<u8>,
     },
-    
+
     Identity {
         encrypted_claim: Vec<u8>,
     },
-    
+
     Ack {
         session_id: [u8; 32],
         confirmation: Vec<u8>,
     },
-    
+
     Reject {
         reason: HandshakeRejectReason,
         message: String,
@@ -1071,7 +1134,7 @@ pub struct HandshakeFrame {
 
 impl HandshakeFrame {
     pub const MAGIC: [u8; 4] = *b"DCHT";
-    
+
     pub fn quick_validate(raw: &[u8]) -> Result<(), FrameError> {
         if raw.len() < 9 {
             return Err(FrameError::TooShort);
@@ -1111,36 +1174,36 @@ pub struct RateLimitConfig {
 impl HandshakeRateLimiter {
     pub fn check(&mut self, ip: IpAddr, peer_hint: Option<&PeerId>) -> RateLimitResult {
         let now = Instant::now();
-        
+
         if self.global.concurrent >= self.config.max_concurrent {
             return RateLimitResult::Rejected {
                 reason: RateLimitReason::GlobalLimit,
                 retry_after: self.estimate_retry(None),
             };
         }
-        
+
         let ip_state = self.ip_limits.entry(ip).or_default();
         ip_state.cleanup(now, self.config.window);
-        
+
         if ip_state.count >= self.config.per_ip_limit {
             return RateLimitResult::Rejected {
                 reason: RateLimitReason::IpLimit,
                 retry_after: self.estimate_retry(Some(ip_state)),
             };
         }
-        
+
         ip_state.count += 1;
         ip_state.last_attempt = now;
         self.global.concurrent += 1;
-        
+
         RateLimitResult::Allowed {
             token: RateLimitToken::new(ip, now),
         }
     }
-    
+
     pub fn release(&mut self, token: RateLimitToken, success: bool) {
         self.global.concurrent = self.global.concurrent.saturating_sub(1);
-        
+
         if !success {
             if let Some(state) = self.ip_limits.get_mut(&token.ip) {
                 state.failure_count += 1;
@@ -1173,17 +1236,17 @@ impl TimeoutAwareHandshake {
             timeout_handle: None,
         }
     }
-    
+
     pub fn check_timeout(&self) -> Result<(), HandshakeError> {
         let now = Instant::now();
-        
+
         if now > self.deadline {
             return Err(HandshakeError::Timeout {
                 phase: "total",
                 elapsed: now.duration_since(self.inner.started_at),
             });
         }
-        
+
         let current_phase = self.inner.phase_name();
         if let Some(&phase_deadline) = self.phase_deadlines.get(current_phase) {
             if now > phase_deadline {
@@ -1193,18 +1256,18 @@ impl TimeoutAwareHandshake {
                 });
             }
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn process_with_timeout(
         &mut self,
         message: &[u8],
     ) -> Result<Option<Vec<u8>>, HandshakeError> {
         self.check_timeout()?;
-        
+
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        
+
         tokio::select! {
             result = self.inner.process_message(message) => result,
             _ = tokio::time::sleep(remaining) => {
@@ -1268,14 +1331,14 @@ impl HandshakeMetrics {
 
 ### 3.8 Handshake Improvement Summary
 
-| Area | Current | Improved |
-|------|---------|----------|
-| **State Machine** | Implicit enum states | Typed phases with compile-time checks |
-| **Identity Binding** | None | Cryptographic binding with signed claims |
-| **Message Format** | Opaque `Vec<u8>` | Typed `HandshakeMessage` with versioning |
-| **Rate Limiting** | None | Per-IP, per-peer, and global limits |
-| **Timeouts** | Periodic cleanup | Active per-phase timeouts |
-| **Observability** | Basic logging | Prometheus metrics, audit logs |
+| Area                 | Current              | Improved                                 |
+| -------------------- | -------------------- | ---------------------------------------- |
+| **State Machine**    | Implicit enum states | Typed phases with compile-time checks    |
+| **Identity Binding** | None                 | Cryptographic binding with signed claims |
+| **Message Format**   | Opaque `Vec<u8>`     | Typed `HandshakeMessage` with versioning |
+| **Rate Limiting**    | None                 | Per-IP, per-peer, and global limits      |
+| **Timeouts**         | Periodic cleanup     | Active per-phase timeouts                |
+| **Observability**    | Basic logging        | Prometheus metrics, audit logs           |
 
 ---
 
@@ -1283,14 +1346,14 @@ impl HandshakeMetrics {
 
 ### 4.1 Current Protocol Stack
 
-| Layer | Current | Status |
-|-------|---------|--------|
-| **Transport** | TCP | ✅ Reliable |
-| **Security** | Noise XX (ChaChaPoly + BLAKE2s) | ✅ Excellent |
-| **Multiplexing** | Yamux | ✅ Good |
-| **Discovery** | Kademlia DHT + mDNS | ✅ Good |
-| **Messaging** | Gossipsub | ✅ Good |
-| **Serialization** | Bincode/CBOR | ✅ Good |
+| Layer             | Current                         | Status       |
+| ----------------- | ------------------------------- | ------------ |
+| **Transport**     | TCP                             | ✅ Reliable  |
+| **Security**      | Noise XX (ChaChaPoly + BLAKE2s) | ✅ Excellent |
+| **Multiplexing**  | Yamux                           | ✅ Good      |
+| **Discovery**     | Kademlia DHT + mDNS             | ✅ Good      |
+| **Messaging**     | Gossipsub                       | ✅ Good      |
+| **Serialization** | Bincode/CBOR                    | ✅ Good      |
 
 ### 4.2 Add QUIC Transport (High Priority)
 
@@ -1305,14 +1368,14 @@ pub fn build_transport(keypair: &identity::Keypair) -> Result<Boxed<(PeerId, Str
     // QUIC transport (built-in encryption + multiplexing)
     let quic_transport = quic::tokio::Transport::new(quic::Config::new(keypair))
         .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)));
-    
+
     // TCP fallback for restrictive networks
     let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true));
     let tcp_with_noise = dns::tokio::Transport::system(tcp_transport)?
         .upgrade(upgrade::Version::V1)
         .authenticate(noise::Config::new(keypair)?)
         .multiplex(yamux::Config::default());
-    
+
     // Prefer QUIC, fallback to TCP
     let transport = quic_transport
         .or_transport(tcp_with_noise)
@@ -1321,15 +1384,16 @@ pub fn build_transport(keypair: &identity::Keypair) -> Result<Boxed<(PeerId, Str
             Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
         })
         .boxed();
-    
+
     Ok(transport)
 }
 ```
 
 **Cargo.toml**:
+
 ```toml
 libp2p = { version = "0.54", features = [
-    "kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr", 
+    "kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr",
     "mdns", "identify", "ping", "gossipsub", "yamux", "tokio",
     "request-response", "macros",
     "quic",  # ADD THIS
@@ -1337,6 +1401,7 @@ libp2p = { version = "0.54", features = [
 ```
 
 **Benefits**:
+
 - 0-RTT connection establishment (vs 3-RTT for TCP+Noise)
 - Built-in multiplexing (no Yamux overhead)
 - Connection migration (survives IP changes on mobile)
@@ -1356,18 +1421,19 @@ pub fn build_transport_with_webrtc(
         keypair.clone(),
         webrtc_cert,
     );
-    
+
     // Combine: QUIC || WebRTC || TCP
     let transport = quic_transport
         .or_transport(webrtc_transport)
         .or_transport(tcp_noise_yamux)
         .boxed();
-    
+
     Ok(transport)
 }
 ```
 
 **Benefits**:
+
 - Enables web-based dchat clients
 - P2P in browsers without server relay
 - NAT traversal via ICE/TURN
@@ -1390,7 +1456,7 @@ impl DchatBehavior {
             .expect("valid namespace");
         self.rendezvous_client.register(namespace, server, None);
     }
-    
+
     pub fn discover_channel_peers(&mut self, channel_id: &str, server: PeerId) {
         let namespace = rendezvous::Namespace::new(format!("dchat/channel/{}", channel_id))
             .expect("valid namespace");
@@ -1400,6 +1466,7 @@ impl DchatBehavior {
 ```
 
 **Benefits**:
+
 - Faster channel discovery than DHT
 - Privacy-preserving (only reveals namespace interest)
 - Complements DHT
@@ -1417,7 +1484,7 @@ pub struct HybridHandshake {
 impl HybridHandshake {
     pub fn derive_hybrid_key(&self, kyber_shared: &[u8]) -> [u8; 64] {
         let noise_key = self.noise.get_symmetric_key();
-        
+
         let mut output = [0u8; 64];
         hkdf::Hkdf::<sha2::Sha256>::new(None, &[noise_key, kyber_shared].concat())
             .expand(b"dchat-hybrid-key", &mut output)
@@ -1463,6 +1530,7 @@ message HandshakeInit {
 ```
 
 **Benefits**:
+
 - Backward compatibility
 - Smaller wire size
 - Code generation for SDKs
@@ -1484,10 +1552,10 @@ impl ContentAddressedMessage {
         let data = DagCborCodec.encode(message)?;
         let hash = Code::Blake3_256.digest(&data);
         let cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
-        
+
         Ok(Self { cid, data })
     }
-    
+
     pub fn verify(&self) -> bool {
         let hash = Code::Blake3_256.digest(&self.data);
         let expected_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
@@ -1497,22 +1565,23 @@ impl ContentAddressedMessage {
 ```
 
 **Benefits**:
+
 - Deduplication
 - Integrity verification
 - IPFS ecosystem compatibility
 
 ### 4.8 Protocol Stack Summary
 
-| Layer | Current | Recommended | Priority |
-|-------|---------|-------------|----------|
-| **Transport** | TCP | **QUIC + TCP fallback** | 🔴 High |
-| **Browser** | None | **WebRTC** | 🟡 Medium |
-| **Encryption** | Noise XX | **Hybrid: Noise + Kyber768** | 🟡 Medium |
-| **Multiplexing** | Yamux | QUIC built-in | — |
-| **Discovery** | Kademlia + mDNS | **+ Rendezvous** | 🟢 Low |
-| **Relay** | relay + dcutr | **Full Relay v2 config** | 🔴 High |
-| **Serialization** | Bincode/CBOR | **Protobuf** | 🟡 Medium |
-| **Content** | Custom | **IPLD/DAG-CBOR** | 🟢 Low |
+| Layer             | Current         | Recommended                  | Priority  |
+| ----------------- | --------------- | ---------------------------- | --------- |
+| **Transport**     | TCP             | **QUIC + TCP fallback**      | 🔴 High   |
+| **Browser**       | None            | **WebRTC**                   | 🟡 Medium |
+| **Encryption**    | Noise XX        | **Hybrid: Noise + Kyber768** | 🟡 Medium |
+| **Multiplexing**  | Yamux           | QUIC built-in                | —         |
+| **Discovery**     | Kademlia + mDNS | **+ Rendezvous**             | 🟢 Low    |
+| **Relay**         | relay + dcutr   | **Full Relay v2 config**     | 🔴 High   |
+| **Serialization** | Bincode/CBOR    | **Protobuf**                 | 🟡 Medium |
+| **Content**       | Custom          | **IPLD/DAG-CBOR**            | 🟢 Low    |
 
 ---
 
@@ -1597,7 +1666,7 @@ impl ContentAddressedMessage {
 ```toml
 # Add to crates/dchat-network/Cargo.toml
 libp2p = { version = "0.54", features = [
-    "kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr", 
+    "kad", "noise", "tcp", "dns", "websocket", "relay", "dcutr",
     "mdns", "identify", "ping", "gossipsub", "yamux", "tokio",
     "request-response", "macros",
     # NEW FEATURES:
@@ -1628,6 +1697,7 @@ libipld = "0.16"
 ### 6.1 Current State Analysis
 
 **Existing Implementation**:
+
 - Genesis block creation for both chains ([genesis.rs](crates/dchat-chain/src/chain/genesis.rs))
 - Tokenomics with 100B initial supply, 1T max cap ([tokenomics.rs](crates/dchat-blockchain/src/tokenomics.rs))
 - Validator staking: 10,000 DCHAT minimum, 1M DCHAT maximum ([staking.rs](crates/dchat-blockchain/src/staking.rs))
@@ -1636,6 +1706,7 @@ libipld = "0.16"
 - 14 relays (2 per validator server)
 
 **Current Genesis Configuration**:
+
 ```rust
 initial_supply: 1_000_000_000_000_000_000 // 1 billion tokens (18 decimals)
 ```
@@ -1694,19 +1765,19 @@ pub enum VestingSchedule {
     /// Immediately liquid at genesis
     Immediate,
     /// Linear vesting over period
-    Linear { 
-        cliff_months: u32, 
+    Linear {
+        cliff_months: u32,
         vesting_months: u32,
         start_block: u64,
     },
     /// Milestone-based release
-    Milestone { 
+    Milestone {
         milestones: Vec<(String, u64)>, // (milestone_name, release_amount)
     },
     /// Locked until governance vote
     GovernanceLocked,
     /// Locked in staking (auto-staked at genesis)
-    StakeLocked { 
+    StakeLocked {
         min_stake_duration_days: u32,
     },
 }
@@ -1714,18 +1785,18 @@ pub enum VestingSchedule {
 
 #### Suggested Allocation Breakdown
 
-| Category | Percentage | Amount (1B total) | Vesting | Purpose |
-|----------|------------|-------------------|---------|---------|
-| **Foundation Validators** | 7% | 70M | Stake-locked 1 year | Initial 7 validators @ 10M each |
-| **Foundation Relays** | 2.8% | 28M | Stake-locked 1 year | Initial 14 relays @ 2M each |
-| **Foundation Treasury** | 15% | 150M | 3/5 multisig, governance-locked | Operations, legal, infrastructure |
-| **Community Incentives** | 30% | 300M | Linear 4 years | Relay rewards, user incentives |
-| **Ecosystem Grants** | 15% | 150M | Milestone-based | Developer grants, integrations |
-| **Team** | 15% | 150M | 1yr cliff + 3yr linear | Founders, core developers |
-| **Advisors** | 3% | 30M | 6mo cliff + 2yr linear | Strategic advisors |
-| **Public Distribution** | 5% | 50M | Immediate | Faucet, initial airdrops |
-| **Liquidity Bootstrap** | 5% | 50M | Immediate | DEX liquidity, market making |
-| **Insurance Fund** | 2.2% | 22M | Governance-locked | User protection fund |
+| Category                  | Percentage | Amount (1B total) | Vesting                         | Purpose                           |
+| ------------------------- | ---------- | ----------------- | ------------------------------- | --------------------------------- |
+| **Foundation Validators** | 7%         | 70M               | Stake-locked 1 year             | Initial 7 validators @ 10M each   |
+| **Foundation Relays**     | 2.8%       | 28M               | Stake-locked 1 year             | Initial 14 relays @ 2M each       |
+| **Foundation Treasury**   | 15%        | 150M              | 3/5 multisig, governance-locked | Operations, legal, infrastructure |
+| **Community Incentives**  | 30%        | 300M              | Linear 4 years                  | Relay rewards, user incentives    |
+| **Ecosystem Grants**      | 15%        | 150M              | Milestone-based                 | Developer grants, integrations    |
+| **Team**                  | 15%        | 150M              | 1yr cliff + 3yr linear          | Founders, core developers         |
+| **Advisors**              | 3%         | 30M               | 6mo cliff + 2yr linear          | Strategic advisors                |
+| **Public Distribution**   | 5%         | 50M               | Immediate                       | Faucet, initial airdrops          |
+| **Liquidity Bootstrap**   | 5%         | 50M               | Immediate                       | DEX liquidity, market making      |
+| **Insurance Fund**        | 2.2%       | 22M               | Governance-locked               | User protection fund              |
 
 **Total**: 100% = 1,000,000,000 DCHAT
 
@@ -1777,14 +1848,15 @@ impl GenesisValidatorStake {
 
 #### Comparison of Staking Payment Models
 
-| Model | Pros | Cons | Recommendation |
-|-------|------|------|----------------|
-| **A: Pre-Funded Genesis** | Simple, no bootstrap chicken-egg problem, transparent | Foundation controls initial stakes | ✅ **Use for mainnet launch** |
-| **B: Self-Funded Purchase** | Decentralized from day 1 | No liquidity at genesis, complex bootstrap | ❌ Not practical |
-| **C: Governance Grant** | Community approval | Requires governance before chain exists | ❌ Not practical |
-| **D: Loan from Treasury** | Eventual repayment | Complex accounting, gaming risk | 🟡 Future option |
+| Model                       | Pros                                                  | Cons                                       | Recommendation                |
+| --------------------------- | ----------------------------------------------------- | ------------------------------------------ | ----------------------------- |
+| **A: Pre-Funded Genesis**   | Simple, no bootstrap chicken-egg problem, transparent | Foundation controls initial stakes         | ✅ **Use for mainnet launch** |
+| **B: Self-Funded Purchase** | Decentralized from day 1                              | No liquidity at genesis, complex bootstrap | ❌ Not practical              |
+| **C: Governance Grant**     | Community approval                                    | Requires governance before chain exists    | ❌ Not practical              |
+| **D: Loan from Treasury**   | Eventual repayment                                    | Complex accounting, gaming risk            | 🟡 Future option              |
 
 **Rationale for Option A**:
+
 1. **Bootstrap Problem**: Can't buy tokens before chain exists
 2. **Transparency**: Genesis block is public, allocations are verifiable
 3. **Security**: Foundation validators provide initial stability
@@ -1802,7 +1874,7 @@ pub struct Phase1State {
     /// All 7 validators operated by Foundation
     pub foundation_validators: 7,
     pub community_validators: 0,
-    /// All 14 relays operated by Foundation  
+    /// All 14 relays operated by Foundation
     pub foundation_relays: 14,
     pub community_relays: 0,
     /// Governance: Foundation has veto power
@@ -1811,6 +1883,7 @@ pub struct Phase1State {
 ```
 
 **Actions**:
+
 - Foundation operates all infrastructure
 - Monitor for stability and bugs
 - Faucet active for user onboarding
@@ -1831,6 +1904,7 @@ pub struct Phase2State {
 ```
 
 **Actions**:
+
 - Accept first 3 community validator applications
 - Community validators must self-fund stake (from public distribution or purchase)
 - Foundation provides staking documentation and support
@@ -1851,6 +1925,7 @@ pub struct Phase3State {
 ```
 
 **Actions**:
+
 - Foundation validators begin unstaking 3 of 7
 - Transfer unstaked tokens to community grants
 - Governance fully controlled by token holders
@@ -1867,6 +1942,7 @@ pub struct Phase4State {
 ```
 
 **Actions**:
+
 - Foundation retains only 2 validators (for emergency recovery)
 - All remaining Foundation stake delegated to community pools
 - Foundation treasury managed by DAO
@@ -1876,6 +1952,7 @@ pub struct Phase4State {
 ### 6.5 Staking Pool Architecture
 
 #### Problem with Direct Staking
+
 - Minimum 10,000 DCHAT for validators is high barrier
 - Small holders can't participate in security
 - Concentration risk
@@ -1946,21 +2023,21 @@ impl StakingPool {
             Some(d) => d,
             None => return 0,
         };
-        
+
         let total_stake = self.operator_stake + self.delegated_stake;
         let delegator_share = delegation.amount as f64 / total_stake as f64;
-        
+
         // Deduct operator commission
         let after_commission = pool_reward * (10000 - self.commission_bps as u64) / 10000;
-        
+
         (after_commission as f64 * delegator_share) as u64
     }
-    
+
     /// Minimum operator stake (10% of total pool)
     pub fn min_operator_stake(&self) -> u64 {
         (self.delegated_stake + self.operator_stake) / 10
     }
-    
+
     /// Check if pool meets requirements
     pub fn is_valid(&self) -> bool {
         // Operator must have at least 10% of total pool
@@ -2001,39 +2078,39 @@ pub enum GenesisStep {
         count: usize,
         key_ceremony_participants: Vec<String>,
     },
-    
+
     /// 2. Verify keys via multi-party computation
     VerifyKeysCeremony {
         threshold: (u8, u8), // e.g., 4-of-7
         verification_hashes: Vec<String>,
     },
-    
+
     /// 3. Create allocation CSV (publicly auditable)
     CreateAllocationManifest {
         allocations: Vec<AllocationEntry>,
         merkle_root: String,
     },
-    
+
     /// 4. Multi-sig approval of allocations
     ApproveAllocations {
         required_signatures: u8,
         signers: Vec<String>,
         signatures: Vec<Signature>,
     },
-    
+
     /// 5. Build genesis blocks for both chains
     BuildGenesisBlocks {
         chat_chain_config: ChatGenesisConfig,
         currency_chain_config: CurrencyGenesisConfig,
     },
-    
+
     /// 6. Publish genesis hashes for verification
     PublishGenesisHashes {
         chat_genesis_hash: String,
         currency_genesis_hash: String,
         publication_channels: Vec<String>, // GitHub, Twitter, website
     },
-    
+
     /// 7. Coordinate validator startup
     CoordinateValidatorStartup {
         target_timestamp: u64,
@@ -2048,6 +2125,7 @@ pub enum GenesisStep {
 ## Genesis Block Security Checklist
 
 ### Key Generation (Week -2)
+
 - [ ] Air-gapped machine for key generation
 - [ ] Multiple witnesses for key ceremony
 - [ ] Keys split via Shamir Secret Sharing (3-of-5)
@@ -2055,6 +2133,7 @@ pub enum GenesisStep {
 - [ ] Hardware security module (HSM) integration for production keys
 
 ### Allocation Verification (Week -1)
+
 - [ ] Allocation CSV published to GitHub
 - [ ] Merkle tree of all allocations computed
 - [ ] Independent audit of allocation math
@@ -2062,6 +2141,7 @@ pub enum GenesisStep {
 - [ ] Multi-sig approval (4-of-7 Foundation signers)
 
 ### Genesis Creation (Day -1)
+
 - [ ] Final allocation manifest locked
 - [ ] Genesis blocks created on isolated machine
 - [ ] Genesis hashes published to multiple channels
@@ -2069,6 +2149,7 @@ pub enum GenesisStep {
 - [ ] All 7 validators confirm genesis hash match
 
 ### Launch (Day 0)
+
 - [ ] Coordinated start time (e.g., 2025-01-15 00:00:00 UTC)
 - [ ] Validators start in sequence with 30-second gaps
 - [ ] First block produced within 5 minutes
@@ -2090,29 +2171,29 @@ pub mod mainnet_economics {
     pub const MIN_VALIDATOR_STAKE: u64 = 10_000_000_000; // 10,000 DCHAT
     pub const MAX_VALIDATOR_STAKE: u64 = 100_000_000_000; // 100,000 DCHAT (prevent whale dominance)
     pub const VALIDATOR_UNSTAKE_COOLDOWN_DAYS: u32 = 14; // 2 weeks
-    
-    /// Relay staking  
+
+    /// Relay staking
     pub const MIN_RELAY_STAKE: u64 = 1_000_000_000; // 1,000 DCHAT
     pub const MAX_RELAY_STAKE: u64 = 50_000_000_000; // 50,000 DCHAT
     pub const RELAY_UNSTAKE_COOLDOWN_DAYS: u32 = 7; // 1 week
-    
+
     /// Slashing
     pub const DOUBLE_SIGN_SLASH_PERCENT: u8 = 5;
     pub const DOWNTIME_SLASH_PERCENT: u8 = 1; // Per 24h of downtime
     pub const MAX_SLASH_PERCENT: u8 = 100; // For malicious behavior
-    
+
     /// Rewards
     pub const ANNUAL_INFLATION_PERCENT: u8 = 5;
     pub const VALIDATOR_REWARD_SHARE: u8 = 70; // 70% to validators
     pub const RELAY_REWARD_SHARE: u8 = 20; // 20% to relays
     pub const TREASURY_SHARE: u8 = 10; // 10% to treasury
-    
+
     /// Governance
     pub const PROPOSAL_DEPOSIT: u64 = 100_000_000; // 100 DCHAT
     pub const VOTING_PERIOD_DAYS: u32 = 7;
     pub const QUORUM_PERCENT: u8 = 33; // 33% of staked tokens must vote
     pub const PASS_THRESHOLD_PERCENT: u8 = 50; // Simple majority
-    
+
     /// Pools
     pub const MIN_POOL_OPERATOR_PERCENT: u8 = 10; // Operator must have 10% of pool
     pub const MAX_POOL_COMMISSION_PERCENT: u8 = 20;
@@ -2181,21 +2262,21 @@ Month +1: First Expansion
 
 #### Pre-Launch Risks
 
-| Risk | Mitigation |
-|------|------------|
-| **Key compromise** | Shamir secret sharing, HSM, air-gapped generation |
-| **Allocation error** | Multi-sig approval, public audit, merkle verification |
-| **Consensus failure** | Testnet rehearsal, staged validator startup |
-| **Network partition** | Geographic distribution, multiple DNS providers |
+| Risk                  | Mitigation                                            |
+| --------------------- | ----------------------------------------------------- |
+| **Key compromise**    | Shamir secret sharing, HSM, air-gapped generation     |
+| **Allocation error**  | Multi-sig approval, public audit, merkle verification |
+| **Consensus failure** | Testnet rehearsal, staged validator startup           |
+| **Network partition** | Geographic distribution, multiple DNS providers       |
 
 #### Post-Launch Risks
 
-| Risk | Mitigation |
-|------|------------|
-| **Foundation capture** | Transition plan with timeline, governance controls |
-| **Validator cartel** | Max stake caps, geographic diversity requirements |
-| **Economic attack** | Slashing, minimum stake requirements, cooldowns |
-| **Software bug** | Circuit breaker, emergency governance, insurance fund |
+| Risk                   | Mitigation                                            |
+| ---------------------- | ----------------------------------------------------- |
+| **Foundation capture** | Transition plan with timeline, governance controls    |
+| **Validator cartel**   | Max stake caps, geographic diversity requirements     |
+| **Economic attack**    | Slashing, minimum stake requirements, cooldowns       |
+| **Software bug**       | Circuit breaker, emergency governance, insurance fund |
 
 ---
 
@@ -2211,7 +2292,7 @@ Month +1: First Expansion
 
 5. **Economic Parameters**:
    - 10,000 DCHAT minimum validator stake
-   - 1,000 DCHAT minimum relay stake  
+   - 1,000 DCHAT minimum relay stake
    - 100 DCHAT minimum delegation
    - 14-day validator unstake cooldown
    - 5% annual inflation with 70/20/10 split (validators/relays/treasury)
@@ -2222,4 +2303,4 @@ Month +1: First Expansion
 
 ---
 
-*End of Plan v3.0*
+_End of Plan v3.0_

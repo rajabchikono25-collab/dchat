@@ -990,8 +990,18 @@ impl CurrencyChainClient {
         
         // Calculate block production rewards (validators only)
         // Reward per block = 10 tokens (in smallest units)
+        // Normalize by epoch: more reward for high block production within epoch
         const REWARD_PER_BLOCK: u64 = 10_000_000; // 10 tokens with 6 decimals
-        let block_reward = blocks_produced * REWARD_PER_BLOCK;
+        // Epoch efficiency bonus: if producing more than expected blocks per epoch
+        let epoch_efficiency = if blocks_produced > 0 && current_epoch > 0 {
+            let expected_blocks = current_epoch * BLOCKS_PER_EPOCH;
+            // Bonus multiplier: 1.0 + (0.1 * efficiency_ratio) capped at 1.5x
+            let efficiency_ratio = (blocks_produced as f64) / (expected_blocks as f64);
+            (100 + ((efficiency_ratio * 10.0).min(50.0) as u64)).min(150)
+        } else {
+            100 // No bonus
+        };
+        let block_reward = (blocks_produced * REWARD_PER_BLOCK * epoch_efficiency) / 100;
         
         // Calculate relay rewards (relays only)
         // Reward per 100 messages = 1 token

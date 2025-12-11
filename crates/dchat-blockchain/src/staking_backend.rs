@@ -242,7 +242,7 @@ mod tests {
         let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let backend = CurrencyChainStakingBackend::new_test_mode(currency_chain.clone());
         
-        let operator = UserId::default();
+        let _operator = UserId::default();
         
         // First need to give the operator some balance
         // In a real test, would set up the wallet first

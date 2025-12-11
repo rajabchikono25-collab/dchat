@@ -28,6 +28,11 @@ pub mod payment_processor;
 pub mod staking_backend;
 pub mod watchtower;
 
+// Wallet infrastructure (production wallets with Solana compatibility)
+pub mod wallet;
+pub mod solana_bridge;
+pub mod solana;
+
 pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
     ValidatorSignature, WorldState,
@@ -100,6 +105,49 @@ pub use payment_processor::{
     PaymentProcessor, PaymentProcessorConfig, PaymentReceipt, PaymentProcessorStats,
 };
 pub use staking_backend::CurrencyChainStakingBackend;
+
+// Wallet infrastructure exports (production wallets with Solana compatibility)
+pub use wallet::{
+    // Core wallet types
+    WalletBalance, TokenBalance, WalletTransaction, SignedTransaction, TransactionSignature,
+    // Normal wallet
+    Wallet, WalletConfig, WalletType, WalletExport,
+    // Multi-sig wallet
+    MultiSigWallet, MultiSigConfig, SignerInfo, PendingMultiSigTx,
+    // Burner wallet
+    BurnerWallet, BurnerWalletConfig, BurnerWalletManager, BurnerStats, DestructionReason,
+    // Solana compatibility
+    SolanaAddress, SolanaSignature, SolanaCompatible, TokenMint,
+    // Universal addressing
+    UniversalAddress, AddressFormat, AddressMapping,
+};
+
+pub use solana_bridge::{
+    SolanaBridge, SolanaBridgeConfig, BridgeValidator, BridgeDirection,
+    BridgeTransferStatus, BridgeTransfer, ValidatorSignature as BridgeValidatorSignature,
+    BridgeStatistics,
+};
+
+// Solana integration exports
+pub use solana::{
+    // High-level client
+    SolanaClient, SharedSolanaClient, create_shared_client,
+    // RPC client
+    SolanaRpcClient, SolanaRpcConfig, Commitment, RpcError,
+    // Transaction building
+    SolanaTransaction, TransactionBuilder, Instruction, CompiledInstruction,
+    MessageHeader, TransactionMessage, SolanaTxStatus,
+    // SPL Token
+    SplToken, TokenAccount, TokenInstruction, MintInfo, TokenTransfer,
+    AssociatedTokenAccount,
+    // Bridge program
+    BridgeProgram, BridgeInstruction, LockAccounts, UnlockAccounts,
+    BridgeState, DepositRecord, WithdrawRecord,
+    // Accounts
+    SolanaAccount, AccountInfo as SolanaAccountInfo, AccountMeta, SystemProgram, Rent,
+    // Helpers
+    Cluster, lamports_to_sol, sol_to_lamports, LAMPORTS_PER_SOL,
+};
 
 // Re-export privacy trait implementations for integration
 // ChatChainClient implements dchat_privacy::zk_proofs::BlockchainClient
