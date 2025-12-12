@@ -4,8 +4,8 @@
 //! available funds, staked amounts, delegations, pending unstakes,
 //! and unclaimed rewards.
 
-use crate::currency_transactions::*;
 use crate::currency_transaction_parser::{ParsedTransaction, TransactionData};
+use crate::currency_transactions::*;
 use dchat_core::types::UserId;
 use dchat_core::{Error, Result};
 use std::collections::HashMap;
@@ -147,9 +147,13 @@ impl BalanceTracker {
         });
 
         match tx.stake_type {
-            StakeType::Validator => info.validator_stake = info.validator_stake.saturating_sub(tx.amount),
+            StakeType::Validator => {
+                info.validator_stake = info.validator_stake.saturating_sub(tx.amount)
+            }
             StakeType::Relay => info.relay_stake = info.relay_stake.saturating_sub(tx.amount),
-            StakeType::Reputation => info.reputation_stake = info.reputation_stake.saturating_sub(tx.amount),
+            StakeType::Reputation => {
+                info.reputation_stake = info.reputation_stake.saturating_sub(tx.amount)
+            }
         }
 
         info.total_staked = info.total_staked.saturating_sub(tx.amount);
@@ -228,10 +232,14 @@ impl BalanceTracker {
         // Update staking info - remove from delegations
         if let Some(info) = staking_info.get_mut(&tx.delegator) {
             // Find and reduce delegation
-            if let Some(delegation) = info.delegations.iter_mut().find(|d| d.validator == tx.validator) {
+            if let Some(delegation) = info
+                .delegations
+                .iter_mut()
+                .find(|d| d.validator == tx.validator)
+            {
                 if delegation.amount >= tx.amount {
                     delegation.amount -= tx.amount;
-                    
+
                     // Remove delegation if amount is now zero
                     if delegation.amount == 0 {
                         info.delegations.retain(|d| d.validator != tx.validator);
@@ -283,7 +291,8 @@ impl BalanceTracker {
         // Update staking info
         if let Some(info) = staking_info.get_mut(&tx.validator) {
             // Reduce validator stake proportionally
-            let total_validator_stake = info.validator_stake + info.relay_stake + info.reputation_stake;
+            let total_validator_stake =
+                info.validator_stake + info.relay_stake + info.reputation_stake;
             if total_validator_stake > 0 {
                 let ratio = tx.slash_amount as f64 / total_validator_stake as f64;
                 info.validator_stake = (info.validator_stake as f64 * (1.0 - ratio)) as u128;
@@ -403,13 +412,16 @@ impl BalanceTracker {
     }
 
     /// Process completed timelocks (move from unstaking to available)
-    pub async fn process_completed_timelocks(&self, current_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub async fn process_completed_timelocks(
+        &self,
+        current_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         let mut balances = self.balances.write().await;
         let mut staking_info = self.staking_info.write().await;
 
         for (user_id, info) in staking_info.iter_mut() {
             let mut completed_amount = 0u128;
-            
+
             // Find completed unstakes
             info.pending_unstakes.retain(|unstake| {
                 if unstake.unlock_at <= current_time {
@@ -427,7 +439,10 @@ impl BalanceTracker {
                     balance.available += completed_amount;
                     balance.total = balance.calculate_total();
 
-                    info!("Timelock completed: {} amount: {}", user_id.0, completed_amount);
+                    info!(
+                        "Timelock completed: {} amount: {}",
+                        user_id.0, completed_amount
+                    );
                 }
             }
         }
@@ -450,19 +465,22 @@ mod tests {
     #[tokio::test]
     async fn test_transfer() {
         let tracker = BalanceTracker::new();
-        
+
         let from = UserId(Uuid::new_v4());
         let to = UserId(Uuid::new_v4());
 
         // Set initial balance
-        tracker.balances.write().await.insert(from, Balance {
-            available: 1000,
-            staked: 0,
-            delegated: 0,
-            unstaking: 0,
-            unclaimed_rewards: 0,
-            total: 1000,
-        });
+        tracker.balances.write().await.insert(
+            from,
+            Balance {
+                available: 1000,
+                staked: 0,
+                delegated: 0,
+                unstaking: 0,
+                unclaimed_rewards: 0,
+                total: 1000,
+            },
+        );
 
         // Create transfer
         let tx = TransferTx {
@@ -489,18 +507,21 @@ mod tests {
     #[tokio::test]
     async fn test_stake() {
         let tracker = BalanceTracker::new();
-        
+
         let staker = UserId(Uuid::new_v4());
 
         // Set initial balance
-        tracker.balances.write().await.insert(staker, Balance {
-            available: 1000,
-            staked: 0,
-            delegated: 0,
-            unstaking: 0,
-            unclaimed_rewards: 0,
-            total: 1000,
-        });
+        tracker.balances.write().await.insert(
+            staker,
+            Balance {
+                available: 1000,
+                staked: 0,
+                delegated: 0,
+                unstaking: 0,
+                unclaimed_rewards: 0,
+                total: 1000,
+            },
+        );
 
         // Create stake
         let tx = StakeTx {

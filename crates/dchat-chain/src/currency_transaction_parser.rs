@@ -16,9 +16,7 @@ impl CurrencyTransactionParser {
     /// Parse transactions from a currency chain block
     pub fn parse_block_transactions(block_data: &Value) -> Result<Vec<ParsedTransaction>> {
         let empty_vec = vec![];
-        let tx_array = block_data["transactions"]
-            .as_array()
-            .unwrap_or(&empty_vec);
+        let tx_array = block_data["transactions"].as_array().unwrap_or(&empty_vec);
 
         let mut transactions = Vec::new();
 
@@ -90,9 +88,7 @@ impl CurrencyTransactionParser {
             "undelegate" => Ok(CurrencyTransactionType::Undelegate),
             "claimrewards" | "claim_rewards" => Ok(CurrencyTransactionType::ClaimRewards),
             "slash" | "slashing" => Ok(CurrencyTransactionType::Slash),
-            "blockreward" | "block_reward" | "coinbase" => {
-                Ok(CurrencyTransactionType::BlockReward)
-            }
+            "blockreward" | "block_reward" | "coinbase" => Ok(CurrencyTransactionType::BlockReward),
             "relaypayment" | "relay_payment" => Ok(CurrencyTransactionType::RelayPayment),
             "channelaccess" | "channel_access" => Ok(CurrencyTransactionType::ChannelAccess),
             _ => Err(Error::validation(format!(
@@ -327,9 +323,11 @@ impl CurrencyTransactionParser {
 
         let amount = Self::parse_amount(tx_data["value"].as_str())?;
 
-        let reward_type_str = tx_data["rewardType"]
-            .as_str()
-            .unwrap_or(tx_data["reward_type"].as_str().unwrap_or("block_production"));
+        let reward_type_str = tx_data["rewardType"].as_str().unwrap_or(
+            tx_data["reward_type"]
+                .as_str()
+                .unwrap_or("block_production"),
+        );
 
         let reward_type = match reward_type_str.to_lowercase().as_str() {
             "block_production" | "block" => RewardType::BlockProduction,
@@ -374,9 +372,7 @@ impl CurrencyTransactionParser {
         let slash_amount = Self::parse_amount(tx_data["slashAmount"].as_str())?;
         let remaining_stake = Self::parse_amount(tx_data["remainingStake"].as_str())?;
 
-        let reason_str = tx_data["reason"]
-            .as_str()
-            .unwrap_or("byzantine");
+        let reason_str = tx_data["reason"].as_str().unwrap_or("byzantine");
 
         let reason = match reason_str.to_lowercase().as_str() {
             "double_sign" | "doublesign" => SlashReason::DoubleSign,
@@ -387,14 +383,9 @@ impl CurrencyTransactionParser {
             _ => SlashReason::Byzantine,
         };
 
-        let evidence_hash = tx_data["evidenceHash"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let evidence_hash = tx_data["evidenceHash"].as_str().unwrap_or("").to_string();
 
-        let authorized_by_str = tx_data["authorizedBy"]
-            .as_str()
-            .unwrap_or("");
+        let authorized_by_str = tx_data["authorizedBy"].as_str().unwrap_or("");
 
         let authorized_by = Uuid::parse_str(authorized_by_str).unwrap_or_else(|_| Uuid::new_v4());
 
@@ -434,18 +425,17 @@ impl CurrencyTransactionParser {
         let proposer_reward = Self::parse_amount(tx_data["proposerReward"].as_str())?;
 
         // Parse validator rewards array
-        let validator_rewards = if let Some(rewards_array) = tx_data["validatorRewards"].as_array() {
+        let validator_rewards = if let Some(rewards_array) = tx_data["validatorRewards"].as_array()
+        {
             rewards_array
                 .iter()
                 .filter_map(|reward| {
                     let validator_str = reward["validator"].as_str()?;
                     let amount_str = reward["amount"].as_str()?;
-                    
-                    let validator_id = Uuid::parse_str(validator_str)
-                        .ok()
-                        .map(UserId)?;
+
+                    let validator_id = Uuid::parse_str(validator_str).ok().map(UserId)?;
                     let amount = Self::parse_amount(Some(amount_str)).ok()?;
-                    
+
                     Some((validator_id, amount))
                 })
                 .collect()
@@ -491,10 +481,7 @@ impl CurrencyTransactionParser {
         let message_count = tx_data["messageCount"].as_u64().unwrap_or(1) as u32;
         let bytes_relayed = tx_data["bytesRelayed"].as_u64().unwrap_or(0);
 
-        let pod_hash = tx_data["podHash"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let pod_hash = tx_data["podHash"].as_str().unwrap_or("").to_string();
 
         let tx = RelayPaymentTx {
             tx_id: Uuid::new_v4(),
@@ -537,8 +524,8 @@ impl CurrencyTransactionParser {
             .as_str()
             .ok_or_else(|| Error::validation("Missing channel ID"))?;
 
-        let channel_id = Uuid::parse_str(channel_id_str)
-            .map_err(|_| Error::validation("Invalid channel ID"))?;
+        let channel_id =
+            Uuid::parse_str(channel_id_str).map_err(|_| Error::validation("Invalid channel ID"))?;
 
         let amount = Self::parse_amount(tx_data["value"].as_str())?;
         let duration_days = tx_data["durationDays"].as_u64().unwrap_or(30) as u32;

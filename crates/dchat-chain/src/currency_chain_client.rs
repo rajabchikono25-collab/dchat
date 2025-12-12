@@ -176,9 +176,7 @@ impl CurrencyChainClient for HttpCurrencyChainClient {
             memo: "Dispute resolution reward".to_string(),
         };
 
-        let response: TransferResponse = self
-            .call_rpc("currency.transfer_reward", params)
-            .await?;
+        let response: TransferResponse = self.call_rpc("currency.transfer_reward", params).await?;
 
         tracing::info!(
             "Reward transferred: tx={}, amount={}",
@@ -201,7 +199,7 @@ mod tests {
         let validator_key = b"test_validator_key";
 
         let result = client.get_validator_stake(validator_key).await;
-        
+
         // Should either succeed or fail with network error (not panic)
         match result {
             Ok(stake) => println!("Stake: {}", stake),

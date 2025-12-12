@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
-use super::genesis::{GenesisCoordinator, ChatGenesisBlock, CurrencyGenesisBlock};
+use super::genesis::{ChatGenesisBlock, CurrencyGenesisBlock, GenesisCoordinator};
 
 /// Bootstrap status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +65,10 @@ pub struct BootstrapCoordinator {
 
 impl BootstrapCoordinator {
     /// Create a new bootstrap coordinator
-    pub fn new(chat_rpc: String, currency_rpc: String) -> (Self, mpsc::UnboundedReceiver<BootstrapEvent>) {
+    pub fn new(
+        chat_rpc: String,
+        currency_rpc: String,
+    ) -> (Self, mpsc::UnboundedReceiver<BootstrapEvent>) {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         let coordinator = Self {
@@ -88,23 +91,26 @@ impl BootstrapCoordinator {
     pub async fn wait_for_first_validator(&mut self) -> Result<()> {
         info!("⏳ Waiting for first validator to stake and start chains...");
 
-        self.update_status(BootstrapStatus::WaitingForFirstValidator).await;
+        self.update_status(BootstrapStatus::WaitingForFirstValidator)
+            .await;
 
         // Poll currency chain for first validator stake
         use reqwest::Client as HttpClient;
         use serde_json::json;
-        
+
         let client = HttpClient::new();
         let mut poll_count = 0;
         const MAX_POLL_ATTEMPTS: u32 = 300; // 5 minutes at 1 second intervals
         const POLL_INTERVAL_MS: u64 = 1000;
-        
+
         loop {
             poll_count += 1;
             if poll_count > MAX_POLL_ATTEMPTS {
-                return Err(Error::chain("Timeout waiting for first validator stake".to_string()));
+                return Err(Error::chain(
+                    "Timeout waiting for first validator stake".to_string(),
+                ));
             }
-            
+
             // Query currency chain for validator registrations
             let payload = json!({
                 "method": "currency.get_validator_count",
@@ -112,7 +118,7 @@ impl BootstrapCoordinator {
                 "jsonrpc": "2.0",
                 "id": poll_count,
             });
-            
+
             match client
                 .post(&self.currency_rpc)
                 .json(&payload)
@@ -131,10 +137,13 @@ impl BootstrapCoordinator {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to poll currency chain (attempt {}): {}", poll_count, e);
+                    warn!(
+                        "Failed to poll currency chain (attempt {}): {}",
+                        poll_count, e
+                    );
                 }
             }
-            
+
             tokio::time::sleep(tokio::time::Duration::from_millis(POLL_INTERVAL_MS)).await;
         }
 
@@ -142,7 +151,11 @@ impl BootstrapCoordinator {
     }
 
     /// Register first validator and initialize chains
-    pub async fn register_first_validator(&mut self, validator_key: SigningKey, stake_amount: u64) -> Result<()> {
+    pub async fn register_first_validator(
+        &mut self,
+        validator_key: SigningKey,
+        stake_amount: u64,
+    ) -> Result<()> {
         let verifying_key = validator_key.verifying_key();
         let validator_key_hex = hex::encode(verifying_key.as_bytes());
 
@@ -155,7 +168,8 @@ impl BootstrapCoordinator {
         self.send_event(BootstrapEvent::FirstValidatorRegistered(validator_key_hex));
         self.send_event(BootstrapEvent::FirstValidatorStaked(stake_amount));
 
-        self.update_status(BootstrapStatus::FirstValidatorStaked).await;
+        self.update_status(BootstrapStatus::FirstValidatorStaked)
+            .await;
 
         Ok(())
     }
@@ -166,9 +180,10 @@ impl BootstrapCoordinator {
 
         self.update_status(BootstrapStatus::CreatingGenesis).await;
 
-        let validator_key = self.first_validator_key.take().ok_or_else(|| {
-            Error::chain("First validator key not set".to_string())
-        })?;
+        let validator_key = self
+            .first_validator_key
+            .take()
+            .ok_or_else(|| Error::chain("First validator key not set".to_string()))?;
 
         // Create and submit genesis blocks
         let (chat_genesis, currency_genesis) = GenesisCoordinator::initialize_chains(
@@ -180,8 +195,12 @@ impl BootstrapCoordinator {
 
         self.first_validator_key = Some(validator_key);
 
-        self.send_event(BootstrapEvent::ChatGenesisCreated(chat_genesis.hash.clone()));
-        self.send_event(BootstrapEvent::CurrencyGenesisCreated(currency_genesis.hash.clone()));
+        self.send_event(BootstrapEvent::ChatGenesisCreated(
+            chat_genesis.hash.clone(),
+        ));
+        self.send_event(BootstrapEvent::CurrencyGenesisCreated(
+            currency_genesis.hash.clone(),
+        ));
 
         self.update_status(BootstrapStatus::GenesisCreated).await;
 
@@ -260,7 +279,8 @@ impl BootstrapCoordinator {
         }
 
         self.send_event(BootstrapEvent::CurrencyChainStarted);
-        self.update_status(BootstrapStatus::CurrencyChainOnline).await;
+        self.update_status(BootstrapStatus::CurrencyChainOnline)
+            .await;
 
         info!("✅ Currency chain is online!");
 
@@ -271,7 +291,8 @@ impl BootstrapCoordinator {
     pub async fn start_bridge(&self) -> Result<()> {
         info!("🌉 Initializing cross-chain bridge...");
 
-        self.update_status(BootstrapStatus::BridgeInitializing).await;
+        self.update_status(BootstrapStatus::BridgeInitializing)
+            .await;
 
         // In production, this would initialize the bridge with both chain states
         use reqwest::Client as HttpClient;
@@ -288,8 +309,8 @@ impl BootstrapCoordinator {
         });
 
         // Bridge RPC endpoint (separate service or embedded)
-        let bridge_rpc = std::env::var("BRIDGE_RPC")
-            .unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let bridge_rpc =
+            std::env::var("BRIDGE_RPC").unwrap_or_else(|_| "http://localhost:9000".to_string());
 
         let client = HttpClient::new();
         let response = client
@@ -332,13 +353,18 @@ impl BootstrapCoordinator {
     }
 
     /// Execute full bootstrap sequence
-    pub async fn execute_full_bootstrap(&mut self, validator_key: SigningKey, stake_amount: u64) -> Result<()> {
+    pub async fn execute_full_bootstrap(
+        &mut self,
+        validator_key: SigningKey,
+        stake_amount: u64,
+    ) -> Result<()> {
         info!("═══════════════════════════════════════");
         info!("     MAINNET BOOTSTRAP SEQUENCE");
         info!("═══════════════════════════════════════");
 
         // Step 1: Register first validator
-        self.register_first_validator(validator_key, stake_amount).await?;
+        self.register_first_validator(validator_key, stake_amount)
+            .await?;
 
         // Step 2: Create genesis blocks
         let (_chat_genesis, _currency_genesis) = self.initialize_chains().await?;
@@ -362,7 +388,8 @@ impl BootstrapCoordinator {
     pub async fn handle_failure(&self, error: &str) {
         error!("❌ Bootstrap failed: {}", error);
         self.send_event(BootstrapEvent::BootstrapFailed(error.to_string()));
-        self.update_status(BootstrapStatus::Failed(error.to_string())).await;
+        self.update_status(BootstrapStatus::Failed(error.to_string()))
+            .await;
     }
 
     /// Update status
@@ -404,7 +431,9 @@ mod tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let stake_amount = dchat_core::config::constants::MIN_VALIDATOR_STAKE;
 
-        let result = coordinator.register_first_validator(signing_key, stake_amount).await;
+        let result = coordinator
+            .register_first_validator(signing_key, stake_amount)
+            .await;
         assert!(result.is_ok());
 
         let status = coordinator.get_status().await;
@@ -412,9 +441,15 @@ mod tests {
 
         // Check events
         let event1 = event_rx.try_recv();
-        assert!(matches!(event1, Ok(BootstrapEvent::FirstValidatorRegistered(_))));
+        assert!(matches!(
+            event1,
+            Ok(BootstrapEvent::FirstValidatorRegistered(_))
+        ));
 
         let event2 = event_rx.try_recv();
-        assert!(matches!(event2, Ok(BootstrapEvent::FirstValidatorStaked(_))));
+        assert!(matches!(
+            event2,
+            Ok(BootstrapEvent::FirstValidatorStaked(_))
+        ));
     }
 }

@@ -10,12 +10,12 @@
 //! - Integration with dchat-privacy for ZK guardian anonymity proofs
 //! - Nullifier storage to prevent ZK proof reuse
 
+use blake3::Hasher;
 use chrono::{DateTime, Utc};
 use dchat_core::error::{Error, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use blake3::Hasher;
 
 /// On-chain guardian registration transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,8 +60,7 @@ impl RegisterGuardianTx {
 
     /// Serialize for blockchain submission
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
+        bincode::serialize(self).map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize from blockchain
@@ -119,8 +118,7 @@ impl InitiateRecoveryTx {
 
     /// Serialize for blockchain submission
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
+        bincode::serialize(self).map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize from blockchain
@@ -145,7 +143,12 @@ pub struct SubmitGuardianSignatureTx {
 
 impl SubmitGuardianSignatureTx {
     /// Create a new guardian signature transaction
-    pub fn new(request_id: String, guardian_id: String, signature: Vec<u8>, current_block: u64) -> Self {
+    pub fn new(
+        request_id: String,
+        guardian_id: String,
+        signature: Vec<u8>,
+        current_block: u64,
+    ) -> Self {
         Self {
             request_id,
             guardian_id,
@@ -156,8 +159,7 @@ impl SubmitGuardianSignatureTx {
 
     /// Serialize for blockchain submission
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
+        bincode::serialize(self).map_err(|e| Error::chain(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize from blockchain
@@ -274,7 +276,7 @@ impl GuardianChainState {
     }
 
     /// Compute nullifier hash from proof data
-    /// 
+    ///
     /// The nullifier is derived from:
     /// - The ZK proof's unique identifier (commitment or serial number)
     /// - The identity being protected
@@ -294,7 +296,7 @@ impl GuardianChainState {
     }
 
     /// Record a nullifier as used
-    /// 
+    ///
     /// Returns error if nullifier was already used (replay attack prevention)
     pub fn record_nullifier(
         &mut self,
@@ -318,7 +320,7 @@ impl GuardianChainState {
         };
 
         self.nullifiers.insert(nullifier, record);
-        
+
         tracing::info!(
             "Recorded nullifier {} at block {} (type: {:?})",
             hex::encode(&nullifier[..8]),
@@ -335,7 +337,10 @@ impl GuardianChainState {
     }
 
     /// Get all nullifiers for an identity
-    pub fn get_nullifiers_for_identity(&self, identity_id: &str) -> Vec<([u8; 32], &NullifierRecord)> {
+    pub fn get_nullifiers_for_identity(
+        &self,
+        identity_id: &str,
+    ) -> Vec<([u8; 32], &NullifierRecord)> {
         self.nullifiers
             .iter()
             .filter(|(_, record)| record.identity_id == identity_id)
@@ -344,14 +349,15 @@ impl GuardianChainState {
     }
 
     /// Prune old nullifiers (optional cleanup for very old entries)
-    /// 
+    ///
     /// In production, nullifiers should be kept indefinitely to prevent replay.
     /// This method is for testing or if a time-limited nullifier policy is desired.
     pub fn prune_nullifiers_before_block(&mut self, block_height: u64) -> usize {
         let before_count = self.nullifiers.len();
-        self.nullifiers.retain(|_, record| record.block_height >= block_height);
+        self.nullifiers
+            .retain(|_, record| record.block_height >= block_height);
         let removed = before_count - self.nullifiers.len();
-        
+
         if removed > 0 {
             tracing::warn!(
                 "Pruned {} nullifiers before block {} (remaining: {})",
@@ -360,7 +366,7 @@ impl GuardianChainState {
                 self.nullifiers.len()
             );
         }
-        
+
         removed
     }
 
@@ -402,12 +408,9 @@ impl GuardianChainState {
         // Verify ZK proof if provided and record nullifier
         if let Some(zk_proof) = &tx.zk_proof {
             // Compute nullifier for this proof
-            let nullifier = self.compute_nullifier(
-                zk_proof,
-                &tx.identity_id,
-                "guardian-registration",
-            );
-            
+            let nullifier =
+                self.compute_nullifier(zk_proof, &tx.identity_id, "guardian-registration");
+
             // Check if nullifier was already used (prevents proof reuse)
             if self.is_nullifier_used(&nullifier) {
                 let record = self.get_nullifier_record(&nullifier).unwrap();
@@ -416,10 +419,10 @@ impl GuardianChainState {
                     record.block_height
                 )));
             }
-            
+
             // Verify the ZK proof cryptographically
             self.verify_guardian_zk_proof(zk_proof, &tx.identity_id, &tx.guardian_id)?;
-            
+
             // Record nullifier on-chain to prevent future reuse
             self.record_nullifier(
                 nullifier,
@@ -457,11 +460,11 @@ impl GuardianChainState {
             hasher.update(&tx.timelock_expires_at_block.to_le_bytes());
             *hasher.finalize().as_bytes()
         };
-        
+
         // Check if this exact recovery was already initiated
         if self.recovery_nullifiers.contains(&recovery_nullifier) {
             return Err(Error::validation(
-                "Duplicate recovery request - this exact recovery was already initiated"
+                "Duplicate recovery request - this exact recovery was already initiated",
             ));
         }
 
@@ -482,7 +485,7 @@ impl GuardianChainState {
 
         // Record recovery nullifier
         self.recovery_nullifiers.insert(recovery_nullifier);
-        
+
         tracing::info!(
             "Recovery initiated for identity {} with nullifier {}",
             tx.identity_id,
@@ -515,7 +518,7 @@ impl GuardianChainState {
             hasher.update(tx.guardian_id.as_bytes());
             *hasher.finalize().as_bytes()
         };
-        
+
         // Check if this guardian already signed this request
         if self.is_nullifier_used(&sig_nullifier) {
             return Err(Error::validation(format!(
@@ -530,7 +533,7 @@ impl GuardianChainState {
                 .recovery_requests
                 .get(&tx.request_id)
                 .ok_or_else(|| Error::validation("Recovery request not found"))?;
-            
+
             (
                 request.timelock_expires_at_block,
                 request.status.clone(),
@@ -569,7 +572,7 @@ impl GuardianChainState {
             );
             msg.into_bytes()
         };
-        
+
         let signature_bytes: [u8; 64] = tx
             .signature
             .clone()
@@ -584,18 +587,17 @@ impl GuardianChainState {
             .map_err(|_| Error::crypto("Invalid guardian signature"))?;
 
         // Now we can mutably borrow and update
-        let request = self
-            .recovery_requests
-            .get_mut(&tx.request_id)
-            .unwrap(); // Safe - we validated existence above
-        
+        let request = self.recovery_requests.get_mut(&tx.request_id).unwrap(); // Safe - we validated existence above
+
         // Update status if just became active
         if current_status == OnChainRecoveryStatus::Pending {
             request.status = OnChainRecoveryStatus::Active;
         }
-        
+
         // Add signature
-        request.signatures.insert(tx.guardian_id.clone(), tx.signature);
+        request
+            .signatures
+            .insert(tx.guardian_id.clone(), tx.signature);
 
         // Check if complete
         if request.signatures.len() >= required_sigs {
@@ -607,7 +609,7 @@ impl GuardianChainState {
                 request.required_signatures
             );
         }
-        
+
         // Now record the nullifier (self is no longer borrowing request)
         // We need to record this to the nullifiers map
         let record = NullifierRecord {
@@ -646,7 +648,7 @@ impl GuardianChainState {
     }
 
     /// Verify ZK proof for guardian anonymity
-    /// 
+    ///
     /// This method verifies the cryptographic validity of the ZK proof.
     /// Nullifier checking is done separately in register_guardian().
     fn verify_guardian_zk_proof(
@@ -655,83 +657,81 @@ impl GuardianChainState {
         identity_id: &str,
         guardian_id: &str,
     ) -> Result<()> {
-        use dchat_privacy::zk_proofs::{ContactProof, ZkVerifier, Groth16Keys};
+        use dchat_privacy::zk_proofs::{ContactProof, Groth16Keys, ZkVerifier};
         use once_cell::sync::Lazy;
-        
+
         // Static Groth16 keys (initialized once)
         static ZK_KEYS: Lazy<Groth16Keys> = Lazy::new(|| {
             let mut rng = rand::thread_rng();
-            Groth16Keys::setup(&mut rng)
-                .expect("Failed to setup ZK keys")
+            Groth16Keys::setup(&mut rng).expect("Failed to setup ZK keys")
         });
-        
+
         // Deserialize the ZK proof
         let contact_proof: ContactProof = bincode::deserialize(proof)
             .map_err(|e| Error::validation(format!("Invalid ZK proof format: {}", e)))?;
-        
+
         // Convert identity_id to UserId for verification
         let identity_uuid = uuid::Uuid::parse_str(identity_id)
             .map_err(|e| Error::validation(format!("Invalid identity ID format: {}", e)))?;
         let identity_user_id = dchat_core::UserId(identity_uuid);
-        
+
         // Create verifier and verify the ZK proof cryptographically
         let verifier = ZkVerifier::new(&ZK_KEYS);
-        let proof_valid = verifier.verify_contact(&contact_proof, &identity_user_id)
+        let proof_valid = verifier
+            .verify_contact(&contact_proof, &identity_user_id)
             .map_err(|e| Error::validation(format!("ZK proof verification failed: {}", e)))?;
-        
+
         if !proof_valid {
             return Err(Error::validation(
-                "ZK proof verification failed: invalid proof structure"
+                "ZK proof verification failed: invalid proof structure",
             ));
         }
-        
+
         // Verify this guardian_id isn't already registered (duplicate check)
         let guardians_for_identity = self.guardians.get(identity_id);
         if let Some(existing_guardians) = guardians_for_identity {
             for guardian in existing_guardians {
                 if guardian.guardian_id == guardian_id && guardian.active {
                     return Err(Error::validation(
-                        "Guardian already registered for this identity"
+                        "Guardian already registered for this identity",
                     ));
                 }
             }
         }
-        
+
         // Extract and verify proof timestamp/freshness
         // The proof should contain a timestamp or block height to ensure freshness
         // This prevents using old proofs that might have been leaked
         let proof_age_blocks = self.estimate_proof_age(&contact_proof);
         const MAX_PROOF_AGE_BLOCKS: u64 = 100; // ~20 minutes at 12s blocks
-        
+
         if proof_age_blocks > MAX_PROOF_AGE_BLOCKS {
             return Err(Error::validation(format!(
                 "ZK proof too old: {} blocks (max: {})",
                 proof_age_blocks, MAX_PROOF_AGE_BLOCKS
             )));
         }
-        
+
         tracing::info!(
             "✓ ZK proof verified for guardian {} protecting identity {} (age: {} blocks)",
             guardian_id,
             identity_id,
             proof_age_blocks
         );
-        
+
         Ok(())
     }
-    
+
     /// Estimate proof age in blocks based on nullifier entropy
-    /// 
+    ///
     /// The nullifier embeds block height at proof creation time in its lower 8 bytes.
     /// Format: nullifier[0..8] = current_block_height (big-endian)
     fn estimate_proof_age(&self, proof: &dchat_privacy::zk_proofs::ContactProof) -> u64 {
         // Extract block height from nullifier lower 8 bytes
         // The proof creator embeds current_block_height when generating the proof
-        let proof_block_bytes: [u8; 8] = proof.nullifier[0..8]
-            .try_into()
-            .unwrap_or([0u8; 8]);
+        let proof_block_bytes: [u8; 8] = proof.nullifier[0..8].try_into().unwrap_or([0u8; 8]);
         let proof_block_height = u64::from_be_bytes(proof_block_bytes);
-        
+
         // Calculate age as difference from current block
         self.current_block_height.saturating_sub(proof_block_height)
     }
@@ -810,97 +810,131 @@ mod tests {
     fn test_nullifier_storage_and_retrieval() {
         let mut chain_state = GuardianChainState::new(10000);
         chain_state.set_block_height(100);
-        
+
         // Create a test nullifier
         let nullifier = [42u8; 32];
-        
+
         // Initially not used
         assert!(!chain_state.is_nullifier_used(&nullifier));
-        
+
         // Record nullifier
-        chain_state.record_nullifier(
-            nullifier,
-            "user123".to_string(),
-            NullifierType::GuardianRegistration,
-        ).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                nullifier,
+                "user123".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         // Now should be used
         assert!(chain_state.is_nullifier_used(&nullifier));
-        
+
         // Verify record
         let record = chain_state.get_nullifier_record(&nullifier).unwrap();
         assert_eq!(record.identity_id, "user123");
         assert_eq!(record.block_height, 100);
         assert_eq!(record.nullifier_type, NullifierType::GuardianRegistration);
     }
-    
+
     #[test]
     fn test_nullifier_prevents_reuse() {
         let mut chain_state = GuardianChainState::new(10000);
         chain_state.set_block_height(100);
-        
+
         let nullifier = [42u8; 32];
-        
+
         // First recording should succeed
-        chain_state.record_nullifier(
-            nullifier,
-            "user123".to_string(),
-            NullifierType::GuardianRegistration,
-        ).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                nullifier,
+                "user123".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         // Second recording should fail
         let result = chain_state.record_nullifier(
             nullifier,
             "user456".to_string(),
             NullifierType::GuardianRegistration,
         );
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already used"));
     }
-    
+
     #[test]
     fn test_get_nullifiers_for_identity() {
         let mut chain_state = GuardianChainState::new(10000);
         chain_state.set_block_height(100);
-        
+
         // Record multiple nullifiers for same identity
-        chain_state.record_nullifier([1u8; 32], "user123".to_string(), NullifierType::GuardianRegistration).unwrap();
+        chain_state
+            .record_nullifier(
+                [1u8; 32],
+                "user123".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
         chain_state.set_block_height(101);
-        chain_state.record_nullifier([2u8; 32], "user123".to_string(), NullifierType::GuardianSignature).unwrap();
+        chain_state
+            .record_nullifier(
+                [2u8; 32],
+                "user123".to_string(),
+                NullifierType::GuardianSignature,
+            )
+            .unwrap();
         chain_state.set_block_height(102);
-        chain_state.record_nullifier([3u8; 32], "other_user".to_string(), NullifierType::GuardianRegistration).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                [3u8; 32],
+                "other_user".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         let nullifiers = chain_state.get_nullifiers_for_identity("user123");
         assert_eq!(nullifiers.len(), 2);
     }
-    
+
     #[test]
     fn test_nullifier_export_import() {
         let mut chain_state = GuardianChainState::new(10000);
         chain_state.set_block_height(100);
-        
-        chain_state.record_nullifier([1u8; 32], "user1".to_string(), NullifierType::GuardianRegistration).unwrap();
-        chain_state.record_nullifier([2u8; 32], "user2".to_string(), NullifierType::RecoveryInitiation).unwrap();
-        
+
+        chain_state
+            .record_nullifier(
+                [1u8; 32],
+                "user1".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+        chain_state
+            .record_nullifier(
+                [2u8; 32],
+                "user2".to_string(),
+                NullifierType::RecoveryInitiation,
+            )
+            .unwrap();
+
         // Export
         let exported = chain_state.export_nullifiers();
         assert_eq!(exported.len(), 2);
-        
+
         // Import into new state
         let mut new_state = GuardianChainState::new(10000);
         new_state.import_nullifiers(exported);
-        
+
         assert!(new_state.is_nullifier_used(&[1u8; 32]));
         assert!(new_state.is_nullifier_used(&[2u8; 32]));
         assert!(!new_state.is_nullifier_used(&[3u8; 32]));
     }
-    
+
     #[test]
     fn test_recovery_prevents_duplicate_requests() {
         let mut chain_state = GuardianChainState::new(10000);
         chain_state.set_block_height(100);
-        
+
         // Register guardians
         for i in 0..3 {
             let signing_key = SigningKey::from_bytes(&[i; 32]);
@@ -912,7 +946,7 @@ mod tests {
             );
             chain_state.register_guardian(tx, 100).unwrap();
         }
-        
+
         // First recovery should succeed
         let recovery_tx = InitiateRecoveryTx::new(
             "recovery-1".to_string(),
@@ -922,14 +956,16 @@ mod tests {
             100,
             2,
         );
-        chain_state.initiate_recovery(recovery_tx.clone(), 100).unwrap();
-        
+        chain_state
+            .initiate_recovery(recovery_tx.clone(), 100)
+            .unwrap();
+
         // Exact same recovery should fail (duplicate nullifier)
         let recovery_tx2 = InitiateRecoveryTx::new(
             "recovery-2".to_string(), // Different ID
             "user123".to_string(),
-            vec![1, 2, 3, 4],  // Same key
-            400,               // Same timelock
+            vec![1, 2, 3, 4], // Same key
+            400,              // Same timelock
             100,
             2,
         );
@@ -1010,28 +1046,46 @@ mod tests {
         let result = chain_state.register_guardian(tx, 100);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_nullifier_pruning() {
         let mut chain_state = GuardianChainState::new(10000);
-        
+
         // Add nullifiers at different block heights
         chain_state.set_block_height(100);
-        chain_state.record_nullifier([1u8; 32], "user1".to_string(), NullifierType::GuardianRegistration).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                [1u8; 32],
+                "user1".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         chain_state.set_block_height(200);
-        chain_state.record_nullifier([2u8; 32], "user2".to_string(), NullifierType::GuardianRegistration).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                [2u8; 32],
+                "user2".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         chain_state.set_block_height(300);
-        chain_state.record_nullifier([3u8; 32], "user3".to_string(), NullifierType::GuardianRegistration).unwrap();
-        
+        chain_state
+            .record_nullifier(
+                [3u8; 32],
+                "user3".to_string(),
+                NullifierType::GuardianRegistration,
+            )
+            .unwrap();
+
         assert_eq!(chain_state.nullifiers.len(), 3);
-        
+
         // Prune nullifiers before block 200
         let removed = chain_state.prune_nullifiers_before_block(200);
         assert_eq!(removed, 1);
         assert_eq!(chain_state.nullifiers.len(), 2);
-        
+
         // Old nullifier should be gone
         assert!(!chain_state.is_nullifier_used(&[1u8; 32]));
         assert!(chain_state.is_nullifier_used(&[2u8; 32]));

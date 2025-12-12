@@ -16,16 +16,14 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::transactions::{
-    Transaction, TransactionStatus,
-};
+use crate::transactions::{Transaction, TransactionStatus};
 use dchat_core::error::{Error, Result};
 
 #[cfg(feature = "storage-integration")]
 use dchat_storage::{
-    DistributedCache, DistributedDatabase, DistributedObjectStorage, TiKVStorage,
-    CacheConfig, DistributedDatabaseConfig, ObjectStorageConfig, TiKVConfig,
-    ChainState, BlockMetadata,
+    BlockMetadata, CacheConfig, ChainState, DistributedCache, DistributedDatabase,
+    DistributedDatabaseConfig, DistributedObjectStorage, ObjectStorageConfig, TiKVConfig,
+    TiKVStorage,
 };
 
 /// Configuration for chain storage backends
@@ -107,9 +105,10 @@ pub struct StoredTransaction {
 impl From<&Transaction> for StoredTransaction {
     fn from(tx: &Transaction) -> Self {
         let (block_height, block_hash) = match &tx.status {
-            TransactionStatus::Confirmed { block_height, block_hash } => {
-                (Some(*block_height), Some(block_hash.clone()))
-            }
+            TransactionStatus::Confirmed {
+                block_height,
+                block_hash,
+            } => (Some(*block_height), Some(block_hash.clone())),
             _ => (None, None),
         };
 
@@ -132,7 +131,7 @@ impl From<&Transaction> for StoredTransaction {
 }
 
 /// Distributed chain storage backend
-/// 
+///
 /// Provides a unified interface to store and retrieve blockchain transactions
 /// across multiple distributed storage systems for high availability.
 #[cfg(feature = "storage-integration")]
@@ -154,7 +153,9 @@ pub struct ChainStorageBackend {
 #[cfg(feature = "storage-integration")]
 impl ChainStorageBackend {
     /// Get the local fallback cache
-    pub fn local_cache(&self) -> &Arc<RwLock<std::collections::HashMap<String, StoredTransaction>>> {
+    pub fn local_cache(
+        &self,
+    ) -> &Arc<RwLock<std::collections::HashMap<String, StoredTransaction>>> {
         &self.local_cache
     }
 
@@ -169,7 +170,8 @@ impl ChainStorageBackend {
             operation_timeout_seconds: 30,
             enable_compression: true,
         };
-        let tikv = TiKVStorage::new(tikv_config).await
+        let tikv = TiKVStorage::new(tikv_config)
+            .await
             .map_err(|e| Error::storage(format!("TiKV init failed: {}", e)))?;
         info!("✅ TiKV connected");
 
@@ -182,7 +184,8 @@ impl ChainStorageBackend {
             consistency_level: "strong".to_string(),
             query_timeout_seconds: 30,
         };
-        let cockroach = DistributedDatabase::new(cockroach_config).await
+        let cockroach = DistributedDatabase::new(cockroach_config)
+            .await
             .map_err(|e| Error::storage(format!("CockroachDB init failed: {}", e)))?;
         info!("✅ CockroachDB connected");
 
@@ -208,7 +211,8 @@ impl ChainStorageBackend {
             multi_region: true,
             upload_timeout_seconds: 60,
         };
-        let object_storage = DistributedObjectStorage::new(object_config).await
+        let object_storage = DistributedObjectStorage::new(object_config)
+            .await
             .map_err(|e| Error::storage(format!("MinIO init failed: {}", e)))?;
         info!("✅ MinIO/S3 connected");
 
@@ -225,7 +229,11 @@ impl ChainStorageBackend {
     }
 
     /// Store a transaction across all backends
-    pub async fn store_transaction(&self, tx: &Transaction, sender_key: Option<&str>) -> Result<()> {
+    pub async fn store_transaction(
+        &self,
+        tx: &Transaction,
+        sender_key: Option<&str>,
+    ) -> Result<()> {
         let mut stored_tx = StoredTransaction::from(tx);
         stored_tx.sender_key = sender_key.map(|s| s.to_string());
 
@@ -260,10 +268,9 @@ impl ChainStorageBackend {
             total_transactions: 1,
         };
 
-        self.tikv.store_chain_state(
-            tx.block_height.unwrap_or(0),
-            &chain_state,
-        ).await
+        self.tikv
+            .store_chain_state(tx.block_height.unwrap_or(0), &chain_state)
+            .await
             .map_err(|e| Error::storage(format!("TiKV store failed: {}", e)))?;
 
         // Also store the transaction itself
@@ -271,7 +278,9 @@ impl ChainStorageBackend {
         let tx_bytes = bincode::serialize(tx)
             .map_err(|e| Error::storage(format!("Serialize failed: {}", e)))?;
 
-        self.tikv.store_validator_state(&tx_key, &tx_bytes).await
+        self.tikv
+            .store_validator_state(&tx_key, &tx_bytes)
+            .await
             .map_err(|e| Error::storage(format!("TiKV transaction store failed: {}", e)))?;
 
         debug!("Transaction {} stored in TiKV", tx.tx_id);
@@ -298,7 +307,9 @@ impl ChainStorageBackend {
 
         let region = tx.region.as_deref().unwrap_or("default");
 
-        self.cockroach.insert_message_geo(&row, region).await
+        self.cockroach
+            .insert_message_geo(&row, region)
+            .await
             .map_err(|e| Error::storage(format!("CockroachDB store failed: {}", e)))?;
 
         debug!("Transaction {} stored in CockroachDB", tx.tx_id);
@@ -309,12 +320,14 @@ impl ChainStorageBackend {
     async fn cache_transaction(&self, tx: &StoredTransaction) -> Result<()> {
         let cache_key = format!("chain:tx:{}", tx.tx_id);
 
-        self.cache.cache_message(&cache_key, tx)
+        self.cache
+            .cache_message(&cache_key, tx)
             .map_err(|e| Error::storage(format!("Redis cache failed: {}", e)))?;
 
         // Also cache by hash for lookup
         let hash_key = format!("chain:hash:{}", tx.tx_hash);
-        self.cache.cache_message(&hash_key, &tx.tx_id.to_string())
+        self.cache
+            .cache_message(&hash_key, &tx.tx_id.to_string())
             .map_err(|e| Error::storage(format!("Redis hash cache failed: {}", e)))?;
 
         debug!("Transaction {} cached in Redis", tx.tx_id);
@@ -326,7 +339,10 @@ impl ChainStorageBackend {
         // 1. Check Redis cache first
         if self.config.enable_cache {
             let cache_key = format!("chain:tx:{}", tx_id);
-            if let Ok(Some(cached)) = self.cache.get_cached_message::<StoredTransaction>(&cache_key) {
+            if let Ok(Some(cached)) = self
+                .cache
+                .get_cached_message::<StoredTransaction>(&cache_key)
+            {
                 debug!("Transaction {} found in cache", tx_id);
                 return Ok(Some(cached));
             }
@@ -367,7 +383,11 @@ impl ChainStorageBackend {
         }
 
         // 4. Check cold storage (MinIO)
-        let cold_key = format!("transactions/{}/{}.bin", tx_id.to_string().chars().take(2).collect::<String>(), tx_id);
+        let cold_key = format!(
+            "transactions/{}/{}.bin",
+            tx_id.to_string().chars().take(2).collect::<String>(),
+            tx_id
+        );
         if let Ok(bytes) = self.object_storage.download_bytes(&cold_key).await {
             if let Ok(tx) = bincode::deserialize::<StoredTransaction>(&bytes) {
                 debug!("Transaction {} found in cold storage", tx_id);
@@ -379,7 +399,10 @@ impl ChainStorageBackend {
     }
 
     /// Get transaction by hash
-    pub async fn get_transaction_by_hash(&self, tx_hash: &str) -> Result<Option<StoredTransaction>> {
+    pub async fn get_transaction_by_hash(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<StoredTransaction>> {
         // Check hash index in Redis
         let hash_key = format!("chain:hash:{}", tx_hash);
         if let Ok(Some(tx_id_str)) = self.cache.get_cached_message::<String>(&hash_key) {
@@ -389,7 +412,10 @@ impl ChainStorageBackend {
         }
 
         // Search in TiKV by scanning
-        let scan_result = self.tikv.scan_keys("tx:", 1000).await
+        let scan_result = self
+            .tikv
+            .scan_keys("tx:", 1000)
+            .await
             .map_err(|e| Error::storage(format!("TiKV scan failed: {}", e)))?;
 
         for key in scan_result {
@@ -407,7 +433,9 @@ impl ChainStorageBackend {
 
     /// Store block metadata
     pub async fn store_block(&self, block: &BlockMetadata) -> Result<()> {
-        self.tikv.store_block_metadata(block).await
+        self.tikv
+            .store_block_metadata(block)
+            .await
             .map_err(|e| Error::storage(format!("Block store failed: {}", e)))?;
 
         info!("Block {} stored in TiKV", block.height);
@@ -416,13 +444,17 @@ impl ChainStorageBackend {
 
     /// Get block metadata
     pub async fn get_block(&self, height: u64) -> Result<Option<BlockMetadata>> {
-        self.tikv.get_block_metadata(height).await
+        self.tikv
+            .get_block_metadata(height)
+            .await
             .map_err(|e| Error::storage(format!("Block fetch failed: {}", e)))
     }
 
     /// Store chain state snapshot
     pub async fn store_chain_state(&self, height: u64, state: &ChainState) -> Result<()> {
-        self.tikv.store_chain_state(height, state).await
+        self.tikv
+            .store_chain_state(height, state)
+            .await
             .map_err(|e| Error::storage(format!("Chain state store failed: {}", e)))?;
 
         info!("Chain state at height {} stored", height);
@@ -431,7 +463,9 @@ impl ChainStorageBackend {
 
     /// Get chain state at height
     pub async fn get_chain_state(&self, height: u64) -> Result<Option<ChainState>> {
-        self.tikv.get_chain_state(height).await
+        self.tikv
+            .get_chain_state(height)
+            .await
             .map_err(|e| Error::storage(format!("Chain state fetch failed: {}", e)))
     }
 
@@ -446,10 +480,16 @@ impl ChainStorageBackend {
 
         // Query old transactions from CockroachDB
         // This is a simplified version - in production, batch this
-        info!("Archiving transactions older than {} days to MinIO", cutoff_days);
+        info!(
+            "Archiving transactions older than {} days to MinIO",
+            cutoff_days
+        );
 
         // Get statistics
-        let stats = self.cockroach.get_stats().await
+        let stats = self
+            .cockroach
+            .get_stats()
+            .await
             .map_err(|e| Error::storage(format!("Stats query failed: {}", e)))?;
 
         info!(
@@ -490,15 +530,21 @@ impl ChainStorageBackend {
 
     /// Get storage statistics
     pub async fn get_statistics(&self) -> Result<StorageStatistics> {
-        let db_stats = self.cockroach.get_stats().await
+        let db_stats = self
+            .cockroach
+            .get_stats()
+            .await
             .map_err(|e| Error::storage(format!("DB stats failed: {}", e)))?;
 
-        let cache_stats = self.cache.get_stats()
+        let cache_stats = self
+            .cache
+            .get_stats()
             .map_err(|e| Error::storage(format!("Cache stats failed: {}", e)))?;
 
         Ok(StorageStatistics {
             total_transactions: db_stats.total_messages as u64,
-            transactions_by_tier: db_stats.messages_by_tier
+            transactions_by_tier: db_stats
+                .messages_by_tier
                 .into_iter()
                 .map(|(k, v)| (k, v as u64))
                 .collect(),
@@ -568,7 +614,11 @@ impl ChainStorageBackend {
     }
 
     /// Store transaction locally
-    pub async fn store_transaction(&self, tx: &Transaction, sender_key: Option<&str>) -> Result<()> {
+    pub async fn store_transaction(
+        &self,
+        tx: &Transaction,
+        sender_key: Option<&str>,
+    ) -> Result<()> {
         let mut stored_tx = StoredTransaction::from(tx);
         stored_tx.sender_key = sender_key.map(|s| s.to_string());
 
@@ -586,7 +636,10 @@ impl ChainStorageBackend {
     }
 
     /// Get transaction by hash
-    pub async fn get_transaction_by_hash(&self, tx_hash: &str) -> Result<Option<StoredTransaction>> {
+    pub async fn get_transaction_by_hash(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<StoredTransaction>> {
         let txs = self.transactions.read().await;
         for tx in txs.values() {
             if tx.tx_hash == tx_hash {
@@ -641,10 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stored_transaction_from() {
-        let tx = Transaction::new(
-            TransactionType::RegisterUser,
-            b"test payload".to_vec(),
-        );
+        let tx = Transaction::new(TransactionType::RegisterUser, b"test payload".to_vec());
 
         let stored = StoredTransaction::from(&tx);
         assert_eq!(stored.tx_id, tx.tx_id);
@@ -666,12 +716,12 @@ mod tests {
         let config = ChainStorageConfig::default();
         let backend = ChainStorageBackend::new(config).await.unwrap();
 
-        let tx = Transaction::new(
-            TransactionType::SendDirectMessage,
-            b"test message".to_vec(),
-        );
+        let tx = Transaction::new(TransactionType::SendDirectMessage, b"test message".to_vec());
 
-        backend.store_transaction(&tx, Some("sender123")).await.unwrap();
+        backend
+            .store_transaction(&tx, Some("sender123"))
+            .await
+            .unwrap();
 
         let retrieved = backend.get_transaction(tx.tx_id).await.unwrap();
         assert!(retrieved.is_some());
@@ -684,10 +734,7 @@ mod tests {
         let config = ChainStorageConfig::default();
         let backend = ChainStorageBackend::new(config).await.unwrap();
 
-        let tx = Transaction::new(
-            TransactionType::CreateChannel,
-            b"channel data".to_vec(),
-        );
+        let tx = Transaction::new(TransactionType::CreateChannel, b"channel data".to_vec());
 
         let tx_hash = tx.tx_hash.clone();
         backend.store_transaction(&tx, None).await.unwrap();

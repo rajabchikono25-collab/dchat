@@ -311,11 +311,8 @@ pub struct Balance {
 impl Balance {
     /// Calculate and update total balance, returning the new total
     pub fn calculate_total(&mut self) -> u128 {
-        self.total = self.available
-            + self.staked
-            + self.delegated
-            + self.unstaking
-            + self.unclaimed_rewards;
+        self.total =
+            self.available + self.staked + self.delegated + self.unstaking + self.unclaimed_rewards;
         self.total
     }
 }

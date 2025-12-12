@@ -3,7 +3,7 @@
 //! Creates the first blocks for chat chain and currency chain when the first validator comes online
 
 use dchat_core::error::{Error, Result};
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, Signer};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -131,7 +131,10 @@ impl GenesisBuilder {
         info!("   Timestamp: {}", genesis.timestamp);
         info!("   Hash: {}", genesis.hash);
         info!("   Validators: {}", genesis.initial_validators.len());
-        info!("   Genesis validator: {}", hex::encode(verifying_key.as_bytes()));
+        info!(
+            "   Genesis validator: {}",
+            hex::encode(verifying_key.as_bytes())
+        );
 
         Ok(genesis)
     }
@@ -175,13 +178,19 @@ impl GenesisBuilder {
         info!("   Hash: {}", genesis.hash);
         info!("   Initial supply: {} tokens", genesis.initial_supply);
         info!("   Validators: {}", genesis.initial_validators.len());
-        info!("   Genesis validator: {}", hex::encode(verifying_key.as_bytes()));
+        info!(
+            "   Genesis validator: {}",
+            hex::encode(verifying_key.as_bytes())
+        );
 
         Ok(genesis)
     }
 
     /// Verify chat genesis block signature
-    pub fn verify_chat_genesis(genesis: &ChatGenesisBlock, public_key: &VerifyingKey) -> Result<()> {
+    pub fn verify_chat_genesis(
+        genesis: &ChatGenesisBlock,
+        public_key: &VerifyingKey,
+    ) -> Result<()> {
         let hash_input = Self::compute_chat_genesis_hash_input(genesis);
 
         let signature_bytes: [u8; 64] = genesis
@@ -200,7 +209,10 @@ impl GenesisBuilder {
     }
 
     /// Verify currency genesis block signature
-    pub fn verify_currency_genesis(genesis: &CurrencyGenesisBlock, public_key: &VerifyingKey) -> Result<()> {
+    pub fn verify_currency_genesis(
+        genesis: &CurrencyGenesisBlock,
+        public_key: &VerifyingKey,
+    ) -> Result<()> {
         let hash_input = Self::compute_currency_genesis_hash_input(genesis);
 
         let signature_bytes: [u8; 64] = genesis
@@ -293,7 +305,8 @@ impl GenesisCoordinator {
         };
 
         // Create genesis blocks
-        let chat_genesis = builder.create_chat_genesis(vec![first_validator.clone()], chat_config)?;
+        let chat_genesis =
+            builder.create_chat_genesis(vec![first_validator.clone()], chat_config)?;
         let currency_genesis = builder.create_currency_genesis(
             vec![first_validator.clone()],
             currency_config,
@@ -348,7 +361,10 @@ impl GenesisCoordinator {
     }
 
     /// Submit currency genesis block to chain
-    async fn submit_currency_genesis(genesis: &CurrencyGenesisBlock, rpc_endpoint: &str) -> Result<()> {
+    async fn submit_currency_genesis(
+        genesis: &CurrencyGenesisBlock,
+        rpc_endpoint: &str,
+    ) -> Result<()> {
         use reqwest::Client as HttpClient;
         use serde_json::json;
 
@@ -409,7 +425,9 @@ mod tests {
             min_reputation_score: 0,
         };
 
-        let genesis = builder.create_chat_genesis(vec![validator], config).unwrap();
+        let genesis = builder
+            .create_chat_genesis(vec![validator], config)
+            .unwrap();
 
         assert_eq!(genesis.block_number, 0);
         assert!(!genesis.hash.is_empty());
@@ -466,7 +484,9 @@ mod tests {
             min_reputation_score: 0,
         };
 
-        let genesis = builder.create_chat_genesis(vec![validator], config).unwrap();
+        let genesis = builder
+            .create_chat_genesis(vec![validator], config)
+            .unwrap();
 
         // Verify with correct key
         let result = GenesisBuilder::verify_chat_genesis(&genesis, &verifying_key);

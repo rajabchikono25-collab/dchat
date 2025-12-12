@@ -212,7 +212,10 @@ impl ValidatorStakingEnforcer {
     }
 
     /// Get cached stake status for validator
-    pub async fn get_cached_status(&self, validator_key: &VerifyingKey) -> Option<ValidatorStakeStatus> {
+    pub async fn get_cached_status(
+        &self,
+        validator_key: &VerifyingKey,
+    ) -> Option<ValidatorStakeStatus> {
         let cache = self.stake_cache.read().await;
         cache.get(&hex::encode(validator_key.as_bytes())).cloned()
     }

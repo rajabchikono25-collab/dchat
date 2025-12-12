@@ -99,11 +99,8 @@ impl ExtendedShardManager {
         // Get channel assignments from base manager
         let channel_assignments = self.base.get_all_channel_assignments();
 
-        self.scheduler.create_plan(
-            &shard_loads,
-            &channel_assignments,
-            algorithm,
-        )
+        self.scheduler
+            .create_plan(&shard_loads, &channel_assignments, algorithm)
     }
 
     /// Set pending rebalancing plan (requires operator approval)
@@ -167,7 +164,7 @@ impl ExtendedShardManager {
     }
 
     /// Create snapshot of shard state
-    /// 
+    ///
     /// Queries the shard manager for actual state data and creates a consistent snapshot
     fn create_shard_snapshot(
         &self,
@@ -175,20 +172,26 @@ impl ExtendedShardManager {
         channels: &[ChannelId],
     ) -> Result<ShardSnapshot> {
         // Query shard state from base manager (synchronous access)
-        let shard_state = self.base.shards.try_read()
+        let shard_state = self
+            .base
+            .shards
+            .try_read()
             .map_err(|_| dchat_core::error::Error::internal("Failed to acquire shard lock"))?
             .get(shard_id)
             .cloned()
-            .ok_or_else(|| dchat_core::error::Error::validation(format!("Shard {} not found", shard_id)))?;
-        
+            .ok_or_else(|| {
+                dchat_core::error::Error::validation(format!("Shard {} not found", shard_id))
+            })?;
+
         // Serialize the channel states
-        let channel_data: Vec<(&ChannelId, bool)> = channels.iter()
+        let channel_data: Vec<(&ChannelId, bool)> = channels
+            .iter()
             .map(|c| (c, shard_state.channels.contains(c)))
             .collect();
-        
+
         let serialized_state = serde_json::to_vec(&channel_data)
             .map_err(|e| dchat_core::error::Error::validation(e.to_string()))?;
-        
+
         // Compute state root as BLAKE3 hash of serialized state
         let state_root = blake3::hash(&serialized_state).as_bytes().to_vec();
 
