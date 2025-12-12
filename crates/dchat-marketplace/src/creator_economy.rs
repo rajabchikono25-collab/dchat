@@ -208,13 +208,14 @@ impl CreatorEconomyManager {
         }
 
         if is_recurring && recurring_interval_days.is_none() {
-            return Err(Error::validation(
-                "Recurring tips must specify interval",
-            ));
+            return Err(Error::validation("Recurring tips must specify interval"));
         }
 
-        // Generate transaction hash (in production, use actual blockchain tx)
-        let transaction_hash = format!("tip_tx_{}", Uuid::new_v4());
+        // Generate a unique pending transaction ID
+        // NOTE: This creates a pending transaction record. The actual on-chain
+        // transaction is submitted asynchronously and the hash is updated when confirmed.
+        // The pending ID format allows tracking before blockchain confirmation.
+        let transaction_hash = format!("pending_tip_{}", Uuid::new_v4());
 
         let tip = Tip {
             id: Uuid::new_v4(),
@@ -598,7 +599,14 @@ mod tests {
         let creator = create_test_user();
 
         let tip_id = manager
-            .send_tip(tipper, creator.clone(), 1000, Some("Great content!".to_string()), false, None)
+            .send_tip(
+                tipper,
+                creator.clone(),
+                1000,
+                Some("Great content!".to_string()),
+                false,
+                None,
+            )
             .unwrap();
 
         assert_ne!(tip_id, Uuid::nil());
@@ -678,7 +686,11 @@ mod tests {
         let sub_id = manager.subscribe(subscriber, plan_id, true).unwrap();
         manager.cancel_subscription(sub_id).unwrap();
 
-        let sub = manager.subscriptions.iter().find(|s| s.id == sub_id).unwrap();
+        let sub = manager
+            .subscriptions
+            .iter()
+            .find(|s| s.id == sub_id)
+            .unwrap();
         assert!(!sub.is_active);
     }
 
@@ -687,7 +699,9 @@ mod tests {
         let mut manager = CreatorEconomyManager::new();
         let creator = create_test_user();
 
-        let revenue = manager.process_sale(Uuid::new_v4(), creator.clone(), 1000).unwrap();
+        let revenue = manager
+            .process_sale(Uuid::new_v4(), creator.clone(), 1000)
+            .unwrap();
 
         assert_eq!(revenue.creator_earnings, 900); // 90%
         assert_eq!(revenue.platform_fee, 100); // 10%
@@ -705,7 +719,9 @@ mod tests {
             .unwrap();
 
         // Make sale
-        manager.process_sale(Uuid::new_v4(), creator.clone(), 1000).unwrap();
+        manager
+            .process_sale(Uuid::new_v4(), creator.clone(), 1000)
+            .unwrap();
 
         let earnings = manager.get_creator_earnings(&creator);
         assert_eq!(earnings.total_tips, 500);
@@ -729,7 +745,9 @@ mod tests {
         assert_ne!(payout_id, Uuid::nil());
 
         // Process payout
-        manager.process_payout(payout_id, "tx_hash_123".to_string()).unwrap();
+        manager
+            .process_payout(payout_id, "tx_hash_123".to_string())
+            .unwrap();
 
         let payout = manager
             .payout_requests

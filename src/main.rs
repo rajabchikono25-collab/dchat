@@ -68,16 +68,13 @@ use dchat::blockchain::{
 use dchat::prelude::*;
 
 use clap::{Parser, Subcommand};
+use dchat_accessibility::Color;
 use dchat_core::{Config, Error, Result, UserId};
-use dchat_identity::{BurnerIdentity, Identity};
-use dchat_crypto::{KeyPair, PrivateKey};
 use dchat_crypto::kms::Ed25519KmsWrapper;
 use dchat_crypto::signatures::Signature as CryptoSignature;
-use dchat_accessibility::Color;
-use dchat_network::{
-    DchatMessage, Multiaddr, NetworkConfig, NetworkEvent,
-    NetworkManager, PeerId,
-};
+use dchat_crypto::{KeyPair, PrivateKey};
+use dchat_identity::{BurnerIdentity, Identity};
+use dchat_network::{DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId};
 use dchat_storage::{BackupManager, Database, DatabaseConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -181,10 +178,10 @@ fn is_private_network(ip: &std::net::IpAddr) -> bool {
             // Check RFC 1918 private ranges
             let octets = ipv4.octets();
             match octets[0] {
-                10 => true, // 10.0.0.0/8
+                10 => true,                                // 10.0.0.0/8
                 172 => octets[1] >= 16 && octets[1] <= 31, // 172.16.0.0/12
-                192 => octets[1] == 168, // 192.168.0.0/16
-                127 => true, // Localhost
+                192 => octets[1] == 168,                   // 192.168.0.0/16
+                127 => true,                               // Localhost
                 _ => false,
             }
         }
@@ -221,42 +218,45 @@ fn extract_ip_from_multiaddr(multiaddr: &str) -> Option<String> {
 /// Validate production environment requirements for mainnet deployment
 async fn validate_mainnet_environment(_config: &Config, node_type: NodeType) -> Result<()> {
     info!("🔍 Validating mainnet environment requirements...");
-    
+
     // Check if running in production mode (assume mainnet for validation)
     let is_mainnet = true; // Production validation always runs
     if !is_mainnet {
         warn!("⚠️  Running in testnet mode - production validations skipped");
         return Ok(());
     }
-    
+
     // Validate credential configuration - reject placeholder values in production
     info!("✓ Validating credential configuration...");
-    
+
     // Check for placeholder Slack webhook
     if let Ok(slack_url) = std::env::var("DCHAT_SLACK_WEBHOOK_URL") {
-        if slack_url.contains("/XXX/") || slack_url.contains("/YYY/") || slack_url.contains("/ZZZ") {
+        if slack_url.contains("/XXX/") || slack_url.contains("/YYY/") || slack_url.contains("/ZZZ")
+        {
             return Err(Error::Config(
                 "DCHAT_SLACK_WEBHOOK_URL contains placeholder values (XXX/YYY/ZZZ). \
-                Set a real Slack webhook URL or unset the variable.".to_string()
+                Set a real Slack webhook URL or unset the variable."
+                    .to_string(),
             ));
         }
     }
-    
+
     // Check for placeholder PagerDuty key
     if let Ok(pd_key) = std::env::var("DCHAT_PAGERDUTY_KEY") {
         if pd_key == "pagerduty_integration_key" || pd_key.contains("placeholder") {
             return Err(Error::Config(
                 "DCHAT_PAGERDUTY_KEY contains placeholder value. \
-                Set a real PagerDuty integration key or unset the variable.".to_string()
+                Set a real PagerDuty integration key or unset the variable."
+                    .to_string(),
             ));
         }
     }
-    
+
     // Validate backup system credentials (using dchat-deployment crate if available)
     #[cfg(feature = "deployment")]
     {
         use dchat_deployment::backup_system::BackendBackupConfig;
-        
+
         let backup_config = BackendBackupConfig::new_production();
         if let Err(e) = backup_config.validate_for_production() {
             return Err(Error::Config(format!(
@@ -266,42 +266,43 @@ async fn validate_mainnet_environment(_config: &Config, node_type: NodeType) -> 
         }
         info!("✓ Backup system credentials validated");
     }
-    
+
     // Warn if running without alert channels configured (development mode)
-    if std::env::var("DCHAT_SLACK_WEBHOOK_URL").is_err() 
-        && std::env::var("DCHAT_PAGERDUTY_KEY").is_err() {
+    if std::env::var("DCHAT_SLACK_WEBHOOK_URL").is_err()
+        && std::env::var("DCHAT_PAGERDUTY_KEY").is_err()
+    {
         warn!(
             "⚠️  No alert channels configured (DCHAT_SLACK_WEBHOOK_URL, DCHAT_PAGERDUTY_KEY). \
             Critical alerts will only be logged locally."
         );
     }
-    
+
     // Validate system resources
     info!("✓ Checking system resources...");
-    
+
     // Check available memory (minimum 2GB for validators, 1GB for relays)
     let _min_memory_mb = match node_type {
         NodeType::Validator => 2048,
         NodeType::Relay => 1024,
         NodeType::Client => 512,
     };
-    
+
     // Validate network connectivity requirements
     info!("✓ Validating network connectivity...");
-    
+
     // Ensure proper firewall configuration
     info!("✓ Checking firewall configuration...");
-    
+
     // Validate cryptographic capabilities
     info!("✓ Validating cryptographic capabilities...");
-    
+
     // Check disk space requirements (minimum 10GB for validators, 5GB for relays)
     let _min_disk_gb = match node_type {
         NodeType::Validator => 10,
         NodeType::Relay => 5,
         NodeType::Client => 1,
     };
-    
+
     info!("✓ All mainnet environment validations passed");
     Ok(())
 }
@@ -317,7 +318,7 @@ impl std::fmt::Display for NodeType {
 }
 
 /// Global peer registry shared across all network operations
-/// 
+///
 /// Thread-safe registry for managing network peers with support for:
 /// - Geographic-aware peer selection
 /// - Connection quality tracking  
@@ -494,7 +495,11 @@ impl PeerRegistry {
     }
 
     /// Get best peers by connection quality for a given node type
-    pub async fn get_best_peers_by_quality(&self, node_type: NodeType, limit: usize) -> Vec<PeerInfo> {
+    pub async fn get_best_peers_by_quality(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+    ) -> Vec<PeerInfo> {
         let peers = self.peers.read().await;
         let mut filtered: Vec<PeerInfo> = peers
             .values()
@@ -589,17 +594,18 @@ impl KmsKeyPairAdapter {
     fn new(kms_wrapper: Ed25519KmsWrapper) -> Self {
         Self { kms_wrapper }
     }
-    
+
     /// Sign data using KMS-protected key
     /// This is async and must be called within an async context
     async fn sign_async(&self, message: &[u8]) -> std::result::Result<CryptoSignature, Error> {
-        let ed_sig = self.kms_wrapper
+        let ed_sig = self
+            .kms_wrapper
             .sign(message)
             .await
             .map_err(|e| Error::crypto(format!("KMS signing failed: {}", e)))?;
         Ok(CryptoSignature::from_bytes(ed_sig.to_bytes()))
     }
-    
+
     /// Get public key bytes
     fn public_key_bytes(&self) -> [u8; 32] {
         self.kms_wrapper.get_public_key().to_bytes()
@@ -623,7 +629,7 @@ impl ValidatorKeyType {
             ValidatorKeyType::Kms(adapter) => adapter.public_key_bytes(),
         }
     }
-    
+
     /// Get private key bytes (only available for local keys)
     /// Returns None for KMS keys as private key never leaves the HSM
     fn private_key_bytes(&self) -> Option<[u8; 32]> {
@@ -632,18 +638,19 @@ impl ValidatorKeyType {
             ValidatorKeyType::Kms(_) => None,
         }
     }
-    
+
     /// Sign data (async for KMS support)
     async fn sign_async(&self, message: &[u8]) -> std::result::Result<CryptoSignature, Error> {
         match self {
             ValidatorKeyType::Local(keypair) => {
                 // Local signing is synchronous, but we need async interface
                 // Use sign_with_private_key which takes PrivateKey and returns Signature
-                Ok(dchat_crypto::signatures::sign_with_private_key(keypair.private_key(), message))
+                Ok(dchat_crypto::signatures::sign_with_private_key(
+                    keypair.private_key(),
+                    message,
+                ))
             }
-            ValidatorKeyType::Kms(adapter) => {
-                adapter.sign_async(message).await
-            }
+            ValidatorKeyType::Kms(adapter) => adapter.sign_async(message).await,
         }
     }
 }
@@ -2357,10 +2364,9 @@ async fn main() -> Result<()> {
 
     info!("🚀 dchat v{} starting...", VERSION);
     info!("Mode: {:?}", cli.command);
-    info!("📊 Production limits: max_connections={}, max_msg_rate={}/s, connection_timeout={}s",
-        MAX_CONCURRENT_CONNECTIONS,
-        MAX_MESSAGE_RATE_PER_SECOND,
-        CONNECTION_TIMEOUT_SECONDS
+    info!(
+        "📊 Production limits: max_connections={}, max_msg_rate={}/s, connection_timeout={}s",
+        MAX_CONCURRENT_CONNECTIONS, MAX_MESSAGE_RATE_PER_SECOND, CONNECTION_TIMEOUT_SECONDS
     );
 
     // Load configuration
@@ -2541,67 +2547,70 @@ fn validate_config(config: &Config) -> Result<()> {
             "max_connections must be greater than 0".to_string(),
         ));
     }
-    
+
     // MAINNET: Enforce maximum connection limits to prevent resource exhaustion
     if config.network.max_connections > 1000 {
         return Err(Error::Config(
             "max_connections too high (max 1000 for production)".to_string(),
         ));
     }
-    
+
     if config.network.connection_timeout_ms == 0 {
         return Err(Error::Config(
             "connection_timeout_ms must be greater than 0".to_string(),
         ));
     }
-    
+
     // MAINNET: Reasonable timeout limits (5s to 60s)
     if config.network.connection_timeout_ms < 5000 || config.network.connection_timeout_ms > 60000 {
         return Err(Error::Config(
             "connection_timeout_ms must be between 5000ms and 60000ms for production".to_string(),
         ));
     }
-    
+
     if config.crypto.key_rotation_interval_hours == 0 {
         return Err(Error::Config(
             "key_rotation_interval_hours must be greater than 0".to_string(),
         ));
     }
-    
+
     // MAINNET SECURITY: Key rotation must be frequent enough (min 24h, max 720h)
-    if config.crypto.key_rotation_interval_hours < 24 || config.crypto.key_rotation_interval_hours > 720 {
+    if config.crypto.key_rotation_interval_hours < 24
+        || config.crypto.key_rotation_interval_hours > 720
+    {
         return Err(Error::Config(
-            "key_rotation_interval_hours must be between 24 and 720 hours for production security".to_string(),
+            "key_rotation_interval_hours must be between 24 and 720 hours for production security"
+                .to_string(),
         ));
     }
-    
+
     if config.governance.quorum_threshold < 0.0 || config.governance.quorum_threshold > 1.0 {
         return Err(Error::Config(
             "quorum_threshold must be between 0.0 and 1.0".to_string(),
         ));
     }
-    
+
     // MAINNET GOVERNANCE: Require reasonable quorum (minimum 33%, maximum 80%)
     if config.governance.quorum_threshold < 0.33 || config.governance.quorum_threshold > 0.80 {
         return Err(Error::Config(
             "quorum_threshold must be between 0.33 and 0.80 for production governance".to_string(),
         ));
     }
-    
+
     // MAINNET: Validate storage configuration for production
     if config.storage.data_dir.to_string_lossy().is_empty() {
         return Err(Error::Config(
             "data_dir cannot be empty in production".to_string(),
         ));
     }
-    
+
     // MAINNET: Ensure reasonable database pool sizes
     if config.storage.db_pool_size < 1 || config.storage.db_pool_size > 100 {
         return Err(Error::Config(
             "db_pool_size must be between 1 and 100 for production".to_string(),
         ));
     }
-    
+
     Ok(())
 }
 
@@ -2620,46 +2629,58 @@ async fn run_relay_node(
     info!("╔═══════════════════════════════════════════════════════════╗");
     info!("║            dchat Relay Node - Mainnet Mode               ║");
     info!("╚═══════════════════════════════════════════════════════════╝");
-    
+
     // MAINNET SECURITY: Validate production environment
     validate_mainnet_environment(&config, NodeType::Relay).await?;
-    
+
     info!("🔀 Relay Node Configuration:");
     info!("   Listen Address: {}", listen_addr);
     info!("   Bootstrap Peers: {} provided", bootstrap_peers.len());
-    
+
     // MAINNET SECURITY: Validate bootstrap peer addresses
     let is_mainnet = true; // Assume mainnet for security validation
     for peer_addr in &bootstrap_peers {
         if peer_addr.is_empty() {
             return Err(Error::validation("Bootstrap peer address cannot be empty"));
         }
-        
+
         // Basic validation for multiaddr format
-        if !peer_addr.starts_with("/ip4/") && !peer_addr.starts_with("/ip6/") && !peer_addr.starts_with("/dns4/") && !peer_addr.starts_with("/dns6/") {
-            return Err(Error::validation(format!("Invalid bootstrap peer format (must be multiaddr): {}", peer_addr)));
+        if !peer_addr.starts_with("/ip4/")
+            && !peer_addr.starts_with("/ip6/")
+            && !peer_addr.starts_with("/dns4/")
+            && !peer_addr.starts_with("/dns6/")
+        {
+            return Err(Error::validation(format!(
+                "Invalid bootstrap peer format (must be multiaddr): {}",
+                peer_addr
+            )));
         }
-        
+
         // Extract IP address from multiaddr and validate
         if let Some(ip_part) = extract_ip_from_multiaddr(peer_addr) {
             if let Ok(ip) = ip_part.parse::<std::net::IpAddr>() {
                 // Security check: Reject private network addresses in mainnet
                 if is_mainnet && is_private_network(&ip) {
                     return Err(Error::validation(format!(
-                        "Private network bootstrap peer not allowed in mainnet: {}", peer_addr
+                        "Private network bootstrap peer not allowed in mainnet: {}",
+                        peer_addr
                     )));
                 }
             }
         }
-        
+
         // Prevent localhost addresses in production unless explicitly allowed
         if peer_addr.contains("127.0.0.1") || peer_addr.contains("localhost") {
             if is_mainnet {
                 return Err(Error::validation(format!(
-                    "Localhost bootstrap peer not allowed in mainnet: {}", peer_addr
+                    "Localhost bootstrap peer not allowed in mainnet: {}",
+                    peer_addr
                 )));
             } else {
-                warn!("⚠️  Localhost bootstrap peer detected: {} (testnet mode)", peer_addr);
+                warn!(
+                    "⚠️  Localhost bootstrap peer detected: {} (testnet mode)",
+                    peer_addr
+                );
             }
         }
     }
@@ -2698,10 +2719,7 @@ async fn run_relay_node(
 
     // Discover all validators and relays via DNS with fallback handling
     info!("🔍 Discovering validators via DNS...");
-    let discovered_validators = match dns_discovery
-        .discover_validators()
-        .await
-    {
+    let discovered_validators = match dns_discovery.discover_validators().await {
         Ok(validators) => {
             if validators.is_empty() {
                 warn!("⚠️  No validators discovered via DNS, using bootstrap peers only");
@@ -2715,7 +2733,8 @@ async fn run_relay_node(
             error!("❌ DNS validator discovery failed: {}", e);
             if bootstrap_peers.is_empty() {
                 return Err(Error::network(format!(
-                    "Failed to discover validators via DNS and no bootstrap peers provided: {}", e
+                    "Failed to discover validators via DNS and no bootstrap peers provided: {}",
+                    e
                 )));
             }
             warn!("⚠️  Falling back to bootstrap peers only due to DNS failure");
@@ -2724,10 +2743,7 @@ async fn run_relay_node(
     };
 
     info!("🔍 Discovering other relays via DNS...");
-    let discovered_relays = match dns_discovery
-        .discover_relays()
-        .await
-    {
+    let discovered_relays = match dns_discovery.discover_relays().await {
         Ok(relays) => {
             if relays.is_empty() {
                 warn!("⚠️  No relays discovered via DNS");
@@ -2738,7 +2754,10 @@ async fn run_relay_node(
             }
         }
         Err(e) => {
-            warn!("⚠️  DNS relay discovery failed, continuing without discovered relays: {}", e);
+            warn!(
+                "⚠️  DNS relay discovery failed, continuing without discovered relays: {}",
+                e
+            );
             vec![]
         }
     };
@@ -2867,12 +2886,16 @@ async fn run_relay_node(
     };
 
     // Parse external address if configured
-    let external_address = config.network.external_address.as_ref().and_then(|addr_str| {
-        addr_str.parse().ok().map(|addr| {
-            info!("📡 External address configured: {}", addr_str);
-            addr
-        })
-    });
+    let external_address = config
+        .network
+        .external_address
+        .as_ref()
+        .and_then(|addr_str| {
+            addr_str.parse().ok().map(|addr| {
+                info!("📡 External address configured: {}", addr_str);
+                addr
+            })
+        });
 
     // Create network config with DNS-discovered peers
     let network_config = NetworkConfig {
@@ -3031,7 +3054,11 @@ async fn run_relay_node(
                 );
 
                 // Update peer registry
-                if peer_registry_arc.get_peer(&connected_peer_id).await.is_some() {
+                if peer_registry_arc
+                    .get_peer(&connected_peer_id)
+                    .await
+                    .is_some()
+                {
                     peer_registry_arc
                         .update_peer_quality(&connected_peer_id, 1.0)
                         .await;
@@ -3046,7 +3073,11 @@ async fn run_relay_node(
                             .first()
                             .cloned()
                             // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-                            .unwrap_or_else(|| FALLBACK_LISTEN_ADDR.parse().expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")),
+                            .unwrap_or_else(|| {
+                                FALLBACK_LISTEN_ADDR
+                                    .parse()
+                                    .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+                            }),
                         node_type: NodeType::Relay,
                         geographic_region: None,
                         last_seen: SystemTime::now(),
@@ -3085,12 +3116,18 @@ async fn run_relay_node(
                 }
 
                 // Update peer count metrics
-                let validators = peer_registry_arc.get_peers_by_type(NodeType::Validator).await;
+                let validators = peer_registry_arc
+                    .get_peers_by_type(NodeType::Validator)
+                    .await;
                 let relays = peer_registry_arc.get_peers_by_type(NodeType::Relay).await;
                 let clients = peer_registry_arc.get_peers_by_type(NodeType::Client).await;
-                peer_metrics.update_peer_count("validator", validators.len()).await;
+                peer_metrics
+                    .update_peer_count("validator", validators.len())
+                    .await;
                 peer_metrics.update_peer_count("relay", relays.len()).await;
-                peer_metrics.update_peer_count("client", clients.len()).await;
+                peer_metrics
+                    .update_peer_count("client", clients.len())
+                    .await;
 
                 if connected_peers >= MIN_RELAY_CONNECTIONS {
                     info!(
@@ -3146,20 +3183,21 @@ async fn run_relay_node(
     // Phase 6b: Initialize Currency Chain and Payment Processor
     info!("💰 Phase 6b: Initializing payment processor");
     let currency_chain_config = CurrencyChainConfig::default();
-    let currency_chain = Arc::new(CurrencyChainClient::new(currency_chain_config)
-        .map_err(|e| Error::internal(format!("Failed to create currency chain client: {}", e)))?);
-    
+    let currency_chain = Arc::new(
+        CurrencyChainClient::new(currency_chain_config).map_err(|e| {
+            Error::internal(format!("Failed to create currency chain client: {}", e))
+        })?,
+    );
+
     let payment_config = PaymentProcessorConfig {
-        interval_seconds: 300,  // Process payments every 5 minutes
+        interval_seconds: 300, // Process payments every 5 minutes
         max_retries: 3,
         batch_size: 100,
-        min_payment_amount: 1000,  // 0.00001 DCHAT minimum
+        min_payment_amount: 1000, // 0.00001 DCHAT minimum
     };
-    let (mut payment_processor, payment_shutdown_tx) = PaymentProcessor::new(
-        payment_config,
-        currency_chain.clone(),
-    );
-    
+    let (mut payment_processor, payment_shutdown_tx) =
+        PaymentProcessor::new(payment_config, currency_chain.clone());
+
     // Start payment processor background task
     let payment_processor_handle = tokio::spawn(async move {
         payment_processor.run().await;
@@ -3200,7 +3238,7 @@ async fn run_relay_node(
 
                             // Check if peer is already registered (e.g., as a bootstrap validator)
                             let existing_peer = peer_registry_arc.get_peer(&peer).await;
-                            
+
                             if let Some(existing) = existing_peer {
                                 // Peer already registered - update last_seen and mark as connected
                                 info!("  ✓ Recognized as existing {} peer", match existing.node_type {
@@ -3255,7 +3293,7 @@ async fn run_relay_node(
                                     peer_metrics.record_handshake_failure().await;
                                 }
                             }
-                            
+
                             // Update peer count metrics
                             let validators = peer_registry_arc.get_peers_by_type(NodeType::Validator).await;
                             let relays = peer_registry_arc.get_peers_by_type(NodeType::Relay).await;
@@ -3267,7 +3305,7 @@ async fn run_relay_node(
                         NetworkEvent::PeerDisconnected(peer) => {
                             info!("👋 Peer left: {}", peer);
                             peer_registry_arc.update_peer_quality(&peer, 0.0).await;
-                            
+
                             // Update peer count metrics after disconnect
                             let validators = peer_registry_arc.get_peers_by_type(NodeType::Validator).await;
                             let relays = peer_registry_arc.get_peers_by_type(NodeType::Relay).await;
@@ -3278,7 +3316,7 @@ async fn run_relay_node(
                         }
                         NetworkEvent::MessageReceived { from, message } => {
                             debug!("📨 Message from {}", from);
-                            
+
                             // Track message received from peer
                             peer_registry_arc.record_message_received(&from).await;
 
@@ -3306,7 +3344,7 @@ async fn run_relay_node(
                         let avg_quality = peer_registry_arc.calculate_average_quality().await;
                         peer_metrics.update_average_rtt(avg_rtt).await;
                         peer_metrics.update_average_quality(avg_quality).await;
-                        info!("📊 Stats: {} events processed, {} peers in registry, avg_rtt={:.1}ms, avg_quality={:.2}", 
+                        info!("📊 Stats: {} events processed, {} peers in registry, avg_rtt={:.1}ms, avg_quality={:.2}",
                             event_count, all_peers.len(), avg_rtt, avg_quality);
                     }
                 }
@@ -3330,7 +3368,7 @@ async fn run_relay_node(
     // Signal all background tasks to stop
     info!("📡 Stopping background tasks...");
     let _ = shutdown_tx.send(());
-    let _ = payment_shutdown_tx.send(true);  // Stop payment processor
+    let _ = payment_shutdown_tx.send(true); // Stop payment processor
 
     // Wait for background tasks to complete
     info!("⏳ Waiting for background tasks to complete...");
@@ -3386,7 +3424,7 @@ async fn run_user_node(
     health_addr: String,
 ) -> Result<()> {
     info!("👤 Starting user node...");
-    
+
     // MAINNET SECURITY: Validate production environment
     validate_mainnet_environment(&config, NodeType::Client).await?;
 
@@ -3443,7 +3481,10 @@ async fn run_user_node(
                         .discovery
                         .bootstrap_nodes
                         .push((peer_id, multiaddr));
-                    info!("✓ Added bootstrap node: {} (peer_id: {})", peer_addr, peer_id);
+                    info!(
+                        "✓ Added bootstrap node: {} (peer_id: {})",
+                        peer_addr, peer_id
+                    );
                 }
                 Err(e) => warn!("⚠ Invalid multiaddr {}: {}", peer_addr, e),
             }
@@ -3786,7 +3827,9 @@ async fn run_genesis_init(
     info!("  Foundation Allocation: {}%", foundation_percent);
 
     // Create output directory
-    tokio::fs::create_dir_all(&output).await.map_err(Error::Io)?;
+    tokio::fs::create_dir_all(&output)
+        .await
+        .map_err(Error::Io)?;
 
     // Calculate allocations
     let foundation_allocation = (initial_supply as u128 * foundation_percent as u128 / 100) as u64;
@@ -3897,8 +3940,16 @@ async fn run_genesis_init(
             }
         }
     });
-    tokio::fs::write(&currency_genesis_path, serde_json::to_string_pretty(&currency_genesis)?).await.map_err(Error::Io)?;
-    info!("✓ Currency chain genesis written to {:?}", currency_genesis_path);
+    tokio::fs::write(
+        &currency_genesis_path,
+        serde_json::to_string_pretty(&currency_genesis)?,
+    )
+    .await
+    .map_err(Error::Io)?;
+    info!(
+        "✓ Currency chain genesis written to {:?}",
+        currency_genesis_path
+    );
 
     // Write chat chain genesis
     let chat_genesis_path = output.join("chat_chain_genesis.json");
@@ -3916,12 +3967,22 @@ async fn run_genesis_init(
             "message_retention_days": 30
         }
     });
-    tokio::fs::write(&chat_genesis_path, serde_json::to_string_pretty(&chat_genesis)?).await.map_err(Error::Io)?;
+    tokio::fs::write(
+        &chat_genesis_path,
+        serde_json::to_string_pretty(&chat_genesis)?,
+    )
+    .await
+    .map_err(Error::Io)?;
     info!("✓ Chat chain genesis written to {:?}", chat_genesis_path);
 
     // Write main genesis summary
     let genesis_summary_path = output.join("genesis.json");
-    tokio::fs::write(&genesis_summary_path, serde_json::to_string_pretty(&genesis)?).await.map_err(Error::Io)?;
+    tokio::fs::write(
+        &genesis_summary_path,
+        serde_json::to_string_pretty(&genesis)?,
+    )
+    .await
+    .map_err(Error::Io)?;
     info!("✓ Genesis summary written to {:?}", genesis_summary_path);
 
     info!("\n🎉 Genesis initialization complete!");
@@ -3929,7 +3990,7 @@ async fn run_genesis_init(
     info!("  1. Distribute genesis files to all validators");
     info!("  2. Each validator runs: dchat validator --key <key_file> --chain-rpc <rpc_url>");
     info!("  3. First validator adds --producer flag to start block production");
-    
+
     Ok(())
 }
 
@@ -4007,7 +4068,7 @@ async fn get_foundation_validators() -> Result<Vec<GenesisValidator>> {
             hasher.update(s.dns.as_bytes());
             let hash = hasher.finalize();
             let public_key_hex = hex::encode(&hash[..32]);
-            
+
             GenesisValidator {
                 name: s.name,
                 public_key: public_key_hex,
@@ -4033,8 +4094,11 @@ async fn run_mainnet_init(
     // Load or create mainnet config
     let mainnet_config = if config_path.exists() {
         info!("Loading mainnet config from {:?}", config_path);
-        let contents = tokio::fs::read_to_string(&config_path).await.map_err(Error::Io)?;
-        toml::from_str(&contents).map_err(|e| Error::Config(format!("Invalid mainnet config: {}", e)))?
+        let contents = tokio::fs::read_to_string(&config_path)
+            .await
+            .map_err(Error::Io)?;
+        toml::from_str(&contents)
+            .map_err(|e| Error::Config(format!("Invalid mainnet config: {}", e)))?
     } else {
         info!("Creating default mainnet config at {:?}", config_path);
         create_default_mainnet_config(&config_path).await?
@@ -4044,11 +4108,11 @@ async fn run_mainnet_init(
     if genesis_validator {
         info!("🌟 Initializing as GENESIS VALIDATOR");
         info!("  This node will create the initial blocks for both chains");
-        
+
         // Initialize currency chain
         info!("📦 Initializing Currency Chain...");
         initialize_currency_chain(&mainnet_config).await?;
-        
+
         // Initialize chat chain
         info!("💬 Initializing Chat Chain...");
         initialize_chat_chain(&mainnet_config).await?;
@@ -4184,29 +4248,32 @@ struct PoolsConfig {
 async fn initialize_currency_chain(config: &MainnetConfig) -> Result<()> {
     info!("  Chain ID: {}-currency", config.chain_id);
     info!("  RPC: {}", config.currency_chain_rpc);
-    
+
     // Create currency chain client with default config
     let mut chain_config = CurrencyChainConfig::default();
     chain_config.rpc_url = config.currency_chain_rpc.clone();
-    
+
     let chain_client = CurrencyChainClient::new(chain_config)?;
-    
+
     // Check if chain is already initialized
     match chain_client.get_current_height().await {
         Ok(height) if height > 0 => {
-            info!("  ✓ Currency chain already initialized at height {}", height);
+            info!(
+                "  ✓ Currency chain already initialized at height {}",
+                height
+            );
             return Ok(());
         }
         _ => {
             info!("  Creating genesis block...");
         }
     }
-    
+
     // Initialize genesis state
     // Note: In production, this would interact with the actual chain
     info!("  ✓ Currency chain genesis initialized");
     info!("    Initial supply: {} tokens", config.initial_supply);
-    
+
     Ok(())
 }
 
@@ -4214,11 +4281,11 @@ async fn initialize_currency_chain(config: &MainnetConfig) -> Result<()> {
 async fn initialize_chat_chain(config: &MainnetConfig) -> Result<()> {
     info!("  Chain ID: {}-chat", config.chain_id);
     info!("  RPC: {}", config.chat_chain_rpc);
-    
+
     // Create chat chain client with default config
     let mut chain_config = ChatChainConfig::default();
     chain_config.rpc_url = config.chat_chain_rpc.clone();
-    
+
     // Try to create the chat chain client - if it succeeds with genesis config, chain is ready
     match ChatChainClient::new(chain_config) {
         Ok(_client) => {
@@ -4228,30 +4295,39 @@ async fn initialize_chat_chain(config: &MainnetConfig) -> Result<()> {
             info!("  Creating genesis block for chat chain...");
         }
         Err(e) => {
-            warn!("  Chat chain connection failed (expected for genesis): {}", e);
+            warn!(
+                "  Chat chain connection failed (expected for genesis): {}",
+                e
+            );
             info!("  Will create genesis block on first validator start...");
         }
     }
-    
+
     info!("  ✓ Chat chain genesis initialized");
-    
+
     Ok(())
 }
 
 /// Fund foundation servers with initial stake
 async fn fund_foundation_servers(config: &MainnetConfig) -> Result<()> {
-    info!("  Funding {} foundation servers...", config.foundation_servers.len());
-    
+    info!(
+        "  Funding {} foundation servers...",
+        config.foundation_servers.len()
+    );
+
     // Create currency chain client for funding
     let mut chain_config = CurrencyChainConfig::default();
     chain_config.rpc_url = config.currency_chain_rpc.clone();
-    
+
     let chain_client = CurrencyChainClient::new(chain_config)?;
-    
+
     for server in &config.foundation_servers {
         if server.stake > 0 {
-            info!("  💵 Funding {} ({}) with {} tokens", server.name, server.dns, server.stake);
-            
+            info!(
+                "  💵 Funding {} ({}) with {} tokens",
+                server.name, server.dns, server.stake
+            );
+
             // PRODUCTION IMPLEMENTATION:
             // 1. Generate/load the server's address from its public key
             //    For now, we derive a deterministic address from the DNS name
@@ -4259,37 +4335,49 @@ async fn fund_foundation_servers(config: &MainnetConfig) -> Result<()> {
             let server_key_bytes = blake3::hash(server.dns.as_bytes());
             let server_pubkey: [u8; 32] = *server_key_bytes.as_bytes();
             let server_user_id = CurrencyChainClient::address_from_public_key(&server_pubkey);
-            
-            info!("    Address: {} (derived from {})", server_user_id, server.dns);
-            
+
+            info!(
+                "    Address: {} (derived from {})",
+                server_user_id, server.dns
+            );
+
             // 2. Transfer tokens from genesis allocation to that address
             let genesis_tx = chain_client.transfer_from_genesis(
                 &server_user_id,
                 server.stake,
                 "foundation_allocation",
             )?;
-            info!("    Genesis transfer: {} tokens (tx: {})", server.stake, genesis_tx);
-            
+            info!(
+                "    Genesis transfer: {} tokens (tx: {})",
+                server.stake, genesis_tx
+            );
+
             // 3. Automatically stake the tokens for validators/relays
             let should_auto_stake = server.node_type == "validator" || server.node_type == "relay";
             if should_auto_stake {
                 // Validators and relays get their stake locked for 90 days minimum
-                let lock_duration_days = if server.node_type == "validator" { 90 } else { 30 };
-                
+                let lock_duration_days = if server.node_type == "validator" {
+                    90
+                } else {
+                    30
+                };
+
                 let stake_tx = chain_client.auto_stake_for_node(
                     &server_user_id,
                     server.stake,
                     &server.node_type,
                     lock_duration_days,
                 )?;
-                info!("    Auto-staked: {} tokens for {} (lock: {} days, tx: {})", 
-                    server.stake, server.node_type, lock_duration_days, stake_tx);
+                info!(
+                    "    Auto-staked: {} tokens for {} (lock: {} days, tx: {})",
+                    server.stake, server.node_type, lock_duration_days, stake_tx
+                );
             } else {
                 info!("    Type: {} (no auto-stake required)", server.node_type);
             }
         }
     }
-    
+
     info!("  ✓ Foundation servers funded and staked");
     Ok(())
 }
@@ -4297,31 +4385,37 @@ async fn fund_foundation_servers(config: &MainnetConfig) -> Result<()> {
 /// Initialize all pools (staking, rewards, liquidity)
 async fn initialize_pools(config: &MainnetConfig) -> Result<()> {
     info!("  Initializing protocol pools...");
-    
+
     // Create currency chain client
     let mut chain_config = CurrencyChainConfig::default();
     chain_config.rpc_url = config.currency_chain_rpc.clone();
-    
+
     let _chain_client = CurrencyChainClient::new(chain_config)?;
-    
+
     // Initialize staking pool
     info!("  🏦 Staking Pool: {} tokens", config.pools.staking_initial);
-    
-    // Initialize rewards pool  
+
+    // Initialize rewards pool
     info!("  🎁 Rewards Pool: {} tokens", config.pools.rewards_initial);
-    
+
     // Initialize liquidity pool
-    info!("  💧 Liquidity Pool: {} tokens", config.pools.liquidity_initial);
-    
+    info!(
+        "  💧 Liquidity Pool: {} tokens",
+        config.pools.liquidity_initial
+    );
+
     // Initialize foundation pool
-    info!("  🏛️  Foundation Pool: {} tokens", config.pools.foundation_initial);
-    
-    let total = config.pools.staking_initial 
-        + config.pools.rewards_initial 
-        + config.pools.liquidity_initial 
+    info!(
+        "  🏛️  Foundation Pool: {} tokens",
+        config.pools.foundation_initial
+    );
+
+    let total = config.pools.staking_initial
+        + config.pools.rewards_initial
+        + config.pools.liquidity_initial
         + config.pools.foundation_initial;
     info!("  ✓ Total pooled: {} tokens", total);
-    
+
     Ok(())
 }
 
@@ -4456,10 +4550,10 @@ async fn run_validator_node(
     health_addr: String,
 ) -> Result<()> {
     info!("⚙️  Starting validator node...");
-    
+
     // MAINNET SECURITY: Validate production environment
     validate_mainnet_environment(&config, NodeType::Validator).await?;
-    
+
     info!("Chain RPC: {}", chain_rpc);
     info!("HSM enabled: {}", use_hsm);
     info!("Stake: {} tokens", stake_amount);
@@ -4481,17 +4575,17 @@ async fn run_validator_node(
     // Load validator key
     let validator_key = if use_hsm {
         info!("🔐 HSM mode enabled - using AWS KMS for key management");
-        
+
         // Get AWS region from environment or default to us-east-1
         let aws_region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
-        
+
         // Initialize AWS KMS client
         use dchat_crypto::kms::{AwsKmsClient, Ed25519KmsWrapper};
-        
+
         match AwsKmsClient::new(&aws_region).await {
             Ok(kms_client) => {
                 info!("✓ Connected to AWS KMS (region: {})", aws_region);
-                
+
                 // key_path should be in format: kms_key_id/encrypted_key_file
                 // Example: "alias/dchat-validator-key/validator1.enc"
                 let key_parts: Vec<&str> = key_path.split('/').collect();
@@ -4501,10 +4595,10 @@ async fn run_validator_node(
                         key_path
                     )));
                 }
-                
+
                 let kms_key_id = key_parts[0];
                 let encrypted_key_file = key_parts[1];
-                
+
                 // Verify KMS key exists and is accessible
                 match kms_client.verify_key_exists(kms_key_id).await {
                     Ok(true) => {
@@ -4523,63 +4617,65 @@ async fn run_validator_node(
                         )));
                     }
                 }
-                
+
                 // Load encrypted key material from file
                 let key_file = PathBuf::from("./validator_keys").join(encrypted_key_file);
-                
+
                 if !key_file.exists() {
                     return Err(Error::Crypto(format!(
                         "Encrypted key file not found: {:?}. Generate with: dchat keygen --use-hsm",
                         key_file
                     )));
                 }
-                
+
                 // Read encrypted key and public key
-                let key_data = tokio::fs::read(&key_file).await
+                let key_data = tokio::fs::read(&key_file)
+                    .await
                     .map_err(|e| Error::Crypto(format!("Failed to read key file: {}", e)))?;
-                
+
                 // Parse key file format: [32 bytes public key][remaining bytes encrypted private key]
                 if key_data.len() < 32 {
                     return Err(Error::Crypto(format!(
                         "Invalid key file format: too small (expected at least 32 bytes)"
                     )));
                 }
-                
+
                 // Safe: length check above guarantees at least 32 bytes
                 let public_key_bytes: [u8; 32] = match key_data[..32].try_into() {
                     Ok(bytes) => bytes,
                     Err(_) => return Err(Error::Crypto("Failed to convert key bytes".to_string())),
                 };
                 let encrypted_private_key = key_data[32..].to_vec();
-                
+
                 let kms_wrapper = Ed25519KmsWrapper::load(
                     kms_client,
                     kms_key_id.to_string(),
                     encrypted_private_key,
                     &public_key_bytes,
-                ).map_err(|e| Error::Crypto(format!("Failed to load KMS-protected key: {}", e)))?;
-                
+                )
+                .map_err(|e| Error::Crypto(format!("Failed to load KMS-protected key: {}", e)))?;
+
                 info!("✓ Validator key loaded from AWS KMS");
                 info!("  KMS Key ID: {}", kms_key_id);
                 info!("  Public Key: {}", hex::encode(public_key_bytes));
-                
+
                 // Create KeyPair adapter for KMS-backed key
                 // The adapter allows KMS-protected keys to work with code expecting KeyPair interface
                 let kms_keypair = KmsKeyPairAdapter::new(kms_wrapper);
-                
+
                 info!("✓ KMS KeyPair adapter created successfully");
                 info!("✓ KMS integration complete - validator will use remote signing");
-                
+
                 ValidatorKeyType::Kms(kms_keypair)
             }
             Err(e) => {
                 warn!("AWS KMS not available: {}", e);
                 info!("Falling back to local encrypted key storage");
-                
+
                 let key_file = PathBuf::from("./validator_keys")
                     .join(&key_path)
                     .with_extension("key");
-                
+
                 if key_file.exists() {
                     ValidatorKeyType::Local(load_validator_key(&key_file).await?)
                 } else {
@@ -4596,7 +4692,10 @@ async fn run_validator_node(
     };
 
     let validator_id_bytes = validator_key.public_key_bytes();
-    info!("✓ Validator key loaded: {:?}", hex::encode(&validator_id_bytes));
+    info!(
+        "✓ Validator key loaded: {:?}",
+        hex::encode(&validator_id_bytes)
+    );
 
     // MAINNET: Initialize DNS-based peer discovery
     info!("🌍 Initializing DNS-based peer discovery for mainnet...");
@@ -4632,7 +4731,8 @@ async fn run_validator_node(
     let mut bootstrap_nodes = Vec::new();
     for validator in &discovered_validators {
         // Try to extract peer_id from multiaddr if it contains /p2p/ component
-        let peer_id = if let Some(p2p_part) = validator.multiaddr.to_string().split("/p2p/").nth(1) {
+        let peer_id = if let Some(p2p_part) = validator.multiaddr.to_string().split("/p2p/").nth(1)
+        {
             if let Ok(pid) = p2p_part.split('/').next().unwrap_or("").parse::<PeerId>() {
                 pid
             } else {
@@ -4644,7 +4744,10 @@ async fn run_validator_node(
             PeerId::random()
         };
         bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
-        info!("  + Validator bootstrap: {} at {}", peer_id, validator.multiaddr);
+        info!(
+            "  + Validator bootstrap: {} at {}",
+            peer_id, validator.multiaddr
+        );
     }
 
     // Also add any manually configured bootstrap peers from config
@@ -4691,12 +4794,16 @@ async fn run_validator_node(
     }
 
     // Parse external address if configured
-    let external_address = config.network.external_address.as_ref().and_then(|addr_str| {
-        addr_str.parse().ok().map(|addr| {
-            info!("📡 External address configured: {}", addr_str);
-            addr
-        })
-    });
+    let external_address = config
+        .network
+        .external_address
+        .as_ref()
+        .and_then(|addr_str| {
+            addr_str.parse().ok().map(|addr| {
+                info!("📡 External address configured: {}", addr_str);
+                addr
+            })
+        });
 
     // Create network config with discovered peers
     let network_config = dchat_network::NetworkConfig {
@@ -4739,7 +4846,7 @@ async fn run_validator_node(
 
     // Count all unique validators: discovered via DNS + manual bootstrap peers from config
     let mut unique_validator_peers = std::collections::HashSet::new();
-    
+
     // Add discovered validators
     for validator in &discovered_validators {
         let multiaddr_str = validator.multiaddr.to_string();
@@ -4749,7 +4856,7 @@ async fn run_validator_node(
             }
         }
     }
-    
+
     // Add manual bootstrap peers from config
     for peer_str in &config.network.bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
@@ -4761,7 +4868,7 @@ async fn run_validator_node(
             }
         }
     }
-    
+
     // Compute dynamic BFT thresholds based on ALL validators (discovered + manual + self)
     let total_validators = unique_validator_peers.len() + 1; // +1 for this node
     use dchat_validator::BftConfig;
@@ -4826,7 +4933,7 @@ async fn run_validator_node(
                             // Parse "validator.india.schikuno.top" -> "india"
                             domain.split('.').nth(1).map(|r| r.to_string())
                         });
-                    
+
                     let peer_info = PeerInfo {
                         peer_id: pid,
                         multiaddr: multiaddr.clone(),
@@ -4847,7 +4954,10 @@ async fn run_validator_node(
                     let region_for_log = peer_info.geographic_region.clone();
                     peer_registry.add_bootstrap_peer(peer_info.clone()).await;
                     peer_registry.add_peer(peer_info).await;
-                    info!("  + Registered manual bootstrap validator: {} (region: {:?})", pid, region_for_log);
+                    info!(
+                        "  + Registered manual bootstrap validator: {} (region: {:?})",
+                        pid, region_for_log
+                    );
                 }
             }
         }
@@ -5002,7 +5112,7 @@ async fn run_validator_node(
             MIN_STAKE_FOR_VALIDATOR
         )));
     }
-    
+
     info!("Submitting validator stake of {} tokens...", stake_amount);
 
     // PRODUCTION: Initialize staking manager (for local state tracking)
@@ -5032,21 +5142,28 @@ async fn run_validator_node(
     // MAINNET PRODUCTION: Submit stake transaction to CURRENCY CHAIN via RPC
     // This submits the actual on-chain staking transaction with finality confirmation
     use dchat_chain::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
-    
+
     info!("📤 Submitting on-chain stake transaction to currency chain...");
-    info!("   Stake Amount: {} DCHAT ({} tokens)", stake_amount, stake_amount * 1_000_000);
-    info!("   Validator Public Key: {}", hex::encode(&public_key_bytes));
+    info!(
+        "   Stake Amount: {} DCHAT ({} tokens)",
+        stake_amount,
+        stake_amount * 1_000_000
+    );
+    info!(
+        "   Validator Public Key: {}",
+        hex::encode(&public_key_bytes)
+    );
     info!("   Lockup Period: 7 days (minimum validator requirement)");
-    
+
     let verifying_key = Ed25519VerifyingKey::from_bytes(&public_key_bytes)
         .map_err(|e| Error::crypto(format!("Failed to create verifying key: {}", e)))?;
-    
+
     let stake_request = StakeRequest {
         validator_key: verifying_key,
         amount: stake_amount * 1_000_000, // Convert to smallest unit (6 decimal places)
-        lockup_period_days: 7, // Minimum lockup for validators
+        lockup_period_days: 7,            // Minimum lockup for validators
     };
-    
+
     let stake_receipt = match submit_validator_stake(&stake_request).await {
         Ok(receipt) => {
             info!("✅ On-chain stake transaction CONFIRMED!");
@@ -5061,15 +5178,20 @@ async fn run_validator_node(
             error!("   This is a mainnet blocker - validator cannot participate without on-chain stake");
             error!("   Check:");
             error!("     1. CURRENCY_CHAIN_RPC environment variable is set correctly");
-            error!("     2. Currency chain RPC endpoint is accessible: {}", 
-                std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string())
+            error!(
+                "     2. Currency chain RPC endpoint is accessible: {}",
+                std::env::var("CURRENCY_CHAIN_RPC")
+                    .unwrap_or_else(|_| "http://localhost:8545".to_string())
             );
-            error!("     3. Validator wallet has sufficient balance (need {} tokens + gas)", stake_amount);
+            error!(
+                "     3. Validator wallet has sufficient balance (need {} tokens + gas)",
+                stake_amount
+            );
             error!("     4. Currency chain is running and accepting transactions");
             return Err(Error::chain(format!("On-chain staking failed: {}", e)));
         }
     };
-    
+
     // Register stake in local staking manager (for tracking and consensus eligibility)
     info!("📝 Registering stake in local validator state...");
     match staking_manager
@@ -5090,33 +5212,38 @@ async fn run_validator_node(
             warn!("Continuing with on-chain stake confirmation only");
         }
     }
-    
+
     // Wait for chain finality (3 blocks at 6 seconds = 18 seconds)
     info!("⏳ Waiting for chain finality (3 blocks ~18 seconds)...");
     tokio::time::sleep(tokio::time::Duration::from_secs(18)).await;
-    
+
     // Verify stake on currency chain
     use dchat_chain::chain::currency_chain::staking::get_validator_stake;
     match get_validator_stake(&verifying_key).await {
         Ok(confirmed_stake) => {
             if confirmed_stake >= stake_amount * 1_000_000 {
                 info!("✅ Stake FINALIZED on currency chain!");
-                info!("   Confirmed Stake: {} tokens ({} DCHAT)", 
-                    confirmed_stake, 
+                info!(
+                    "   Confirmed Stake: {} tokens ({} DCHAT)",
+                    confirmed_stake,
                     confirmed_stake as f64 / 1_000_000.0
                 );
             } else {
-                warn!("⚠️ Stake confirmation mismatch: expected {}, got {}", 
-                    stake_amount * 1_000_000, 
+                warn!(
+                    "⚠️ Stake confirmation mismatch: expected {}, got {}",
+                    stake_amount * 1_000_000,
                     confirmed_stake
                 );
             }
         }
         Err(e) => {
-            warn!("⚠️ Failed to verify stake on-chain (continuing anyway): {}", e);
+            warn!(
+                "⚠️ Failed to verify stake on-chain (continuing anyway): {}",
+                e
+            );
         }
     }
-    
+
     // Activate validator in local state
     info!("🎯 Activating validator for consensus participation...");
     match staking_manager.activate_validator(&validator_user_id).await {
@@ -5134,32 +5261,32 @@ async fn run_validator_node(
     }
 
     // Start consensus participation with BFT block verification
+    use dchat_blockchain::StateValidator;
     use dchat_network::DchatMessage;
     use std::collections::HashMap;
-    use dchat_blockchain::StateValidator;
-    
+
     // Track block acknowledgments for BFT consensus
-    let block_acknowledgments: Arc<tokio::sync::Mutex<HashMap<u64, HashMap<Vec<u8>, Vec<u8>>>>> = 
+    let block_acknowledgments: Arc<tokio::sync::Mutex<HashMap<u64, HashMap<Vec<u8>, Vec<u8>>>>> =
         Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-    
+
     // Initialize state validator for Byzantine fault detection
-    let state_validator: Arc<tokio::sync::Mutex<StateValidator>> = 
+    let state_validator: Arc<tokio::sync::Mutex<StateValidator>> =
         Arc::new(tokio::sync::Mutex::new(StateValidator::new()));
     info!("✓ State validator initialized for Byzantine fault detection");
-    
+
     // Get public key bytes for signing in consensus (validator_key is moved into Arc for sharing)
     let validator_public_key_bytes = validator_key.public_key_bytes();
     let validator_key_arc = Arc::new(tokio::sync::Mutex::new(validator_key));
-    
+
     let consensus_handle = {
         let network_arc_clone = network_arc.clone();
         let validator_key_arc_clone = Arc::clone(&validator_key_arc);
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone = state_validator.clone();
-        
+
         tokio::spawn(async move {
             info!("Starting consensus engine with BFT verification and FULL state validation...");
-            
+
             // PRODUCTION IMPLEMENTATION: Full state validation with Merkle proofs
             // This implementation now uses the complete dchat_blockchain::Block structure
             // which includes:
@@ -5173,13 +5300,13 @@ async fn run_validator_node(
             //   4. On receive: validate_block() verifies state_root against Merkle tree
             //   5. On StateValidationError::ByzantineFault: slash offending validator
             //   6. Periodically cleanup old state roots
-            
-            use dchat_blockchain::{Block, Subblock, Miniblock, MerkleTree, StateValidationError};
+
             use dchat_blockchain::block_hierarchy::Hash as BlockHash;
-            
+            use dchat_blockchain::{Block, MerkleTree, Miniblock, StateValidationError, Subblock};
+
             let mut block_height = 0u64;
             let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            
+
             // World state for transaction execution
             let mut world_state = dchat_blockchain::WorldState::new();
 
@@ -5190,11 +5317,11 @@ async fn run_validator_node(
                         if is_producer {
                             block_height += 1;
                             info!("📦 Producing block #{} with FULL state validation", block_height);
-                            
+
                             // Gather pending transactions from mempool
                             let pending_txs: Vec<dchat_chain::Transaction> = Vec::new();
                             info!("  • Gathered {} pending transactions from mempool", pending_txs.len());
-                            
+
                             // Create hierarchical block structure
                             let prev_hash = if block_height == 1 {
                                 BlockHash::from([0u8; 32])
@@ -5204,27 +5331,27 @@ async fn run_validator_node(
                                 prev_data.extend_from_slice(&(block_height - 1).to_le_bytes());
                                 BlockHash::from(*blake3::hash(&prev_data).as_bytes())
                             };
-                            
+
                             let mut block = Block::new(block_height, prev_hash);
-                            
+
                             // Create subblock with miniblocks containing transactions
                             let mut subblock = Subblock::new(0);
-                            
+
                             // Split transactions into miniblocks (max 250 per miniblock)
                             let chunks: Vec<Vec<dchat_chain::Transaction>> = pending_txs
                                 .chunks(250)
                                 .map(|c| c.to_vec())
                                 .collect();
-                            
+
                             let mut all_state_transitions = Vec::new();
-                            
+
                             for (idx, tx_chunk) in chunks.iter().enumerate() {
                                 let pre_state_hash = world_state.compute_hash();
-                                
+
                                 // Execute transactions
                                 let mut miniblock = Miniblock::new(idx as u16, tx_chunk.clone());
                                 miniblock.pre_state_hash = pre_state_hash;
-                                
+
                                 // Execute each transaction in the miniblock
                                 let mut gas_used = 0u64;
                                 for tx in tx_chunk {
@@ -5235,10 +5362,10 @@ async fn run_validator_node(
                                         }
                                     }
                                 }
-                                
+
                                 miniblock.post_state_hash = world_state.compute_hash();
                                 miniblock.gas_used = gas_used;
-                                
+
                                 // Collect state transition for Merkle tree
                                 let mut transition = Vec::new();
                                 transition.extend_from_slice(&(idx as u16).to_le_bytes());
@@ -5246,55 +5373,55 @@ async fn run_validator_node(
                                 transition.extend_from_slice(miniblock.post_state_hash.as_bytes());
                                 transition.extend_from_slice(&gas_used.to_le_bytes());
                                 all_state_transitions.push(transition);
-                                
+
                                 let _ = subblock.add_miniblock(miniblock);
                             }
-                            
+
                             // If no transactions, create an empty miniblock for genesis
                             if chunks.is_empty() {
                                 let pre_state = world_state.compute_hash();
                                 let mut miniblock = Miniblock::new(0, Vec::new());
                                 miniblock.pre_state_hash = pre_state;
                                 miniblock.post_state_hash = pre_state;
-                                
+
                                 let mut transition = Vec::new();
                                 transition.extend_from_slice(&0u16.to_le_bytes());
                                 transition.extend_from_slice(miniblock.pre_state_hash.as_bytes());
                                 transition.extend_from_slice(miniblock.post_state_hash.as_bytes());
                                 transition.extend_from_slice(&0u64.to_le_bytes());
                                 all_state_transitions.push(transition);
-                                
+
                                 let _ = subblock.add_miniblock(miniblock);
                             }
-                            
+
                             // Calculate Merkle root from all state transitions
                             let merkle_tree = MerkleTree::from_state_transitions(all_state_transitions);
                             let state_root = merkle_tree.root_hash()
                                 .unwrap_or_else(|| vec![0u8; 32]);
-                            
+
                             // Set block state root
                             let mut state_root_bytes = [0u8; 32];
                             state_root_bytes.copy_from_slice(&state_root[..32.min(state_root.len())]);
                             block.state_root = BlockHash::from(state_root_bytes);
-                            
+
                             let _ = block.add_subblock(subblock);
-                            
+
                             info!("  • State root: {}", hex::encode(&state_root[..8]));
-                            info!("  • Block has {} subblocks, {} transactions total", 
+                            info!("  • Block has {} subblocks, {} transactions total",
                                 block.subblocks.len(), block.transaction_count());
-                            
+
                             // Calculate block hash
                             let block_hash_obj = block.calculate_hash();
                             let block_hash = block_hash_obj.as_bytes().to_vec();
-                            
+
                             info!("  • Block hash: {}", hex::encode(&block_hash[..8]));
-                            
+
                             // Sign the block with validator key
                             let signature_result = {
                                 let validator_key = validator_key_arc_clone.lock().await;
                                 validator_key.sign_async(&block_hash).await
                             };
-                            
+
                             let block_signature = match signature_result {
                                 Ok(sig) => sig,
                                 Err(e) => {
@@ -5302,15 +5429,15 @@ async fn run_validator_node(
                                     continue;
                                 }
                             };
-                            
+
                             info!("  • Block signed with Ed25519 signature: {}", hex::encode(&block_signature.to_bytes()[..8]));
-                            
+
                             // Validate our own block before broadcasting
                             {
                                 let mut validator = state_validator_clone.lock().await;
                                 match validator.validate_block(&block) {
                                     Ok(computed_root) => {
-                                        info!("  ✓ Block self-validation passed, state root verified: {}", 
+                                        info!("  ✓ Block self-validation passed, state root verified: {}",
                                             hex::encode(&computed_root[..8]));
                                     }
                                     Err(StateValidationError::StateRootMismatch { expected, actual }) => {
@@ -5324,19 +5451,19 @@ async fn run_validator_node(
                                     }
                                 }
                             }
-                            
+
                             // Create ValidatorBlock message (includes full block data)
                             let validator_id = validator_public_key_bytes.to_vec();
                             let timestamp = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .expect("system time is before UNIX epoch")
                                 .as_secs();
-                            
+
                             // Serialize transactions for network message
                             let tx_bytes: Vec<Vec<u8>> = pending_txs.iter()
                                 .filter_map(|tx| bincode::serialize(tx).ok())
                                 .collect();
-                            
+
                             let block_message = DchatMessage::ValidatorBlock {
                                 height: block_height,
                                 validator_id: validator_id.clone(),
@@ -5345,7 +5472,7 @@ async fn run_validator_node(
                                 timestamp,
                                 transactions: tx_bytes,
                             };
-                            
+
                             // Broadcast block to validator network via gossipsub
                             let mut net = network_arc_clone.lock().await;
                             match net.broadcast_validator_block(&block_message) {
@@ -5358,24 +5485,24 @@ async fn run_validator_node(
                                     continue;
                                 }
                             }
-                            
+
                             // Cleanup old state roots periodically (keep last 1000 blocks)
                             if block_height % 100 == 0 && block_height > 1000 {
                                 let mut validator = state_validator_clone.lock().await;
                                 validator.cleanup_old_roots(block_height, 1000);
                                 info!("  • Cleaned up state roots for blocks before {}", block_height - 1000);
                             }
-                            
+
                             // Wait for BFT threshold of acknowledgments (2f+1 signatures)
                             let ack_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
                             let mut received_acks = 0;
-                            
+
                             while tokio::time::Instant::now() < ack_deadline {
                                 let acks = block_acks_clone.lock().await;
                                 if let Some(height_acks) = acks.get(&block_height) {
                                     received_acks = height_acks.len();
                                     if received_acks >= required_signatures {
-                                        info!("✅ Block #{} finalized with {} acknowledgments (BFT threshold reached)", 
+                                        info!("✅ Block #{} finalized with {} acknowledgments (BFT threshold reached)",
                                             block_height, received_acks);
                                         break;
                                     }
@@ -5383,9 +5510,9 @@ async fn run_validator_node(
                                 drop(acks);
                                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                             }
-                            
+
                             if received_acks < required_signatures {
-                                warn!("⚠️  Block #{} did not reach BFT threshold ({}/{} acks)", 
+                                warn!("⚠️  Block #{} did not reach BFT threshold ({}/{} acks)",
                                     block_height, received_acks, required_signatures);
                                 warn!("   Block may not be finalized - potential network partition");
                             }
@@ -5400,14 +5527,14 @@ async fn run_validator_node(
                         info!("📊 Validator stats: height={}, stake={}", block_height, stake_amount);
                         let acks = block_acks_clone.lock().await;
                         info!("   Pending acknowledgments: {} blocks", acks.len());
-                        
+
                         // Report Byzantine fault statistics
                         let validator = state_validator_clone.lock().await;
                         let faults = validator.get_byzantine_faults();
                         if !faults.is_empty() {
                             warn!("   ⚠️ Byzantine faults detected: {} validators", faults.len());
                             for (validator_id, fault_list) in faults.iter() {
-                                warn!("      Validator {}: {} faults", 
+                                warn!("      Validator {}: {} faults",
                                     hex::encode(&validator_id[..4.min(validator_id.len())]),
                                     fault_list.len());
                             }
@@ -5417,7 +5544,7 @@ async fn run_validator_node(
             }
         })
     };
-    
+
     // Start network event handler for incoming validator blocks
     let network_event_handle = {
         let network_arc_clone = network_arc.clone();
@@ -5426,17 +5553,17 @@ async fn run_validator_node(
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone2 = state_validator.clone();
         let mut shutdown = shutdown_tx.subscribe();
-        
+
         tokio::spawn(async move {
             info!("Starting network event handler for consensus messages...");
-            
+
             loop {
                 tokio::select! {
                     _ = shutdown.recv() => {
                         info!("Network event handler shutting down");
                         break;
                     }
-                    
+
                     event = async {
                         let mut network_guard = network_arc_clone.lock().await;
                         network_guard.next_event().await
@@ -5452,13 +5579,13 @@ async fn run_validator_node(
                                     transactions,
                                 } => {
                                     info!("📨 Received validator block #{} from {}", height, hex::encode(&validator_id[..4]));
-                                    
+
                                     // Verify block signature
                                     if validator_id.len() != 32 {
                                         warn!("⚠️  Invalid validator ID length: {}", validator_id.len());
                                         continue;
                                     }
-                                    
+
                                     let validator_id_bytes: [u8; 32] = match validator_id.clone().try_into() {
                                         Ok(bytes) => bytes,
                                         Err(_) => {
@@ -5466,7 +5593,7 @@ async fn run_validator_node(
                                             continue;
                                         }
                                     };
-                                    
+
                                     let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&validator_id_bytes) {
                                         Ok(key) => key,
                                         Err(e) => {
@@ -5474,12 +5601,12 @@ async fn run_validator_node(
                                             continue;
                                         }
                                     };
-                                    
+
                                     if signature.len() != 64 {
                                         warn!("⚠️  Invalid signature length: {}", signature.len());
                                         continue;
                                     }
-                                    
+
                                     let sig_bytes: [u8; 64] = match signature.clone().try_into() {
                                         Ok(bytes) => bytes,
                                         Err(_) => {
@@ -5488,7 +5615,7 @@ async fn run_validator_node(
                                         }
                                     };
                                     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                                    
+
                                     // Verify signature
                                     use ed25519_dalek::Verifier;
                                     if let Err(e) = verifying_key.verify(&block_hash, &sig) {
@@ -5496,9 +5623,9 @@ async fn run_validator_node(
                                         warn!("   Block rejected - invalid validator signature");
                                         continue;
                                     }
-                                    
+
                                     info!("✓ Block #{} signature verified from validator {}", height, hex::encode(&validator_id[..4]));
-                                    
+
                                     // Verify block hash matches content
                                     let mut block_data = Vec::new();
                                     block_data.extend_from_slice(&height.to_le_bytes());
@@ -5506,28 +5633,28 @@ async fn run_validator_node(
                                         block_data.extend_from_slice(tx);
                                     }
                                     let computed_hash = blake3::hash(&block_data).as_bytes().to_vec();
-                                    
+
                                     if computed_hash != block_hash {
-                                        warn!("⚠️  Block #{} hash mismatch - computed {} != received {}", 
+                                        warn!("⚠️  Block #{} hash mismatch - computed {} != received {}",
                                             height, hex::encode(&computed_hash[..8]), hex::encode(&block_hash[..8]));
                                         warn!("   Block rejected - hash verification failed");
                                         continue;
                                     }
-                                    
+
                                     info!("✓ Block #{} hash verified ({} transactions)", height, transactions.len());
-                                    
+
                                     // State validation with Byzantine fault detection
                                     {
                                         let mut validator = state_validator_clone2.lock().await;
-                                        
+
                                         // Check if we've seen conflicting state for this height
                                         if let Some(byzantine_validators) = validator.get_byzantine_faults_at_height(&height.to_le_bytes()) {
-                                            warn!("⚠️  Byzantine fault detected at height {}: {} conflicting validators", 
+                                            warn!("⚠️  Byzantine fault detected at height {}: {} conflicting validators",
                                                 height, byzantine_validators.len());
                                             for fault_validator_id in &byzantine_validators {
                                                 warn!("   Fault from validator: {}", hex::encode(&fault_validator_id[..4.min(fault_validator_id.len())]));
                                             }
-                                            
+
                                             // Get slashing recommendations
                                             let slash_recommendations = validator.get_slashing_recommendations();
                                             for (slash_validator_id, slash_pct, reason) in slash_recommendations {
@@ -5536,14 +5663,14 @@ async fn run_validator_node(
                                                     slash_pct,
                                                     reason
                                                 );
-                                                
+
                                                 // Queue slashing transaction for governance council review
                                                 // In production, this would:
                                                 // 1. Create slashing proposal with evidence
                                                 // 2. Submit to governance council for voting
                                                 // 3. Collect 5-of-7 multisig signatures
                                                 // 4. Execute slash_validator with signatures
-                                                
+
                                                 // For now, log as critical security event
                                                 error!(
                                                     "🚨 BYZANTINE FAULT DETECTED - Validator {} requires slashing ({}% - {})",
@@ -5551,7 +5678,7 @@ async fn run_validator_node(
                                                     slash_pct,
                                                     reason
                                                 );
-                                                
+
                                                 // In production system:
                                                 // let proposal_id = governance_council.propose_slashing(
                                                 //     slash_validator_id.clone(),
@@ -5559,7 +5686,7 @@ async fn run_validator_node(
                                                 //     reason.clone(),
                                                 //     block_hash.clone(), // Evidence
                                                 // ).await?;
-                                                // 
+                                                //
                                                 // When signatures collected:
                                                 // staking_manager.slash_validator(
                                                 //     &slash_validator_id,
@@ -5570,7 +5697,7 @@ async fn run_validator_node(
                                                 // ).await?;
                                             }
                                         }
-                                        
+
                                         // Detect if this validator is broadcasting conflicting state
                                         let validator_id_str = hex::encode(&validator_id[..8.min(validator_id.len())]);
                                         if let Err(e) = validator.detect_byzantine_fault(
@@ -5578,9 +5705,9 @@ async fn run_validator_node(
                                             &validator_id_str,
                                             &block_hash
                                         ) {
-                                            error!("⚠️  Byzantine fault from validator {}: {}", 
+                                            error!("⚠️  Byzantine fault from validator {}: {}",
                                                 hex::encode(&validator_id[..4.min(validator_id.len())]), e);
-                                            
+
                                             // In production: Submit slashing transaction
                                             // let slashing_tx = create_slashing_transaction(
                                             //     &validator_id,
@@ -5588,27 +5715,27 @@ async fn run_validator_node(
                                             //     format!("Byzantine fault: {}", e)
                                             // );
                                             // staking_manager.submit_slashing(slashing_tx).await?;
-                                            
+
                                             // Reject this block - do not acknowledge
                                             warn!("   Block rejected due to Byzantine behavior");
                                             continue;
                                         }
-                                        
+
                                         // Cleanup old state roots (keep last 1000 blocks)
                                         if height > 1000 {
                                             validator.cleanup_old_roots(height, 1000);
                                         }
                                     }
-                                    
+
                                     info!("✓ Block #{} passed Byzantine fault check", height);
-                                    
+
                                     // Create and sign acknowledgment
                                     let our_validator_id = validator_public_key_bytes_clone.to_vec();
                                     let ack_signature_result = {
                                         let validator_key = validator_key_arc_clone2.lock().await;
                                         validator_key.sign_async(&block_hash).await
                                     };
-                                    
+
                                     let ack_signature = match ack_signature_result {
                                         Ok(sig) => sig,
                                         Err(e) => {
@@ -5616,14 +5743,14 @@ async fn run_validator_node(
                                             continue;
                                         }
                                     };
-                                    
+
                                     let ack_message = DchatMessage::BlockAcknowledgment {
                                         block_height: height,
                                         block_hash: block_hash.clone(),
                                         validator_id: our_validator_id,
                                         signature: ack_signature.to_bytes().to_vec(),
                                     };
-                                    
+
                                     // Broadcast acknowledgment
                                     let mut net = network_arc_clone.lock().await;
                                     match net.broadcast_validator_block(&ack_message) {
@@ -5635,22 +5762,22 @@ async fn run_validator_node(
                                         }
                                     }
                                 }
-                                
+
                                 DchatMessage::BlockAcknowledgment {
                                     block_height,
                                     block_hash,
                                     validator_id,
                                     signature,
                                 } => {
-                                    info!("📨 Received acknowledgment for block #{} from {}", 
+                                    info!("📨 Received acknowledgment for block #{} from {}",
                                         block_height, hex::encode(&validator_id[..4]));
-                                    
+
                                     // Verify acknowledgment signature
                                     if validator_id.len() != 32 || signature.len() != 64 {
                                         warn!("⚠️  Invalid acknowledgment format");
                                         continue;
                                     }
-                                    
+
                                     let validator_id_bytes: [u8; 32] = match validator_id.clone().try_into() {
                                         Ok(bytes) => bytes,
                                         Err(_) => {
@@ -5658,7 +5785,7 @@ async fn run_validator_node(
                                             continue;
                                         }
                                     };
-                                    
+
                                     let verifying_key = match ed25519_dalek::VerifyingKey::from_bytes(&validator_id_bytes) {
                                         Ok(key) => key,
                                         Err(e) => {
@@ -5666,7 +5793,7 @@ async fn run_validator_node(
                                             continue;
                                         }
                                     };
-                                    
+
                                     let sig_bytes: [u8; 64] = match signature.clone().try_into() {
                                         Ok(bytes) => bytes,
                                         Err(_) => {
@@ -5675,29 +5802,29 @@ async fn run_validator_node(
                                         }
                                     };
                                     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                                    
+
                                     use ed25519_dalek::Verifier;
                                     if let Err(e) = verifying_key.verify(&block_hash, &sig) {
                                         warn!("⚠️  Acknowledgment signature verification FAILED: {}", e);
                                         continue;
                                     }
-                                    
+
                                     // Store valid acknowledgment
                                     let mut acks = block_acks_clone.lock().await;
                                     acks.entry(block_height)
                                         .or_insert_with(HashMap::new)
                                         .insert(validator_id.clone(), signature.clone());
-                                    
+
                                     let ack_count = acks.get(&block_height).map(|m| m.len()).unwrap_or(0);
-                                    info!("✓ Acknowledgment verified for block #{} ({} total acks)", 
+                                    info!("✓ Acknowledgment verified for block #{} ({} total acks)",
                                         block_height, ack_count);
-                                    
+
                                     // Cleanup old acknowledgments (keep last 100 blocks)
                                     if block_height > 100 {
                                         acks.remove(&(block_height - 100));
                                     }
                                 }
-                                
+
                                 _ => {
                                     // Other message types handled elsewhere
                                 }
@@ -5731,7 +5858,7 @@ async fn run_validator_node(
 
     // Unstake tokens from chain
     info!("Initiating unstaking process...");
-    
+
     // PRODUCTION: Submit unstaking request
     match staking_manager_clone
         .submit_validator_unstake(
@@ -5749,16 +5876,18 @@ async fn run_validator_node(
             warn!("Failed to submit unstake (continuing shutdown): {}", e);
         }
     }
-    
+
     info!("✓ Validator shutdown initiated (unstaking in progress)");
     // Close database connections gracefully
     info!("Closing database connections...");
     // Database closes automatically on drop
     drop(database);
-    Ok::<(), Error>(()).map_err(|e| {
-        warn!("Database shutdown warning: {}", e);
-        e
-    }).ok();
+    Ok::<(), Error>(())
+        .map_err(|e| {
+            warn!("Database shutdown warning: {}", e);
+            e
+        })
+        .ok();
     info!("✓ Database closed successfully");
 
     // Wait for tasks to complete
@@ -5857,7 +5986,7 @@ async fn load_validator_key(path: &PathBuf) -> Result<KeyPair> {
 /// Load identity from file (auto-detects encrypted vs plaintext)
 async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
     let contents = tokio::fs::read(path).await.map_err(Error::Io)?;
-    
+
     // Try to parse as JSON (plaintext) first
     if let Ok(json_str) = std::str::from_utf8(&contents) {
         if let Ok(identity) = serde_json::from_str::<Identity>(json_str) {
@@ -5865,7 +5994,7 @@ async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
             return Ok(identity);
         }
     }
-    
+
     // Try to load as encrypted data
     load_identity_encrypted(path, None).await
 }
@@ -5873,30 +6002,30 @@ async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
 /// Load encrypted identity with password prompt
 async fn load_identity_encrypted(path: &PathBuf, password: Option<String>) -> Result<Identity> {
     use dchat_crypto::{decrypt_with_password, EncryptedData};
-    
+
     let encrypted_bytes = tokio::fs::read(path).await.map_err(Error::Io)?;
-    
+
     // Deserialize encrypted data
     let encrypted = EncryptedData::from_bytes(&encrypted_bytes)
         .map_err(|e| Error::crypto(format!("Invalid encrypted file format: {}", e)))?;
-    
+
     // Get password
     let password = match password {
         Some(p) => p,
         None => prompt_password("Enter password to decrypt identity: ")?,
     };
-    
+
     // Decrypt
     let decrypted = decrypt_with_password(&password, &encrypted)
         .map_err(|e| Error::crypto(format!("Decryption failed: {}", e)))?;
-    
+
     // Parse JSON identity
     let json_str = std::str::from_utf8(&decrypted)
         .map_err(|e| Error::crypto(format!("Invalid UTF-8 after decryption: {}", e)))?;
-    
+
     let identity: Identity = serde_json::from_str(json_str)
         .map_err(|e| Error::crypto(format!("Invalid identity JSON: {}", e)))?;
-    
+
     info!("✓ Loaded encrypted identity: {}", identity.user_id);
     Ok(identity)
 }
@@ -5905,9 +6034,9 @@ async fn load_identity_encrypted(path: &PathBuf, password: Option<String>) -> Re
 async fn save_identity_plaintext(path: &Path, identity: &Identity) -> Result<()> {
     let json = serde_json::to_string_pretty(identity)
         .map_err(|e| Error::crypto(format!("Serialization failed: {}", e)))?;
-    
+
     tokio::fs::write(path, json).await.map_err(Error::Io)?;
-    
+
     // Set restrictive permissions on Unix
     #[cfg(unix)]
     {
@@ -5915,9 +6044,11 @@ async fn save_identity_plaintext(path: &Path, identity: &Identity) -> Result<()>
         let metadata = tokio::fs::metadata(path).await.map_err(Error::Io)?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o600);
-        tokio::fs::set_permissions(path, permissions).await.map_err(Error::Io)?;
+        tokio::fs::set_permissions(path, permissions)
+            .await
+            .map_err(Error::Io)?;
     }
-    
+
     info!("✓ Identity saved as plaintext to {:?}", path);
     Ok(())
 }
@@ -6112,7 +6243,7 @@ async fn generate_keys(output: PathBuf, burner: bool, plaintext: bool) -> Result
         let keypair = KeyPair::generate();
         let identity = Identity::new("user".to_string(), &keypair);
         info!("✓ Identity created: {}", identity.user_id);
-        
+
         // Display public key for reference
         let public_key_hex = hex::encode(keypair.public_key().as_bytes());
         info!("📋 Public key: {}", public_key_hex);
@@ -6125,15 +6256,17 @@ async fn generate_keys(output: PathBuf, burner: bool, plaintext: bool) -> Result
             // Prompt for password and encrypt
             let password = prompt_password("Enter password to encrypt identity: ")?;
             let confirm = prompt_password("Confirm password: ")?;
-            
+
             if password != confirm {
                 return Err(Error::crypto("Passwords do not match".to_string()));
             }
-            
+
             if password.len() < 8 {
-                return Err(Error::crypto("Password must be at least 8 characters".to_string()));
+                return Err(Error::crypto(
+                    "Password must be at least 8 characters".to_string(),
+                ));
             }
-            
+
             save_identity_encrypted(&output, &identity, &password).await?;
         }
     }
@@ -6250,45 +6383,45 @@ async fn run_database_command(config: Config, action: DatabaseCommand) -> Result
 
             // Production: Use SQLite backup API for consistent snapshot
             info!("Creating database backup...");
-            
+
             // Backup database using SQLite backup API
             use std::fs;
-            
+
             // Ensure output directory exists
             if let Some(parent) = output.parent() {
                 fs::create_dir_all(parent)?;
             }
-            
+
             // Perform database backup using BackupManager
             let backup_manager = BackupManager::new(
                 config.storage.data_dir.join("backups"),
                 10, // Keep 10 backups
             );
-            
+
             // Generate encryption key from node's identity key
             // In production, this should derive from a user-provided passphrase or KMS
             let key_hash = blake3::hash(b"dchat-database-backup-key-v1");
             let encryption_key: [u8; 32] = *key_hash.as_bytes();
-            
+
             // Read database file
             let db_path = config.storage.data_dir.join("dchat.db");
             let db_data = tokio::fs::read(&db_path)
                 .await
                 .map_err(|e| Error::storage(format!("Failed to read database file: {}", e)))?;
-            
+
             info!("Database size: {} bytes", db_data.len());
-            
+
             // Create encrypted backup
             let backup_path = backup_manager
                 .create_backup("node".to_string(), db_data, &encryption_key)
                 .await
                 .map_err(|e| Error::storage(format!("Backup creation failed: {}", e)))?;
-            
+
             // Copy backup to requested output location
             tokio::fs::copy(&backup_path, &output)
                 .await
                 .map_err(|e| Error::storage(format!("Failed to copy backup to output: {}", e)))?;
-            
+
             let file_size = fs::metadata(&output)?.len();
             info!("✓ Database backed up to {:?} ({} bytes)", output, file_size);
 
@@ -6315,10 +6448,7 @@ async fn run_database_command(config: Config, action: DatabaseCommand) -> Result
             // Production: Use BackupManager to decrypt and restore
             info!("Decrypting and restoring database from encrypted backup...");
 
-            let backup_manager = BackupManager::new(
-                config.storage.data_dir.join("backups"),
-                10,
-            );
+            let backup_manager = BackupManager::new(config.storage.data_dir.join("backups"), 10);
 
             // Generate encryption key (same as backup)
             let key_hash = blake3::hash(b"dchat-database-backup-key-v1");
@@ -6416,18 +6546,19 @@ async fn perform_peer_handshake(
     // Serialize handshake to JSON for transmission
     let handshake_bytes = serde_json::to_vec(&handshake)
         .map_err(|e| Error::crypto(format!("Failed to serialize handshake: {}", e)))?;
-    
+
     debug!(
         "Sending handshake to {} with {} known peers ({} bytes)",
         peer_id,
         handshake.known_peers.len(),
         handshake_bytes.len()
     );
-    
+
     // Use dchat network manager to send handshake
-    network.send_handshake(peer_id, handshake_bytes)
+    network
+        .send_handshake(peer_id, handshake_bytes)
         .map_err(|e| Error::network(format!("Failed to send handshake: {}", e)))?;
-    
+
     info!("✓ Handshake sent to {} successfully", peer_id);
     Ok(())
 }
@@ -6460,7 +6591,11 @@ pub async fn handle_peer_handshake(
             .first()
             .cloned()
             // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-            .unwrap_or_else(|| FALLBACK_LISTEN_ADDR.parse().expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")),
+            .unwrap_or_else(|| {
+                FALLBACK_LISTEN_ADDR
+                    .parse()
+                    .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+            }),
         node_type: match handshake.node_type.as_str() {
             "validator" => NodeType::Validator,
             "relay" => NodeType::Relay,
@@ -6643,7 +6778,7 @@ async fn run_peer_health_monitor(
                     for (region, count) in &region_map {
                         info!("   {} = {} peers", region, count);
                     }
-                    
+
                     // Check if we have geographic diversity (mainnet requirement)
                     if region_map.len() < 2 {
                         warn!("⚠️  Low geographic diversity: only {} region(s) represented", region_map.len());
@@ -6709,7 +6844,7 @@ async fn run_peer_list_sync(
                     // Create channel message for peer discovery
                     // Use peer_id as the sender identity for peer discovery
                     let sender_id = UserId::new(); // Generate new UserId for peer discovery
-                    
+
                     let dchat_msg = DchatMessage::ChannelMessage {
                         sender: sender_id,
                         channel_id: PEER_DISCOVERY_CHANNEL.to_string(),
@@ -7254,41 +7389,41 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                 String::from("free-listing")
             } else {
                 info!("Processing payment of {} tokens...", price);
-                
+
                 // Initialize currency chain client
                 let currency_chain = CurrencyChainClient::new(CurrencyChainConfig::default())?;
 
                 // Check buyer balance before transfer
                 let buyer_balance = currency_chain.get_balance(&buyer)?;
-                
+
                 if buyer_balance < price {
                     return Err(Error::validation(format!(
                         "Insufficient balance: has {} tokens, needs {} tokens",
                         buyer_balance, price
                     )));
                 }
-                
+
                 info!("✓ Buyer has sufficient balance ({} tokens)", buyer_balance);
 
                 // Execute payment transaction using the saved creator
                 let hash = currency_chain.transfer(&buyer, &listing_creator, price)?;
-                
+
                 info!("✓ Payment transaction submitted (tx: {})", hash);
 
                 // Wait for blockchain confirmation
                 info!("Waiting for transaction confirmation (tx: {})...", hash);
-                
+
                 // Track confirmations asynchronously
                 let mut confirmations = 0u32;
                 const REQUIRED_CONFIRMATIONS: u32 = 3;
                 const POLL_INTERVAL_MS: u64 = 2000;
                 const MAX_POLL_ATTEMPTS: u32 = 150; // 5 minutes at 2 second intervals
                 let mut poll_attempts = 0u32;
-                
+
                 while confirmations < REQUIRED_CONFIRMATIONS && poll_attempts < MAX_POLL_ATTEMPTS {
                     tokio::time::sleep(tokio::time::Duration::from_millis(POLL_INTERVAL_MS)).await;
                     poll_attempts += 1;
-                    
+
                     // Check transaction status by verifying it exists in chain
                     // In a real implementation, this would compare tx block height vs current height
                     if let Ok(Some(_tx)) = currency_chain.get_transaction(&hash) {
@@ -7296,31 +7431,32 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                         let current_block = currency_chain.get_current_block();
                         let tx_block = 1u64; // Assume tx was included in first block after submission
                         confirmations = (current_block.saturating_sub(tx_block)) as u32;
-                        
+
                         if confirmations > 0 {
                             info!(
-                                "Transaction confirmations: {}/{}", 
-                                confirmations, 
-                                REQUIRED_CONFIRMATIONS
+                                "Transaction confirmations: {}/{}",
+                                confirmations, REQUIRED_CONFIRMATIONS
                             );
                         }
                     }
                 }
-                
+
                 if confirmations < REQUIRED_CONFIRMATIONS {
                     return Err(Error::network(format!(
-                        "Transaction not confirmed after timeout (tx: {})", 
+                        "Transaction not confirmed after timeout (tx: {})",
                         hash
                     )));
                 }
-                
-                info!("✓ Payment verified on-chain with {} confirmations (tx: {})", confirmations, hash);
+
+                info!(
+                    "✓ Payment verified on-chain with {} confirmations (tx: {})",
+                    confirmations, hash
+                );
                 hash.to_string()
             };
 
             // Complete purchase with verified transaction - use earlier listing variables
-            let purchase_id =
-                marketplace.purchase(buyer, listing_uuid, price, tx_hash.clone())?;
+            let purchase_id = marketplace.purchase(buyer, listing_uuid, price, tx_hash.clone())?;
 
             println!("\n✅ Purchase successful!");
             println!("Purchase ID: {}", purchase_id);
@@ -7364,7 +7500,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
 
             // PRODUCTION: Listing validation would go here if listing_id parameter was added
             // For now, creating escrow with just buyer, seller, and amount
-            
+
             let lock_duration_secs = 30 * 24 * 60 * 60; // 30 days in seconds
 
             let escrow_id = marketplace
@@ -7919,29 +8055,27 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
     // PRODUCTION: Load upgrade manager state from database
     // This ensures proposals, votes, and upgrade status persist across restarts
     info!("Loading upgrade manager state from database...");
-    
+
     let db_path = PathBuf::from("./data/governance.db");
     std::fs::create_dir_all("./data").ok();
-    
+
     let mut manager = if db_path.exists() {
         // Load upgrade manager state from JSON file
         info!("Loading upgrade manager state from {}", db_path.display());
         match tokio::fs::read_to_string(&db_path).await {
-            Ok(json_data) => {
-                match serde_json::from_str::<UpgradeManager>(&json_data) {
-                    Ok(mgr) => {
-                        info!("✓ Loaded upgrade manager from database");
-                        info!("  Current version: {}", mgr.current_version());
-                        info!("  Active proposals: {}", mgr.get_active_proposals().len());
-                        mgr
-                    }
-                    Err(e) => {
-                        warn!("Failed to deserialize upgrade manager: {}", e);
-                        info!("Creating new upgrade manager instance");
-                        UpgradeManager::new()
-                    }
+            Ok(json_data) => match serde_json::from_str::<UpgradeManager>(&json_data) {
+                Ok(mgr) => {
+                    info!("✓ Loaded upgrade manager from database");
+                    info!("  Current version: {}", mgr.current_version());
+                    info!("  Active proposals: {}", mgr.get_active_proposals().len());
+                    mgr
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to deserialize upgrade manager: {}", e);
+                    info!("Creating new upgrade manager instance");
+                    UpgradeManager::new()
+                }
+            },
             Err(e) => {
                 warn!("Failed to read upgrade manager from database: {}", e);
                 info!("Creating new upgrade manager instance");
@@ -7952,7 +8086,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
         info!("No existing governance database, creating new upgrade manager");
         UpgradeManager::new()
     };
-    
+
     // Helper function to persist manager state
     let persist_manager = |mgr: &UpgradeManager| -> Result<()> {
         let json_data = serde_json::to_string_pretty(mgr)
@@ -7987,7 +8121,8 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                 "security-patch" => UpgradeType::SecurityPatch,
                 name if name.starts_with("feature-toggle:") => {
                     // Safe: condition above guarantees prefix exists
-                    let feature = name.strip_prefix("feature-toggle:")
+                    let feature = name
+                        .strip_prefix("feature-toggle:")
                         .expect("prefix verified by starts_with check")
                         .to_string();
                     UpgradeType::FeatureToggle { feature }
@@ -8020,7 +8155,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
             }
 
             let proposal_id = manager.submit_proposal(proposal)?;
-            
+
             // Persist state after modification
             persist_manager(&manager)?;
 
@@ -8204,14 +8339,17 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                 .ok_or_else(|| Error::NotFound("Proposal not found".to_string()))?;
 
             // Create proposal commitment hash for signing
-            use sha2::{Sha256, Digest};
+            use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(proposal.id.as_bytes());
             hasher.update(proposal.id.as_bytes()); // Use id instead of version_number
             hasher.update(proposal.description.as_bytes());
             let commitment = hasher.finalize().to_vec();
-            
-            info!("✓ Proposal commitment created (hash: {})", hex::encode(&commitment));
+
+            info!(
+                "✓ Proposal commitment created (hash: {})",
+                hex::encode(&commitment)
+            );
 
             // Sign with validator key using Ed25519
             use dchat_crypto::signatures::SigningKey;
@@ -8227,13 +8365,18 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
             };
 
             // Add signature to proposal
-            manager.add_validator_signature(&id, sig)
-                .map_err(|e| Error::validation(format!("Failed to add validator signature: {}", e)))?;
-            
+            manager.add_validator_signature(&id, sig).map_err(|e| {
+                Error::validation(format!("Failed to add validator signature: {}", e))
+            })?;
+
             // Persist state after modification
             persist_manager(&manager)?;
-            
-            info!("✓ Validator signature recorded for proposal {} (sig: {})", id, hex::encode(&signature.to_bytes()[..8]));
+
+            info!(
+                "✓ Validator signature recorded for proposal {} (sig: {})",
+                id,
+                hex::encode(&signature.to_bytes()[..8])
+            );
 
             println!("✅ Validator signature added!");
 
@@ -8297,7 +8440,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
 
             // Use existing manager
             manager.activate_upgrade(id, current_height)?;
-            
+
             // Persist state after modification
             persist_manager(&manager)?;
 
@@ -8432,13 +8575,13 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
     use dchat::blockchain::{
         BurnReason, MintReason, RecipientType, TokenSupplyConfig, TokenomicsManager,
     };
-    use std::sync::Mutex;
     use std::path::PathBuf;
+    use std::sync::Mutex;
 
     // Production: Load tokenomics state from database for persistent supply tracking
     let tokenomics_db_path = PathBuf::from("./data/tokenomics.db");
     std::fs::create_dir_all("./data").ok();
-    
+
     // Initialize database for tokenomics tracking
     let db_config = DatabaseConfig {
         path: tokenomics_db_path,
@@ -8449,7 +8592,7 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
         enable_wal: true,
     };
     let _tokenomics_db = Database::new(db_config).await?;
-    
+
     let config = TokenSupplyConfig::default();
     let tokenomics_inner = Arc::new(TokenomicsManager::new(config));
     let tokenomics = Arc::new(Mutex::new(tokenomics_inner.clone()));
@@ -8813,7 +8956,9 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
         }
 
         TokenCommand::Transfer { from, to, amount } => {
-            let currency_client = currency_client.lock().expect("currency_client mutex poisoned");
+            let currency_client = currency_client
+                .lock()
+                .expect("currency_client mutex poisoned");
 
             let from_id = UserId(
                 Uuid::parse_str(&from).map_err(|_| Error::validation("Invalid from user ID"))?,
@@ -8824,11 +8969,13 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
             // Ensure wallets exist
             // Wallet creation handled internally by currency chain
             if false { // Placeholder check
-                // Wallet auto-created
+                 // Wallet auto-created
             }
 
             // Currency client operations - unwrap Result from MutexGuard
-            let client = currency_client.as_ref().map_err(|e| Error::chain(format!("Currency client error: {}", e)))?;
+            let client = currency_client
+                .as_ref()
+                .map_err(|e| Error::chain(format!("Currency client error: {}", e)))?;
             let tx_id = client.transfer(&from_id, &to_id, amount)?;
 
             println!("\n💸 Transfer Completed");
@@ -8847,15 +8994,18 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
         }
 
         TokenCommand::Balance { user_id } => {
-            let currency_client = currency_client.lock().expect("currency_client mutex poisoned");
+            let currency_client = currency_client
+                .lock()
+                .expect("currency_client mutex poisoned");
 
             let id = UserId(
                 Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
             );
 
-            let client = currency_client.as_ref()
+            let client = currency_client
+                .as_ref()
                 .map_err(|e| Error::chain(format!("Currency client error: {}", e)))?;
-            
+
             let wallet = client
                 .get_wallet(&id)?
                 .ok_or_else(|| Error::NotFound("Wallet not found".to_string()))?;
@@ -8889,7 +9039,18 @@ fn format_tokens(amount: u64) -> String {
         result.push(c);
     }
 
-    format!("{} tokens", result)
+    result
+}
+
+/// Truncate a string to fit within max_len characters, adding ellipsis if needed
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len <= 3 {
+        s.chars().take(max_len).collect()
+    } else {
+        format!("{}...", s.chars().take(max_len - 3).collect::<String>())
+    }
 }
 
 /// Update distribution command handler
@@ -9145,21 +9306,28 @@ async fn run_update_command(action: UpdateCommand) -> Result<()> {
 
 /// Network and peer management command handler
 async fn run_network_command(config: Config, action: NetworkCommand) -> Result<()> {
-    use dchat_network::{NetworkConfig, NetworkManager, PeerId, Multiaddr};
+    use dchat_network::{Multiaddr, NetworkConfig, NetworkManager, PeerId};
 
     match action {
         NetworkCommand::Status => {
             println!("\n📡 Network Status:");
             println!("══════════════════════════════════════════════════════════");
-            
+
             // Initialize network to get status
             let network_config = NetworkConfig::default();
             let network = NetworkManager::new(network_config).await?;
             let peer_id = network.peer_id();
-            
+
             println!("Local Peer ID: {}", peer_id);
             println!("Protocol Version: {}", VERSION);
-            println!("Network: {}", if config.network.enable_mdns { "testnet (mDNS enabled)" } else { "mainnet" });
+            println!(
+                "Network: {}",
+                if config.network.enable_mdns {
+                    "testnet (mDNS enabled)"
+                } else {
+                    "mainnet"
+                }
+            );
             println!();
             println!("Listen Addresses:");
             for addr in &config.network.listen_addresses {
@@ -9168,7 +9336,10 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             println!();
             println!("Bootstrap Peers: {}", config.network.bootstrap_peers.len());
             println!("Max Connections: {}", config.network.max_connections);
-            println!("Connection Timeout: {}ms", config.network.connection_timeout_ms);
+            println!(
+                "Connection Timeout: {}ms",
+                config.network.connection_timeout_ms
+            );
             println!();
             println!("✅ Network ready for connections");
 
@@ -9208,8 +9379,14 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
                     }
                 }
 
-                println!("{:<20} {:<50} {:>10}", ptype, 
-                    if peer_addr.len() > 48 { format!("{}...", &peer_addr[..45]) } else { peer_addr.clone() },
+                println!(
+                    "{:<20} {:<50} {:>10}",
+                    ptype,
+                    if peer_addr.len() > 48 {
+                        format!("{}...", &peer_addr[..45])
+                    } else {
+                        peer_addr.clone()
+                    },
                     format!("{:.0}%", 80.0 + (i as f64 * 2.0).min(20.0))
                 );
             }
@@ -9221,7 +9398,8 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             println!("🔗 Connecting to peer: {}", multiaddr);
 
             // Validate multiaddr format
-            let addr: Multiaddr = multiaddr.parse()
+            let addr: Multiaddr = multiaddr
+                .parse()
                 .map_err(|e| Error::validation(format!("Invalid multiaddr: {}", e)))?;
 
             // In production, this would actually dial the peer
@@ -9235,7 +9413,8 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             println!("👋 Disconnecting from peer: {}", peer_id);
 
             // Validate peer ID format
-            let _pid: PeerId = peer_id.parse()
+            let _pid: PeerId = peer_id
+                .parse()
                 .map_err(|e| Error::validation(format!("Invalid peer ID: {}", e)))?;
 
             // In production, this would disconnect from the peer
@@ -9244,10 +9423,15 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             Ok(())
         }
 
-        NetworkCommand::Ban { peer_id, duration_hours, reason } => {
+        NetworkCommand::Ban {
+            peer_id,
+            duration_hours,
+            reason,
+        } => {
             println!("🚫 Banning peer: {}", peer_id);
 
-            let _pid: PeerId = peer_id.parse()
+            let _pid: PeerId = peer_id
+                .parse()
                 .map_err(|e| Error::validation(format!("Invalid peer ID: {}", e)))?;
 
             let duration_str = if duration_hours == 0 {
@@ -9271,7 +9455,8 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
         NetworkCommand::Unban { peer_id } => {
             println!("✅ Unbanning peer: {}", peer_id);
 
-            let _pid: PeerId = peer_id.parse()
+            let _pid: PeerId = peer_id
+                .parse()
                 .map_err(|e| Error::validation(format!("Invalid peer ID: {}", e)))?;
 
             // In production, this would remove from ban list
@@ -9333,29 +9518,78 @@ async fn run_wallet_command(_config: Config, action: WalletCommand) -> Result<()
         }
 
         WalletCommand::Balance { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n💰 Wallet Balance:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
             println!();
 
-            // In production, this would query the blockchain
-            println!("Available Balance: 0 DCHAT");
-            println!("Staked Balance:    0 DCHAT");
-            println!("Pending Rewards:   0 DCHAT");
-            println!("──────────────────────────");
-            println!("Total Assets:      0 DCHAT");
+            // Query blockchain for wallet balance
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    // Query wallet from blockchain
+                    match currency_chain.get_wallet(&uid) {
+                        Ok(Some(wallet)) => {
+                            println!("Available Balance: {} DCHAT", format_tokens(wallet.balance));
+                            println!("Staked Balance:    {} DCHAT", format_tokens(wallet.staked));
+                            println!(
+                                "Pending Rewards:   {} DCHAT",
+                                format_tokens(wallet.rewards_pending)
+                            );
+                            println!("──────────────────────────");
+                            let total = wallet.balance + wallet.staked + wallet.rewards_pending;
+                            println!("Total Assets:      {} DCHAT", format_tokens(total));
+                        }
+                        Ok(None) => {
+                            println!("Available Balance: 0 DCHAT");
+                            println!("Staked Balance:    0 DCHAT");
+                            println!("Pending Rewards:   0 DCHAT");
+                            println!("──────────────────────────");
+                            println!("Total Assets:      0 DCHAT");
+                            println!();
+                            println!("💡 Wallet not found. Create one with: dchat wallet create");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to query wallet from chain: {}", e);
+                            println!("⚠️  Unable to query blockchain: {}", e);
+                            println!();
+                            println!("Check that DCHAT_CURRENCY_RPC_URL is set correctly.");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                    println!();
+                    println!("Set DCHAT_CURRENCY_RPC_URL environment variable to configure.");
+                }
+            }
+
             println!();
             println!("💡 Earn tokens by running a relay node or staking!");
 
             Ok(())
         }
 
-        WalletCommand::Export { user_id, output, password } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+        WalletCommand::Export {
+            user_id,
+            output,
+            password,
+        } => {
+            let _uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             // Get password if not provided
             let pass = match password {
@@ -9426,12 +9660,16 @@ async fn run_wallet_command(_config: Config, action: WalletCommand) -> Result<()
         }
 
         WalletCommand::History { user_id, limit } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let _uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n📜 Transaction History (last {}):", limit);
             println!("══════════════════════════════════════════════════════════");
-            println!("{:<24} {:<12} {:>15} {:<20}", "Date", "Type", "Amount", "Status");
+            println!(
+                "{:<24} {:<12} {:>15} {:<20}",
+                "Date", "Type", "Amount", "Status"
+            );
             println!("{}", "-".repeat(75));
 
             // In production, this would query the blockchain
@@ -9443,11 +9681,15 @@ async fn run_wallet_command(_config: Config, action: WalletCommand) -> Result<()
         }
 
         WalletCommand::NewAddress { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let _uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             // Generate new receiving address (derived from user's key)
-            let address = format!("dchat1{}", &Uuid::new_v4().to_string().replace("-", "")[..32]);
+            let address = format!(
+                "dchat1{}",
+                &Uuid::new_v4().to_string().replace("-", "")[..32]
+            );
 
             println!("\n📫 New Receiving Address:");
             println!("══════════════════════════════════════════════════════════");
@@ -9468,9 +9710,14 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
     let _staking_manager = StakingManager::new();
 
     match action {
-        StakingCommand::Stake { user_id, amount, duration_days } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+        StakingCommand::Stake {
+            user_id,
+            amount,
+            duration_days,
+        } => {
+            let _uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n💎 Staking Tokens:");
             println!("══════════════════════════════════════════════════════════");
@@ -9491,21 +9738,32 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
             println!();
             println!("✅ Stake submitted successfully!");
             println!("   Expected APY: ~12%");
-            println!("   Unlock Date: {}", chrono::Utc::now() + chrono::Duration::days(duration_days as i64));
+            println!(
+                "   Unlock Date: {}",
+                chrono::Utc::now() + chrono::Duration::days(duration_days as i64)
+            );
             println!();
-            println!("Check status with: dchat staking status --user-id {}", user_id);
+            println!(
+                "Check status with: dchat staking status --user-id {}",
+                user_id
+            );
 
             Ok(())
         }
 
         StakingCommand::Unstake { user_id, amount } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let _uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n🔓 Unstaking Tokens:");
             println!("══════════════════════════════════════════════════════════");
-            
-            let amount_str = if amount == 0 { "ALL".to_string() } else { format_tokens(amount) };
+
+            let amount_str = if amount == 0 {
+                "ALL".to_string()
+            } else {
+                format_tokens(amount)
+            };
             println!("User ID: {}", user_id);
             println!("Amount: {}", amount_str);
             println!();
@@ -9514,32 +9772,98 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
 
             // In production, this would initiate unbonding
             println!("✅ Unstake request submitted!");
-            println!("   Funds will be available: {}", 
-                (chrono::Utc::now() + chrono::Duration::days(21)).format("%Y-%m-%d"));
+            println!(
+                "   Funds will be available: {}",
+                (chrono::Utc::now() + chrono::Duration::days(21)).format("%Y-%m-%d")
+            );
 
             Ok(())
         }
 
         StakingCommand::Status { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n📊 Staking Status:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
             println!();
-            
-            // In production, this would query the staking contract
-            println!("Active Stakes:");
-            println!("  (none)");
+
+            // Query blockchain for staking status
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    // Query wallet for staking info
+                    match currency_chain.get_wallet(&uid) {
+                        Ok(Some(wallet)) => {
+                            println!("Active Stakes:");
+                            if wallet.staked > 0 {
+                                println!("  💎 {} DCHAT staked", format_tokens(wallet.staked));
+                            } else {
+                                println!("  (none)");
+                            }
+                            println!();
+
+                            // Query unbonding queue
+                            let unbonding_records = currency_chain.get_unbonding_records(&uid);
+                            println!("Unbonding:");
+                            if unbonding_records.is_empty() {
+                                println!("  (none)");
+                            } else {
+                                for record in &unbonding_records {
+                                    let available_time =
+                                        chrono::DateTime::from_timestamp(record.available_at, 0)
+                                            .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                                            .unwrap_or_else(|| "unknown".to_string());
+                                    println!(
+                                        "  ⏳ {} DCHAT (available {})",
+                                        format_tokens(record.amount),
+                                        available_time
+                                    );
+                                }
+                            }
+                            println!();
+                            println!("Total Staked: {} DCHAT", format_tokens(wallet.staked));
+                            println!(
+                                "Pending Rewards: {} DCHAT",
+                                format_tokens(wallet.rewards_pending)
+                            );
+                        }
+                        Ok(None) => {
+                            println!("Active Stakes:");
+                            println!("  (none)");
+                            println!();
+                            println!("Unbonding:");
+                            println!("  (none)");
+                            println!();
+                            println!("Total Staked: 0 DCHAT");
+                            println!("Pending Rewards: 0 DCHAT");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to query staking from chain: {}", e);
+                            println!("⚠️  Unable to query blockchain: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
+
             println!();
-            println!("Unbonding:");
-            println!("  (none)");
-            println!();
-            println!("Total Staked: 0 DCHAT");
-            println!("Pending Rewards: 0 DCHAT");
-            println!();
-            println!("💡 Stake tokens with: dchat staking stake --user-id {} --amount <AMOUNT>", user_id);
+            println!(
+                "💡 Stake tokens with: dchat staking stake --user-id {} --amount <AMOUNT>",
+                user_id
+            );
 
             Ok(())
         }
@@ -9547,55 +9871,175 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
         StakingCommand::Validators => {
             println!("\n✅ Active Validators:");
             println!("══════════════════════════════════════════════════════════");
-            println!("{:<20} {:>15} {:>10} {:>15}", "Validator", "Stake", "APY", "Commission");
+            println!(
+                "{:<20} {:>15} {:>10} {:>15}",
+                "Validator", "Stake", "APY", "Commission"
+            );
             println!("{}", "-".repeat(65));
 
-            // In production, this would query the validator set
-            println!("validator1.dchat     100,000 DCHAT     12.0%          5.0%");
-            println!("validator2.dchat      75,000 DCHAT     11.5%          5.0%");
-            println!("validator3.dchat      50,000 DCHAT     11.0%          5.0%");
-            println!();
-            println!("Total validators: 3");
-            println!("Total staked: 225,000 DCHAT");
+            // Query validator set from blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => match currency_chain.get_validators() {
+                    Ok(validators) => {
+                        let mut total_stake = 0u64;
+                        for validator in &validators {
+                            let apy_display = format!("{:.1}%", validator.apy_estimate);
+                            let commission_display = format!("{:.1}%", validator.commission_rate);
+                            println!(
+                                "{:<20} {:>12} DCHAT {:>10} {:>15}",
+                                truncate_str(&validator.name, 18),
+                                format_tokens(validator.total_stake),
+                                apy_display,
+                                commission_display
+                            );
+                            total_stake += validator.total_stake;
+                        }
+                        println!();
+                        println!("Total validators: {}", validators.len());
+                        println!("Total staked: {} DCHAT", format_tokens(total_stake));
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to query validators: {}", e);
+                        println!("⚠️  Unable to query validators: {}", e);
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
-        StakingCommand::Delegate { user_id, validator_id, amount } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+        StakingCommand::Delegate {
+            user_id,
+            validator_id,
+            amount,
+        } => {
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n🤝 Delegating Stake:");
             println!("══════════════════════════════════════════════════════════");
             println!("Delegator: {}", user_id);
             println!("Validator: {}", validator_id);
-            println!("Amount: {}", format_tokens(amount));
+            println!("Amount: {} DCHAT", format_tokens(amount));
 
-            // In production, this would delegate to the validator
-            println!();
-            println!("✅ Delegation successful!");
-            println!("   Your rewards will be distributed based on validator performance.");
+            // Execute delegation via blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    match currency_chain
+                        .delegate_stake(&uid, &validator_id, amount)
+                        .await
+                    {
+                        Ok(tx_hash) => {
+                            println!();
+                            println!("✅ Delegation successful!");
+                            println!("   Transaction: {}", tx_hash);
+                            println!("   Your rewards will be distributed based on validator performance.");
+                        }
+                        Err(e) => {
+                            println!();
+                            println!("❌ Delegation failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
-        StakingCommand::Undelegate { user_id, validator_id, amount } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+        StakingCommand::Undelegate {
+            user_id,
+            validator_id,
+            amount,
+        } => {
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
-            let amount_str = if amount == 0 { "ALL".to_string() } else { format_tokens(amount) };
+            let amount_str = if amount == 0 {
+                "ALL".to_string()
+            } else {
+                format!("{} DCHAT", format_tokens(amount))
+            };
 
             println!("\n🔄 Undelegating Stake:");
             println!("══════════════════════════════════════════════════════════");
             println!("Delegator: {}", user_id);
             println!("Validator: {}", validator_id);
             println!("Amount: {}", amount_str);
-            println!();
-            println!("⏳ Unbonding period: 21 days");
 
-            // In production, this would initiate undelegation
-            println!();
-            println!("✅ Undelegation submitted!");
+            // Execute undelegation via blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    let actual_amount = if amount == 0 {
+                        // Query current delegation to undelegate all
+                        currency_chain
+                            .get_delegation(&uid, &validator_id)
+                            .unwrap_or(0)
+                    } else {
+                        amount
+                    };
+
+                    match currency_chain
+                        .initiate_stake_unbonding(&uid, actual_amount)
+                        .await
+                    {
+                        Ok(unbonding_record) => {
+                            let cooldown_days = unbonding_record.cooldown_seconds / 86400;
+                            println!();
+                            println!("⏳ Unbonding period: {} days", cooldown_days);
+                            println!();
+                            println!("✅ Undelegation submitted!");
+                            println!("   Unbonding ID: {}", unbonding_record.id);
+                            let available_time =
+                                chrono::DateTime::from_timestamp(unbonding_record.available_at, 0)
+                                    .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                            println!("   Available: {}", available_time);
+                        }
+                        Err(e) => {
+                            println!();
+                            println!("❌ Undelegation failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
@@ -9606,107 +10050,384 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
 async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<()> {
     match action {
         RewardsCommand::Claim { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n🎁 Claiming Rewards:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
 
-            // In production, this would claim from the rewards contract
-            println!();
-            println!("Pending Rewards: 0 DCHAT");
-            println!();
-            println!("No rewards to claim at this time.");
-            println!("💡 Earn rewards by staking tokens or running a relay node!");
+            // Claim rewards from blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    // First check pending rewards
+                    match currency_chain.get_wallet(&uid) {
+                        Ok(Some(wallet)) => {
+                            if wallet.rewards_pending == 0 {
+                                println!();
+                                println!("Pending Rewards: 0 DCHAT");
+                                println!();
+                                println!("No rewards to claim at this time.");
+                                println!(
+                                    "💡 Earn rewards by staking tokens or running a relay node!"
+                                );
+                            } else {
+                                println!();
+                                println!(
+                                    "Pending Rewards: {} DCHAT",
+                                    format_tokens(wallet.rewards_pending)
+                                );
+
+                                match currency_chain.claim_rewards(&uid).await {
+                                    Ok(tx_hash) => {
+                                        println!();
+                                        println!("✅ Rewards claimed successfully!");
+                                        println!("   Transaction: {}", tx_hash);
+                                        println!(
+                                            "   Amount: {} DCHAT",
+                                            format_tokens(wallet.rewards_pending)
+                                        );
+                                    }
+                                    Err(e) => {
+                                        println!();
+                                        println!("❌ Failed to claim rewards: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            println!();
+                            println!("Pending Rewards: 0 DCHAT");
+                            println!();
+                            println!("No rewards to claim at this time.");
+                            println!("💡 Earn rewards by staking tokens or running a relay node!");
+                        }
+                        Err(e) => {
+                            println!();
+                            println!("⚠️  Unable to query rewards: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!();
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
         RewardsCommand::History { user_id, limit } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n📜 Reward History (last {}):", limit);
             println!("══════════════════════════════════════════════════════════");
             println!("{:<24} {:<20} {:>15}", "Date", "Type", "Amount");
             println!("{}", "-".repeat(65));
 
-            // In production, this would query reward history
-            println!("No reward history found.");
-            println!();
-            println!("Rewards are distributed:");
-            println!("  • Staking rewards: Every epoch (~24 hours)");
-            println!("  • Relay rewards: Per message delivered");
-            println!("  • Validator rewards: Per block produced");
+            // Query reward history from blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    match currency_chain.get_reward_history(&uid, limit as usize) {
+                        Ok(history) if history.is_empty() => {
+                            println!("No reward history found.");
+                            println!();
+                            println!("Rewards are distributed:");
+                            println!("  • Staking rewards: Every epoch (~24 hours)");
+                            println!("  • Relay rewards: Per message delivered");
+                            println!("  • Validator rewards: Per block produced");
+                        }
+                        Ok(history) => {
+                            for entry in history {
+                                let date = chrono::DateTime::from_timestamp(entry.timestamp, 0)
+                                    .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                println!(
+                                    "{:<24} {:<20} {:>12} DCHAT",
+                                    date,
+                                    entry.reward_type,
+                                    format_tokens(entry.amount)
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to query reward history: {}", e);
+                            println!("⚠️  Unable to query history: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
         RewardsCommand::Pending { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n⏳ Pending Rewards:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
             println!();
 
-            // In production, this would calculate pending rewards
-            println!("Staking Rewards:    0 DCHAT");
-            println!("Relay Rewards:      0 DCHAT");
-            println!("Referral Rewards:   0 DCHAT");
-            println!("──────────────────────────");
-            println!("Total Pending:      0 DCHAT");
-            println!();
-            println!("Claim with: dchat rewards claim --user-id {}", user_id);
+            // Query pending rewards breakdown from blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    match currency_chain.get_pending_rewards_breakdown(&uid) {
+                        Ok(breakdown) => {
+                            println!(
+                                "Staking Rewards:    {} DCHAT",
+                                format_tokens(breakdown.staking_rewards)
+                            );
+                            println!(
+                                "Relay Rewards:      {} DCHAT",
+                                format_tokens(breakdown.relay_rewards)
+                            );
+                            println!(
+                                "Referral Rewards:   {} DCHAT",
+                                format_tokens(breakdown.referral_rewards)
+                            );
+                            println!("──────────────────────────");
+                            let total = breakdown.staking_rewards
+                                + breakdown.relay_rewards
+                                + breakdown.referral_rewards;
+                            println!("Total Pending:      {} DCHAT", format_tokens(total));
+                            println!();
+                            if total > 0 {
+                                println!("Claim with: dchat rewards claim --user-id {}", user_id);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to query pending rewards: {}", e);
+                            // Fallback to wallet query
+                            match currency_chain.get_wallet(&uid) {
+                                Ok(Some(wallet)) => {
+                                    println!(
+                                        "Staking Rewards:    {} DCHAT",
+                                        format_tokens(wallet.rewards_pending)
+                                    );
+                                    println!("Relay Rewards:      0 DCHAT");
+                                    println!("Referral Rewards:   0 DCHAT");
+                                    println!("──────────────────────────");
+                                    println!(
+                                        "Total Pending:      {} DCHAT",
+                                        format_tokens(wallet.rewards_pending)
+                                    );
+                                    println!();
+                                    if wallet.rewards_pending > 0 {
+                                        println!(
+                                            "Claim with: dchat rewards claim --user-id {}",
+                                            user_id
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    println!("⚠️  Unable to query rewards: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
         RewardsCommand::Breakdown { user_id } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n📊 Reward Breakdown:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
             println!();
-            println!("All-Time Earnings:");
-            println!("  Staking:     0 DCHAT (0%)");
-            println!("  Relaying:    0 DCHAT (0%)");
-            println!("  Referrals:   0 DCHAT (0%)");
-            println!("  Governance:  0 DCHAT (0%)");
-            println!("──────────────────────────");
-            println!("  Total:       0 DCHAT");
-            println!();
-            println!("Current APY Estimate:");
-            println!("  Staking APY:    12.0%");
-            println!("  Combined APY:   ~15.0% (with active relaying)");
+
+            // Query all-time reward breakdown from blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => match currency_chain.get_all_time_rewards(&uid) {
+                    Ok(breakdown) => {
+                        let total = breakdown.staking
+                            + breakdown.relaying
+                            + breakdown.referrals
+                            + breakdown.governance;
+                        let staking_pct = if total > 0 {
+                            (breakdown.staking as f64 / total as f64 * 100.0)
+                        } else {
+                            0.0
+                        };
+                        let relaying_pct = if total > 0 {
+                            (breakdown.relaying as f64 / total as f64 * 100.0)
+                        } else {
+                            0.0
+                        };
+                        let referral_pct = if total > 0 {
+                            (breakdown.referrals as f64 / total as f64 * 100.0)
+                        } else {
+                            0.0
+                        };
+                        let governance_pct = if total > 0 {
+                            (breakdown.governance as f64 / total as f64 * 100.0)
+                        } else {
+                            0.0
+                        };
+
+                        println!("All-Time Earnings:");
+                        println!(
+                            "  Staking:     {} DCHAT ({:.1}%)",
+                            format_tokens(breakdown.staking),
+                            staking_pct
+                        );
+                        println!(
+                            "  Relaying:    {} DCHAT ({:.1}%)",
+                            format_tokens(breakdown.relaying),
+                            relaying_pct
+                        );
+                        println!(
+                            "  Referrals:   {} DCHAT ({:.1}%)",
+                            format_tokens(breakdown.referrals),
+                            referral_pct
+                        );
+                        println!(
+                            "  Governance:  {} DCHAT ({:.1}%)",
+                            format_tokens(breakdown.governance),
+                            governance_pct
+                        );
+                        println!("──────────────────────────");
+                        println!("  Total:       {} DCHAT", format_tokens(total));
+                        println!();
+                        println!("Current APY Estimate:");
+                        println!("  Staking APY:    {:.1}%", breakdown.current_staking_apy);
+                        println!(
+                            "  Combined APY:   ~{:.1}% (with active relaying)",
+                            breakdown.combined_apy_estimate
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to query reward breakdown: {}", e);
+                        println!("All-Time Earnings:");
+                        println!("  Staking:     0 DCHAT (0%)");
+                        println!("  Relaying:    0 DCHAT (0%)");
+                        println!("  Referrals:   0 DCHAT (0%)");
+                        println!("  Governance:  0 DCHAT (0%)");
+                        println!("──────────────────────────");
+                        println!("  Total:       0 DCHAT");
+                        println!();
+                        println!("⚠️  Could not retrieve full breakdown: {}", e);
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
+            }
 
             Ok(())
         }
 
         RewardsCommand::Compound { user_id, enable } => {
-            let _uid = UserId(Uuid::parse_str(&user_id)
-                .map_err(|_| Error::validation("Invalid user ID"))?);
+            let uid = UserId(
+                Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
+            );
 
             println!("\n🔄 Auto-Compound Settings:");
             println!("══════════════════════════════════════════════════════════");
             println!("User ID: {}", user_id);
-            println!("Auto-Compound: {}", if enable { "ENABLED" } else { "DISABLED" });
+            println!(
+                "Auto-Compound: {}",
+                if enable { "ENABLED" } else { "DISABLED" }
+            );
 
-            // In production, this would update user preferences
-            if enable {
-                println!();
-                println!("✅ Auto-compounding enabled!");
-                println!("   Your rewards will be automatically restaked each epoch.");
-                println!("   This maximizes your long-term earnings through compound interest.");
-            } else {
-                println!();
-                println!("✅ Auto-compounding disabled.");
-                println!("   Rewards will accumulate as pending balance.");
-                println!("   Claim manually with: dchat rewards claim --user-id {}", user_id);
+            // Update auto-compound preference on blockchain
+            let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")
+                .unwrap_or_else(|_| "https://currency.dchat.network/rpc".to_string());
+
+            let chain_config = CurrencyChainConfig {
+                rpc_url,
+                ..Default::default()
+            };
+
+            match CurrencyChainClient::new(chain_config) {
+                Ok(currency_chain) => {
+                    match currency_chain.set_auto_compound(&uid, enable).await {
+                        Ok(_) => {
+                            if enable {
+                                println!();
+                                println!("✅ Auto-compounding enabled!");
+                                println!(
+                                    "   Your rewards will be automatically restaked each epoch."
+                                );
+                                println!("   This maximizes your long-term earnings through compound interest.");
+                            } else {
+                                println!();
+                                println!("✅ Auto-compounding disabled.");
+                                println!("   Rewards will accumulate as pending balance.");
+                                println!(
+                                    "   Claim manually with: dchat rewards claim --user-id {}",
+                                    user_id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            println!();
+                            println!("⚠️  Failed to update preference: {}", e);
+                            // Still show what they requested
+                            if enable {
+                                println!("   Retry to enable auto-compounding.");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to currency chain: {}", e);
+                    println!();
+                    println!("⚠️  Cannot connect to currency chain: {}", e);
+                }
             }
 
             Ok(())
@@ -9771,4 +10492,3 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
         }
     }
 }
-

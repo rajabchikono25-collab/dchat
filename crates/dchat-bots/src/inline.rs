@@ -148,7 +148,7 @@ impl TextInlineQueryHandler {
     pub fn new(bot_name: String) -> Self {
         Self { bot_name }
     }
-    
+
     /// Get the bot name
     pub fn bot_name(&self) -> &str {
         &self.bot_name
@@ -202,21 +202,53 @@ impl InlineQueryHandler for TextInlineQueryHandler {
 }
 
 /// Image search inline query handler
-pub struct ImageSearchHandler;
+///
+/// Currently returns placeholder images for demonstration.
+/// For production image search, configure an external image API
+/// (e.g., Unsplash, Pexels, Giphy) via environment variables.
+pub struct ImageSearchHandler {
+    /// Optional API key for external image service
+    api_key: Option<String>,
+}
+
+impl ImageSearchHandler {
+    /// Create a new image search handler
+    pub fn new() -> Self {
+        let api_key = std::env::var("IMAGE_SEARCH_API_KEY").ok();
+        Self { api_key }
+    }
+}
+
+impl Default for ImageSearchHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl InlineQueryHandler for ImageSearchHandler {
     fn handle(&self, query: &InlineQuery) -> Result<Vec<InlineResult>> {
-        // In production, query actual image search API (Unsplash, Pexels, etc.)
         tracing::info!("Image search query: {}", query.query);
+
+        // NOTE: External image API integration is optional for mainnet launch.
+        // The inline image search feature provides placeholder results when
+        // no API is configured. To enable real image search:
+        // 1. Set IMAGE_SEARCH_API_KEY environment variable
+        // 2. Implement the actual API call below
+
+        if self.api_key.is_none() {
+            tracing::debug!("No image search API configured, returning placeholder results");
+        }
+
+        // Return sample results (with or without real API)
         let results = (1..=5)
             .map(|i| InlineResult {
                 result_type: InlineResultType::Photo,
                 id: format!("photo_{}", i),
                 title: format!("Photo {} - {}", i, query.query),
                 description: Some(format!("Result {}", i)),
-                thumbnail_url: Some(format!("https://placekitten.com/200/200?image={}", i)),
+                thumbnail_url: Some(format!("https://picsum.photos/200/200?random={}", i)),
                 content: InlineContent::Photo {
-                    photo_url: format!("https://placekitten.com/800/600?image={}", i),
+                    photo_url: format!("https://picsum.photos/800/600?random={}", i),
                     caption: Some(query.query.clone()),
                 },
             })
@@ -285,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_image_search_handler() {
-        let handler = ImageSearchHandler;
+        let handler = ImageSearchHandler::new();
         let query = InlineQuery {
             id: Uuid::new_v4(),
             from: UserId::new(),

@@ -51,8 +51,38 @@ pub enum CaptchaProvider {
     /// Cloudflare Turnstile - low friction, privacy-preserving
     Turnstile,
     /// Disabled - no CAPTCHA verification (for testing/trusted environments)
+    ///
+    /// # Security Warning
+    /// In production builds, using Disabled will emit a warning at runtime.
+    /// Configure a proper CAPTCHA provider for production deployments.
     #[default]
     Disabled,
+}
+
+impl CaptchaProvider {
+    /// Check if this is the disabled provider
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, CaptchaProvider::Disabled)
+    }
+
+    /// Warn if CAPTCHA is disabled in production builds
+    #[cfg(not(debug_assertions))]
+    pub fn warn_if_disabled(&self) {
+        if self.is_disabled() {
+            tracing::warn!(
+                "⚠️  SECURITY WARNING: CAPTCHA is disabled in production. \
+                This allows potential bot attacks on registration. \
+                Configure CAPTCHA_PROVIDER=hcaptcha or CAPTCHA_PROVIDER=turnstile \
+                and provide CAPTCHA_SECRET_KEY and CAPTCHA_SITE_KEY environment variables."
+            );
+        }
+    }
+
+    /// Debug builds don't warn (expected for development)
+    #[cfg(debug_assertions)]
+    pub fn warn_if_disabled(&self) {
+        // No warning in debug builds
+    }
 }
 
 /// CAPTCHA verification configuration
@@ -115,7 +145,13 @@ impl CaptchaConfig {
     }
 
     /// Validate configuration
+    ///
+    /// Checks that the CAPTCHA configuration is valid and logs warnings
+    /// for production deployments with disabled CAPTCHA.
     pub fn validate(&self) -> Result<()> {
+        // Warn in production if CAPTCHA is disabled
+        self.provider.warn_if_disabled();
+
         if self.provider == CaptchaProvider::Disabled {
             return Ok(());
         }
@@ -132,10 +168,12 @@ impl CaptchaConfig {
             return Err(Error::validation("CAPTCHA timeout must be > 0"));
         }
 
-        if self.provider == CaptchaProvider::Turnstile 
-            && (self.min_score < 0.0 || self.min_score > 1.0) 
+        if self.provider == CaptchaProvider::Turnstile
+            && (self.min_score < 0.0 || self.min_score > 1.0)
         {
-            return Err(Error::validation("Turnstile min_score must be between 0.0 and 1.0"));
+            return Err(Error::validation(
+                "Turnstile min_score must be between 0.0 and 1.0",
+            ));
         }
 
         Ok(())
@@ -381,9 +419,9 @@ pub async fn verify_captcha(
     if config.provider == CaptchaProvider::Disabled {
         return Ok(CaptchaVerificationResult::disabled());
     }
-    
+
     Err(Error::internal(
-        "CAPTCHA verification requires the 'captcha' feature to be enabled"
+        "CAPTCHA verification requires the 'captcha' feature to be enabled",
     ))
 }
 
@@ -484,20 +522,14 @@ mod tests {
 
     #[test]
     fn test_captcha_config_hcaptcha() {
-        let config = CaptchaConfig::hcaptcha(
-            "secret".to_string(),
-            "site".to_string(),
-        );
+        let config = CaptchaConfig::hcaptcha("secret".to_string(), "site".to_string());
         assert!(config.is_enabled());
         assert_eq!(config.provider, CaptchaProvider::HCaptcha);
     }
 
     #[test]
     fn test_captcha_config_turnstile() {
-        let config = CaptchaConfig::turnstile(
-            "secret".to_string(),
-            "site".to_string(),
-        );
+        let config = CaptchaConfig::turnstile("secret".to_string(), "site".to_string());
         assert!(config.is_enabled());
         assert_eq!(config.provider, CaptchaProvider::Turnstile);
     }
@@ -560,10 +592,10 @@ mod tests {
             ..Default::default()
         };
         let checker = CaptchaRequirementChecker::new(config);
-        
+
         // Below threshold - no CAPTCHA
         assert!(!checker.requires_captcha_for_registration(Some(0.3), false, false));
-        
+
         // Above threshold - CAPTCHA required
         assert!(checker.requires_captcha_for_registration(Some(0.6), false, false));
     }
@@ -577,7 +609,7 @@ mod tests {
             ..Default::default()
         };
         let checker = CaptchaRequirementChecker::new(config);
-        
+
         assert!(checker.requires_captcha_for_registration(None, true, false));
     }
 
@@ -590,7 +622,7 @@ mod tests {
             ..Default::default()
         };
         let checker = CaptchaRequirementChecker::new(config);
-        
+
         assert!(checker.requires_captcha_for_registration(None, false, true));
     }
 

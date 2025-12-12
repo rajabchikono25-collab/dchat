@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 license.workspace = true
+
+[[bin]]
+name = "generate_ceremony"
+path = "src/bin/generate_ceremony.rs"
+
+[[bin]]
+name = "verify_ceremony"
+path = "src/bin/verify_ceremony.rs"
+
+[[bin]]
+name = "ceremony_standalone"
+path = "src/bin/ceremony_standalone.rs"
+
 [dependencies]
 # Core dependencies
 dchat-core = { path = "../dchat-core" }
@@ -14,10 +27,11 @@ curve25519-dalek = "4.1"
 ed25519-dalek = "2.1"
 blake3 = "1.5"
 rand = "0.8"
-chacha20poly1305 = "0.10"  # AEAD encryption for stealth payloads
-num-bigint = "0.4"  # Big integer arithmetic for RSA blind signatures
-num-integer = "0.1"  # Integer operations
-num-traits = "0.2"  # Numeric traits
+rand_chacha = "0.3"
+chacha20poly1305 = "0.10" # AEAD encryption for stealth payloads
+num-bigint = "0.4"        # Big integer arithmetic for RSA blind signatures
+num-integer = "0.1"       # Integer operations
+num-traits = "0.2"        # Numeric traits
 
 # Zero-knowledge proofs (Groth16)
 ark-std = { version = "0.4", default-features = false }
@@ -29,7 +43,10 @@ ark-relations = { version = "0.4", default-features = false }
 ark-r1cs-std = { version = "0.4", default-features = false }
 ark-snark = { version = "0.4", default-features = false }
 ark-serialize = { version = "0.4", default-features = false }
-ark-crypto-primitives = { version = "0.4", default-features = false, features = ["sponge", "r1cs"] }
+ark-crypto-primitives = { version = "0.4", default-features = false, features = [
+  "sponge",
+  "r1cs",
+] }
 
 # RSA for blind signatures
 rsa = "0.9"
@@ -37,7 +54,9 @@ sha2 = "0.10"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 hex = "0.4"
+chrono = "0.4"
 
 # Logging
 tracing = { workspace = true }
@@ -53,13 +72,13 @@ ark-std = { version = "0.4", features = ["std"] }
 [features]
 default = ["std"]
 std = [
-    "ark-std/std",
-    "ark-ff/std",
-    "ark-ec/std",
-    "ark-bn254/std",
-    "ark-groth16/std",
-    "ark-relations/std",
-    "ark-r1cs-std/std",
-    "ark-serialize/std",
-    "ark-crypto-primitives/std",
+  "ark-std/std",
+  "ark-ff/std",
+  "ark-ec/std",
+  "ark-bn254/std",
+  "ark-groth16/std",
+  "ark-relations/std",
+  "ark-r1cs-std/std",
+  "ark-serialize/std",
+  "ark-crypto-primitives/std",
 ]

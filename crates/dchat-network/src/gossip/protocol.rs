@@ -31,7 +31,7 @@ pub enum GossipError {
 
     #[error("Failed to extract public key: {0}")]
     KeyExtractionFailed(String),
-    
+
     #[error("Payload too large: {size} bytes exceeds maximum of {max} bytes")]
     PayloadTooLarge { size: usize, max: usize },
 }
@@ -40,7 +40,9 @@ pub enum GossipError {
 ///
 /// PeerIds in libp2p are derived from public keys. For Ed25519 keys,
 /// the PeerId embeds the public key directly, allowing signature verification.
-fn extract_ed25519_key_from_peer_id(peer_id: &PeerId) -> std::result::Result<VerifyingKey, GossipError> {
+fn extract_ed25519_key_from_peer_id(
+    peer_id: &PeerId,
+) -> std::result::Result<VerifyingKey, GossipError> {
     // Try to extract the public key from the PeerId
     // For Ed25519 keys, PeerId contains the multihash of the public key
     // We need to decode it to get the actual public key bytes
@@ -97,11 +99,11 @@ pub struct GossipConfig {
     pub local_peer_id: PeerId,
 
     /// Signing key for message authentication (shared across threads)
-    /// 
+    ///
     /// # Production Requirements
     /// This MUST be loaded from a persistent keystore using `GossipProtocol::new_with_keystore()`.
     /// Random keys are only acceptable for testing/development.
-    /// 
+    ///
     /// Using a persistent key ensures:
     /// - Consistent identity across restarts
     /// - Recipients can verify message authenticity
@@ -132,15 +134,15 @@ impl Default for GossipConfig {
         // For testing/development only - production code MUST provide a persistent signing key
         // via `GossipProtocol::new_with_keystore()`
         use rand::rngs::OsRng;
-        
+
         #[cfg(debug_assertions)]
         tracing::warn!(
             "⚠️ GossipConfig using ephemeral signing key - FOR TESTING ONLY. \
             Production deployments must use GossipProtocol::new_with_keystore()."
         );
-        
+
         let signing_key = Arc::new(SigningKey::generate(&mut OsRng));
-        
+
         Self {
             local_peer_id: PeerId::random(),
             signing_key,
@@ -156,16 +158,16 @@ impl Default for GossipConfig {
 
 impl GossipConfig {
     /// Create config from a persistent keystore
-    /// 
+    ///
     /// This is the recommended way to create a GossipConfig for production deployments.
     /// The keystore provides:
     /// - Persistent identity across restarts
     /// - Encrypted key storage with passphrase protection
     /// - Deterministic peer ID derivation from signing key
-    /// 
+    ///
     /// # Arguments
     /// * `keystore` - A RelayKeystore loaded from encrypted storage
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// let keystore = RelayKeystore::load("/path/to/keystore.age")?;
@@ -174,20 +176,21 @@ impl GossipConfig {
     /// ```
     pub fn from_keystore(keystore: &crate::keystore::RelayKeystore) -> dchat_core::Result<Self> {
         use libp2p::identity::Keypair;
-        
+
         // Get Ed25519 signing key from keystore
         let signing_key = keystore.ed25519_signing_key()?;
-        
+
         // Derive PeerId from signing key
-        let libp2p_keypair = Keypair::ed25519_from_bytes(signing_key.to_bytes())
-            .map_err(|e| dchat_core::Error::crypto(format!("Failed to create libp2p keypair: {}", e)))?;
+        let libp2p_keypair = Keypair::ed25519_from_bytes(signing_key.to_bytes()).map_err(|e| {
+            dchat_core::Error::crypto(format!("Failed to create libp2p keypair: {}", e))
+        })?;
         let peer_id = PeerId::from_public_key(&libp2p_keypair.public());
-        
+
         tracing::info!(
             "✅ GossipConfig initialized with persistent identity: {}",
             peer_id
         );
-        
+
         Ok(Self {
             local_peer_id: peer_id,
             signing_key: Arc::new(signing_key),
@@ -226,7 +229,7 @@ pub struct GossipMessage {
 
 impl GossipMessage {
     /// Create a new gossip message with Ed25519 signature
-    /// 
+    ///
     /// The signing_key MUST come from a persistent keystore in production.
     /// This ensures message authenticity can be verified by recipients.
     pub fn new(payload: Vec<u8>, max_ttl: u8, sender: PeerId, signing_key: &SigningKey) -> Self {
@@ -236,7 +239,8 @@ impl GossipMessage {
             .unwrap()
             .as_secs();
 
-        let signature = Self::sign_message(&id.to_string(), &payload, timestamp, max_ttl, signing_key);
+        let signature =
+            Self::sign_message(&id.to_string(), &payload, timestamp, max_ttl, signing_key);
 
         Self {
             id,
@@ -334,14 +338,14 @@ impl GossipMessage {
     }
 
     /// Sign message with Ed25519 using the provided signing key
-    /// 
+    ///
     /// The signing_key MUST be loaded from a persistent, encrypted keystore.
     /// This ensures consistent identity across sessions and allows recipients
     /// to verify message authenticity using the sender's known public key.
     fn sign_message(
-        message_id: &str, 
-        payload: &[u8], 
-        timestamp: u64, 
+        message_id: &str,
+        payload: &[u8],
+        timestamp: u64,
         ttl: u8,
         signing_key: &SigningKey,
     ) -> Vec<u8> {
@@ -408,22 +412,22 @@ impl GossipProtocol {
             peer_key_cache: HashMap::new(),
         })
     }
-    
+
     /// Create a new gossip protocol instance with persistent keystore
-    /// 
+    ///
     /// This is the recommended way to create a GossipProtocol for production deployments.
     /// The keystore provides persistent identity across restarts.
-    /// 
+    ///
     /// # Arguments
     /// * `keystore` - A RelayKeystore loaded from encrypted storage
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// use dchat_network::keystore::RelayKeystore;
-    /// 
+    ///
     /// // Load keystore (requires DCHAT_RELAY_KEYSTORE_PASSPHRASE env var)
     /// let keystore = RelayKeystore::load("/path/to/relay_keystore.age")?;
-    /// 
+    ///
     /// // Create protocol with persistent identity
     /// let protocol = GossipProtocol::new_with_keystore(&keystore)?;
     /// ```
@@ -433,10 +437,13 @@ impl GossipProtocol {
     }
 
     /// Get or extract Ed25519 key for a peer (with caching)
-    pub fn get_peer_key(&mut self, peer_id: &PeerId) -> std::result::Result<&VerifyingKey, GossipError> {
+    pub fn get_peer_key(
+        &mut self,
+        peer_id: &PeerId,
+    ) -> std::result::Result<&VerifyingKey, GossipError> {
         // Use entry API for safe cache population without double lookup
         use std::collections::hash_map::Entry;
-        
+
         match self.peer_key_cache.entry(*peer_id) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
@@ -449,8 +456,8 @@ impl GossipProtocol {
     /// Broadcast a message to the network
     pub async fn broadcast(&mut self, payload: Vec<u8>) -> Result<MessageId> {
         let message = GossipMessage::new(
-            payload, 
-            self.config.max_ttl, 
+            payload,
+            self.config.max_ttl,
             self.config.local_peer_id,
             &self.config.signing_key,
         );
@@ -493,7 +500,7 @@ impl GossipProtocol {
             );
             return Ok(());
         }
-        
+
         // Check rate limits
         if !self.flood_control.check_rate_limit(&from) {
             tracing::warn!("Rate limit exceeded for peer {:?}", from);
@@ -606,7 +613,7 @@ impl GossipProtocol {
             state.messages_sent += 1;
         }
     }
-    
+
     /// Get the local peer ID for this gossip protocol instance
     pub fn local_peer_id(&self) -> PeerId {
         self.config.local_peer_id

@@ -87,39 +87,201 @@ pub enum DeltaOperation {
 }
 
 impl DeltaEncoded {
-    /// Create a simple delta (full replacement for now)
-    /// 
-    /// TODO: Implement proper delta computation (e.g., xdelta, bsdiff)
+    /// Create a delta between base and new data using longest common subsequence matching
+    ///
+    /// This implementation uses a rolling hash approach to find matching blocks
+    /// between base and new data, generating Copy operations for matching regions
+    /// and Insert operations for new content.
     pub fn create(base_data: &[u8], new_data: &[u8]) -> Self {
         let base_id = ContentId::from_data(base_data);
         let result_id = ContentId::from_data(new_data);
 
-        // Simple strategy: check if new data contains base data as prefix
-        if new_data.starts_with(base_data) {
-            let suffix = &new_data[base_data.len()..];
-            DeltaEncoded {
-                base_id,
-                operations: vec![
-                    DeltaOperation::Copy {
-                        offset: 0,
-                        length: base_data.len() as u64,
-                    },
-                    DeltaOperation::Insert {
-                        data: suffix.to_vec(),
-                    },
-                ],
-                result_id,
-            }
-        } else {
-            // Fallback: store as full replacement
-            DeltaEncoded {
+        // For very small files, just insert
+        if base_data.len() < 16 || new_data.len() < 16 {
+            return DeltaEncoded {
                 base_id,
                 operations: vec![DeltaOperation::Insert {
                     data: new_data.to_vec(),
                 }],
                 result_id,
+            };
+        }
+
+        let mut operations = Vec::new();
+
+        // Check for prefix match
+        let prefix_len = Self::common_prefix_len(base_data, new_data);
+        if prefix_len > 0 {
+            operations.push(DeltaOperation::Copy {
+                offset: 0,
+                length: prefix_len as u64,
+            });
+        }
+
+        // Check for suffix match (after prefix)
+        let remaining_base = &base_data[prefix_len..];
+        let remaining_new = &new_data[prefix_len..];
+        let suffix_len = Self::common_suffix_len(remaining_base, remaining_new);
+
+        // Middle portion that differs
+        let middle_new_end = remaining_new.len().saturating_sub(suffix_len);
+        let middle_new = &remaining_new[..middle_new_end];
+
+        if !middle_new.is_empty() {
+            // Try to find matching blocks in the middle portion
+            let middle_ops = Self::find_matching_blocks(remaining_base, middle_new, prefix_len);
+            operations.extend(middle_ops);
+        }
+
+        if suffix_len > 0 {
+            let suffix_offset = base_data.len() - suffix_len;
+            operations.push(DeltaOperation::Copy {
+                offset: suffix_offset as u64,
+                length: suffix_len as u64,
+            });
+        }
+
+        // If no operations were generated, fallback to full insert
+        if operations.is_empty() {
+            operations.push(DeltaOperation::Insert {
+                data: new_data.to_vec(),
+            });
+        }
+
+        // Optimize: merge consecutive inserts
+        let operations = Self::optimize_operations(operations);
+
+        DeltaEncoded {
+            base_id,
+            operations,
+            result_id,
+        }
+    }
+
+    /// Find common prefix length between two slices
+    fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+        a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+    }
+
+    /// Find common suffix length between two slices
+    fn common_suffix_len(a: &[u8], b: &[u8]) -> usize {
+        a.iter()
+            .rev()
+            .zip(b.iter().rev())
+            .take_while(|(x, y)| x == y)
+            .count()
+    }
+
+    /// Find matching blocks using a simple rolling hash approach
+    fn find_matching_blocks(base: &[u8], target: &[u8], base_offset: usize) -> Vec<DeltaOperation> {
+        const BLOCK_SIZE: usize = 8;
+        let mut operations = Vec::new();
+
+        if target.is_empty() {
+            return operations;
+        }
+
+        // Build a hash table of base data blocks
+        let mut base_blocks: HashMap<u64, Vec<usize>> = HashMap::new();
+        for i in 0..base.len().saturating_sub(BLOCK_SIZE) {
+            let hash = Self::simple_hash(&base[i..i + BLOCK_SIZE]);
+            base_blocks.entry(hash).or_default().push(i);
+        }
+
+        let mut pos = 0;
+        let mut pending_insert: Vec<u8> = Vec::new();
+
+        while pos < target.len() {
+            let remaining = target.len() - pos;
+
+            if remaining >= BLOCK_SIZE {
+                let hash = Self::simple_hash(&target[pos..pos + BLOCK_SIZE]);
+
+                if let Some(positions) = base_blocks.get(&hash) {
+                    // Verify match and extend
+                    for &base_pos in positions {
+                        if base[base_pos..].starts_with(&target[pos..pos + BLOCK_SIZE]) {
+                            // Found match, flush pending insert
+                            if !pending_insert.is_empty() {
+                                operations.push(DeltaOperation::Insert {
+                                    data: std::mem::take(&mut pending_insert),
+                                });
+                            }
+
+                            // Extend the match as far as possible
+                            let mut match_len = BLOCK_SIZE;
+                            while base_pos + match_len < base.len()
+                                && pos + match_len < target.len()
+                                && base[base_pos + match_len] == target[pos + match_len]
+                            {
+                                match_len += 1;
+                            }
+
+                            operations.push(DeltaOperation::Copy {
+                                offset: (base_offset + base_pos) as u64,
+                                length: match_len as u64,
+                            });
+
+                            pos += match_len;
+                            break;
+                        }
+                    }
+
+                    // If no actual match found at any position, add to pending
+                    if pos < target.len()
+                        && (operations.is_empty()
+                            || !matches!(operations.last(), Some(DeltaOperation::Copy { .. }))
+                            || pending_insert.is_empty())
+                    {
+                        pending_insert.push(target[pos]);
+                        pos += 1;
+                    }
+                } else {
+                    pending_insert.push(target[pos]);
+                    pos += 1;
+                }
+            } else {
+                pending_insert.push(target[pos]);
+                pos += 1;
             }
         }
+
+        // Flush remaining insert
+        if !pending_insert.is_empty() {
+            operations.push(DeltaOperation::Insert {
+                data: pending_insert,
+            });
+        }
+
+        operations
+    }
+
+    /// Simple hash function for block matching
+    fn simple_hash(data: &[u8]) -> u64 {
+        let mut hash: u64 = 0;
+        for &b in data {
+            hash = hash.wrapping_mul(31).wrapping_add(b as u64);
+        }
+        hash
+    }
+
+    /// Merge consecutive Insert operations
+    fn optimize_operations(operations: Vec<DeltaOperation>) -> Vec<DeltaOperation> {
+        let mut optimized = Vec::new();
+
+        for op in operations {
+            match (&mut optimized.last_mut(), op) {
+                (
+                    Some(DeltaOperation::Insert { data: existing }),
+                    DeltaOperation::Insert { data: new },
+                ) => {
+                    existing.extend(new);
+                }
+                (_, op) => optimized.push(op),
+            }
+        }
+
+        optimized
     }
 
     /// Apply delta to base data to reconstruct original

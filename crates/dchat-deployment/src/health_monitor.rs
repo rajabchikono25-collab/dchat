@@ -316,7 +316,8 @@ impl AlertChannel {
         match self.channel_type.as_str() {
             "slack" => {
                 // Slack webhook should be a valid URL
-                self.endpoint.starts_with("https://hooks.slack.com/services/")
+                self.endpoint
+                    .starts_with("https://hooks.slack.com/services/")
                     && !self.endpoint.contains("/XXX/")
                     && !self.endpoint.contains("/YYY/")
                     && !self.endpoint.contains("/ZZZ")
@@ -486,7 +487,8 @@ impl HealthMonitorConfig {
 
         // Slack webhook URL from DCHAT_SLACK_WEBHOOK_URL
         if let Ok(slack_url) = std::env::var("DCHAT_SLACK_WEBHOOK_URL") {
-            if !slack_url.is_empty() && slack_url != "https://hooks.slack.com/services/XXX/YYY/ZZZ" {
+            if !slack_url.is_empty() && slack_url != "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+            {
                 alert_channels.push(AlertChannel::new_slack(slack_url));
             } else {
                 tracing::warn!(
@@ -518,16 +520,30 @@ impl HealthMonitorConfig {
 
         // Fallback to placeholder if no valid alert channels configured (for development)
         if alert_channels.is_empty() {
-            tracing::warn!(
-                "No valid alert channels configured. Using placeholder channels for development. \
-                Configure DCHAT_SLACK_WEBHOOK_URL and/or DCHAT_PAGERDUTY_KEY for production."
-            );
-            alert_channels.push(AlertChannel::new_slack(
-                "https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string(),
-            ));
-            alert_channels.push(AlertChannel::new_pagerduty(
-                "pagerduty_integration_key".to_string(),
-            ));
+            #[cfg(debug_assertions)]
+            {
+                tracing::warn!(
+                    "No valid alert channels configured. Using placeholder channels for development. \
+                    Configure DCHAT_SLACK_WEBHOOK_URL and/or DCHAT_PAGERDUTY_KEY for production."
+                );
+                alert_channels.push(AlertChannel::new_slack(
+                    "https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string(),
+                ));
+                alert_channels.push(AlertChannel::new_pagerduty(
+                    "pagerduty_integration_key".to_string(),
+                ));
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                tracing::error!(
+                    "CRITICAL: No alert channels configured in production! \
+                    Alerts will not be delivered. Configure DCHAT_SLACK_WEBHOOK_URL \
+                    and/or DCHAT_PAGERDUTY_KEY environment variables immediately."
+                );
+                // In production, continue without placeholder - better to have no alerts
+                // than to send alerts to invalid endpoints
+            }
         }
 
         Self {
@@ -1031,7 +1047,10 @@ mod tests {
         // Test with only Slack configured
         std::env::remove_var("DCHAT_PAGERDUTY_KEY");
         let config = HealthMonitorConfig::new_production();
-        assert!(config.alert_channels.iter().any(|c| c.channel_type == "slack"));
+        assert!(config
+            .alert_channels
+            .iter()
+            .any(|c| c.channel_type == "slack"));
         assert!(config.alert_channels.iter().any(|c| c.is_valid()));
 
         // Restore original env vars
@@ -1057,7 +1076,7 @@ mod tests {
 
         // Create config with placeholder channels
         let mut config = HealthMonitorConfig::new_production();
-        
+
         // Override with placeholder channels
         config.alert_channels = vec![
             AlertChannel::new_slack("https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string()),

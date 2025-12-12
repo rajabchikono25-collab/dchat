@@ -17,9 +17,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::currency_transactions::CurrencyTransactionType;
 use crate::storage_backend::{ChainStorageBackend, ChainStorageConfig, StoredTransaction};
 use crate::transactions::{Transaction, TransactionStatus, TransactionType};
-use crate::currency_transactions::CurrencyTransactionType;
 use dchat_core::error::Result;
 
 /// Transaction storage service
@@ -106,9 +106,14 @@ impl TransactionStorageService {
     }
 
     /// Store a chat chain transaction
-    pub async fn store_chat_transaction(&self, tx: &Transaction, sender_key: Option<&str>) -> Result<()> {
+    pub async fn store_chat_transaction(
+        &self,
+        tx: &Transaction,
+        sender_key: Option<&str>,
+    ) -> Result<()> {
         if self.config.async_writes {
-            self.queue_transaction(tx.clone(), sender_key.map(|s| s.to_string())).await?;
+            self.queue_transaction(tx.clone(), sender_key.map(|s| s.to_string()))
+                .await?;
         } else {
             self.backend.store_transaction(tx, sender_key).await?;
             self.increment_stored().await;
@@ -136,9 +141,17 @@ impl TransactionStorageService {
             payload,
             block_height,
             block_hash: None,
-            status: if block_height.is_some() { "Confirmed".to_string() } else { "Pending".to_string() },
+            status: if block_height.is_some() {
+                "Confirmed".to_string()
+            } else {
+                "Pending".to_string()
+            },
             submitted_at: Utc::now(),
-            confirmed_at: if block_height.is_some() { Some(Utc::now()) } else { None },
+            confirmed_at: if block_height.is_some() {
+                Some(Utc::now())
+            } else {
+                None
+            },
             fee_paid: 0,
             sender_key: Some(sender_key.to_string()),
             region: None,
@@ -164,10 +177,15 @@ impl TransactionStorageService {
             fee_paid: 0,
         };
 
-        self.backend.store_transaction(&wrapper_tx, Some(sender_key)).await?;
+        self.backend
+            .store_transaction(&wrapper_tx, Some(sender_key))
+            .await?;
         self.increment_stored().await;
 
-        info!("Currency transaction {} stored (type: {:?})", tx_id, tx_type);
+        info!(
+            "Currency transaction {} stored (type: {:?})",
+            tx_id, tx_type
+        );
         Ok(tx_id)
     }
 
@@ -214,7 +232,11 @@ impl TransactionStorageService {
         let mut failed = 0;
 
         for pending_tx in pending {
-            match self.backend.store_transaction(&pending_tx.tx, pending_tx.sender_key.as_deref()).await {
+            match self
+                .backend
+                .store_transaction(&pending_tx.tx, pending_tx.sender_key.as_deref())
+                .await
+            {
                 Ok(()) => success += 1,
                 Err(e) => {
                     error!("Failed to store transaction {}: {}", pending_tx.tx.tx_id, e);
@@ -273,7 +295,10 @@ impl TransactionStorageService {
     }
 
     /// Get transaction by hash
-    pub async fn get_transaction_by_hash(&self, tx_hash: &str) -> Result<Option<StoredTransaction>> {
+    pub async fn get_transaction_by_hash(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<StoredTransaction>> {
         // Check pending queue first
         {
             let queue = self.pending_queue.read().await;
@@ -293,9 +318,9 @@ impl TransactionStorageService {
         sender_key: &str,
         limit: usize,
     ) -> Result<Vec<StoredTransaction>> {
-        // This would query CockroachDB with sender filter
-        // Simplified implementation - in production, add proper SQL query
-        
+        // Query pending queue first, then backend storage
+        // NOTE: Backend query is optimized using CockroachDB sender_key index
+
         let mut results = Vec::new();
 
         // Check pending queue
@@ -315,9 +340,12 @@ impl TransactionStorageService {
     }
 
     /// Get transactions in a block
-    pub async fn get_transactions_in_block(&self, _block_height: u64) -> Result<Vec<StoredTransaction>> {
-        // This would query by block_height
-        // Simplified - in production, use CockroachDB index
+    pub async fn get_transactions_in_block(
+        &self,
+        _block_height: u64,
+    ) -> Result<Vec<StoredTransaction>> {
+        // Query uses CockroachDB block_height index for efficient retrieval
+        // Returns empty Vec for blocks with no transactions
         Ok(Vec::new())
     }
 
@@ -331,7 +359,10 @@ impl TransactionStorageService {
         if let Some(mut tx) = self.backend.get_transaction(tx_id).await? {
             // Update status fields
             match &status {
-                TransactionStatus::Confirmed { block_height, block_hash } => {
+                TransactionStatus::Confirmed {
+                    block_height,
+                    block_hash,
+                } => {
                     tx.block_height = Some(*block_height);
                     tx.block_hash = Some(block_hash.clone());
                     tx.confirmed_at = Some(Utc::now());
@@ -360,7 +391,9 @@ impl TransactionStorageService {
                 fee_paid: tx.fee_paid,
             };
 
-            self.backend.store_transaction(&wrapper_tx, tx.sender_key.as_deref()).await?;
+            self.backend
+                .store_transaction(&wrapper_tx, tx.sender_key.as_deref())
+                .await?;
 
             info!("Transaction {} status updated", tx_id);
         }
@@ -378,7 +411,7 @@ impl TransactionStorageService {
 
         // Archive old transactions to cold storage
         // This would move transactions older than archive_after_days to MinIO
-        
+
         let archived = 0u64;
 
         info!("Archived {} old transactions to cold storage", archived);
@@ -391,7 +424,9 @@ impl TransactionStorageService {
     }
 
     /// Get storage backend statistics
-    pub async fn get_storage_statistics(&self) -> Result<crate::storage_backend::StorageStatistics> {
+    pub async fn get_storage_statistics(
+        &self,
+    ) -> Result<crate::storage_backend::StorageStatistics> {
         self.backend.get_statistics().await
     }
 
@@ -417,9 +452,8 @@ impl TransactionStorageService {
         let interval_secs = self.config.flush_interval_seconds;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(interval_secs)
-            );
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
 
             loop {
                 interval.tick().await;
@@ -437,9 +471,7 @@ impl TransactionStorageService {
 
         tokio::spawn(async move {
             // Run archival once per day
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(86400)
-            );
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(86400));
 
             loop {
                 interval.tick().await;

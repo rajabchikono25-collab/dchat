@@ -20,10 +20,27 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Global ZK keys for abuse reporting (setup once, used by all)
+///
+/// # Panics
+/// This will panic at startup if ZK key generation fails. This is intentional
+/// because the abuse reporting system cannot function without valid ZK keys,
+/// and catching this at startup is safer than runtime failures.
 static ABUSE_REPORTING_ZK_KEYS: Lazy<Groth16Keys> = Lazy::new(|| {
     // Use deterministic seed for reproducible keys
     let mut rng = ChaCha20Rng::from_seed([42u8; 32]);
-    Groth16Keys::setup(&mut rng).expect("Failed to setup ZK keys for abuse reporting")
+    match Groth16Keys::setup(&mut rng) {
+        Ok(keys) => keys,
+        Err(e) => {
+            // Log critical error before panicking
+            eprintln!(
+                "CRITICAL: Failed to setup ZK keys for abuse reporting: {:?}",
+                e
+            );
+            eprintln!("The abuse reporting system cannot function without valid ZK keys.");
+            eprintln!("This is a fatal configuration error that must be resolved before launch.");
+            panic!("Failed to setup ZK keys for abuse reporting: {:?}", e);
+        }
+    }
 });
 
 /// Type of abuse being reported
