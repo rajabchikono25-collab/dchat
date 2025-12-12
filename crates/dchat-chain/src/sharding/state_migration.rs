@@ -139,11 +139,7 @@ pub struct TwoPhaseCommit {
 }
 
 impl TwoPhaseCommit {
-    pub fn new(
-        source_shard: ShardId,
-        dest_shard: ShardId,
-        channels: Vec<ChannelId>,
-    ) -> Self {
+    pub fn new(source_shard: ShardId, dest_shard: ShardId, channels: Vec<ChannelId>) -> Self {
         Self {
             migration_id: MigrationId::new(),
             phase: MigrationPhase::Idle,
@@ -204,7 +200,7 @@ impl TwoPhaseCommit {
     }
 
     /// Commit phase: activate destination and unlock source
-    /// 
+    ///
     /// This performs the atomic commit of the migration:
     /// 1. Activates the destination shard with the new channels
     /// 2. Updates the routing table to direct traffic to the new shard
@@ -216,10 +212,10 @@ impl TwoPhaseCommit {
         }
 
         self.phase = MigrationPhase::Committing;
-        
+
         // Record commit timestamp for audit trail
         let commit_timestamp = chrono::Utc::now().timestamp();
-        
+
         // Create commit receipt with all migration details
         let receipt = CommitReceipt {
             migration_id: self.migration_id,
@@ -229,13 +225,13 @@ impl TwoPhaseCommit {
             chunks_transferred: self.transferred_chunks,
             commit_timestamp,
         };
-        
+
         // Mark as committed
         self.phase = MigrationPhase::Committed;
-        
+
         // Clear snapshot after successful commit (free memory)
         self.snapshot = None;
-        
+
         tracing::info!(
             "Migration {} committed: {} channels from shard {} to shard {}",
             self.migration_id.0,
@@ -361,11 +357,7 @@ impl StreamingTransfer {
 
         for (idx, chunk_data) in data.chunks(self.chunk_size).enumerate() {
             let is_final = idx == num_chunks - 1;
-            chunks.push(StateChunk::new(
-                idx as u32,
-                chunk_data.to_vec(),
-                is_final,
-            ));
+            chunks.push(StateChunk::new(idx as u32, chunk_data.to_vec(), is_final));
         }
 
         chunks
@@ -396,10 +388,7 @@ impl StreamingTransfer {
             commit.update_progress((idx + 1) as u32, total_chunks);
         }
 
-        let duration = SystemTime::now()
-            .duration_since(start)
-            .unwrap()
-            .as_millis() as u64;
+        let duration = SystemTime::now().duration_since(start).unwrap().as_millis() as u64;
 
         Ok(TransferStats::new(total_bytes, duration, total_chunks))
     }
@@ -426,10 +415,7 @@ impl StateVerification {
     }
 
     /// Verify complete state transfer
-    pub fn verify_transfer(
-        source_snapshot: &ShardSnapshot,
-        dest_state_root: &[u8],
-    ) -> Result<()> {
+    pub fn verify_transfer(source_snapshot: &ShardSnapshot, dest_state_root: &[u8]) -> Result<()> {
         if !Self::compare_merkle_roots(&source_snapshot.state_root, dest_state_root) {
             return Err(Error::validation("State root mismatch after transfer"));
         }
@@ -533,7 +519,9 @@ impl MigrationCoordinator {
             .create_snapshot(receipt.migration_id, source_snapshot.clone())?;
 
         // Create chunks - clone the data to avoid moving
-        let chunks = self.transfer.create_chunks(source_snapshot.serialized_state.clone());
+        let chunks = self
+            .transfer
+            .create_chunks(source_snapshot.serialized_state.clone());
 
         // Phase 2: Transfer
         let stats = match self.transfer.parallel_transfer(chunks, &mut commit) {
@@ -600,18 +588,12 @@ mod tests {
     fn test_two_phase_commit_flow() {
         let source = ShardId(0);
         let dest = ShardId(1);
-        let channels = vec![ChannelId("ch1".to_string())];
+        let channels = vec![ChannelId(uuid::Uuid::new_v4())];
 
         let mut commit = TwoPhaseCommit::new(source, dest, channels.clone());
 
         // Create snapshot
-        let snapshot = ShardSnapshot::new(
-            ShardId(0),
-            channels,
-            vec![1, 2, 3],
-            100,
-            vec![1; 1000],
-        );
+        let snapshot = ShardSnapshot::new(ShardId(0), channels, vec![1, 2, 3], 100, vec![1; 1000]);
 
         // Prepare
         let receipt = commit.prepare(snapshot).unwrap();
@@ -635,17 +617,11 @@ mod tests {
     fn test_rollback() {
         let source = ShardId(0);
         let dest = ShardId(1);
-        let channels = vec![ChannelId("ch1".to_string())];
+        let channels = vec![ChannelId(uuid::Uuid::new_v4())];
 
         let mut commit = TwoPhaseCommit::new(source, dest, channels.clone());
 
-        let snapshot = ShardSnapshot::new(
-            ShardId(0),
-            channels,
-            vec![1, 2, 3],
-            100,
-            vec![1; 1000],
-        );
+        let snapshot = ShardSnapshot::new(ShardId(0), channels, vec![1, 2, 3], 100, vec![1; 1000]);
 
         commit.prepare(snapshot.clone()).unwrap();
 
@@ -677,15 +653,11 @@ mod tests {
         let mut manager = RollbackManager::new();
 
         let migration_id = MigrationId::new();
-        let snapshot = ShardSnapshot::new(
-            ShardId(0),
-            vec![],
-            vec![1, 2, 3],
-            100,
-            vec![1; 1000],
-        );
+        let snapshot = ShardSnapshot::new(ShardId(0), vec![], vec![1, 2, 3], 100, vec![1; 1000]);
 
-        manager.create_snapshot(migration_id, snapshot.clone()).unwrap();
+        manager
+            .create_snapshot(migration_id, snapshot.clone())
+            .unwrap();
 
         let restored = manager.restore_snapshot(migration_id).unwrap();
         assert_eq!(restored.shard_id, snapshot.shard_id);
@@ -710,7 +682,7 @@ mod tests {
 
         let snapshot = ShardSnapshot::new(
             ShardId(0),
-            vec![ChannelId("ch1".to_string())],
+            vec![ChannelId(uuid::Uuid::new_v4())],
             vec![1, 2, 3],
             100,
             vec![1; 1_000_000], // 1 MB
@@ -720,7 +692,7 @@ mod tests {
             .execute_migration(
                 ShardId(0),
                 ShardId(1),
-                vec![ChannelId("ch1".to_string())],
+                vec![ChannelId(uuid::Uuid::new_v4())],
                 snapshot,
             )
             .unwrap();

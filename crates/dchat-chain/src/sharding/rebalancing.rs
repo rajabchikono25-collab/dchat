@@ -10,9 +10,9 @@ use crate::sharding::{ChannelId, ShardId};
 use chrono::Timelike;
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// Number of virtual nodes per physical shard
 const VIRTUAL_NODES_PER_SHARD: u32 = 150;
@@ -91,7 +91,10 @@ impl ConsistentHashRing {
         let hash = Self::hash_channel(channel_id);
 
         // Binary search for first node >= hash
-        let idx = match self.ring.binary_search_by_key(&hash, |node| node.hash_value) {
+        let idx = match self
+            .ring
+            .binary_search_by_key(&hash, |node| node.hash_value)
+        {
             Ok(i) => i,
             Err(i) => {
                 if i >= self.ring.len() {
@@ -127,9 +130,7 @@ impl ConsistentHashRing {
     /// Remove shard from the ring
     pub fn remove_shard(&mut self, shard_id: &ShardId) -> Result<()> {
         if self.shard_node_count.len() <= 1 {
-            return Err(Error::validation(
-                "Cannot remove last shard from hash ring",
-            ));
+            return Err(Error::validation("Cannot remove last shard from hash ring"));
         }
 
         // Remove all virtual nodes for this shard
@@ -187,9 +188,9 @@ pub struct RebalancingPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardLoad {
     pub shard_id: ShardId,
-    pub cpu_usage: f64,         // 0.0-1.0
-    pub memory_usage: f64,      // 0.0-1.0
-    pub throughput_msg_s: f64,  // Messages per second
+    pub cpu_usage: f64,        // 0.0-1.0
+    pub memory_usage: f64,     // 0.0-1.0
+    pub throughput_msg_s: f64, // Messages per second
     pub storage_bytes: u64,
     pub channel_count: usize,
 }
@@ -262,11 +263,7 @@ impl RebalancingScheduler {
             return false; // Almost no load, skip
         }
 
-        let variance = loads
-            .iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum::<f64>()
-            / loads.len() as f64;
+        let variance = loads.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / loads.len() as f64;
         let std_dev = variance.sqrt();
 
         // Rebalance if imbalance ratio > 0.2 (20%)
@@ -303,10 +300,7 @@ impl RebalancingScheduler {
 
         // Find overloaded and underloaded shards
         let mut overloaded: Vec<_> = shard_loads.iter().filter(|s| s.is_overloaded()).collect();
-        let mut underloaded: Vec<_> = shard_loads
-            .iter()
-            .filter(|s| s.is_underloaded())
-            .collect();
+        let mut underloaded: Vec<_> = shard_loads.iter().filter(|s| s.is_underloaded()).collect();
 
         // Sort by load score
         overloaded.sort_by(|a, b| b.load_score().partial_cmp(&a.load_score()).unwrap());
@@ -335,7 +329,7 @@ impl RebalancingScheduler {
                         from_shard: overloaded_shard.shard_id.clone(),
                         to_shard: target_shard.shard_id.clone(),
                         estimated_size_bytes: 1_000_000, // Estimate 1MB per channel
-                        estimated_time_secs: 2.0,         // Estimate 2 seconds per channel
+                        estimated_time_secs: 2.0,        // Estimate 2 seconds per channel
                     });
                 }
             }
@@ -351,14 +345,14 @@ impl RebalancingScheduler {
             algorithm: RebalancingAlgorithm::GreedyBinPacking,
             created_at: chrono::Utc::now().timestamp(),
         };
-        
+
         tracing::info!(
             "Created rebalancing plan: {} migrations, {} bytes transfer, {:.2}s downtime",
             plan.migrations.len(),
             plan.total_transfer_bytes,
             plan.total_downtime_secs
         );
-        
+
         Ok(plan)
     }
 
@@ -377,8 +371,8 @@ impl RebalancingScheduler {
             .collect();
 
         // Calculate target load (average)
-        let avg_load = shard_loads.iter().map(|s| s.load_score()).sum::<f64>()
-            / shard_loads.len() as f64;
+        let avg_load =
+            shard_loads.iter().map(|s| s.load_score()).sum::<f64>() / shard_loads.len() as f64;
 
         // For each overloaded shard, move minimal channels to reach avg_load
         for shard_load in shard_loads.iter().filter(|s| s.is_overloaded()) {
@@ -402,8 +396,8 @@ impl RebalancingScheduler {
             let load_per_channel = shard_load.load_score() / channels.len() as f64;
 
             // Calculate how many channels to move
-            let channels_to_move = ((excess_load / load_per_channel).ceil() as usize)
-                .min(channels.len());
+            let channels_to_move =
+                ((excess_load / load_per_channel).ceil() as usize).min(channels.len());
 
             // Find best target shard (lowest load)
             let target_shard = shard_loads
@@ -463,7 +457,7 @@ impl RebalancingScheduler {
             .enumerate()
             .map(|(i, s)| (s.shard_id.clone(), i))
             .collect();
-        
+
         let mut current_energy = calculate_energy(&current_loads);
         let mut best_migrations: Vec<ChannelMigration> = Vec::new();
         let mut best_energy = current_energy;
@@ -475,10 +469,9 @@ impl RebalancingScheduler {
         for _ in 0..iterations {
             // Try random swap
             if let Some((from_shard, to_shard)) = self.random_swap(shard_loads) {
-                if let (Some(&from_idx), Some(&to_idx)) = (
-                    shard_indices.get(&from_shard),
-                    shard_indices.get(&to_shard)
-                ) {
+                if let (Some(&from_idx), Some(&to_idx)) =
+                    (shard_indices.get(&from_shard), shard_indices.get(&to_shard))
+                {
                     // Find a channel to migrate from the source shard
                     let channel = sim_assignments
                         .iter()
@@ -487,7 +480,8 @@ impl RebalancingScheduler {
 
                     if let Some(ch_id) = channel {
                         // Estimate channel load contribution (assume uniform distribution)
-                        let from_channel_count = sim_assignments.values()
+                        let from_channel_count = sim_assignments
+                            .values()
                             .filter(|s| *s == &from_shard)
                             .count() as f64;
                         let channel_load = if from_channel_count > 0.0 {
@@ -508,7 +502,7 @@ impl RebalancingScheduler {
                             current_energy = new_energy;
                             current_loads = new_loads;
                             sim_assignments.insert(ch_id.clone(), to_shard.clone());
-                            
+
                             // Track this migration
                             migrations.push(ChannelMigration {
                                 channel_id: ch_id,
@@ -517,7 +511,7 @@ impl RebalancingScheduler {
                                 estimated_size_bytes: 1_000_000, // Could be estimated from shard state
                                 estimated_time_secs: 2.0,
                             });
-                            
+
                             // Track best solution found
                             if current_energy < best_energy {
                                 best_energy = current_energy;
@@ -651,7 +645,7 @@ mod tests {
         let shards = vec![ShardId(0), ShardId(1), ShardId(2)];
         let ring = ConsistentHashRing::new(&shards);
 
-        let channel = ChannelId("test-channel".to_string());
+        let channel = ChannelId(uuid::Uuid::new_v4());
         let shard1 = ring.assign_channel(&channel);
         let shard2 = ring.assign_channel(&channel);
 
@@ -749,8 +743,8 @@ mod tests {
         ];
 
         let mut assignments = HashMap::new();
-        for i in 0..100 {
-            assignments.insert(ChannelId(format!("channel{}", i)), ShardId(0));
+        for _i in 0..100 {
+            assignments.insert(ChannelId(uuid::Uuid::new_v4()), ShardId(0));
         }
 
         let plan = scheduler.greedy_bin_packing(&loads, &assignments).unwrap();

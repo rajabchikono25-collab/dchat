@@ -112,13 +112,19 @@ async fn test_slash_accused_after_vote() {
             String::from_utf8(accused_key.to_vec()).unwrap(),
             b"fork_evidence".to_vec(),
         )
+        .await
         .unwrap();
 
     // Skip to voting
-    resolver.set_claim_status(&claim_id, DisputeStatus::UnderVote).unwrap();
+    resolver
+        .set_claim_status(&claim_id, DisputeStatus::UnderVote)
+        .unwrap();
 
     // Resolve with 70% vote for claimant (above 66% threshold)
-    resolver.resolve_dispute(claim_id.clone(), 0.70).await.unwrap();
+    resolver
+        .resolve_dispute(claim_id.clone(), 0.70)
+        .await
+        .unwrap();
 
     // Verify slash was executed
     let slashes = mock_client.get_slashes();
@@ -173,13 +179,19 @@ async fn test_slash_claimant_for_false_claim() {
             String::from_utf8(accused_key.to_vec()).unwrap(),
             b"fork_evidence".to_vec(),
         )
+        .await
         .unwrap();
 
     // Skip to voting
-    resolver.set_claim_status(&claim_id, DisputeStatus::UnderVote).unwrap();
+    resolver
+        .set_claim_status(&claim_id, DisputeStatus::UnderVote)
+        .unwrap();
 
     // Resolve with 20% vote for claimant (below 34% inverse threshold)
-    resolver.resolve_dispute(claim_id.clone(), 0.20).await.unwrap();
+    resolver
+        .resolve_dispute(claim_id.clone(), 0.20)
+        .await
+        .unwrap();
 
     // Verify claimant was slashed (false claim penalty)
     let slashes = mock_client.get_slashes();
@@ -209,8 +221,7 @@ async fn test_inconclusive_dispute_no_slash() {
     mock_client.set_stake(accused_key, 10000);
     mock_client.set_stake(claimant_key, 5000);
 
-    let mut resolver = DisputeResolver::new()
-        .with_currency_chain_client(mock_client.clone());
+    let mut resolver = DisputeResolver::new().with_currency_chain_client(mock_client.clone());
 
     let claim_id = resolver
         .submit_claim(
@@ -219,13 +230,19 @@ async fn test_inconclusive_dispute_no_slash() {
             String::from_utf8(accused_key.to_vec()).unwrap(),
             b"fork_evidence".to_vec(),
         )
+        .await
         .unwrap();
 
     // Skip to voting
-    resolver.set_claim_status(&claim_id, DisputeStatus::UnderVote).unwrap();
+    resolver
+        .set_claim_status(&claim_id, DisputeStatus::UnderVote)
+        .unwrap();
 
     // Resolve with 50% vote (inconclusive)
-    resolver.resolve_dispute(claim_id.clone(), 0.50).await.unwrap();
+    resolver
+        .resolve_dispute(claim_id.clone(), 0.50)
+        .await
+        .unwrap();
 
     // Verify no slashes occurred
     let slashes = mock_client.get_slashes();
@@ -266,14 +283,17 @@ async fn test_insufficient_stake_error() {
             String::from_utf8(accused_key.to_vec()).unwrap(),
             b"fork_evidence".to_vec(),
         )
+        .await
         .unwrap();
 
     // Skip to voting
-    resolver.set_claim_status(&claim_id, DisputeStatus::UnderVote).unwrap();
+    resolver
+        .set_claim_status(&claim_id, DisputeStatus::UnderVote)
+        .unwrap();
 
     // Attempt to resolve - should fail
     let result = resolver.resolve_dispute(claim_id.clone(), 0.70).await;
-    
+
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
@@ -292,10 +312,13 @@ async fn test_no_currency_client_configured() {
             "accused".to_string(),
             b"evidence".to_vec(),
         )
+        .await
         .unwrap();
 
     // Skip to voting
-    resolver.set_claim_status(&claim_id, DisputeStatus::UnderVote).unwrap();
+    resolver
+        .set_claim_status(&claim_id, DisputeStatus::UnderVote)
+        .unwrap();
 
     // Attempt to resolve without client
     let result = resolver.resolve_dispute(claim_id, 0.70).await;

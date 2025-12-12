@@ -1267,6 +1267,9 @@ impl CurrencyChainClient {
         // Deduct from allocation tracking
         allocation_entry.remaining -= amount;
         allocation_entry.recipients.push(recipient.clone());
+        let remaining_after = allocation_entry.remaining;
+
+        // Now we can safely access genesis_allocation again
         genesis_allocation.remaining -= amount;
 
         // Create transfer record for audit trail
@@ -1279,7 +1282,7 @@ impl CurrencyChainClient {
             amount,
             source_category: category.to_string(),
             timestamp: now,
-            remaining_after: allocation_entry.remaining,
+            remaining_after,
         });
 
         drop(genesis_allocation);
@@ -1393,8 +1396,12 @@ impl CurrencyChainClient {
     /// * `amount` - Amount of tokens to unbond (or 0 for all)
     ///
     /// # Returns
-    /// Transaction ID for the unbonding initiation
-    pub fn initiate_stake_unbonding(&self, operator: &UserId, amount: u64) -> Result<Uuid> {
+    /// The unbonding record with full details
+    pub fn initiate_stake_unbonding(
+        &self,
+        operator: &UserId,
+        amount: u64,
+    ) -> Result<UnbondingRecord> {
         self.initiate_stake_unbonding_with_type(operator, amount, "validator")
     }
 
@@ -1412,13 +1419,13 @@ impl CurrencyChainClient {
     /// * `node_type` - Type of node ("validator", "relay", "delegation")
     ///
     /// # Returns
-    /// Transaction ID for the unbonding initiation
+    /// The unbonding record with full details
     pub fn initiate_stake_unbonding_with_type(
         &self,
         operator: &UserId,
         amount: u64,
         node_type: &str,
-    ) -> Result<Uuid> {
+    ) -> Result<UnbondingRecord> {
         let mut wallets = self.wallets.write().unwrap();
         let wallet = wallets
             .get_mut(operator)
@@ -1476,6 +1483,8 @@ impl CurrencyChainClient {
             status: UnbondingStatus::Pending,
         };
 
+        // Clone for return before moving into queue
+        let result = unbonding_record.clone();
         existing_unbondings.push(unbonding_record);
 
         // Mark tokens as "unbonding" - they're still staked but can't be used
@@ -1511,7 +1520,7 @@ impl CurrencyChainClient {
             unbonding_id
         );
 
-        Ok(unbonding_id)
+        Ok(result)
     }
 
     /// Complete unbonding and withdraw tokens to wallet
@@ -2318,34 +2327,19 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
         self.redeemed_tokens.write().unwrap().insert(signature_hash);
         Ok(())
     }
+}
 
+/// Additional methods for CurrencyChainClient (not part of PrivacyCurrencyChainClient trait)
+impl CurrencyChainClient {
     /// Get the list of active validators from the blockchain
-    pub fn get_validators(&self) -> Result<Vec<ValidatorInfo>> {
-        // Query RPC for validator set
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "validators.list",
-            "params": [],
-            "id": 1
-        });
+    pub async fn get_validators(&self) -> Result<Vec<ValidatorInfo>> {
+        let params = serde_json::json!([]);
 
-        match self
-            .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-        {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        if let Ok(validators) =
-                            serde_json::from_value::<Vec<ValidatorInfo>>(result.clone())
-                        {
-                            return Ok(validators);
-                        }
-                    }
+        match self.rpc_client.call_rpc("validators.list", params).await {
+            Ok(result) => {
+                if let Ok(validators) = serde_json::from_value::<Vec<ValidatorInfo>>(result) {
+                    return Ok(validators);
                 }
-                // Return empty vec if RPC unavailable, log warning
                 tracing::warn!("Could not parse validator response from RPC");
                 Ok(Vec::new())
             }
@@ -2376,72 +2370,40 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
         }
 
         // Submit delegation transaction via RPC
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "staking.delegate",
-            "params": {
-                "delegator": user_id.0.to_string(),
-                "validator": validator_id,
-                "amount": amount
-            },
-            "id": 1
+        let params = serde_json::json!({
+            "delegator": user_id.0.to_string(),
+            "validator": validator_id,
+            "amount": amount
         });
 
-        match self
-            .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-        {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        if let Some(tx_hash) = result.get("tx_hash").and_then(|v| v.as_str()) {
-                            // Update local state
-                            let mut wallets = self.wallets.write().unwrap();
-                            if let Some(w) = wallets.get_mut(user_id) {
-                                w.balance -= amount;
-                                w.staked += amount;
-                            }
-                            return Ok(tx_hash.to_string());
-                        }
-                    }
-                    if let Some(error) = json.get("error") {
-                        return Err(Error::chain_rpc(format!("Delegation failed: {:?}", error)));
-                    }
-                }
-                Err(Error::chain_rpc("Invalid response from RPC"))
+        let result = self.rpc_client.call_rpc("staking.delegate", params).await?;
+
+        if let Some(tx_hash) = result.get("tx_hash").and_then(|v| v.as_str()) {
+            // Update local state
+            let mut wallets = self.wallets.write().unwrap();
+            if let Some(w) = wallets.get_mut(user_id) {
+                w.balance -= amount;
+                w.staked += amount;
             }
-            Err(e) => Err(Error::chain_rpc(format!("RPC request failed: {}", e))),
+            return Ok(tx_hash.to_string());
         }
+
+        Err(Error::chain_rpc("Invalid response from RPC"))
     }
 
     /// Get delegation amount for a user to a specific validator
-    pub fn get_delegation(&self, user_id: &UserId, validator_id: &str) -> Option<u64> {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "staking.getDelegation",
-            "params": {
-                "delegator": user_id.0.to_string(),
-                "validator": validator_id
-            },
-            "id": 1
+    pub async fn get_delegation(&self, user_id: &UserId, validator_id: &str) -> Option<u64> {
+        let params = serde_json::json!({
+            "delegator": user_id.0.to_string(),
+            "validator": validator_id
         });
 
         match self
             .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
+            .call_rpc("staking.getDelegation", params)
+            .await
         {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        return result.get("amount").and_then(|v| v.as_u64());
-                    }
-                }
-                None
-            }
+            Ok(result) => result.get("amount").and_then(|v| v.as_u64()),
             Err(_) => None,
         }
     }
@@ -2455,36 +2417,20 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
     }
 
     /// Get reward history for a user
-    pub fn get_reward_history(
+    pub async fn get_reward_history(
         &self,
         user_id: &UserId,
         limit: usize,
     ) -> Result<Vec<RewardHistoryEntry>> {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "rewards.history",
-            "params": {
-                "user_id": user_id.0.to_string(),
-                "limit": limit
-            },
-            "id": 1
+        let params = serde_json::json!({
+            "user_id": user_id.0.to_string(),
+            "limit": limit
         });
 
-        match self
-            .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-        {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        if let Ok(history) =
-                            serde_json::from_value::<Vec<RewardHistoryEntry>>(result.clone())
-                        {
-                            return Ok(history);
-                        }
-                    }
+        match self.rpc_client.call_rpc("rewards.history", params).await {
+            Ok(result) => {
+                if let Ok(history) = serde_json::from_value::<Vec<RewardHistoryEntry>>(result) {
+                    return Ok(history);
                 }
                 Ok(Vec::new())
             }
@@ -2496,36 +2442,24 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
     }
 
     /// Get pending rewards breakdown by type
-    pub fn get_pending_rewards_breakdown(
+    pub async fn get_pending_rewards_breakdown(
         &self,
         user_id: &UserId,
     ) -> Result<PendingRewardsBreakdown> {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "rewards.pendingBreakdown",
-            "params": {
-                "user_id": user_id.0.to_string()
-            },
-            "id": 1
+        let params = serde_json::json!({
+            "user_id": user_id.0.to_string()
         });
 
         match self
             .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
+            .call_rpc("rewards.pendingBreakdown", params)
+            .await
         {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        if let Ok(breakdown) =
-                            serde_json::from_value::<PendingRewardsBreakdown>(result.clone())
-                        {
-                            return Ok(breakdown);
-                        }
-                    }
+            Ok(result) => {
+                if let Ok(breakdown) = serde_json::from_value::<PendingRewardsBreakdown>(result) {
+                    return Ok(breakdown);
                 }
-                // Return empty breakdown if RPC unavailable
+                // Return empty breakdown if parsing fails
                 Ok(PendingRewardsBreakdown {
                     staking_rewards: 0,
                     relay_rewards: 0,
@@ -2540,33 +2474,21 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
     }
 
     /// Get all-time rewards breakdown for a user
-    pub fn get_all_time_rewards(&self, user_id: &UserId) -> Result<AllTimeRewardsBreakdown> {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "rewards.allTimeBreakdown",
-            "params": {
-                "user_id": user_id.0.to_string()
-            },
-            "id": 1
+    pub async fn get_all_time_rewards(&self, user_id: &UserId) -> Result<AllTimeRewardsBreakdown> {
+        let params = serde_json::json!({
+            "user_id": user_id.0.to_string()
         });
 
         match self
             .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
+            .call_rpc("rewards.allTimeBreakdown", params)
+            .await
         {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if let Some(result) = json.get("result") {
-                        if let Ok(breakdown) =
-                            serde_json::from_value::<AllTimeRewardsBreakdown>(result.clone())
-                        {
-                            return Ok(breakdown);
-                        }
-                    }
+            Ok(result) => {
+                if let Ok(breakdown) = serde_json::from_value::<AllTimeRewardsBreakdown>(result) {
+                    return Ok(breakdown);
                 }
-                // Return default if RPC unavailable
+                // Return default if parsing fails
                 Ok(AllTimeRewardsBreakdown {
                     staking: 0,
                     relaying: 0,
@@ -2585,38 +2507,15 @@ impl PrivacyCurrencyChainClient for CurrencyChainClient {
 
     /// Set auto-compound preference for a user
     pub async fn set_auto_compound(&self, user_id: &UserId, enable: bool) -> Result<()> {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "rewards.setAutoCompound",
-            "params": {
-                "user_id": user_id.0.to_string(),
-                "enable": enable
-            },
-            "id": 1
+        let params = serde_json::json!({
+            "user_id": user_id.0.to_string(),
+            "enable": enable
         });
 
-        match self
-            .rpc_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-        {
-            Ok(response) => {
-                if let Ok(json) = response.json::<serde_json::Value>() {
-                    if json.get("result").is_some() {
-                        return Ok(());
-                    }
-                    if let Some(error) = json.get("error") {
-                        return Err(Error::chain_rpc(format!(
-                            "Failed to set preference: {:?}",
-                            error
-                        )));
-                    }
-                }
-                Ok(())
-            }
-            Err(e) => Err(Error::chain_rpc(format!("RPC request failed: {}", e))),
-        }
+        self.rpc_client
+            .call_rpc("rewards.setAutoCompound", params)
+            .await?;
+        Ok(())
     }
 }
 

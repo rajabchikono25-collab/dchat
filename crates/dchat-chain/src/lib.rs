@@ -10,11 +10,11 @@
 //! - Guardian-based account recovery with on-chain timelock verification
 //! - Distributed storage integration (TiKV, CockroachDB, Redis, MinIO)
 
+pub mod balance_tracker;
 pub mod chain; // Currency chain, slashing, and guardian modules
 pub mod currency_chain_client;
-pub mod currency_transactions;
 pub mod currency_transaction_parser;
-pub mod balance_tracker;
+pub mod currency_transactions;
 pub mod dispute_resolution;
 pub mod insurance_fund;
 pub mod pruning;
@@ -29,16 +29,18 @@ pub use chain::currency_chain;
 pub use chain::guardians;
 pub use chain::slashing;
 
-pub use currency_chain_client::HttpCurrencyChainClient;
-pub use currency_transaction_parser::{CurrencyTransactionParser, ParsedTransaction, TransactionData};
 pub use balance_tracker::BalanceTracker;
+pub use currency_chain_client::HttpCurrencyChainClient;
+pub use currency_transaction_parser::{
+    CurrencyTransactionParser, ParsedTransaction, TransactionData,
+};
 pub use currency_transactions::{
-    Balance, BlockRewardTx, ChannelAccessTx, ClaimRewardsTx, CurrencyTransactionType,
-    DelegateTx, Delegation, PendingUnstake, RelayPaymentTx, RewardType, SlashReason, SlashTx,
-    StakeTx, StakeType, StakingInfo, TransferTx, UndelegateTx, UnstakeTx,
+    Balance, BlockRewardTx, ChannelAccessTx, ClaimRewardsTx, CurrencyTransactionType, DelegateTx,
+    Delegation, PendingUnstake, RelayPaymentTx, RewardType, SlashReason, SlashTx, StakeTx,
+    StakeType, StakingInfo, TransferTx, UndelegateTx, UnstakeTx,
 };
 pub use dispute_resolution::{
-    CurrencyChainClient, DisputeClaim, DisputeResolver, DisputeStatus, SlashingConfig,
+    CurrencyChainClient, DisputeClaim, DisputeResolver, DisputeStatus, DisputeType, SlashingConfig,
     SlashingEvent,
 };
 pub use guardians::{
@@ -50,18 +52,18 @@ pub use insurance_fund::{
 };
 pub use pruning::{MerkleCheckpoint, MerkleProof, NodeType, PruningManager, PruningPolicy};
 pub use sharding::{ShardConfig, ShardId, ShardManager};
-pub use transactions::{
-    ChannelVisibility, CreateChannelTx, JoinChannelTx, PostToChannelTx, RegisterUserTx,
-    SendDirectMessageTx, SubmitDeliveryProofTx, Transaction, TransactionReceipt,
-    TransactionStatus, TransactionType,
-};
-pub use validator_registry::{
-    InMemoryValidatorRegistry, OnChainValidatorRegistry, ValidatorInfo, ValidatorRegistry,
-};
 pub use storage_backend::{
     ChainStorageBackend, ChainStorageConfig, StorageHealthStatus, StorageStatistics,
     StoredTransaction,
 };
 pub use transaction_storage::{
-    TransactionStorageService, TransactionStorageConfig, ServiceStatistics,
+    ServiceStatistics, TransactionStorageConfig, TransactionStorageService,
+};
+pub use transactions::{
+    ChannelVisibility, CreateChannelTx, JoinChannelTx, PostToChannelTx, RegisterUserTx,
+    SendDirectMessageTx, SubmitDeliveryProofTx, Transaction, TransactionReceipt, TransactionStatus,
+    TransactionType,
+};
+pub use validator_registry::{
+    InMemoryValidatorRegistry, OnChainValidatorRegistry, ValidatorInfo, ValidatorRegistry,
 };

@@ -211,7 +211,10 @@ impl NatTraversalManager {
         Ok(nat_type)
     }
 
-    fn build_stun_binding_request(&self) -> Vec<u8> {
+    /// Build a STUN Binding Request (RFC 5389).
+    ///
+    /// This is exposed for testing and diagnostics.
+    pub fn build_stun_binding_request(&self) -> Vec<u8> {
         // STUN Binding Request format (RFC 5389)
         let mut request = Vec::new();
 
@@ -233,7 +236,7 @@ impl NatTraversalManager {
         request
     }
 
-    fn parse_stun_response(&self, data: &[u8]) -> Result<SocketAddr> {
+    pub fn parse_stun_response(&self, data: &[u8]) -> Result<SocketAddr> {
         if data.len() < 20 {
             return Err(Error::network("Invalid STUN response: too short"));
         }
@@ -292,6 +295,31 @@ impl NatTraversalManager {
         Err(Error::network(
             "XOR-MAPPED-ADDRESS not found in STUN response",
         ))
+    }
+
+    /// Read the currently detected NAT type (if detection has run).
+    pub fn detected_nat_type(&self) -> Option<NatType> {
+        self.detected_nat_type.clone()
+    }
+
+    /// Override detected NAT type (used for configuration and deterministic testing).
+    pub fn set_detected_nat_type(&mut self, nat_type: Option<NatType>) {
+        self.detected_nat_type = nat_type;
+    }
+
+    /// Read the currently active traversal strategy (if any).
+    pub fn active_strategy(&self) -> Option<NatStrategy> {
+        self.active_strategy.clone()
+    }
+
+    /// Inspect UPnP gateway state (if configured).
+    pub fn upnp_gateway(&self) -> Option<&UpnpGateway> {
+        self.upnp_gateway.as_ref()
+    }
+
+    /// Inspect TURN connection state.
+    pub fn turn_connections(&self) -> &[TurnConnection] {
+        &self.turn_connections
     }
 
     /// Attempt UPnP port mapping using IGD protocol
@@ -407,7 +435,10 @@ impl NatTraversalManager {
         let client = reqwest::Client::new();
         let response = client
             .post(&control_url)
-            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress\"")
+            .header(
+                "SOAPAction",
+                "\"urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress\"",
+            )
             .header("Content-Type", "text/xml; charset=\"utf-8\"")
             .body(soap_request)
             .send()
@@ -490,7 +521,10 @@ impl NatTraversalManager {
         let client = reqwest::Client::new();
         let response = client
             .post(&control_url)
-            .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"")
+            .header(
+                "SOAPAction",
+                "\"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"",
+            )
             .header("Content-Type", "text/xml; charset=\"utf-8\"")
             .body(soap_request)
             .send()
@@ -546,7 +580,10 @@ impl NatTraversalManager {
         Ok(relay_addr)
     }
 
-    fn build_turn_allocate_request(&self, username: &str, credential: &str) -> Result<Vec<u8>> {
+    /// Build a TURN Allocate request (RFC 5766).
+    ///
+    /// This is exposed for testing and diagnostics.
+    pub fn build_turn_allocate_request(&self, username: &str, credential: &str) -> Result<Vec<u8>> {
         // TURN Allocate Request (RFC 5766)
         let mut request = Vec::new();
 
@@ -607,7 +644,10 @@ impl NatTraversalManager {
         Ok(request)
     }
 
-    fn parse_turn_allocate_response(&self, data: &[u8]) -> Result<SocketAddr> {
+    /// Parse a TURN Allocate response and extract the relayed address.
+    ///
+    /// This is exposed for testing and diagnostics.
+    pub fn parse_turn_allocate_response(&self, data: &[u8]) -> Result<SocketAddr> {
         if data.len() < 20 {
             return Err(Error::network("Invalid TURN response: too short"));
         }
@@ -729,7 +769,7 @@ impl NatTraversalManager {
         // Simultaneous packet sending - both peers do this
         // Send multiple packets to create NAT binding
         let punch_packet = b"DCHAT_HOLE_PUNCH";
-        
+
         for attempt in 0..5 {
             // Send punch packet to remote's public address
             socket
@@ -830,12 +870,17 @@ impl NatTraversalManager {
             let client = reqwest::Client::new();
             let _response = client
                 .post(&control_url)
-                .header("SOAPAction", "\"urn:schemas-upnp-org:service:WANIPConnection:1#DeletePortMapping\"")
+                .header(
+                    "SOAPAction",
+                    "\"urn:schemas-upnp-org:service:WANIPConnection:1#DeletePortMapping\"",
+                )
                 .header("Content-Type", "text/xml; charset=\"utf-8\"")
                 .body(soap_request)
                 .send()
                 .await
-                .map_err(|e| Error::network(format!("UPnP DeletePortMapping request failed: {}", e)))?;
+                .map_err(|e| {
+                    Error::network(format!("UPnP DeletePortMapping request failed: {}", e))
+                })?;
 
             self.upnp_gateway = None;
         }

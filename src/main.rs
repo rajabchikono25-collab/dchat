@@ -9887,7 +9887,7 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
             };
 
             match CurrencyChainClient::new(chain_config) {
-                Ok(currency_chain) => match currency_chain.get_validators() {
+                Ok(currency_chain) => match currency_chain.get_validators().await {
                     Ok(validators) => {
                         let mut total_stake = 0u64;
                         for validator in &validators {
@@ -10007,6 +10007,7 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
                         // Query current delegation to undelegate all
                         currency_chain
                             .get_delegation(&uid, &validator_id)
+                            .await
                             .unwrap_or(0)
                     } else {
                         amount
@@ -10087,7 +10088,7 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
                                     format_tokens(wallet.rewards_pending)
                                 );
 
-                                match currency_chain.claim_rewards(&uid).await {
+                                match currency_chain.claim_rewards(&uid) {
                                     Ok(tx_hash) => {
                                         println!();
                                         println!("✅ Rewards claimed successfully!");
@@ -10148,7 +10149,10 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
 
             match CurrencyChainClient::new(chain_config) {
                 Ok(currency_chain) => {
-                    match currency_chain.get_reward_history(&uid, limit as usize) {
+                    match currency_chain
+                        .get_reward_history(&uid, limit as usize)
+                        .await
+                    {
                         Ok(history) if history.is_empty() => {
                             println!("No reward history found.");
                             println!();
@@ -10206,7 +10210,7 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
 
             match CurrencyChainClient::new(chain_config) {
                 Ok(currency_chain) => {
-                    match currency_chain.get_pending_rewards_breakdown(&uid) {
+                    match currency_chain.get_pending_rewards_breakdown(&uid).await {
                         Ok(breakdown) => {
                             println!(
                                 "Staking Rewards:    {} DCHAT",
@@ -10290,7 +10294,7 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
             };
 
             match CurrencyChainClient::new(chain_config) {
-                Ok(currency_chain) => match currency_chain.get_all_time_rewards(&uid) {
+                Ok(currency_chain) => match currency_chain.get_all_time_rewards(&uid).await {
                     Ok(breakdown) => {
                         let total = breakdown.staking
                             + breakdown.relaying

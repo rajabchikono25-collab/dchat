@@ -114,7 +114,7 @@ pub struct IntegrityEvidence {
 pub trait CurrencyChainClient: Send + Sync {
     /// Get validator's current stake amount
     async fn get_validator_stake(&self, validator_key: &[u8]) -> Result<u64>;
-    
+
     /// Execute slash transaction: reduce validator's stake
     async fn execute_slash(
         &self,
@@ -122,13 +122,9 @@ pub trait CurrencyChainClient: Send + Sync {
         slash_amount: u64,
         reason: &str,
     ) -> Result<String>; // Returns transaction ID
-    
+
     /// Transfer reward to reporter/claimant
-    async fn transfer_reward(
-        &self,
-        recipient_key: &[u8],
-        amount: u64,
-    ) -> Result<String>;
+    async fn transfer_reward(&self, recipient_key: &[u8], amount: u64) -> Result<String>;
 }
 
 /// Slashing configuration
@@ -147,10 +143,10 @@ pub struct SlashingConfig {
 impl Default for SlashingConfig {
     fn default() -> Self {
         Self {
-            base_slash_rate: 0.30,        // 30% stake reduction
-            false_claim_multiplier: 1.5,   // 45% for false claims
-            claimant_reward_rate: 0.10,    // 10% to claimant
-            min_dispute_stake: 1000,       // Minimum 1000 tokens
+            base_slash_rate: 0.30,       // 30% stake reduction
+            false_claim_multiplier: 1.5, // 45% for false claims
+            claimant_reward_rate: 0.10,  // 10% to claimant
+            min_dispute_stake: 1000,     // Minimum 1000 tokens
         }
     }
 }
@@ -205,10 +201,7 @@ impl DisputeResolver {
     }
 
     /// Set currency chain client for slashing execution
-    pub fn with_currency_chain_client(
-        mut self,
-        client: Arc<dyn CurrencyChainClient>,
-    ) -> Self {
+    pub fn with_currency_chain_client(mut self, client: Arc<dyn CurrencyChainClient>) -> Self {
         self.currency_chain_client = Some(client);
         self
     }
@@ -233,8 +226,7 @@ impl DisputeResolver {
         &self.slashing_events
     }
 
-    /// Set claim status directly (for testing)
-    #[cfg(test)]
+    /// Set claim status directly (for testing and integration tests)
     pub fn set_claim_status(&mut self, claim_id: &ClaimId, status: DisputeStatus) -> Result<()> {
         let claim = self
             .claims
@@ -275,12 +267,14 @@ impl DisputeResolver {
         if let Some(metrics) = &self.metrics {
             let mut labels = HashMap::new();
             labels.insert("type".to_string(), format!("{:?}", dispute_type));
-            let _ = metrics.record_counter(
-                "dispute_claims_total".to_string(),
-                1.0,
-                labels,
-                "Total dispute claims submitted".to_string(),
-            ).await;
+            let _ = metrics
+                .record_counter(
+                    "dispute_claims_total".to_string(),
+                    1.0,
+                    labels,
+                    "Total dispute claims submitted".to_string(),
+                )
+                .await;
         }
 
         Ok(claim_id)
@@ -293,7 +287,7 @@ impl DisputeResolver {
                 // Deserialize fork evidence
                 let fork_evidence: ForkEvidence = serde_json::from_slice(evidence)
                     .map_err(|_| Error::network("Invalid fork evidence format"))?;
-                
+
                 // Verify Ed25519 signatures on both messages
                 self.verify_fork_signatures(&fork_evidence).await?;
             }
@@ -312,82 +306,92 @@ impl DisputeResolver {
 
         Ok(())
     }
-    
+
     /// Verify Ed25519 signatures on fork evidence messages
     async fn verify_fork_signatures(&self, evidence: &ForkEvidence) -> Result<()> {
         use ed25519_dalek::{Signature, VerifyingKey};
-        
+
         // Extract accused validator's public key from registry
         let public_key_bytes = self.get_validator_pubkey(&evidence.accused).await?;
-        
+
         let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
-        
+
         // Verify signature A on message A
-        let sig_a_bytes: [u8; 64] = evidence.signature_a.as_slice()
+        let sig_a_bytes: [u8; 64] = evidence
+            .signature_a
+            .as_slice()
             .try_into()
             .map_err(|_| Error::crypto("Invalid signature A length"))?;
         let sig_a = Signature::from_bytes(&sig_a_bytes);
-        
-        verifying_key.verify_strict(&evidence.message_a, &sig_a)
+
+        verifying_key
+            .verify_strict(&evidence.message_a, &sig_a)
             .map_err(|e| Error::crypto(format!("Signature A verification failed: {}", e)))?;
-        
+
         // Verify signature B on message B
-        let sig_b_bytes: [u8; 64] = evidence.signature_b.as_slice()
+        let sig_b_bytes: [u8; 64] = evidence
+            .signature_b
+            .as_slice()
             .try_into()
             .map_err(|_| Error::crypto("Invalid signature B length"))?;
         let sig_b = Signature::from_bytes(&sig_b_bytes);
-        
-        verifying_key.verify_strict(&evidence.message_b, &sig_b)
+
+        verifying_key
+            .verify_strict(&evidence.message_b, &sig_b)
             .map_err(|e| Error::crypto(format!("Signature B verification failed: {}", e)))?;
-        
+
         // Verify both messages have same sequence number (fork proof)
         let seq_a = self.extract_sequence_number(&evidence.message_a)?;
         let seq_b = self.extract_sequence_number(&evidence.message_b)?;
-        
+
         if seq_a != seq_b {
-            return Err(Error::validation("Messages have different sequence numbers - not a fork"));
+            return Err(Error::validation(
+                "Messages have different sequence numbers - not a fork",
+            ));
         }
-        
+
         // Verify messages are different
         if evidence.message_a == evidence.message_b {
             return Err(Error::validation("Messages are identical - not a fork"));
         }
-        
+
         tracing::info!(
             "✅ Fork evidence verified: validator {} signed conflicting messages at sequence {}",
             evidence.accused,
             seq_a
         );
-        
+
         Ok(())
     }
-    
+
     /// Extract sequence number from message (first 8 bytes as u64)
     fn extract_sequence_number(&self, message: &[u8]) -> Result<u64> {
         if message.len() < 8 {
-            return Err(Error::validation("Message too short to contain sequence number"));
+            return Err(Error::validation(
+                "Message too short to contain sequence number",
+            ));
         }
-        
+
         let seq_bytes: [u8; 8] = message[0..8]
             .try_into()
             .map_err(|_| Error::internal("Failed to parse sequence number"))?;
-        
+
         Ok(u64::from_le_bytes(seq_bytes))
     }
-    
+
     /// Get validator public key from chain registry
     ///
     /// Queries the validator registry (on-chain or in-memory) for the validator's public key.
     /// This method should be used instead of any deterministic key derivation.
     async fn get_validator_pubkey(&self, validator_id: &str) -> Result<[u8; 32]> {
         tracing::debug!("Looking up validator public key for: {}", validator_id);
-        
+
         // Validate input
         if validator_id.is_empty() {
             return Err(Error::validation("Validator ID cannot be empty"));
         }
-        
+
         // Use validator registry if available
         if let Some(registry) = &self.validator_registry {
             match registry.get_validator_pubkey(validator_id).await {
@@ -402,7 +406,8 @@ impl DisputeResolver {
                 Err(e) => {
                     tracing::error!(
                         "❌ Failed to retrieve validator {} from registry: {}",
-                        validator_id, e
+                        validator_id,
+                        e
                     );
                     return Err(Error::network(format!(
                         "Validator {} not found in registry: {}",
@@ -411,14 +416,14 @@ impl DisputeResolver {
                 }
             }
         }
-        
+
         // If no registry is configured, fail with clear error
         tracing::error!(
             "❌ Validator registry not configured - cannot lookup validator {}",
             validator_id
         );
         Err(Error::network(
-            "Validator registry not configured. Use with_validator_registry() to set one."
+            "Validator registry not configured. Use with_validator_registry() to set one.",
         ))
     }
 
@@ -612,7 +617,11 @@ impl DisputeResolver {
     }
 
     /// Resolve dispute based on vote
-    pub async fn resolve_dispute(&mut self, claim_id: ClaimId, vote_for_claimant: f64) -> Result<()> {
+    pub async fn resolve_dispute(
+        &mut self,
+        claim_id: ClaimId,
+        vote_for_claimant: f64,
+    ) -> Result<()> {
         let claim = self
             .claims
             .get(&claim_id)
@@ -635,60 +644,62 @@ impl DisputeResolver {
                 &claim_id_str,
                 "Dispute resolved against accused",
                 self.slashing_config.base_slash_rate,
-            ).await?;
-            
+            )
+            .await?;
+
             // Update claim status after slash completes
             if let Some(claim) = self.claims.get_mut(&claim_id) {
                 claim.status = DisputeStatus::ResolvedForClaimant;
             }
-            
+
             // Record metric
             if let Some(metrics) = &self.metrics {
                 let mut labels = HashMap::new();
                 labels.insert("outcome".to_string(), "for_claimant".to_string());
-                let _ = metrics.record_counter(
-                    "dispute_resolutions_total".to_string(),
-                    1.0,
-                    labels,
-                    "Total dispute resolutions".to_string(),
-                ).await;
+                let _ = metrics
+                    .record_counter(
+                        "dispute_resolutions_total".to_string(),
+                        1.0,
+                        labels,
+                        "Total dispute resolutions".to_string(),
+                    )
+                    .await;
             }
-            
-            tracing::info!(
-                "Slashed {}'s stake for dispute {}",
-                accused,
-                claim_id_str
-            );
+
+            tracing::info!("Slashed {}'s stake for dispute {}", accused, claim_id_str);
         } else if vote_for_claimant <= (1.0 - self.slash_threshold) {
             // Execute slashing against claimant for false claim
-            let false_claim_rate = self.slashing_config.base_slash_rate 
-                * self.slashing_config.false_claim_multiplier;
-            
+            let false_claim_rate =
+                self.slashing_config.base_slash_rate * self.slashing_config.false_claim_multiplier;
+
             self.execute_slash(
                 claimant.as_bytes(),
                 accused.as_bytes(),
                 &claim_id_str,
                 "False claim penalty",
                 false_claim_rate,
-            ).await?;
-            
+            )
+            .await?;
+
             // Update claim status after slash completes
             if let Some(claim) = self.claims.get_mut(&claim_id) {
                 claim.status = DisputeStatus::ResolvedForAccused;
             }
-            
+
             // Record metric
             if let Some(metrics) = &self.metrics {
                 let mut labels = HashMap::new();
                 labels.insert("outcome".to_string(), "for_accused".to_string());
-                let _ = metrics.record_counter(
-                    "dispute_resolutions_total".to_string(),
-                    1.0,
-                    labels,
-                    "Total dispute resolutions".to_string(),
-                ).await;
+                let _ = metrics
+                    .record_counter(
+                        "dispute_resolutions_total".to_string(),
+                        1.0,
+                        labels,
+                        "Total dispute resolutions".to_string(),
+                    )
+                    .await;
             }
-            
+
             tracing::info!(
                 "Slashed {}'s stake for false claim {}",
                 claimant,
@@ -723,14 +734,15 @@ impl DisputeResolver {
         let original_stake = client.get_validator_stake(slashed_party_key).await?;
 
         if original_stake < self.slashing_config.min_dispute_stake {
-            return Err(Error::network(
-                format!("Insufficient stake: {} < {}", original_stake, self.slashing_config.min_dispute_stake)
-            ));
+            return Err(Error::network(format!(
+                "Insufficient stake: {} < {}",
+                original_stake, self.slashing_config.min_dispute_stake
+            )));
         }
 
         // 2. Calculate slash amount
         let slash_amount = (original_stake as f64 * slash_rate).round() as u64;
-        
+
         if slash_amount == 0 {
             tracing::warn!("Slash amount is zero, skipping execution");
             return Ok(());
@@ -750,8 +762,9 @@ impl DisputeResolver {
         );
 
         // 4. Transfer reward to beneficiary (claimant or accused)
-        let reward_amount = (slash_amount as f64 * self.slashing_config.claimant_reward_rate).round() as u64;
-        
+        let reward_amount =
+            (slash_amount as f64 * self.slashing_config.claimant_reward_rate).round() as u64;
+
         let _reward_tx_id = if reward_amount > 0 {
             client
                 .transfer_reward(beneficiary_key, reward_amount)
@@ -879,9 +892,12 @@ mod tests {
 
         (evidence, signing_key)
     }
-    
+
     /// Setup test resolver with in-memory validator registry
-    async fn create_test_resolver() -> (DisputeResolver, Arc<crate::validator_registry::InMemoryValidatorRegistry>) {
+    async fn create_test_resolver() -> (
+        DisputeResolver,
+        Arc<crate::validator_registry::InMemoryValidatorRegistry>,
+    ) {
         use crate::validator_registry::InMemoryValidatorRegistry;
         let registry = Arc::new(InMemoryValidatorRegistry::new());
         let resolver = DisputeResolver::new().with_validator_registry(registry.clone());
@@ -892,7 +908,8 @@ mod tests {
     async fn test_submit_claim() {
         let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _signing_key) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+        let (evidence, _signing_key) =
+            create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
 
         // Register the accused validator with the registry
         use crate::validator_registry::ValidatorInfo;
@@ -930,14 +947,16 @@ mod tests {
 
         // Register validator
         use crate::validator_registry::ValidatorInfo;
-        registry.register_validator(ValidatorInfo {
-            validator_id: "bob".to_string(),
-            public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
-            stake: 10000,
-            is_active: true,
-            region: None,
-            registered_at: 0,
-        }).await;
+        registry
+            .register_validator(ValidatorInfo {
+                validator_id: "bob".to_string(),
+                public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+                stake: 10000,
+                is_active: true,
+                region: None,
+                registered_at: 0,
+            })
+            .await;
 
         let claim_id = resolver
             .submit_claim(
@@ -958,11 +977,24 @@ mod tests {
         assert_eq!(claim.status, DisputeStatus::Challenged);
     }
 
-    #[test]
-    fn test_respond_to_challenge() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_respond_to_challenge() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register the accused validator with the registry
+        use crate::validator_registry::ValidatorInfo;
+        registry
+            .register_validator(ValidatorInfo {
+                validator_id: "bob".to_string(),
+                public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+                stake: 10000,
+                is_active: true,
+                region: None,
+                registered_at: 0,
+            })
+            .await;
 
         let claim_id = resolver
             .submit_claim(
@@ -971,6 +1003,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         resolver
@@ -989,12 +1022,14 @@ mod tests {
         let resolver = DisputeResolver::new();
 
         // Test valid fork with proper signatures
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "test-validator");
+        let (evidence, _) =
+            create_signed_fork_evidence(b"message 1", b"message 2", 42, "test-validator");
         let valid = resolver.verify_fork_evidence(&evidence).unwrap();
         assert!(valid, "Valid fork evidence should pass verification");
 
         // Test invalid fork: same message
-        let (invalid_evidence, _) = create_signed_fork_evidence(b"message 1", b"message 1", 42, "test-validator");
+        let (invalid_evidence, _) =
+            create_signed_fork_evidence(b"message 1", b"message 1", 42, "test-validator");
         let valid = resolver.verify_fork_evidence(&invalid_evidence).unwrap();
         assert!(!valid, "Same messages should not be valid fork");
 
@@ -1035,11 +1070,24 @@ mod tests {
         assert!(valid);
     }
 
-    #[test]
-    fn test_resolve_dispute_for_claimant() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_resolve_dispute_for_claimant() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register the accused validator with the registry
+        use crate::validator_registry::ValidatorInfo;
+        registry
+            .register_validator(ValidatorInfo {
+                validator_id: "bob".to_string(),
+                public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+                stake: 10000,
+                is_active: true,
+                region: None,
+                registered_at: 0,
+            })
+            .await;
 
         let claim_id = resolver
             .submit_claim(
@@ -1048,6 +1096,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         resolver
@@ -1057,17 +1106,33 @@ mod tests {
             .respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec())
             .unwrap();
         resolver.submit_to_vote(claim_id.clone()).unwrap();
-        resolver.resolve_dispute(claim_id.clone(), 0.8).unwrap(); // 80% vote for claimant
+        resolver
+            .resolve_dispute(claim_id.clone(), 0.8)
+            .await
+            .unwrap(); // 80% vote for claimant
 
         let claim = resolver.get_claim(&claim_id).unwrap();
         assert_eq!(claim.status, DisputeStatus::ResolvedForClaimant);
     }
 
-    #[test]
-    fn test_resolve_dispute_for_accused() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_resolve_dispute_for_accused() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register the accused validator with the registry
+        use crate::validator_registry::ValidatorInfo;
+        registry
+            .register_validator(ValidatorInfo {
+                validator_id: "bob".to_string(),
+                public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+                stake: 10000,
+                is_active: true,
+                region: None,
+                registered_at: 0,
+            })
+            .await;
 
         let claim_id = resolver
             .submit_claim(
@@ -1076,6 +1141,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         resolver
@@ -1085,17 +1151,33 @@ mod tests {
             .respond_to_challenge(claim_id.clone(), "alice".to_string(), b"response".to_vec())
             .unwrap();
         resolver.submit_to_vote(claim_id.clone()).unwrap();
-        resolver.resolve_dispute(claim_id.clone(), 0.2).unwrap(); // 20% vote for claimant
+        resolver
+            .resolve_dispute(claim_id.clone(), 0.2)
+            .await
+            .unwrap(); // 20% vote for claimant
 
         let claim = resolver.get_claim(&claim_id).unwrap();
         assert_eq!(claim.status, DisputeStatus::ResolvedForAccused);
     }
 
-    #[test]
-    fn test_dispute_stats() {
-        let mut resolver = DisputeResolver::new();
+    #[tokio::test]
+    async fn test_dispute_stats() {
+        let (mut resolver, registry) = create_test_resolver().await;
 
-        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42);
+        let (evidence, _) = create_signed_fork_evidence(b"message 1", b"message 2", 42, "bob");
+
+        // Register the accused validator with the registry
+        use crate::validator_registry::ValidatorInfo;
+        registry
+            .register_validator(ValidatorInfo {
+                validator_id: "bob".to_string(),
+                public_key: evidence.accused_public_key.as_slice().try_into().unwrap(),
+                stake: 10000,
+                is_active: true,
+                region: None,
+                registered_at: 0,
+            })
+            .await;
 
         resolver
             .submit_claim(
@@ -1104,6 +1186,7 @@ mod tests {
                 "bob".to_string(),
                 serde_json::to_vec(&evidence).unwrap(),
             )
+            .await
             .unwrap();
 
         let stats = resolver.get_stats();

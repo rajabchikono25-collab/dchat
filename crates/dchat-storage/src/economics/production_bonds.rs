@@ -200,10 +200,8 @@ impl<'de> Deserialize<'de> for BondSignature {
         }
 
         let helper = BondSignatureHelper::deserialize(deserializer)?;
-        let signer_bytes = hex::decode(&helper.signer)
-            .map_err(serde::de::Error::custom)?;
-        let signature_bytes = hex::decode(&helper.signature)
-            .map_err(serde::de::Error::custom)?;
+        let signer_bytes = hex::decode(&helper.signer).map_err(serde::de::Error::custom)?;
+        let signature_bytes = hex::decode(&helper.signature).map_err(serde::de::Error::custom)?;
 
         let mut signer = [0u8; 32];
         if signer_bytes.len() == 32 {
@@ -362,8 +360,15 @@ impl std::fmt::Display for BondError {
             Self::InvalidStateTransition { from, to } => {
                 write!(f, "Invalid state transition: {:?} -> {:?}", from, to)
             }
-            Self::InsufficientFunds { required, available } => {
-                write!(f, "Insufficient funds: required {}, available {}", required, available)
+            Self::InsufficientFunds {
+                required,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Insufficient funds: required {}, available {}",
+                    required, available
+                )
             }
             Self::RateLimited { retry_after } => {
                 write!(f, "Rate limited, retry after {:?}", retry_after)
@@ -372,7 +377,11 @@ impl std::fmt::Display for BondError {
                 write!(f, "Amount {} out of range [{}, {}]", provided, min, max)
             }
             Self::DurationOutOfRange { min, max, provided } => {
-                write!(f, "Duration {} days out of range [{}, {}]", provided, min, max)
+                write!(
+                    f,
+                    "Duration {} days out of range [{}, {}]",
+                    provided, min, max
+                )
             }
             Self::ProviderNotRegistered(key) => {
                 write!(f, "Provider not registered: {}", hex::encode(key))
@@ -386,8 +395,15 @@ impl std::fmt::Display for BondError {
             Self::InvalidNonce { expected, provided } => {
                 write!(f, "Invalid nonce: expected {}, got {}", expected, provided)
             }
-            Self::MultiSigRequired { required, collected } => {
-                write!(f, "Multi-sig: need {} signatures, have {}", required, collected)
+            Self::MultiSigRequired {
+                required,
+                collected,
+            } => {
+                write!(
+                    f,
+                    "Multi-sig: need {} signatures, have {}",
+                    required, collected
+                )
             }
             Self::ChainError(msg) => write!(f, "Chain error: {}", msg),
             Self::Internal(msg) => write!(f, "Internal error: {}", msg),
@@ -415,7 +431,10 @@ impl ProductionBondManager {
     }
 
     /// Create a new storage bond with signature verification
-    pub async fn create_bond(&self, request: CreateBondRequest) -> Result<BondCreationResult, BondError> {
+    pub async fn create_bond(
+        &self,
+        request: CreateBondRequest,
+    ) -> Result<BondCreationResult, BondError> {
         let user_key_bytes: [u8; 32] = request.user_key.to_bytes();
 
         // 1. Verify signature
@@ -466,7 +485,8 @@ impl ProductionBondManager {
         // 6. Calculate storage and pricing
         let storage_bytes = request.storage_gb * 1_073_741_824;
         let demand_multiplier = *self.demand_multiplier.read();
-        let required_amount = self.calculate_bond_cost(storage_bytes, request.duration_days, demand_multiplier);
+        let required_amount =
+            self.calculate_bond_cost(storage_bytes, request.duration_days, demand_multiplier);
 
         if request.amount < required_amount {
             return Err(BondError::InsufficientFunds {
@@ -530,8 +550,10 @@ impl ProductionBondManager {
         }
 
         // 11. Update totals
-        self.total_bonded.fetch_add(request.amount, Ordering::SeqCst);
-        self.total_storage_bonded.fetch_add(storage_bytes, Ordering::SeqCst);
+        self.total_bonded
+            .fetch_add(request.amount, Ordering::SeqCst);
+        self.total_storage_bonded
+            .fetch_add(storage_bytes, Ordering::SeqCst);
 
         // 12. Record rate limit
         self.record_bond_creation(&user_key_bytes);
@@ -560,7 +582,10 @@ impl ProductionBondManager {
     }
 
     /// Initiate unbonding (start withdrawal cooldown)
-    pub async fn initiate_unbonding(&self, request: WithdrawBondRequest) -> Result<WithdrawalResult, BondError> {
+    pub async fn initiate_unbonding(
+        &self,
+        request: WithdrawBondRequest,
+    ) -> Result<WithdrawalResult, BondError> {
         let user_key_bytes = request.user_key.to_bytes();
 
         // 1. Verify signature
@@ -640,7 +665,10 @@ impl ProductionBondManager {
     }
 
     /// Complete withdrawal after unbonding period
-    pub async fn complete_withdrawal(&self, request: WithdrawBondRequest) -> Result<WithdrawalResult, BondError> {
+    pub async fn complete_withdrawal(
+        &self,
+        request: WithdrawBondRequest,
+    ) -> Result<WithdrawalResult, BondError> {
         let user_key_bytes = request.user_key.to_bytes();
 
         // 1. Verify signature
@@ -675,12 +703,17 @@ impl ProductionBondManager {
         // 5. Check unbonding period is complete
         let now = Utc::now();
         if let Some(unbonding_started) = bond.unbonding_started_at {
-            let unbonding_ends = unbonding_started + Duration::days(self.config.unbonding_period_days as i64);
+            let unbonding_ends =
+                unbonding_started + Duration::days(self.config.unbonding_period_days as i64);
             if now < unbonding_ends {
-                return Err(BondError::UnbondingNotComplete { ends_at: unbonding_ends });
+                return Err(BondError::UnbondingNotComplete {
+                    ends_at: unbonding_ends,
+                });
             }
         } else {
-            return Err(BondError::Internal("Unbonding start time not set".to_string()));
+            return Err(BondError::Internal(
+                "Unbonding start time not set".to_string(),
+            ));
         }
 
         // 6. Calculate final amounts
@@ -700,7 +733,8 @@ impl ProductionBondManager {
 
         // 8. Update totals
         self.total_bonded.fetch_sub(bond.amount, Ordering::SeqCst);
-        self.total_storage_bonded.fetch_sub(bond.storage_bytes, Ordering::SeqCst);
+        self.total_storage_bonded
+            .fetch_sub(bond.storage_bytes, Ordering::SeqCst);
 
         // 9. Submit to chain
         let tx_id = self.submit_withdrawal_to_chain(&bond, net_amount).await?;
@@ -723,7 +757,10 @@ impl ProductionBondManager {
     }
 
     /// Early terminate a bond with penalty
-    pub async fn early_terminate(&self, request: WithdrawBondRequest) -> Result<WithdrawalResult, BondError> {
+    pub async fn early_terminate(
+        &self,
+        request: WithdrawBondRequest,
+    ) -> Result<WithdrawalResult, BondError> {
         let user_key_bytes = request.user_key.to_bytes();
 
         // 1. Verify signature
@@ -789,10 +826,13 @@ impl ProductionBondManager {
 
         // 8. Update totals
         self.total_bonded.fetch_sub(bond.amount, Ordering::SeqCst);
-        self.total_storage_bonded.fetch_sub(bond.storage_bytes, Ordering::SeqCst);
+        self.total_storage_bonded
+            .fetch_sub(bond.storage_bytes, Ordering::SeqCst);
 
         // 9. Submit to chain
-        let tx_id = self.submit_early_termination_to_chain(&bond, net_amount, total_penalty).await?;
+        let tx_id = self
+            .submit_early_termination_to_chain(&bond, net_amount, total_penalty)
+            .await?;
 
         warn!(
             "Early termination: id={}, penalty={}, net={}",
@@ -822,7 +862,12 @@ impl ProductionBondManager {
         authority_key: &VerifyingKey,
     ) -> Result<u64, BondError> {
         // Verify authority signature
-        let message = format!("SLASH:{}:{}:{}", hex::encode(bond_id), slash_percentage, reason);
+        let message = format!(
+            "SLASH:{}:{}:{}",
+            hex::encode(bond_id),
+            slash_percentage,
+            reason
+        );
         authority_key
             .verify(message.as_bytes(), authority_signature)
             .map_err(|e| BondError::InvalidSignature(e.to_string()))?;
@@ -830,14 +875,18 @@ impl ProductionBondManager {
         // Get and validate bond
         let bond = {
             let bonds = self.bonds.read();
-            bonds.get(&bond_id).cloned().ok_or(BondError::BondNotFound(bond_id))?
+            bonds
+                .get(&bond_id)
+                .cloned()
+                .ok_or(BondError::BondNotFound(bond_id))?
         };
 
         // Calculate slash amount
         let slash_amount = (bond.amount as f64 * slash_percentage.min(1.0)) as u64;
 
         // Submit slashing to chain
-        self.submit_slashing_to_chain(&bond, slash_amount, reason).await?;
+        self.submit_slashing_to_chain(&bond, slash_amount, reason)
+            .await?;
 
         // Update bond
         {
@@ -850,7 +899,8 @@ impl ProductionBondManager {
 
         // Update totals
         self.total_bonded.fetch_sub(bond.amount, Ordering::SeqCst);
-        self.total_storage_bonded.fetch_sub(bond.storage_bytes, Ordering::SeqCst);
+        self.total_storage_bonded
+            .fetch_sub(bond.storage_bytes, Ordering::SeqCst);
 
         error!(
             "Bond slashed: id={}, amount={}, reason={}",
@@ -887,7 +937,8 @@ impl ProductionBondManager {
         }
 
         // Submit provider registration to chain
-        self.submit_provider_registration_to_chain(&key_bytes, stake_amount, storage_capacity).await?;
+        self.submit_provider_registration_to_chain(&key_bytes, stake_amount, storage_capacity)
+            .await?;
 
         let provider = StorageProvider {
             key: key_bytes,
@@ -955,7 +1006,10 @@ impl ProductionBondManager {
         let bonds = self.bonds.read();
         let providers = self.providers.read();
 
-        let active_bonds = bonds.values().filter(|b| b.status == BondStatus::Active).count();
+        let active_bonds = bonds
+            .values()
+            .filter(|b| b.status == BondStatus::Active)
+            .count();
         let total_bonded = self.total_bonded.load(Ordering::Relaxed);
         let total_storage = self.total_storage_bonded.load(Ordering::Relaxed);
         let demand_multiplier = *self.demand_multiplier.read();
@@ -995,7 +1049,12 @@ impl ProductionBondManager {
         message
     }
 
-    fn generate_bond_id(&self, user_key: &[u8; 32], nonce: u64, timestamp: DateTime<Utc>) -> [u8; 32] {
+    fn generate_bond_id(
+        &self,
+        user_key: &[u8; 32],
+        nonce: u64,
+        timestamp: DateTime<Utc>,
+    ) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(user_key);
         hasher.update(nonce.to_le_bytes());
@@ -1045,17 +1104,27 @@ impl ProductionBondManager {
 
     fn record_bond_creation(&self, user_key: &[u8; 32]) {
         let mut state = self.rate_limits.write();
-        state.bonds_today.entry(*user_key).or_default().push(Utc::now());
+        state
+            .bonds_today
+            .entry(*user_key)
+            .or_default()
+            .push(Utc::now());
     }
 
-    fn calculate_bond_cost(&self, storage_bytes: u64, duration_days: u32, demand_multiplier: f64) -> u64 {
+    fn calculate_bond_cost(
+        &self,
+        storage_bytes: u64,
+        duration_days: u32,
+        demand_multiplier: f64,
+    ) -> u64 {
         // Base rate: 0.0001 DCHAT per GB per day (in 8-decimal token units)
         const BASE_RATE_PER_GB_DAY: u64 = 10_000; // 0.0001 * 10^8
 
         let storage_gb = storage_bytes / 1_073_741_824;
         let duration_factor = (duration_days as f64).sqrt();
 
-        ((BASE_RATE_PER_GB_DAY as f64) * (storage_gb as f64) * duration_factor * demand_multiplier) as u64
+        ((BASE_RATE_PER_GB_DAY as f64) * (storage_gb as f64) * duration_factor * demand_multiplier)
+            as u64
     }
 
     fn calculate_yield(&self, amount: u64, duration_days: u32) -> u64 {
@@ -1063,7 +1132,11 @@ impl ProductionBondManager {
         (amount as f64 * self.config.base_apy * years) as u64
     }
 
-    fn calculate_withdrawal_amounts(&self, bond: &ProductionBond, now: DateTime<Utc>) -> (u64, u64, u64) {
+    fn calculate_withdrawal_amounts(
+        &self,
+        bond: &ProductionBond,
+        now: DateTime<Utc>,
+    ) -> (u64, u64, u64) {
         let elapsed_days = (now - bond.created_at).num_days() as u32;
         let is_early = now < bond.expires_at;
 
@@ -1162,7 +1235,11 @@ impl ProductionBondManager {
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
     }
 
-    async fn submit_withdrawal_to_chain(&self, bond: &ProductionBond, amount: u64) -> Result<String, BondError> {
+    async fn submit_withdrawal_to_chain(
+        &self,
+        bond: &ProductionBond,
+        amount: u64,
+    ) -> Result<String, BondError> {
         // Offline mode for testing
         if self.config.offline_mode {
             return Ok(format!("offline-withdraw-{}", hex::encode(&bond.id[..8])));
@@ -1302,7 +1379,10 @@ impl ProductionBondManager {
     ) -> Result<String, BondError> {
         // Offline mode for testing
         if self.config.offline_mode {
-            return Ok(format!("offline-provider-{}", hex::encode(&provider_key[..8])));
+            return Ok(format!(
+                "offline-provider-{}",
+                hex::encode(&provider_key[..8])
+            ));
         }
 
         use reqwest::Client;
@@ -1356,17 +1436,15 @@ pub struct BondStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
 
     fn create_test_manager() -> ProductionBondManager {
         let mut config = ProductionBondConfig::default();
         config.offline_mode = true; // Enable offline mode for tests
-        
-        ProductionBondManager::new(
-            config,
-            "http://localhost:8545".to_string(),
-        )
+
+        ProductionBondManager::new(config, "http://localhost:8545".to_string())
     }
 
     #[test]

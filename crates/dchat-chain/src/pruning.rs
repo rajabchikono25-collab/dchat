@@ -489,10 +489,8 @@ impl PruningManager {
             {
                 if let Some(storage) = &self.storage {
                     // Convert MessageId to String for database queries
-                    let msg_id_strings: Vec<String> = messages_to_prune
-                        .iter()
-                        .map(|m| m.0.to_string())
-                        .collect();
+                    let msg_id_strings: Vec<String> =
+                        messages_to_prune.iter().map(|m| m.0.to_string()).collect();
 
                     // Delete messages and get actual bytes freed
                     let (_deleted_count, bytes) = storage.delete_messages(&msg_id_strings).await?;
@@ -707,15 +705,15 @@ mod tests {
         assert_eq!(calculated_root.len(), 32); // Blake3 produces 32-byte hashes
     }
 
-    #[test]
-    fn test_pruning_execution() {
+    #[tokio::test]
+    async fn test_pruning_execution() {
         let mut manager = PruningManager::new(PruningConfig::default());
 
         // Mark messages for pruning
         manager.mark_for_pruning(MessageId(uuid::Uuid::new_v4()));
         manager.mark_for_pruning(MessageId(uuid::Uuid::new_v4()));
 
-        let result = manager.execute_pruning().unwrap();
+        let result = manager.execute_pruning().await.unwrap();
         assert_eq!(result.messages_pruned, 2);
         assert!(result.bytes_freed > 0);
     }
@@ -735,8 +733,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_emergency_pruning() {
+    #[tokio::test]
+    async fn test_emergency_pruning() {
         let mut config = PruningConfig::default();
         config.max_state_size = 1000;
 
@@ -746,12 +744,12 @@ mod tests {
         // Should trigger emergency pruning
         assert!(manager.needs_emergency_pruning());
 
-        let result = manager.emergency_prune(10).unwrap();
+        let result = manager.emergency_prune(10).await.unwrap();
         assert_eq!(result.messages_pruned, 10);
     }
 
-    #[test]
-    fn test_local_cache_retention() {
+    #[tokio::test]
+    async fn test_local_cache_retention() {
         let mut config = PruningConfig::default();
         config.retain_local_cache = true;
 
@@ -759,7 +757,7 @@ mod tests {
 
         let msg_id = MessageId(uuid::Uuid::new_v4());
         manager.mark_for_pruning(msg_id.clone());
-        manager.execute_pruning().unwrap();
+        manager.execute_pruning().await.unwrap();
 
         // Message should be in local cache
         assert!(manager.is_cached_locally(&msg_id));

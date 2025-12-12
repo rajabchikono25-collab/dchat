@@ -38,22 +38,28 @@ impl BotClient {
             base_url: "https://api.dchat.network/bot".to_string(),
         }
     }
-    
-    /// Create a new bot client with custom base URL
-    pub fn with_base_url(token: String, base_url: String) -> Self {
+
+    /// Create a new bot client with custom base URL (static constructor)
+    pub fn new_with_base_url(token: String, base_url: String) -> Self {
         Self { token, base_url }
     }
-    
+
+    /// Builder-style method to set custom base URL
+    pub fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
+    }
+
     /// Get the authentication token for API requests
     pub fn token(&self) -> &str {
         &self.token
     }
-    
+
     /// Get the base URL for API requests
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
-    
+
     /// Build the authorization header value
     pub fn authorization_header(&self) -> String {
         format!("Bearer {}", self.token)
@@ -140,8 +146,8 @@ impl BotApi {
     pub fn new(bot: Arc<Bot>) -> Result<Self> {
         let config = BlockchainConfig::default();
         let blockchain_client = BlockchainClient::new(config)?;
-        
-        Ok(Self { 
+
+        Ok(Self {
             bot,
             blockchain_client: Arc::new(blockchain_client),
             storage: None,
@@ -151,9 +157,12 @@ impl BotApi {
     }
 
     /// Create a new BotApi instance with custom blockchain configuration
-    pub fn with_blockchain_config(bot: Arc<Bot>, blockchain_config: BlockchainConfig) -> Result<Self> {
+    pub fn with_blockchain_config(
+        bot: Arc<Bot>,
+        blockchain_config: BlockchainConfig,
+    ) -> Result<Self> {
         let blockchain_client = BlockchainClient::new(blockchain_config)?;
-        
+
         Ok(Self {
             bot,
             blockchain_client: Arc::new(blockchain_client),
@@ -205,7 +214,7 @@ impl BotApi {
     pub async fn register_callback_query(&self, callback_id: Uuid, user_id: UserId) {
         let mut cache = self.callback_cache.write().await;
         cache.insert(callback_id, user_id);
-        
+
         // Clean up old entries (older than 5 minutes)
         // In production, we'd also have a background task for this
         if cache.len() > 10000 {
@@ -239,7 +248,8 @@ impl BotApi {
         }
 
         // Submit message to blockchain for ordering and proof
-        let tx_id = self.blockchain_client
+        let tx_id = self
+            .blockchain_client
             .send_direct_message(
                 message_id,
                 UserId(self.bot.id),
@@ -292,28 +302,37 @@ impl BotApi {
 
         // Verify bot owns the message by querying blockchain
         let message_id = MessageId(request.message_id);
-        
+
         // Get the original transaction from blockchain
         // The bot can only edit messages it sent
-        let tx_verified = if let Some(tx) = self.blockchain_client.get_transaction(request.message_id) {
+        let tx_verified = if let Some(tx) =
+            self.blockchain_client.get_transaction(request.message_id)
+        {
             // Verify the transaction was submitted by this bot
             // Transaction payload contains sender_id
             tracing::debug!("Found original message transaction: {:?}", tx.tx_type);
-            
+
             // Decode payload to verify sender
             if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&tx.payload) {
                 if let Some(sender_str) = payload.get("sender_id").and_then(|v| v.as_str()) {
                     let bot_id_str = self.bot.id.to_string();
                     if sender_str != bot_id_str {
-                        tracing::warn!("Bot {} attempted to edit message owned by {}", self.bot.id, sender_str);
+                        tracing::warn!(
+                            "Bot {} attempted to edit message owned by {}",
+                            self.bot.id,
+                            sender_str
+                        );
                         return Err(Error::validation("Cannot edit messages from other senders"));
                     }
                 }
             }
             true
         } else {
-            tracing::debug!("Message {} not found in local cache, querying blockchain RPC", request.message_id);
-            
+            tracing::debug!(
+                "Message {} not found in local cache, querying blockchain RPC",
+                request.message_id
+            );
+
             // Query blockchain RPC for the message transaction
             match self.query_transaction_from_rpc(request.message_id).await {
                 Ok(Some(tx_info)) => {
@@ -321,8 +340,14 @@ impl BotApi {
                     if let Some(sender_id) = tx_info.get("sender_id").and_then(|v| v.as_str()) {
                         let bot_id_str = self.bot.id.to_string();
                         if sender_id != bot_id_str {
-                            tracing::warn!("Bot {} cannot edit message owned by {}", self.bot.id, sender_id);
-                            return Err(Error::validation("Cannot edit messages from other senders"));
+                            tracing::warn!(
+                                "Bot {} cannot edit message owned by {}",
+                                self.bot.id,
+                                sender_id
+                            );
+                            return Err(Error::validation(
+                                "Cannot edit messages from other senders",
+                            ));
                         }
                     }
                     tracing::debug!("Message {} verified via RPC", request.message_id);
@@ -330,16 +355,23 @@ impl BotApi {
                 }
                 Ok(None) => {
                     tracing::warn!("Message {} not found on blockchain", request.message_id);
-                    return Err(Error::NotFound(format!("Message {} not found on blockchain", request.message_id)));
+                    return Err(Error::NotFound(format!(
+                        "Message {} not found on blockchain",
+                        request.message_id
+                    )));
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to query blockchain for message {}: {}", request.message_id, e);
+                    tracing::warn!(
+                        "Failed to query blockchain for message {}: {}",
+                        request.message_id,
+                        e
+                    );
                     // Allow edit attempt - blockchain will reject if invalid
                     false
                 }
             }
         };
-        
+
         if tx_verified {
             tracing::debug!("Message ownership verified for edit");
         }
@@ -351,7 +383,8 @@ impl BotApi {
         // Submit edit transaction to blockchain
         // Note: We use send_direct_message for edits since there's no separate edit tx type
         // The message_id remains the same, content_hash is updated
-        let tx_id = self.blockchain_client
+        let tx_id = self
+            .blockchain_client
             .send_direct_message(
                 message_id,
                 UserId(self.bot.id),
@@ -400,7 +433,8 @@ impl BotApi {
         let deletion_marker = "DELETED";
         let content_hash = hex::encode(blake3::hash(deletion_marker.as_bytes()).as_bytes());
 
-        let tx_id = self.blockchain_client
+        let tx_id = self
+            .blockchain_client
             .send_direct_message(
                 message_id,
                 UserId(self.bot.id),
@@ -441,7 +475,7 @@ impl BotApi {
         // 2. Send callback response to user through messaging system
         if let Some(user_id) = user_id {
             tracing::debug!("Sending callback response to user {:?}", user_id);
-            
+
             if let Some(ref router) = self.message_router {
                 // Build callback answer message
                 let _response_content = serde_json::json!({
@@ -450,14 +484,17 @@ impl BotApi {
                     "text": request.text,
                     "show_alert": request.show_alert,
                 });
-                
+
                 // Route response message to user via message router
-                match router.send_callback_response(
-                    user_id,
-                    request.callback_query_id,
-                    request.text.clone(),
-                    request.show_alert,
-                ).await {
+                match router
+                    .send_callback_response(
+                        user_id,
+                        request.callback_query_id,
+                        request.text.clone(),
+                        request.show_alert,
+                    )
+                    .await
+                {
                     Ok(_) => {
                         tracing::debug!("Callback response sent successfully to {:?}", user_id);
                     }
@@ -469,7 +506,7 @@ impl BotApi {
             } else {
                 tracing::debug!("No message router configured, callback response logged only");
             }
-            
+
             // Remove from cache after responding
             {
                 let mut cache = self.callback_cache.write().await;
@@ -506,12 +543,13 @@ impl BotApi {
 
         // Query blockchain for channel membership
         // Parse chat_id to determine if it's a channel or DM
-        let is_channel = request.chat_id.starts_with("channel_") || request.chat_id.starts_with("@");
+        let is_channel =
+            request.chat_id.starts_with("channel_") || request.chat_id.starts_with("@");
 
         if is_channel {
             // For channels, query on-chain membership data
             tracing::debug!("Querying blockchain for channel membership");
-            
+
             // Get current blockchain height to verify we have fresh data
             match self.blockchain_client.get_current_height().await {
                 Ok(height) => {
@@ -559,7 +597,11 @@ impl BotApi {
             return Err(Error::validation("Bot is not active"));
         }
 
-        tracing::info!("Bot {} updating {} commands", self.bot.username, commands.len());
+        tracing::info!(
+            "Bot {} updating {} commands",
+            self.bot.username,
+            commands.len()
+        );
 
         // 1. Validate commands (length, format, uniqueness)
         let mut seen_commands = std::collections::HashSet::new();
@@ -571,14 +613,14 @@ impl BotApi {
                     cmd.command
                 )));
             }
-            
+
             if !cmd.command.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 return Err(Error::validation(format!(
                     "Command '{}' contains invalid characters (only alphanumeric and underscore allowed)",
                     cmd.command
                 )));
             }
-            
+
             // Validate description (1-256 chars)
             if cmd.description.is_empty() || cmd.description.len() > 256 {
                 return Err(Error::validation(format!(
@@ -586,7 +628,7 @@ impl BotApi {
                     cmd.command
                 )));
             }
-            
+
             // Check for duplicates
             if !seen_commands.insert(cmd.command.to_lowercase()) {
                 return Err(Error::validation(format!(
@@ -600,16 +642,16 @@ impl BotApi {
         // 2. Store in local database
         if let Some(ref storage) = self.storage {
             tracing::debug!("Storing commands in database");
-            
+
             // Create a bot copy with updated commands for storage
             let mut bot_with_commands = (*self.bot).clone();
             bot_with_commands.commands = commands.clone();
-            
+
             storage.save_bot(&bot_with_commands).await.map_err(|e| {
                 tracing::error!("Failed to save bot commands to database: {}", e);
                 Error::storage(format!("Failed to persist commands: {}", e))
             })?;
-            
+
             tracing::debug!("Commands persisted to database");
         } else {
             tracing::debug!("No storage configured, commands stored in memory only");
@@ -617,20 +659,21 @@ impl BotApi {
 
         // 3. Update bot metadata on blockchain for discoverability
         tracing::debug!("Updating bot metadata on blockchain");
-        
+
         // Serialize commands for blockchain storage
         let commands_json = serde_json::to_string(&commands)
             .map_err(|e| Error::internal(format!("Failed to serialize commands: {}", e)))?;
-        
+
         // Create bot metadata hash for blockchain
         let metadata_hash = blake3::hash(commands_json.as_bytes());
         let content_hash = hex::encode(metadata_hash.as_bytes());
-        
+
         // Submit bot info update transaction
         // Using a special message type with bot_id as recipient (self-referential update)
-        let tx_id = self.blockchain_client
+        let tx_id = self
+            .blockchain_client
             .send_direct_message(
-                MessageId::new(), // New message ID for this update
+                MessageId::new(),    // New message ID for this update
                 UserId(self.bot.id), // Bot as sender
                 UserId(self.bot.id), // Bot as recipient (metadata update marker)
                 &content_hash,
@@ -638,7 +681,7 @@ impl BotApi {
                 None,
             )
             .await?;
-        
+
         tracing::info!(
             "Bot metadata update submitted to blockchain, tx_id: {}, commands_hash: {}",
             tx_id,
@@ -676,7 +719,10 @@ impl BotApi {
             .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(Error::network(format!("RPC error: status {}", response.status())));
+            return Err(Error::network(format!(
+                "RPC error: status {}",
+                response.status()
+            )));
         }
 
         let json: serde_json::Value = response
@@ -890,7 +936,7 @@ mod tests {
         };
 
         let bot = bot_father.create_bot(owner_id, request).unwrap();
-        
+
         // Use mock blockchain client for testing
         let blockchain_config = BlockchainConfig::default();
         let blockchain_client = Arc::new(BlockchainClient::new_mock(blockchain_config));
@@ -921,7 +967,7 @@ mod tests {
         };
 
         let bot = bot_father.create_bot(owner_id, request).unwrap();
-        
+
         let blockchain_config = BlockchainConfig::default();
         let blockchain_client = Arc::new(BlockchainClient::new_mock(blockchain_config));
         let api = BotApi::with_blockchain_client(Arc::new(bot), blockchain_client);

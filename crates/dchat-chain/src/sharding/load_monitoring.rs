@@ -99,7 +99,7 @@ impl MessageThroughputTracker {
             }
         }
     }
-    
+
     /// Prune samples older than window
     pub fn prune_samples(&mut self, samples: &mut VecDeque<(u64, u64)>, window_secs: u64) {
         let now = Self::now_timestamp();
@@ -167,8 +167,8 @@ impl StorageSizeMonitor {
 
     /// Predict size in future hours
     pub fn predict_size_in_hours(&self, hours: u64) -> u64 {
-        let predicted = self.current_size_bytes as f64
-            + (self.growth_rate_bytes_per_hour * hours as f64);
+        let predicted =
+            self.current_size_bytes as f64 + (self.growth_rate_bytes_per_hour * hours as f64);
         predicted.max(0.0) as u64
     }
 
@@ -466,6 +466,7 @@ impl Default for PrometheusExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_throughput_tracker() {

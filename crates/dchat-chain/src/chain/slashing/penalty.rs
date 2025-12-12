@@ -273,6 +273,9 @@ pub fn simulate_penalty(current_stake: u64, slash_rate: f64) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dchat_core::config::constants::{
+        SLASH_RATE_CENSORSHIP, SLASH_RATE_DOUBLE_SIGN, SLASH_RATE_INVALID_PROOF,
+    };
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
 

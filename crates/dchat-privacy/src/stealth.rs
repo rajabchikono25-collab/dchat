@@ -122,13 +122,13 @@ impl StealthGenerator {
         use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 
         let cipher = ChaCha20Poly1305::new(encryption_key.as_bytes().into());
-        
+
         // SECURITY FIX: Generate random nonce for each message instead of deriving from key
         // This prevents catastrophic nonce reuse when same shared secret is used
         let mut nonce_bytes = [0u8; 12];
         rng.fill(&mut nonce_bytes);
         let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_bytes);
-        
+
         let ciphertext = cipher
             .encrypt(&nonce, plaintext)
             .map_err(|_| Error::Crypto("Encryption failed".to_string()))?;
@@ -144,7 +144,7 @@ impl StealthGenerator {
         // Pad to uniform size (e.g., 1KB blocks)
         let target_size = Self::calculate_padded_size(plaintext.len());
         let padding_size = target_size - plaintext.len();
-        
+
         // Prepend nonce to ciphertext so recipient can decrypt
         let mut ciphertext_with_nonce = Vec::with_capacity(12 + ciphertext.len());
         ciphertext_with_nonce.extend_from_slice(&nonce_bytes);
@@ -241,7 +241,9 @@ impl StealthScanner {
 
         // Validate ciphertext has nonce prefix
         if payload.ciphertext.len() < 12 {
-            return Err(Error::Crypto("Ciphertext too short (missing nonce)".to_string()));
+            return Err(Error::Crypto(
+                "Ciphertext too short (missing nonce)".to_string(),
+            ));
         }
 
         // Extract nonce (first 12 bytes) and actual ciphertext
@@ -267,7 +269,7 @@ impl StealthScanner {
 
         let cipher = ChaCha20Poly1305::new(decryption_key.as_bytes().into());
         let nonce = chacha20poly1305::aead::Nonce::<ChaCha20Poly1305>::from(nonce_bytes);
-        
+
         let plaintext = cipher
             .decrypt(&nonce, actual_ciphertext)
             .map_err(|_| Error::Crypto("Decryption failed (authentication failed)".to_string()))?;

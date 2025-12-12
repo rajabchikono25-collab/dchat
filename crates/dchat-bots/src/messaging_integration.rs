@@ -29,15 +29,16 @@ use dchat_messaging::{Message, MessageBuilder, MessageType};
 use dchat_network::{
     behavior::{DchatMessage, HandshakeData},
     discovery::{Discovery, DiscoveryConfig, PeerInfo as DhtPeerInfo},
-    relay::reputation::scorer::{
-        RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier,
-    },
+    relay::reputation::scorer::{RelayReputationScorer, ReputationTier},
     relay_network::{RelayNetworkConfig, RelayNetworkManager},
     swarm::{NetworkConfig, NetworkManager},
 };
+use ed25519_dalek::VerifyingKey;
 use libp2p::{Multiaddr, PeerId};
-use std::collections::HashMap;
+use rand::Rng;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -54,6 +55,28 @@ pub struct BotMessagingClient {
 
     /// Bot's static keypair for Noise Protocol
     noise_keypair: snow::Keypair,
+
+    /// Relay reputation scorer for intelligent relay selection
+    relay_scorer: Arc<RelayReputationScorer>,
+
+    /// Latency measurements for relays (addr -> avg latency in ms)
+    relay_latencies: Arc<RwLock<HashMap<String, u64>>>,
+
+    /// Blacklisted relay addresses (temporarily or permanently banned)
+    /// Contains: (relay_addr, ban_until_timestamp, reason)
+    relay_blacklist: Arc<RwLock<HashMap<String, (SystemTime, String)>>>,
+
+    /// Relay verification keys cache: addr -> VerifyingKey
+    /// Caches extracted Ed25519 keys from relay PeerIds
+    relay_keys_cache: Arc<RwLock<HashMap<String, VerifyingKey>>>,
+
+    /// Relay failure tracking for circuit breaker pattern
+    /// (relay_addr -> (consecutive_failures, last_failure_time))
+    relay_failures: Arc<RwLock<HashMap<String, (u32, SystemTime)>>>,
+
+    /// Recently used relays for traffic analysis resistance
+    /// Tracks (relay_addr, last_used_time) to avoid patterns
+    recent_relay_usage: Arc<RwLock<Vec<(String, SystemTime)>>>,
 }
 
 /// Noise Protocol session state
@@ -110,6 +133,12 @@ impl BotMessagingClient {
             outgoing_queue: Arc::new(RwLock::new(Vec::new())),
             noise_sessions: Arc::new(RwLock::new(HashMap::new())),
             noise_keypair: keypair,
+            relay_scorer: Arc::new(RelayReputationScorer::new()),
+            relay_latencies: Arc::new(RwLock::new(HashMap::new())),
+            relay_blacklist: Arc::new(RwLock::new(HashMap::new())),
+            relay_keys_cache: Arc::new(RwLock::new(HashMap::new())),
+            relay_failures: Arc::new(RwLock::new(HashMap::new())),
+            recent_relay_usage: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -120,6 +149,12 @@ impl BotMessagingClient {
             outgoing_queue: Arc::new(RwLock::new(Vec::new())),
             noise_sessions: Arc::new(RwLock::new(HashMap::new())),
             noise_keypair: keypair,
+            relay_scorer: Arc::new(RelayReputationScorer::new()),
+            relay_latencies: Arc::new(RwLock::new(HashMap::new())),
+            relay_blacklist: Arc::new(RwLock::new(HashMap::new())),
+            relay_keys_cache: Arc::new(RwLock::new(HashMap::new())),
+            relay_failures: Arc::new(RwLock::new(HashMap::new())),
+            recent_relay_usage: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -561,6 +596,396 @@ impl BotMessagingClient {
         Ok(messages)
     }
 
+    /// Process and send all queued messages via relay network
+    ///
+    /// This drains the outgoing queue and sends each message using
+    /// the intelligent relay selection algorithm. Messages are sent
+    /// in order, with proper error handling and relay reputation tracking.
+    ///
+    /// Returns the number of successfully sent messages.
+    pub async fn process_outgoing_queue(&self) -> Result<usize> {
+        let messages = self.flush_queue().await?;
+        let total = messages.len();
+
+        if total == 0 {
+            return Ok(0);
+        }
+
+        tracing::info!(
+            "Processing {} queued messages for bot {}",
+            total,
+            self.bot.username
+        );
+
+        let mut success_count = 0;
+        let mut failed_messages: Vec<(Message, String)> = Vec::new();
+
+        for message in messages {
+            match self.send_message_via_relay(&message).await {
+                Ok(()) => {
+                    success_count += 1;
+                    tracing::debug!("Successfully sent message {:?} via relay", message.id);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to send message {:?}: {}", message.id, e);
+                    failed_messages.push((message, e.to_string()));
+                }
+            }
+        }
+
+        // Re-queue failed messages for retry
+        if !failed_messages.is_empty() {
+            let mut queue = self.outgoing_queue.write().await;
+            for (msg, reason) in failed_messages {
+                tracing::warn!(
+                    "Re-queuing message {:?} for retry (failure: {})",
+                    msg.id,
+                    reason
+                );
+                queue.push(msg);
+            }
+        }
+
+        tracing::info!(
+            "Processed queue: {}/{} messages sent successfully",
+            success_count,
+            total
+        );
+
+        Ok(success_count)
+    }
+
+    /// Send a single message via the relay network with intelligent relay selection
+    ///
+    /// This uses the full relay selection algorithm with:
+    /// - Blacklist filtering
+    /// - Circuit breaker for failed relays
+    /// - Multi-factor scoring (latency, reputation, Sybil resistance, etc.)
+    /// - Weighted random selection for traffic analysis resistance
+    async fn send_message_via_relay(&self, message: &Message) -> Result<()> {
+        let start = std::time::Instant::now();
+
+        // 1. Determine recipient and look up relay addresses
+        let recipient_id = match &message.message_type {
+            MessageType::Direct { recipient, .. } => *recipient,
+            MessageType::Channel { channel_id, .. } => {
+                // For channels, use the channel owner as routing target
+                self.get_channel_key_holder(channel_id).await?
+            }
+            MessageType::System { .. } => {
+                // System messages don't route through relays
+                return Err(Error::validation(
+                    "System messages cannot be sent via relay",
+                ));
+            }
+        };
+
+        // 2. Look up recipient's relay addresses via DHT
+        let relay_addrs = self.lookup_relay_addresses(&recipient_id).await?;
+
+        if relay_addrs.is_empty() {
+            return Err(Error::network(format!(
+                "No relay addresses found for recipient {:?}",
+                recipient_id
+            )));
+        }
+
+        // 3. Cache any VerifyingKeys we can extract from relay addresses
+        for addr in &relay_addrs {
+            if let Some(vk) = self.try_extract_verifying_key(addr) {
+                self.cache_relay_key(addr, vk).await;
+            }
+        }
+
+        // 4. Select the best relay using complex multi-factor scoring
+        let selected_relay = self.select_best_relay(&relay_addrs).await?;
+
+        // 5. Send message to selected relay
+        match self.deliver_to_relay(&selected_relay, message).await {
+            Ok(()) => {
+                // Record successful delivery for reputation
+                self.record_relay_delivery(&selected_relay, true).await;
+
+                tracing::info!(
+                    "✅ Message {:?} delivered via relay {} in {:?}",
+                    message.id,
+                    self.extract_relay_id_from_addr(&selected_relay),
+                    start.elapsed()
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                // Record failure for circuit breaker
+                self.record_relay_delivery(&selected_relay, false).await;
+
+                tracing::warn!(
+                    "Failed to deliver message {:?} via relay {}: {}",
+                    message.id,
+                    self.extract_relay_id_from_addr(&selected_relay),
+                    e
+                );
+
+                // Try fallback to next best relay
+                let fallback_addrs: Vec<String> = relay_addrs
+                    .into_iter()
+                    .filter(|a| a != &selected_relay)
+                    .collect();
+
+                if !fallback_addrs.is_empty() {
+                    tracing::info!("Attempting fallback relay for message {:?}", message.id);
+                    let fallback_relay = self.select_best_relay(&fallback_addrs).await?;
+
+                    match self.deliver_to_relay(&fallback_relay, message).await {
+                        Ok(()) => {
+                            self.record_relay_delivery(&fallback_relay, true).await;
+                            tracing::info!(
+                                "✅ Message {:?} delivered via fallback relay {} in {:?}",
+                                message.id,
+                                self.extract_relay_id_from_addr(&fallback_relay),
+                                start.elapsed()
+                            );
+                            return Ok(());
+                        }
+                        Err(fallback_err) => {
+                            self.record_relay_delivery(&fallback_relay, false).await;
+                            return Err(Error::network(format!(
+                                "All relays failed: primary={}, fallback={}",
+                                e, fallback_err
+                            )));
+                        }
+                    }
+                }
+
+                Err(e)
+            }
+        }
+    }
+
+    /// Look up relay addresses for a user via DHT
+    async fn lookup_relay_addresses(&self, user_id: &UserId) -> Result<Vec<String>> {
+        // Query DHT for user's relay addresses
+        let dht_key = format!("user:{}:relays", user_id.0);
+        tracing::debug!("Looking up relay addresses for user, DHT key: {}", dht_key);
+
+        // Try registry endpoint first
+        let registry_url = std::env::var("DCHAT_RELAY_REGISTRY_URL")
+            .unwrap_or_else(|_| "https://registry.dchat.network/relays".to_string());
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
+
+        let response = client
+            .get(format!("{}/{}", registry_url, user_id.0))
+            .send()
+            .await;
+
+        if let Ok(resp) = response {
+            if resp.status().is_success() {
+                if let Ok(relay_info) = resp.json::<serde_json::Value>().await {
+                    if let Some(addrs) = relay_info.get("addresses").and_then(|a| a.as_array()) {
+                        let relay_addrs: Vec<String> = addrs
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect();
+
+                        if !relay_addrs.is_empty() {
+                            // Update latency measurements
+                            for addr in &relay_addrs {
+                                self.measure_relay_latency(addr).await;
+                            }
+                            return Ok(relay_addrs);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: return bootstrap relays from environment
+        let bootstrap = std::env::var("DCHAT_BOOTSTRAP_RELAYS")
+            .unwrap_or_else(|_| "/ip4/127.0.0.1/tcp/4001".to_string());
+
+        let fallback_addrs: Vec<String> = bootstrap
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if fallback_addrs.is_empty() {
+            Err(Error::network("No relay addresses available"))
+        } else {
+            tracing::warn!(
+                "Using {} fallback bootstrap relays for user {:?}",
+                fallback_addrs.len(),
+                user_id
+            );
+            Ok(fallback_addrs)
+        }
+    }
+
+    /// Measure latency to a relay and update cache
+    async fn measure_relay_latency(&self, relay_addr: &str) {
+        let start = std::time::Instant::now();
+
+        // Simple ping via HTTP OPTIONS or TCP connect
+        if let Ok(multiaddr) = relay_addr.parse::<Multiaddr>() {
+            // Extract IP and port for TCP ping
+            let mut ip = None;
+            let mut port = None;
+
+            for proto in multiaddr.iter() {
+                match proto {
+                    libp2p::multiaddr::Protocol::Ip4(addr) => ip = Some(std::net::IpAddr::V4(addr)),
+                    libp2p::multiaddr::Protocol::Ip6(addr) => ip = Some(std::net::IpAddr::V6(addr)),
+                    libp2p::multiaddr::Protocol::Tcp(p) => port = Some(p),
+                    _ => {}
+                }
+            }
+
+            if let (Some(ip_addr), Some(tcp_port)) = (ip, port) {
+                let socket_addr = std::net::SocketAddr::new(ip_addr, tcp_port);
+
+                // Attempt TCP connect with timeout
+                let connect_result = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    tokio::net::TcpStream::connect(socket_addr),
+                )
+                .await;
+
+                let latency_ms = start.elapsed().as_millis() as u64;
+
+                if connect_result.is_ok() {
+                    let mut latencies = self.relay_latencies.write().await;
+                    // Exponential moving average
+                    let new_latency = if let Some(&old) = latencies.get(relay_addr) {
+                        (old * 7 + latency_ms * 3) / 10 // 70% old, 30% new
+                    } else {
+                        latency_ms
+                    };
+                    latencies.insert(relay_addr.to_string(), new_latency);
+
+                    tracing::trace!(
+                        "Relay {} latency: {}ms (avg: {}ms)",
+                        relay_addr,
+                        latency_ms,
+                        new_latency
+                    );
+                }
+            }
+        }
+    }
+
+    /// Actually deliver a message to a specific relay
+    async fn deliver_to_relay(&self, relay_addr: &str, message: &Message) -> Result<()> {
+        // Parse multiaddr
+        let multiaddr: Multiaddr = relay_addr
+            .parse()
+            .map_err(|e| Error::network(format!("Invalid relay address: {}", e)))?;
+
+        // Serialize message for transmission
+        let message_bytes = bincode::serialize(message)
+            .map_err(|e| Error::internal(format!("Failed to serialize message: {}", e)))?;
+
+        // Build relay request
+        let relay_id = self.extract_relay_id_from_addr(relay_addr);
+        let request_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "relay.forward",
+            "params": {
+                "message_id": message.id.0.to_string(),
+                "payload": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &message_bytes),
+                "timestamp": SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+            "id": 1
+        });
+
+        // Extract HTTP endpoint from multiaddr (or construct from IP:port)
+        let http_url = self.multiaddr_to_http_url(&multiaddr)?;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| Error::network(format!("HTTP client error: {}", e)))?;
+
+        let response = client
+            .post(&http_url)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("Relay request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::network(format!(
+                "Relay {} returned error: status={}, body={}",
+                relay_id, status, body
+            )));
+        }
+
+        // Parse response to verify acceptance
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Invalid relay response: {}", e)))?;
+
+        if let Some(error) = response_json.get("error") {
+            return Err(Error::network(format!(
+                "Relay error: {}",
+                error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown")
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Convert multiaddr to HTTP URL for relay communication
+    fn multiaddr_to_http_url(&self, multiaddr: &Multiaddr) -> Result<String> {
+        let mut ip = None;
+        let mut port = None;
+        let mut is_https = false;
+
+        for proto in multiaddr.iter() {
+            match proto {
+                libp2p::multiaddr::Protocol::Ip4(addr) => {
+                    ip = Some(format!("{}", addr));
+                }
+                libp2p::multiaddr::Protocol::Ip6(addr) => {
+                    ip = Some(format!("[{}]", addr));
+                }
+                libp2p::multiaddr::Protocol::Tcp(p) => {
+                    port = Some(p);
+                }
+                libp2p::multiaddr::Protocol::Https => {
+                    is_https = true;
+                }
+                _ => {}
+            }
+        }
+
+        match (ip, port) {
+            (Some(ip_str), Some(p)) => {
+                let scheme = if is_https || p == 443 {
+                    "https"
+                } else {
+                    "http"
+                };
+                Ok(format!("{}://{}:{}/rpc", scheme, ip_str, p))
+            }
+            _ => Err(Error::network(
+                "Cannot extract HTTP endpoint from multiaddr",
+            )),
+        }
+    }
+
     /// Get queue length
     pub async fn queue_length(&self) -> usize {
         let queue = self.outgoing_queue.read().await;
@@ -661,6 +1086,8 @@ impl BotMessagingClient {
         let handshake_data = HandshakeData {
             data: data.to_vec(),
         };
+        let handshake_payload = bincode::serialize(&handshake_data)
+            .map_err(|e| Error::internal(format!("Failed to serialize handshake: {}", e)))?;
 
         // Send via HTTP relay endpoint (production uses dedicated handshake relays)
         // The relay forwards the handshake to the target peer and returns response
@@ -675,7 +1102,7 @@ impl BotMessagingClient {
         let request_body = serde_json::json!({
             "from": hex::encode(&self.noise_keypair.public),
             "to": target_peer_id.to_string(),
-            "data": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data),
+            "data": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &handshake_payload),
             "timestamp": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -811,133 +1238,376 @@ impl BotMessagingClient {
         Ok(UserId(key_holder_uuid))
     }
 
-    /// Select the best relay from available options using latency and reputation scoring
+    /// Select the best relay from available options using multi-factor security scoring
     ///
-    /// This implements intelligent relay selection based on:
-    /// 1. Measured latency (from recent interactions)
-    /// 2. Reputation score (from relay reputation scorer)
-    /// 3. Geographic proximity (derived from relay metadata)
-    /// 4. Current load (if available)
+    /// This implements production-grade relay selection with:
+    /// 1. **Blacklist filtering** - Reject banned/misbehaving relays
+    /// 2. **Circuit breaker** - Penalize relays with recent failures
+    /// 3. **Cryptographic identity verification** - Extract and verify relay VerifyingKey
+    /// 4. **Full reputation scoring** - Use RelayReputationScorer with uptime, latency, delivery rate
+    /// 5. **Traffic analysis resistance** - Avoid recently used relays to prevent pattern detection
+    /// 6. **Sybil resistance** - Detect and penalize suspicious relay clusters
+    /// 7. **Weighted random selection** - Probabilistic selection among top candidates
+    /// 8. **Staleness detection** - Penalize relays with outdated metrics
     async fn select_best_relay(&self, relay_addrs: &[String]) -> Result<String> {
         if relay_addrs.is_empty() {
             return Err(Error::network("No relay addresses available".to_string()));
         }
 
-        // If only one relay, return it immediately
-        if relay_addrs.len() == 1 {
-            return Ok(relay_addrs[0].clone());
-        }
+        // Phase 1: Filter out blacklisted and circuit-broken relays
+        let now = SystemTime::now();
+        let blacklist = self.relay_blacklist.read().await;
+        let failures = self.relay_failures.read().await;
 
-        // Score each relay
-        let mut scored_relays: Vec<(String, f64)> = Vec::with_capacity(relay_addrs.len());
-        let latencies = self.relay_latencies.read().await;
-
-        for relay_addr in relay_addrs {
-            let mut score: f64 = 100.0; // Base score
-
-            // 1. Factor in measured latency (lower is better)
-            // Latency weight: 40%
-            if let Some(&latency_ms) = latencies.get(relay_addr) {
-                // Score decreases logarithmically with latency
-                // <50ms = excellent, <200ms = good, <500ms = acceptable, >1000ms = poor
-                let latency_penalty = match latency_ms {
-                    0..=50 => 0.0,
-                    51..=100 => 5.0,
-                    101..=200 => 10.0,
-                    201..=500 => 20.0,
-                    501..=1000 => 30.0,
-                    _ => 40.0,
-                };
-                score -= latency_penalty;
-            } else {
-                // Unknown latency - slight penalty for uncertainty
-                score -= 5.0;
-            }
-
-            // 2. Factor in reputation score (higher is better)
-            // Reputation weight: 40%
-            // Extract relay ID from address for reputation lookup
-            let relay_id = self.extract_relay_id_from_addr(relay_addr);
-
-            // Create metrics from cached data or use defaults
-            let metrics = RelayMetrics {
-                uptime_percentage: 0.95, // Default assumption
-                messages_delivered: 1000,
-                messages_failed: 10,
-                average_latency_ms: latencies.get(relay_addr).copied().unwrap_or(100) as f64,
-                last_seen: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                geographic_region: None,
-                stake_amount: 10_000_000, // Minimum stake assumption
-            };
-
-            let reputation = self.relay_scorer.calculate_score(&relay_id, &metrics);
-
-            // Map reputation tier to score bonus
-            let reputation_bonus = match reputation.tier {
-                ReputationTier::Elite => 40.0,
-                ReputationTier::Trusted => 30.0,
-                ReputationTier::Established => 20.0,
-                ReputationTier::Verified => 10.0,
-                ReputationTier::Newcomer => 0.0,
-                ReputationTier::Probation => -10.0,
-                ReputationTier::Blacklisted => -50.0,
-            };
-            score += reputation_bonus;
-
-            // 3. Geographic proximity bonus (20% weight)
-            // If relay is in same region as user, add bonus
-            if let Some(region) = &metrics.geographic_region {
-                let user_region = std::env::var("DCHAT_USER_REGION").ok();
-                if user_region.as_deref() == Some(region.as_str()) {
-                    score += 20.0;
-                } else if user_region.is_some() {
-                    // Different region - slight penalty
-                    score -= 5.0;
+        let eligible_relays: Vec<&String> = relay_addrs
+            .iter()
+            .filter(|addr| {
+                // Check blacklist
+                if let Some((ban_until, reason)) = blacklist.get(*addr) {
+                    if now < *ban_until {
+                        tracing::debug!(
+                            "Relay {} blacklisted until {:?}: {}",
+                            addr,
+                            ban_until,
+                            reason
+                        );
+                        return false;
+                    }
                 }
-            }
 
-            // Add some randomization to prevent always picking same relay
-            // This helps distribute load and improves resilience
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            relay_addr.hash(&mut hasher);
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                .hash(&mut hasher);
-            let jitter = (hasher.finish() % 10) as f64; // 0-9 random bonus
-            score += jitter;
+                // Circuit breaker: skip relays with 3+ consecutive failures in last 5 minutes
+                if let Some((fail_count, last_failure)) = failures.get(*addr) {
+                    if *fail_count >= 3 {
+                        let five_minutes_ago = now - Duration::from_secs(300);
+                        if *last_failure > five_minutes_ago {
+                            tracing::debug!(
+                                "Relay {} circuit-broken: {} consecutive failures",
+                                addr,
+                                fail_count
+                            );
+                            return false;
+                        }
+                    }
+                }
 
-            scored_relays.push((relay_addr.clone(), score));
+                true
+            })
+            .collect();
 
-            tracing::trace!(
-                "Relay {} scored {:.2} (latency: {:?}ms, reputation: {:?})",
-                relay_addr,
-                score,
-                latencies.get(relay_addr),
-                reputation.tier
-            );
+        drop(blacklist);
+        drop(failures);
+
+        if eligible_relays.is_empty() {
+            return Err(Error::network(
+                "All relay addresses are blacklisted or circuit-broken".to_string(),
+            ));
         }
 
-        // Sort by score descending
+        // If only one eligible relay, return it (but log a warning)
+        if eligible_relays.len() == 1 {
+            tracing::warn!(
+                "Only one eligible relay available: {} - reduced resilience",
+                eligible_relays[0]
+            );
+            return Ok(eligible_relays[0].clone());
+        }
+
+        // Phase 2: Calculate comprehensive scores for each relay
+        let latencies = self.relay_latencies.read().await;
+        let recent_usage = self.recent_relay_usage.read().await;
+        let keys_cache = self.relay_keys_cache.read().await;
+
+        // Track IP prefixes for Sybil detection (relays in same /24 subnet)
+        let mut ip_prefix_counts: HashMap<String, u32> = HashMap::new();
+        for addr in &eligible_relays {
+            if let Some(prefix) = self.extract_ip_prefix(addr) {
+                *ip_prefix_counts.entry(prefix).or_insert(0) += 1;
+            }
+        }
+
+        let mut scored_relays: Vec<(String, f64, RelayScoreBreakdown)> =
+            Vec::with_capacity(eligible_relays.len());
+
+        for relay_addr in &eligible_relays {
+            let mut breakdown = RelayScoreBreakdown::default();
+            let mut total_score: f64 = 0.0;
+
+            // Factor 1: Latency score (weight: 25%)
+            // Lower latency = higher score, unknown = neutral
+            const LATENCY_WEIGHT: f64 = 25.0;
+            breakdown.latency_score = if let Some(&latency_ms) = latencies.get(*relay_addr) {
+                // Logarithmic scoring: diminishing returns for very low latency
+                let normalized = match latency_ms {
+                    0..=30 => 100.0,    // Excellent: <30ms
+                    31..=50 => 95.0,    // Very good: 30-50ms
+                    51..=100 => 85.0,   // Good: 50-100ms
+                    101..=200 => 70.0,  // Acceptable: 100-200ms
+                    201..=500 => 50.0,  // Marginal: 200-500ms
+                    501..=1000 => 25.0, // Poor: 500-1000ms
+                    _ => 10.0,          // Very poor: >1000ms
+                };
+                normalized
+            } else {
+                50.0 // Unknown latency: neutral score
+            };
+            total_score += breakdown.latency_score * (LATENCY_WEIGHT / 100.0);
+
+            // Factor 2: Reputation score (weight: 35%)
+            // Use full RelayReputationScorer if we have the relay's VerifyingKey
+            const REPUTATION_WEIGHT: f64 = 35.0;
+            breakdown.reputation_score = if let Some(verifying_key) = keys_cache.get(*relay_addr) {
+                // Try to get cached reputation score
+                if let Some(rep_score) = self.relay_scorer.get_score(verifying_key) {
+                    // Check staleness - penalize old scores
+                    let age = now.duration_since(rep_score.timestamp).unwrap_or_default();
+                    let staleness_penalty = if age > Duration::from_secs(3600) {
+                        // Score older than 1 hour: apply up to 20% penalty
+                        (age.as_secs() as f64 / 3600.0).min(5.0) * 4.0
+                    } else {
+                        0.0
+                    };
+
+                    // Tier-based bonus
+                    let tier_bonus = match rep_score.tier {
+                        ReputationTier::Excellent => 10.0,
+                        ReputationTier::Good => 5.0,
+                        ReputationTier::Average => 0.0,
+                        ReputationTier::Poor => -10.0,
+                        ReputationTier::VeryPoor => -25.0,
+                    };
+
+                    (rep_score.total_score + tier_bonus - staleness_penalty).clamp(0.0, 100.0)
+                } else {
+                    // No cached score - try to calculate fresh
+                    match self.relay_scorer.calculate_score(*verifying_key) {
+                        Ok(score) => score.total_score,
+                        Err(_) => 50.0, // Fallback to neutral
+                    }
+                }
+            } else {
+                // No VerifyingKey available - try to extract and register
+                if let Some(vk) = self.try_extract_verifying_key(relay_addr) {
+                    // Register the relay for future scoring
+                    self.relay_scorer.register_relay(vk);
+                    50.0 // Start with neutral score
+                } else {
+                    40.0 // Can't verify identity: slight penalty
+                }
+            };
+            total_score += breakdown.reputation_score * (REPUTATION_WEIGHT / 100.0);
+
+            // Factor 3: Traffic analysis resistance (weight: 15%)
+            // Penalize recently used relays to prevent usage patterns
+            const TRAFFIC_RESISTANCE_WEIGHT: f64 = 15.0;
+            breakdown.traffic_resistance_score = {
+                let mut recency_penalty = 0.0;
+                let five_minutes_ago = now - Duration::from_secs(300);
+
+                for (used_addr, used_time) in recent_usage.iter() {
+                    if used_addr == *relay_addr && *used_time > five_minutes_ago {
+                        // Calculate penalty based on how recently used
+                        let age_secs = now.duration_since(*used_time).unwrap_or_default().as_secs();
+                        // More recent = higher penalty (up to 50 points)
+                        recency_penalty = 50.0 - (age_secs as f64 * 50.0 / 300.0);
+                        break;
+                    }
+                }
+
+                (100.0 - recency_penalty).max(0.0)
+            };
+            total_score += breakdown.traffic_resistance_score * (TRAFFIC_RESISTANCE_WEIGHT / 100.0);
+
+            // Factor 4: Sybil resistance (weight: 10%)
+            // Penalize relays that share IP prefix with many others
+            const SYBIL_WEIGHT: f64 = 10.0;
+            breakdown.sybil_resistance_score =
+                if let Some(prefix) = self.extract_ip_prefix(relay_addr) {
+                    let count = ip_prefix_counts.get(&prefix).copied().unwrap_or(1);
+                    if count <= 1 {
+                        100.0 // Unique prefix: excellent
+                    } else if count <= 2 {
+                        80.0 // 2 relays in same /24: acceptable
+                    } else if count <= 3 {
+                        50.0 // 3 relays: suspicious
+                    } else {
+                        20.0 // 4+ relays: likely Sybil attack
+                    }
+                } else {
+                    60.0 // Can't determine IP: slight penalty
+                };
+            total_score += breakdown.sybil_resistance_score * (SYBIL_WEIGHT / 100.0);
+
+            // Factor 5: Geographic diversity (weight: 10%)
+            // Prefer relays in different regions than recently used
+            const GEO_WEIGHT: f64 = 10.0;
+            breakdown.geographic_score = {
+                // Use ASN/region hints from multiaddr if available
+                // For now, use IP prefix diversity as proxy
+                let prefix = self.extract_ip_prefix(relay_addr);
+                let recent_prefixes: HashSet<_> = recent_usage
+                    .iter()
+                    .filter_map(|(addr, _)| self.extract_ip_prefix(addr))
+                    .collect();
+
+                if let Some(ref p) = prefix {
+                    if recent_prefixes.contains(p) {
+                        70.0 // Same region as recent: slight penalty
+                    } else {
+                        100.0 // Different region: bonus
+                    }
+                } else {
+                    80.0 // Unknown region: neutral
+                }
+            };
+            total_score += breakdown.geographic_score * (GEO_WEIGHT / 100.0);
+
+            // Factor 6: Delivery history bonus (weight: 5%)
+            // Bonus for relays with high successful delivery rate
+            const DELIVERY_WEIGHT: f64 = 5.0;
+            breakdown.delivery_bonus = if let Some(vk) = keys_cache.get(*relay_addr) {
+                if let Some(score) = self.relay_scorer.get_score(vk) {
+                    score.delivery_score
+                } else {
+                    50.0
+                }
+            } else {
+                50.0
+            };
+            total_score += breakdown.delivery_bonus * (DELIVERY_WEIGHT / 100.0);
+
+            // Log breakdown before moving it
+            tracing::trace!(
+                "Relay {} scored {:.2} (lat:{:.1} rep:{:.1} traffic:{:.1} sybil:{:.1} geo:{:.1} del:{:.1})",
+                relay_addr,
+                total_score,
+                breakdown.latency_score,
+                breakdown.reputation_score,
+                breakdown.traffic_resistance_score,
+                breakdown.sybil_resistance_score,
+                breakdown.geographic_score,
+                breakdown.delivery_bonus,
+            );
+
+            // Total is now out of 100
+            scored_relays.push(((*relay_addr).clone(), total_score, breakdown));
+        }
+
+        drop(latencies);
+        drop(recent_usage);
+        drop(keys_cache);
+
+        // Phase 3: Weighted random selection from top candidates
+        // This prevents traffic analysis attacks while still preferring good relays
         scored_relays.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Select the best relay
-        let (best_relay, best_score) = &scored_relays[0];
+        // Take top 3 candidates (or all if fewer)
+        let top_count = scored_relays.len().min(3);
+        let top_candidates = &scored_relays[..top_count];
+
+        // Calculate selection weights (exponential preference for higher scores)
+        let weights: Vec<f64> = top_candidates
+            .iter()
+            .map(|(_, score, _)| {
+                // Exponential weighting: score^2 gives strong preference to high scores
+                // while still allowing lower-scored relays to be selected occasionally
+                score.powi(2)
+            })
+            .collect();
+
+        let total_weight: f64 = weights.iter().sum();
+        if total_weight <= 0.0 {
+            // Fallback: return highest scored
+            return Ok(top_candidates[0].0.clone());
+        }
+
+        // Weighted random selection
+        let mut rng = rand::thread_rng();
+        let random_point: f64 = rng.gen_range(0.0..total_weight);
+
+        let mut cumulative = 0.0;
+        let mut selected_idx = 0;
+        for (idx, weight) in weights.iter().enumerate() {
+            cumulative += weight;
+            if random_point < cumulative {
+                selected_idx = idx;
+                break;
+            }
+        }
+
+        let (selected_relay, selected_score, _) = &top_candidates[selected_idx];
+
+        // Record this usage for traffic analysis resistance
+        let mut recent_usage = self.recent_relay_usage.write().await;
+        recent_usage.push((selected_relay.clone(), now));
+        // Keep only last 20 entries
+        if recent_usage.len() > 20 {
+            recent_usage.remove(0);
+        }
 
         tracing::debug!(
-            "Selected relay {} with score {:.2} (from {} candidates)",
-            best_relay,
-            best_score,
+            "Selected relay {} with score {:.2} (from {} eligible, {} total candidates)",
+            selected_relay,
+            selected_score,
+            eligible_relays.len(),
             relay_addrs.len()
         );
 
-        Ok(best_relay.clone())
+        Ok(selected_relay.clone())
+    }
+
+    /// Try to extract Ed25519 VerifyingKey from relay multiaddr
+    /// Returns None if extraction fails
+    fn try_extract_verifying_key(&self, addr: &str) -> Option<VerifyingKey> {
+        if let Ok(multiaddr) = addr.parse::<Multiaddr>() {
+            for proto in multiaddr.iter() {
+                if let libp2p::multiaddr::Protocol::P2p(peer_id) = proto {
+                    // Try to extract Ed25519 public key from PeerId
+                    // PeerIds are derived from public keys, so we can extract if it's Ed25519
+                    // The to_bytes() gives us the multihash-encoded public key
+                    let peer_bytes = peer_id.to_bytes();
+                    // Skip the multihash prefix (typically 2 bytes) and decode
+                    if peer_bytes.len() > 2 {
+                        if let Ok(pub_key) =
+                            libp2p::identity::PublicKey::try_decode_protobuf(&peer_bytes[2..])
+                        {
+                            // try_into_ed25519() returns Result, not Option
+                            if let Ok(ed25519_key) = pub_key.try_into_ed25519() {
+                                // Convert libp2p Ed25519 key to ed25519_dalek VerifyingKey
+                                let key_bytes = ed25519_key.to_bytes();
+                                if let Ok(vk) = VerifyingKey::from_bytes(&key_bytes) {
+                                    return Some(vk);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract /24 IP prefix from multiaddr for Sybil detection
+    fn extract_ip_prefix(&self, addr: &str) -> Option<String> {
+        if let Ok(multiaddr) = addr.parse::<Multiaddr>() {
+            for proto in multiaddr.iter() {
+                match proto {
+                    libp2p::multiaddr::Protocol::Ip4(ip) => {
+                        let octets = ip.octets();
+                        return Some(format!("{}.{}.{}", octets[0], octets[1], octets[2]));
+                    }
+                    libp2p::multiaddr::Protocol::Ip6(ip) => {
+                        let segments = ip.segments();
+                        // Use first 3 segments (48 bits) for IPv6 prefix
+                        return Some(format!(
+                            "{:x}:{:x}:{:x}",
+                            segments[0], segments[1], segments[2]
+                        ));
+                    }
+                    _ => continue,
+                }
+            }
+        }
+        None
     }
 
     /// Extract relay ID from multiaddr for reputation lookup
@@ -956,27 +1626,84 @@ impl BotMessagingClient {
         hex::encode(&hash.as_bytes()[..16])
     }
 
-    /// Record latency measurement for a relay
+    /// Record latency measurement for a relay with proper reputation integration
     pub async fn record_relay_latency(&self, relay_addr: &str, latency_ms: u64) {
+        // Update local latency cache
         let mut latencies = self.relay_latencies.write().await;
         latencies.insert(relay_addr.to_string(), latency_ms);
+        drop(latencies);
 
-        // Also update reputation scorer with new metrics
-        let relay_id = self.extract_relay_id_from_addr(relay_addr);
-        let metrics = RelayMetrics {
-            uptime_percentage: 0.95,
-            messages_delivered: 1,
-            messages_failed: 0,
-            average_latency_ms: latency_ms as f64,
-            last_seen: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            geographic_region: None,
-            stake_amount: 10_000_000,
-        };
-        self.relay_scorer.update_metrics(&relay_id, metrics);
+        // Update reputation scorer if we have the relay's key
+        let keys_cache = self.relay_keys_cache.read().await;
+        if let Some(vk) = keys_cache.get(relay_addr) {
+            if let Err(e) = self.relay_scorer.update_latency(*vk, latency_ms) {
+                tracing::trace!(
+                    "Failed to update reputation latency for {}: {}",
+                    relay_addr,
+                    e
+                );
+            }
+        }
+
+        tracing::trace!("Recorded relay {} latency: {}ms", relay_addr, latency_ms);
     }
+
+    /// Record a relay delivery attempt for reputation tracking
+    pub async fn record_relay_delivery(&self, relay_addr: &str, success: bool) {
+        // Update local failure tracking
+        if !success {
+            let mut failures = self.relay_failures.write().await;
+            let entry = failures
+                .entry(relay_addr.to_string())
+                .or_insert((0, SystemTime::now()));
+            entry.0 += 1;
+            entry.1 = SystemTime::now();
+        } else {
+            // Reset failure counter on success
+            let mut failures = self.relay_failures.write().await;
+            failures.remove(relay_addr);
+        }
+
+        // Update reputation scorer
+        let keys_cache = self.relay_keys_cache.read().await;
+        if let Some(vk) = keys_cache.get(relay_addr) {
+            if let Err(e) = self.relay_scorer.record_delivery(*vk, success) {
+                tracing::trace!("Failed to update delivery for {}: {}", relay_addr, e);
+            }
+        }
+    }
+
+    /// Blacklist a relay temporarily or permanently
+    pub async fn blacklist_relay(&self, relay_addr: &str, duration: Duration, reason: &str) {
+        let ban_until = SystemTime::now() + duration;
+        let mut blacklist = self.relay_blacklist.write().await;
+        blacklist.insert(relay_addr.to_string(), (ban_until, reason.to_string()));
+        tracing::warn!(
+            "Blacklisted relay {} until {:?}: {}",
+            relay_addr,
+            ban_until,
+            reason
+        );
+    }
+
+    /// Cache a relay's VerifyingKey for future reputation lookups
+    pub async fn cache_relay_key(&self, relay_addr: &str, key: VerifyingKey) {
+        let mut cache = self.relay_keys_cache.write().await;
+        cache.insert(relay_addr.to_string(), key);
+        // Also register with scorer
+        self.relay_scorer.register_relay(key);
+    }
+}
+
+/// Score breakdown for debugging and monitoring
+#[derive(Debug, Default, Clone)]
+struct RelayScoreBreakdown {
+    latency_score: f64,
+    reputation_score: f64,
+    traffic_resistance_score: f64,
+    sybil_resistance_score: f64,
+    geographic_score: f64,
+    delivery_bonus: f64,
 }
 
 /// Chat type
@@ -1047,6 +1774,14 @@ pub struct MessageRouter {
     relay_scorer: Arc<RelayReputationScorer>,
     /// Latency measurements for relays (addr -> avg latency in ms)
     relay_latencies: Arc<RwLock<HashMap<String, u64>>>,
+    /// Blacklisted relay addresses (temporarily or permanently banned)
+    relay_blacklist: Arc<RwLock<HashMap<String, (SystemTime, String)>>>,
+    /// Relay verification keys cache: addr -> VerifyingKey
+    relay_keys_cache: Arc<RwLock<HashMap<String, VerifyingKey>>>,
+    /// Relay failure tracking for circuit breaker pattern
+    relay_failures: Arc<RwLock<HashMap<String, (u32, SystemTime)>>>,
+    /// Recently used relays for traffic analysis resistance
+    recent_relay_usage: Arc<RwLock<Vec<(String, SystemTime)>>>,
 }
 
 /// Metrics trait for message routing observability
@@ -1169,6 +1904,10 @@ impl MessageRouter {
             ))),
             relay_scorer: Arc::new(RelayReputationScorer::new()),
             relay_latencies: Arc::new(RwLock::new(HashMap::new())),
+            relay_blacklist: Arc::new(RwLock::new(HashMap::new())),
+            relay_keys_cache: Arc::new(RwLock::new(HashMap::new())),
+            relay_failures: Arc::new(RwLock::new(HashMap::new())),
+            recent_relay_usage: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -1400,6 +2139,258 @@ impl MessageRouter {
         })
     }
 
+    /// Select the best relay from available options using latency scoring
+    ///
+    /// This implements intelligent relay selection based on:
+    /// 1. Measured latency (from recent interactions)
+    /// 2. Load distribution (random jitter to prevent hotspots)
+    async fn select_best_relay(&self, relay_addrs: &[String]) -> Result<String> {
+        if relay_addrs.is_empty() {
+            return Err(Error::network("No relay addresses available".to_string()));
+        }
+
+        // If only one eligible relay, return it (but log a warning)
+        if relay_addrs.len() == 1 {
+            tracing::warn!(
+                "Only one relay available: {} - reduced resilience",
+                relay_addrs[0]
+            );
+            return Ok(relay_addrs[0].clone());
+        }
+
+        // Phase 1: Filter out blacklisted and circuit-broken relays
+        let now = SystemTime::now();
+        let blacklist = self.relay_blacklist.read().await;
+        let failures = self.relay_failures.read().await;
+
+        let eligible_relays: Vec<&String> = relay_addrs
+            .iter()
+            .filter(|addr| {
+                // Check blacklist
+                if let Some((ban_until, reason)) = blacklist.get(*addr) {
+                    if now < *ban_until {
+                        tracing::debug!("Relay {} blacklisted: {}", addr, reason);
+                        return false;
+                    }
+                }
+
+                // Circuit breaker: skip relays with 3+ consecutive failures in last 5 minutes
+                if let Some((fail_count, last_failure)) = failures.get(*addr) {
+                    if *fail_count >= 3 {
+                        let five_minutes_ago = now - Duration::from_secs(300);
+                        if *last_failure > five_minutes_ago {
+                            tracing::debug!(
+                                "Relay {} circuit-broken: {} failures",
+                                addr,
+                                fail_count
+                            );
+                            return false;
+                        }
+                    }
+                }
+                true
+            })
+            .collect();
+
+        drop(blacklist);
+        drop(failures);
+
+        if eligible_relays.is_empty() {
+            return Err(Error::network(
+                "All relay addresses are blacklisted or circuit-broken".to_string(),
+            ));
+        }
+
+        // Phase 2: Calculate comprehensive scores for each relay
+        let latencies = self.relay_latencies.read().await;
+        let recent_usage = self.recent_relay_usage.read().await;
+        let keys_cache = self.relay_keys_cache.read().await;
+
+        // Track IP prefixes for Sybil detection
+        let mut ip_prefix_counts: HashMap<String, u32> = HashMap::new();
+        for addr in &eligible_relays {
+            if let Some(prefix) = self.extract_ip_prefix(addr) {
+                *ip_prefix_counts.entry(prefix).or_insert(0) += 1;
+            }
+        }
+
+        let mut scored_relays: Vec<(String, f64)> = Vec::with_capacity(eligible_relays.len());
+
+        for relay_addr in &eligible_relays {
+            let mut total_score: f64 = 0.0;
+
+            // Factor 1: Latency score (weight: 25%)
+            let latency_score = if let Some(&latency_ms) = latencies.get(*relay_addr) {
+                match latency_ms {
+                    0..=30 => 100.0,
+                    31..=50 => 95.0,
+                    51..=100 => 85.0,
+                    101..=200 => 70.0,
+                    201..=500 => 50.0,
+                    501..=1000 => 25.0,
+                    _ => 10.0,
+                }
+            } else {
+                50.0
+            };
+            total_score += latency_score * 0.25;
+
+            // Factor 2: Reputation score (weight: 35%)
+            let reputation_score = if let Some(vk) = keys_cache.get(*relay_addr) {
+                if let Some(rep_score) = self.relay_scorer.get_score(vk) {
+                    let tier_bonus = match rep_score.tier {
+                        ReputationTier::Excellent => 10.0,
+                        ReputationTier::Good => 5.0,
+                        ReputationTier::Average => 0.0,
+                        ReputationTier::Poor => -10.0,
+                        ReputationTier::VeryPoor => -25.0,
+                    };
+                    (rep_score.total_score + tier_bonus).clamp(0.0, 100.0)
+                } else {
+                    50.0
+                }
+            } else {
+                45.0 // Unknown identity: slight penalty
+            };
+            total_score += reputation_score * 0.35;
+
+            // Factor 3: Traffic analysis resistance (weight: 15%)
+            let traffic_score = {
+                let mut recency_penalty = 0.0;
+                let five_minutes_ago = now - Duration::from_secs(300);
+                for (used_addr, used_time) in recent_usage.iter() {
+                    if used_addr == *relay_addr && *used_time > five_minutes_ago {
+                        let age_secs = now.duration_since(*used_time).unwrap_or_default().as_secs();
+                        recency_penalty = 50.0 - (age_secs as f64 * 50.0 / 300.0);
+                        break;
+                    }
+                }
+                (100.0 - recency_penalty).max(0.0)
+            };
+            total_score += traffic_score * 0.15;
+
+            // Factor 4: Sybil resistance (weight: 10%)
+            let sybil_score = if let Some(prefix) = self.extract_ip_prefix(relay_addr) {
+                match ip_prefix_counts.get(&prefix).copied().unwrap_or(1) {
+                    1 => 100.0,
+                    2 => 80.0,
+                    3 => 50.0,
+                    _ => 20.0,
+                }
+            } else {
+                60.0
+            };
+            total_score += sybil_score * 0.10;
+
+            // Factor 5: Geographic diversity (weight: 10%)
+            let geo_score = {
+                let prefix = self.extract_ip_prefix(relay_addr);
+                let recent_prefixes: HashSet<_> = recent_usage
+                    .iter()
+                    .filter_map(|(addr, _)| self.extract_ip_prefix(addr))
+                    .collect();
+                if let Some(ref p) = prefix {
+                    if recent_prefixes.contains(p) {
+                        70.0
+                    } else {
+                        100.0
+                    }
+                } else {
+                    80.0
+                }
+            };
+            total_score += geo_score * 0.10;
+
+            // Factor 6: Delivery bonus (weight: 5%)
+            let delivery_score = if let Some(vk) = keys_cache.get(*relay_addr) {
+                if let Some(score) = self.relay_scorer.get_score(vk) {
+                    score.delivery_score
+                } else {
+                    50.0
+                }
+            } else {
+                50.0
+            };
+            total_score += delivery_score * 0.05;
+
+            scored_relays.push(((*relay_addr).clone(), total_score));
+        }
+
+        drop(latencies);
+        drop(recent_usage);
+        drop(keys_cache);
+
+        // Phase 3: Weighted random selection from top candidates
+        scored_relays.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let top_count = scored_relays.len().min(3);
+        let top_candidates = &scored_relays[..top_count];
+
+        let weights: Vec<f64> = top_candidates
+            .iter()
+            .map(|(_, score)| score.powi(2))
+            .collect();
+        let total_weight: f64 = weights.iter().sum();
+
+        if total_weight <= 0.0 {
+            return Ok(top_candidates[0].0.clone());
+        }
+
+        let mut rng = rand::thread_rng();
+        let random_point: f64 = rng.gen_range(0.0..total_weight);
+
+        let mut cumulative = 0.0;
+        let mut selected_idx = 0;
+        for (idx, weight) in weights.iter().enumerate() {
+            cumulative += weight;
+            if random_point < cumulative {
+                selected_idx = idx;
+                break;
+            }
+        }
+
+        let (selected_relay, selected_score) = &top_candidates[selected_idx];
+
+        // Record usage for traffic analysis resistance
+        let mut recent_usage = self.recent_relay_usage.write().await;
+        recent_usage.push((selected_relay.clone(), now));
+        if recent_usage.len() > 20 {
+            recent_usage.remove(0);
+        }
+
+        tracing::debug!(
+            "Selected relay {} with score {:.2} (from {} candidates)",
+            selected_relay,
+            selected_score,
+            relay_addrs.len()
+        );
+
+        Ok(selected_relay.clone())
+    }
+
+    /// Extract /24 IP prefix from multiaddr for Sybil detection
+    fn extract_ip_prefix(&self, addr: &str) -> Option<String> {
+        if let Ok(multiaddr) = addr.parse::<Multiaddr>() {
+            for proto in multiaddr.iter() {
+                match proto {
+                    libp2p::multiaddr::Protocol::Ip4(ip) => {
+                        let octets = ip.octets();
+                        return Some(format!("{}.{}.{}", octets[0], octets[1], octets[2]));
+                    }
+                    libp2p::multiaddr::Protocol::Ip6(ip) => {
+                        let segments = ip.segments();
+                        return Some(format!(
+                            "{:x}:{:x}:{:x}",
+                            segments[0], segments[1], segments[2]
+                        ));
+                    }
+                    _ => continue,
+                }
+            }
+        }
+        None
+    }
+
     /// Route message to recipient via DHT and relay network
     ///
     /// This is the core message routing function. It:
@@ -1585,6 +2576,12 @@ impl MessageRouter {
 
         // Extract peer ID from multiaddr if present, otherwise derive from address
         let relay_peer_id = self.extract_peer_id_from_multiaddr(&multiaddr)?;
+
+        // Cache relay's VerifyingKey if we can extract it from the address
+        // This enables reputation tracking for this relay
+        if let Some(vk) = self.try_extract_verifying_key(relay_addr) {
+            self.cache_relay_key(relay_addr, vk).await;
+        }
 
         tracing::debug!(
             "Sending message {:?} ({} bytes) to relay {} (peer: {})",
@@ -2462,6 +3459,156 @@ impl MessageRouter {
             "Failed to deliver callback response to any relay: {}",
             last_error.unwrap_or_else(|| "No relays available".to_string())
         )))
+    }
+
+    /// Record relay delivery outcome for circuit breaker and reputation tracking
+    ///
+    /// Call this after each message delivery attempt to track relay reliability.
+    /// Failed deliveries increment the circuit breaker counter; successful deliveries reset it.
+    pub async fn record_relay_delivery(&self, relay_addr: &str, success: bool) {
+        let now = SystemTime::now();
+
+        if success {
+            // Reset failure counter on success
+            let mut failures = self.relay_failures.write().await;
+            failures.remove(relay_addr);
+
+            // Update reputation if we have the key cached
+            let keys_cache = self.relay_keys_cache.read().await;
+            if let Some(vk) = keys_cache.get(relay_addr) {
+                if let Err(e) = self.relay_scorer.record_delivery(*vk, true) {
+                    tracing::trace!(
+                        "Failed to update delivery reputation for {}: {}",
+                        relay_addr,
+                        e
+                    );
+                }
+            }
+
+            tracing::debug!("Recorded successful delivery via relay: {}", relay_addr);
+        } else {
+            // Increment failure counter
+            let mut failures = self.relay_failures.write().await;
+            let (count, _) = failures.entry(relay_addr.to_string()).or_insert((0, now));
+            *count += 1;
+
+            let fail_count = *count;
+            drop(failures);
+
+            // Update reputation if we have the key cached
+            let keys_cache = self.relay_keys_cache.read().await;
+            if let Some(vk) = keys_cache.get(relay_addr) {
+                if let Err(e) = self.relay_scorer.record_delivery(*vk, false) {
+                    tracing::trace!(
+                        "Failed to update failure reputation for {}: {}",
+                        relay_addr,
+                        e
+                    );
+                }
+            }
+
+            tracing::warn!(
+                "Recorded failed delivery via relay: {} (consecutive failures: {})",
+                relay_addr,
+                fail_count
+            );
+
+            // Auto-blacklist after 5 consecutive failures
+            if fail_count >= 5 {
+                drop(keys_cache);
+                self.blacklist_relay(
+                    relay_addr,
+                    Duration::from_secs(600), // 10 minutes
+                    "Exceeded 5 consecutive delivery failures",
+                )
+                .await;
+            }
+        }
+    }
+
+    /// Blacklist a relay for a specified duration
+    ///
+    /// Blacklisted relays are excluded from selection until the ban expires.
+    /// Use this for relays that exhibit malicious behavior or persistent failures.
+    pub async fn blacklist_relay(&self, relay_addr: &str, duration: Duration, reason: &str) {
+        let ban_until = SystemTime::now() + duration;
+
+        let mut blacklist = self.relay_blacklist.write().await;
+        blacklist.insert(relay_addr.to_string(), (ban_until, reason.to_string()));
+
+        tracing::warn!(
+            "Blacklisted relay {} for {:?}: {}",
+            relay_addr,
+            duration,
+            reason
+        );
+    }
+
+    /// Cache a relay's VerifyingKey for reputation lookups
+    ///
+    /// Call this when you successfully extract a relay's public key from
+    /// its PeerId or handshake. This enables reputation-based scoring.
+    pub async fn cache_relay_key(&self, relay_addr: &str, key: VerifyingKey) {
+        // Register with scorer if not already known
+        self.relay_scorer.register_relay(key);
+
+        let mut keys_cache = self.relay_keys_cache.write().await;
+        keys_cache.insert(relay_addr.to_string(), key);
+
+        tracing::debug!("Cached VerifyingKey for relay: {}", relay_addr);
+    }
+
+    /// Attempt to extract VerifyingKey from a PeerId in the multiaddr
+    ///
+    /// PeerIds are derived from Ed25519 public keys, so we can sometimes
+    /// recover the original key for reputation lookups.
+    fn try_extract_verifying_key(&self, addr: &str) -> Option<VerifyingKey> {
+        // Parse multiaddr and look for /p2p/... component
+        let multiaddr: Multiaddr = addr.parse().ok()?;
+
+        for proto in multiaddr.iter() {
+            if let libp2p::multiaddr::Protocol::P2p(peer_id) = proto {
+                // Try to extract Ed25519 public key from PeerId
+                let peer_bytes = peer_id.to_bytes();
+                if peer_bytes.len() > 2 {
+                    if let Ok(public_key) = libp2p::identity::PublicKey::try_decode_protobuf(
+                        &peer_bytes[2..], // Skip multihash header
+                    ) {
+                        // try_into_ed25519 returns Result, not Option
+                        if let Ok(ed25519_key) = public_key.try_into_ed25519() {
+                            let key_bytes: [u8; 32] = ed25519_key.to_bytes();
+                            return VerifyingKey::from_bytes(&key_bytes).ok();
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Clean up expired blacklist entries and old failure records
+    ///
+    /// Call periodically (e.g., every 5 minutes) to prevent memory growth
+    /// and allow previously-banned relays to be reconsidered.
+    pub async fn cleanup_relay_state(&self) {
+        let now = SystemTime::now();
+        let cutoff = now - Duration::from_secs(600); // 10 minutes ago
+
+        // Clean expired blacklist entries
+        let mut blacklist = self.relay_blacklist.write().await;
+        blacklist.retain(|_, (ban_until, _)| *ban_until > now);
+        drop(blacklist);
+
+        // Clean old failure records
+        let mut failures = self.relay_failures.write().await;
+        failures.retain(|_, (_, last_failure)| *last_failure > cutoff);
+        drop(failures);
+
+        // Clean old usage records
+        let mut recent_usage = self.recent_relay_usage.write().await;
+        recent_usage.retain(|(_, used_time)| *used_time > cutoff);
+
+        tracing::debug!("Cleaned up relay state (blacklist, failures, usage)");
     }
 }
 

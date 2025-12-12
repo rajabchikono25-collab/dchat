@@ -45,6 +45,16 @@ pub trait ChainRpcClient: Send + Sync {
         from_block: u64,
         to_block: Option<u64>,
     ) -> Result<Vec<serde_json::Value>>;
+
+    /// Generic JSON-RPC call for custom methods
+    ///
+    /// # Arguments
+    /// * `method` - The RPC method name
+    /// * `params` - The parameters as a JSON value
+    ///
+    /// # Returns
+    /// The result field from the JSON-RPC response
+    async fn call_rpc(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value>;
 }
 
 /// Production HTTP RPC client implementation
@@ -298,6 +308,43 @@ impl ChainRpcClient for HttpRpcClient {
 
         Ok(events)
     }
+
+    async fn call_rpc(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        use serde_json::json;
+
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        });
+
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::chain_rpc(format!("RPC request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::chain_rpc(format!(
+                "RPC returned error status: {}",
+                response.status()
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::chain_rpc(format!("Failed to parse RPC response: {}", e)))?;
+
+        if let Some(error) = json.get("error") {
+            return Err(Error::chain_rpc(format!("RPC error: {:?}", error)));
+        }
+
+        Ok(json["result"].clone())
+    }
 }
 
 /// Mock RPC client for testing (simulated responses)
@@ -354,6 +401,15 @@ impl ChainRpcClient for MockRpcClient {
     ) -> Result<Vec<serde_json::Value>> {
         // Mock returns empty events - tests can override this behavior
         Ok(Vec::new())
+    }
+
+    async fn call_rpc(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        // Mock returns null result - specific tests can override
+        Ok(serde_json::Value::Null)
     }
 }
 
