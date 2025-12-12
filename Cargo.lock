@@ -1955,6 +1955,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2078,7 +2087,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.111",
 ]
 
 [[package]]
@@ -2159,6 +2168,8 @@ dependencies = [
  "blst",
  "bs58",
  "chrono",
+ "crossbeam-channel",
+ "dashmap",
  "dchat-chain",
  "dchat-core",
  "dchat-crypto",
@@ -2168,9 +2179,11 @@ dependencies = [
  "futures-util",
  "hex",
  "maxminddb",
+ "parking_lot",
  "pqcrypto-dilithium",
  "pqcrypto-traits",
  "rand 0.8.5",
+ "rayon",
  "reqwest 0.11.27",
  "serde",
  "serde_bytes",
