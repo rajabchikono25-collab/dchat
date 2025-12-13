@@ -63,35 +63,25 @@ impl SystemProgram {
     }
 
     /// Allocate space instruction
-    pub fn allocate(
-        account: &SolanaAddress,
-        space: u64,
-    ) -> Result<Instruction> {
+    pub fn allocate(account: &SolanaAddress, space: u64) -> Result<Instruction> {
         let program_id = Self::id()?;
 
         let mut data = vec![8, 0, 0, 0]; // Allocate instruction (u32)
         data.extend_from_slice(&space.to_le_bytes());
 
-        let accounts = vec![
-            AccountMeta::signer_writable(account.clone()),
-        ];
+        let accounts = vec![AccountMeta::signer_writable(account.clone())];
 
         Ok(Instruction::new(program_id, accounts, data))
     }
 
     /// Assign account to program instruction
-    pub fn assign(
-        account: &SolanaAddress,
-        owner: &SolanaAddress,
-    ) -> Result<Instruction> {
+    pub fn assign(account: &SolanaAddress, owner: &SolanaAddress) -> Result<Instruction> {
         let program_id = Self::id()?;
 
         let mut data = vec![1, 0, 0, 0]; // Assign instruction (u32)
         data.extend_from_slice(owner.as_bytes());
 
-        let accounts = vec![
-            AccountMeta::signer_writable(account.clone()),
-        ];
+        let accounts = vec![AccountMeta::signer_writable(account.clone())];
 
         Ok(Instruction::new(program_id, accounts, data))
     }
@@ -110,12 +100,12 @@ impl SystemProgram {
 
         let mut data = vec![3, 0, 0, 0]; // CreateAccountWithSeed instruction (u32)
         data.extend_from_slice(base.as_bytes());
-        
+
         // Seed string (length-prefixed)
         let seed_bytes = seed.as_bytes();
         data.extend_from_slice(&(seed_bytes.len() as u64).to_le_bytes());
         data.extend_from_slice(seed_bytes);
-        
+
         data.extend_from_slice(&lamports.to_le_bytes());
         data.extend_from_slice(&space.to_le_bytes());
         data.extend_from_slice(owner.as_bytes());
@@ -207,12 +197,12 @@ impl SystemProgram {
 
         let mut data = vec![11, 0, 0, 0]; // TransferWithSeed instruction (u32)
         data.extend_from_slice(&lamports.to_le_bytes());
-        
+
         // Seed string
         let seed_bytes = seed.as_bytes();
         data.extend_from_slice(&(seed_bytes.len() as u64).to_le_bytes());
         data.extend_from_slice(seed_bytes);
-        
+
         data.extend_from_slice(from_owner.as_bytes());
 
         let accounts = vec![
@@ -364,9 +354,9 @@ mod tests {
     fn test_transfer_instruction() {
         let from = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
         let to = SolanaAddress::from_bytes(&[2u8; 32]).unwrap();
-        
+
         let ix = SystemProgram::transfer(&from, &to, 1_000_000).unwrap();
-        
+
         assert_eq!(ix.accounts.len(), 2);
         assert_eq!(&ix.data[0..4], &[2, 0, 0, 0]); // Transfer instruction
     }
@@ -383,7 +373,7 @@ mod tests {
         let addr = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
         let account = SolanaAccount::signer_writable(addr);
         let meta = account.to_meta();
-        
+
         assert!(meta.is_signer);
         assert!(meta.is_writable);
     }

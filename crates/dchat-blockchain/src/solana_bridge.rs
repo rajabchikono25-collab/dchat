@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::wallet::solana_compat::{SolanaAddress, TokenMint};
 use crate::wallet::address::{AddressMapping, UniversalAddress};
+use crate::wallet::solana_compat::{SolanaAddress, TokenMint};
 
 /// Solana bridge configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,8 +54,8 @@ impl Default for SolanaBridgeConfig {
             wdchat_mint: SolanaAddress::from_bytes(&[0u8; 32]).unwrap(),
             dchat_confirmations: 12,
             solana_confirmations: 32,
-            fee_bps: 30, // 0.3%
-            min_transfer: 1_000_000_000, // 1 DCHAT
+            fee_bps: 30,                         // 0.3%
+            min_transfer: 1_000_000_000,         // 1 DCHAT
             max_transfer: 1_000_000_000_000_000, // 1M DCHAT
             validators: Vec::new(),
             validator_threshold: 2,
@@ -97,18 +97,11 @@ pub enum BridgeTransferStatus {
     /// Validators have signed, executing on destination
     Executing,
     /// Transfer completed successfully
-    Completed {
-        source_tx: String,
-        dest_tx: String,
-    },
+    Completed { source_tx: String, dest_tx: String },
     /// Transfer failed
-    Failed {
-        reason: String,
-    },
+    Failed { reason: String },
     /// Transfer refunded (e.g., timeout)
-    Refunded {
-        refund_tx: String,
-    },
+    Refunded { refund_tx: String },
 }
 
 /// A cross-chain bridge transfer
@@ -238,7 +231,7 @@ impl SolanaBridge {
         // Validate config
         if config.validator_threshold > config.validators.len() {
             return Err(Error::validation(
-                "Validator threshold exceeds number of validators"
+                "Validator threshold exceeds number of validators",
             ));
         }
 
@@ -344,13 +337,7 @@ impl SolanaBridge {
         let fee = self.calculate_fee(amount);
 
         // Create transfer
-        let transfer = BridgeTransfer::solana_to_dchat(
-            source,
-            dest_address,
-            amount,
-            fee,
-            24,
-        );
+        let transfer = BridgeTransfer::solana_to_dchat(source, dest_address, amount, fee, 24);
 
         let transfer_id = transfer.id;
         self.transfers.insert(transfer_id, transfer);
@@ -365,12 +352,10 @@ impl SolanaBridge {
     }
 
     /// Record source chain transaction confirmation
-    pub fn record_source_confirmation(
-        &mut self,
-        transfer_id: Uuid,
-        tx_hash: String,
-    ) -> Result<()> {
-        let transfer = self.transfers.get_mut(&transfer_id)
+    pub fn record_source_confirmation(&mut self, transfer_id: Uuid, tx_hash: String) -> Result<()> {
+        let transfer = self
+            .transfers
+            .get_mut(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
 
         if transfer.source_tx_hash.is_some() {
@@ -397,32 +382,39 @@ impl SolanaBridge {
         }
 
         // Check if validator is valid
-        let validator = self.config.validators.iter()
+        let validator = self
+            .config
+            .validators
+            .iter()
             .find(|v| v.id == validator_id && v.is_active)
             .ok_or_else(|| Error::validation("Unknown or inactive validator"))?
             .clone();
 
         // Get transfer and create signing message
-        let transfer = self.transfers.get(&transfer_id)
+        let transfer = self
+            .transfers
+            .get(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
 
         // Check if already signed
-        if transfer.validator_signatures.iter().any(|s| s.validator_id == validator_id) {
+        if transfer
+            .validator_signatures
+            .iter()
+            .any(|s| s.validator_id == validator_id)
+        {
             return Err(Error::validation("Validator already signed"));
         }
 
         // Verify the signature against the transfer data
         let signing_message = self.create_signing_message(transfer);
-        self.verify_validator_signature(
-            &validator.solana_address,
-            &signing_message,
-            &signature,
-        )?;
+        self.verify_validator_signature(&validator.solana_address, &signing_message, &signature)?;
 
         // Now get mutable reference and add the verified signature
-        let transfer = self.transfers.get_mut(&transfer_id)
+        let transfer = self
+            .transfers
+            .get_mut(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
-        
+
         // Add signature
         transfer.validator_signatures.push(ValidatorSignature {
             validator_id: validator.id,
@@ -452,22 +444,24 @@ impl SolanaBridge {
         message: &[u8],
         signature: &[u8],
     ) -> Result<()> {
-        let sig_bytes: [u8; 64] = signature.try_into()
+        let sig_bytes: [u8; 64] = signature
+            .try_into()
             .map_err(|_| Error::crypto("Invalid signature length"))?;
-        
+
         let verifying_key = VerifyingKey::from_bytes(validator_address.as_bytes())
             .map_err(|e| Error::crypto(format!("Invalid validator public key: {}", e)))?;
-        
+
         let sig = Signature::from_bytes(&sig_bytes);
-        
-        verifying_key.verify_strict(message, &sig)
-            .map_err(|e| Error::crypto(format!("Validator signature verification failed: {}", e)))?;
-        
+
+        verifying_key.verify_strict(message, &sig).map_err(|e| {
+            Error::crypto(format!("Validator signature verification failed: {}", e))
+        })?;
+
         Ok(())
     }
 
     /// Create signing message for validators
-    /// 
+    ///
     /// Generates a deterministic message hash that validators must sign
     /// to approve a bridge transfer. The message includes all relevant
     /// transfer details to prevent replay attacks.
@@ -484,30 +478,32 @@ impl SolanaBridge {
     }
 
     /// Get the signing message for a transfer (for validators to sign)
-    /// 
+    ///
     /// This public method allows validators to retrieve the message they
     /// need to sign to approve a transfer.
     pub fn get_signing_message(&self, transfer_id: Uuid) -> Result<Vec<u8>> {
-        let transfer = self.transfers.get(&transfer_id)
+        let transfer = self
+            .transfers
+            .get(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
-        
+
         Ok(self.create_signing_message(transfer))
     }
 
     /// Complete transfer (record destination tx)
-    pub fn complete_transfer(
-        &mut self,
-        transfer_id: Uuid,
-        dest_tx_hash: String,
-    ) -> Result<()> {
-        let transfer = self.transfers.get_mut(&transfer_id)
+    pub fn complete_transfer(&mut self, transfer_id: Uuid, dest_tx_hash: String) -> Result<()> {
+        let transfer = self
+            .transfers
+            .get_mut(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
 
         if !matches!(transfer.status, BridgeTransferStatus::Executing) {
             return Err(Error::validation("Transfer not in executing state"));
         }
 
-        let source_tx = transfer.source_tx_hash.clone()
+        let source_tx = transfer
+            .source_tx_hash
+            .clone()
             .ok_or_else(|| Error::validation("Source tx not recorded"))?;
 
         transfer.dest_tx_hash = Some(dest_tx_hash.clone());
@@ -534,7 +530,9 @@ impl SolanaBridge {
 
     /// Fail transfer
     pub fn fail_transfer(&mut self, transfer_id: Uuid, reason: String) -> Result<()> {
-        let transfer = self.transfers.get_mut(&transfer_id)
+        let transfer = self
+            .transfers
+            .get_mut(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
 
         transfer.status = BridgeTransferStatus::Failed { reason };
@@ -545,7 +543,9 @@ impl SolanaBridge {
 
     /// Refund timed-out transfer
     pub fn refund_transfer(&mut self, transfer_id: Uuid, refund_tx: String) -> Result<()> {
-        let transfer = self.transfers.get_mut(&transfer_id)
+        let transfer = self
+            .transfers
+            .get_mut(&transfer_id)
             .ok_or_else(|| Error::validation("Transfer not found"))?;
 
         if !transfer.is_timed_out() {
@@ -565,11 +565,14 @@ impl SolanaBridge {
 
     /// Get pending transfers
     pub fn pending_transfers(&self) -> Vec<&BridgeTransfer> {
-        self.transfers.values()
-            .filter(|t| matches!(
-                t.status,
-                BridgeTransferStatus::Pending | BridgeTransferStatus::AwaitingValidation
-            ))
+        self.transfers
+            .values()
+            .filter(|t| {
+                matches!(
+                    t.status,
+                    BridgeTransferStatus::Pending | BridgeTransferStatus::AwaitingValidation
+                )
+            })
             .collect()
     }
 
@@ -587,12 +590,15 @@ impl SolanaBridge {
 
     /// Cleanup timed-out transfers
     pub fn cleanup_timed_out(&mut self) -> Vec<Uuid> {
-        let timed_out: Vec<Uuid> = self.transfers.iter()
+        let timed_out: Vec<Uuid> = self
+            .transfers
+            .iter()
             .filter(|(_, t)| {
-                t.is_timed_out() && matches!(
-                    t.status,
-                    BridgeTransferStatus::Pending | BridgeTransferStatus::AwaitingValidation
-                )
+                t.is_timed_out()
+                    && matches!(
+                        t.status,
+                        BridgeTransferStatus::Pending | BridgeTransferStatus::AwaitingValidation
+                    )
             })
             .map(|(id, _)| *id)
             .collect();
@@ -610,18 +616,28 @@ impl SolanaBridge {
 
     /// Get bridge statistics
     pub fn statistics(&self) -> BridgeStatistics {
-        let pending_count = self.transfers.values()
-            .filter(|t| matches!(
-                t.status,
-                BridgeTransferStatus::Pending | BridgeTransferStatus::AwaitingValidation | BridgeTransferStatus::Executing
-            ))
+        let pending_count = self
+            .transfers
+            .values()
+            .filter(|t| {
+                matches!(
+                    t.status,
+                    BridgeTransferStatus::Pending
+                        | BridgeTransferStatus::AwaitingValidation
+                        | BridgeTransferStatus::Executing
+                )
+            })
             .count();
 
-        let completed_count = self.transfers.values()
+        let completed_count = self
+            .transfers
+            .values()
             .filter(|t| matches!(t.status, BridgeTransferStatus::Completed { .. }))
             .count();
 
-        let failed_count = self.transfers.values()
+        let failed_count = self
+            .transfers
+            .values()
             .filter(|t| matches!(t.status, BridgeTransferStatus::Failed { .. }))
             .count();
 
@@ -632,7 +648,12 @@ impl SolanaBridge {
             failed_count,
             total_volume_dchat_to_solana: self.total_volume_dchat_to_solana,
             total_volume_solana_to_dchat: self.total_volume_solana_to_dchat,
-            active_validators: self.config.validators.iter().filter(|v| v.is_active).count(),
+            active_validators: self
+                .config
+                .validators
+                .iter()
+                .filter(|v| v.is_active)
+                .count(),
         }
     }
 }
@@ -662,28 +683,29 @@ mod tests {
     }
 
     fn create_test_validators(count: usize) -> Vec<TestValidator> {
-        (0..count).map(|_| {
-            let keypair = KeyPair::try_generate().unwrap();
-            let signing_key = ed25519_dalek::SigningKey::from_bytes(
-                keypair.private_key().as_bytes()
-            );
-            
-            TestValidator {
-                info: BridgeValidator {
-                    id: UserId::new(),
-                    solana_address: SolanaAddress::from_public_key(keypair.public_key()),
-                    dchat_address: keypair.to_address().to_hex(),
-                    stake: 10000,
-                    is_active: true,
-                },
-                signing_key,
-            }
-        }).collect()
+        (0..count)
+            .map(|_| {
+                let keypair = KeyPair::try_generate().unwrap();
+                let signing_key =
+                    ed25519_dalek::SigningKey::from_bytes(keypair.private_key().as_bytes());
+
+                TestValidator {
+                    info: BridgeValidator {
+                        id: UserId::new(),
+                        solana_address: SolanaAddress::from_public_key(keypair.public_key()),
+                        dchat_address: keypair.to_address().to_hex(),
+                        stake: 10000,
+                        is_active: true,
+                    },
+                    signing_key,
+                }
+            })
+            .collect()
     }
 
     fn create_test_config() -> SolanaBridgeConfig {
         let mut config = SolanaBridgeConfig::default();
-        
+
         // Add test validators
         for _ in 0..3 {
             let keypair = KeyPair::try_generate().unwrap();
@@ -695,18 +717,18 @@ mod tests {
                 is_active: true,
             });
         }
-        
+
         config.validator_threshold = 2;
         config
     }
 
     fn create_test_config_with_signers() -> (SolanaBridgeConfig, Vec<TestValidator>) {
         let validators = create_test_validators(3);
-        
+
         let mut config = SolanaBridgeConfig::default();
         config.validators = validators.iter().map(|v| v.info.clone()).collect();
         config.validator_threshold = 2;
-        
+
         (config, validators)
     }
 
@@ -714,7 +736,7 @@ mod tests {
     fn test_bridge_creation() {
         let config = create_test_config();
         let bridge = SolanaBridge::new(config).unwrap();
-        
+
         assert_eq!(bridge.config().validator_threshold, 2);
         assert!(!bridge.supported_tokens.is_empty());
     }
@@ -723,7 +745,7 @@ mod tests {
     fn test_fee_calculation() {
         let config = create_test_config();
         let bridge = SolanaBridge::new(config).unwrap();
-        
+
         // 30 bps = 0.3%
         let fee = bridge.calculate_fee(1_000_000_000);
         assert_eq!(fee, 3_000_000); // 0.3% of 1B
@@ -733,22 +755,20 @@ mod tests {
     fn test_transfer_initiation() {
         let config = create_test_config();
         let mut bridge = SolanaBridge::new(config).unwrap();
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let source = UniversalAddress::from_public_key(
             keypair.public_key(),
             crate::wallet::AddressFormat::DchatNative,
         );
-        
+
         let dest_keypair = KeyPair::try_generate().unwrap();
         let dest = SolanaAddress::from_public_key(dest_keypair.public_key());
-        
-        let transfer_id = bridge.initiate_dchat_to_solana(
-            source,
-            &dest.to_base58(),
-            1_000_000_000,
-        ).unwrap();
-        
+
+        let transfer_id = bridge
+            .initiate_dchat_to_solana(source, &dest.to_base58(), 1_000_000_000)
+            .unwrap();
+
         let transfer = bridge.get_transfer(transfer_id).unwrap();
         assert_eq!(transfer.direction, BridgeDirection::DchatToSolana);
         assert!(matches!(transfer.status, BridgeTransferStatus::Pending));
@@ -758,49 +778,56 @@ mod tests {
     fn test_transfer_validation_flow() {
         let (config, validators) = create_test_config_with_signers();
         let mut bridge = SolanaBridge::new(config).unwrap();
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let source = UniversalAddress::from_public_key(
             keypair.public_key(),
             crate::wallet::AddressFormat::DchatNative,
         );
-        
+
         let dest_keypair = KeyPair::try_generate().unwrap();
         let dest = SolanaAddress::from_public_key(dest_keypair.public_key());
-        
-        let transfer_id = bridge.initiate_dchat_to_solana(
-            source,
-            &dest.to_base58(),
-            1_000_000_000,
-        ).unwrap();
-        
+
+        let transfer_id = bridge
+            .initiate_dchat_to_solana(source, &dest.to_base58(), 1_000_000_000)
+            .unwrap();
+
         // Record source confirmation
-        bridge.record_source_confirmation(transfer_id, "tx_hash_123".to_string()).unwrap();
-        
+        bridge
+            .record_source_confirmation(transfer_id, "tx_hash_123".to_string())
+            .unwrap();
+
         let transfer = bridge.get_transfer(transfer_id).unwrap();
-        assert!(matches!(transfer.status, BridgeTransferStatus::AwaitingValidation));
-        
+        assert!(matches!(
+            transfer.status,
+            BridgeTransferStatus::AwaitingValidation
+        ));
+
         // Get the signing message and create real signatures
         let signing_message = bridge.get_signing_message(transfer_id).unwrap();
-        
+
         // Submit first validator signature
         let sig1 = validators[0].signing_key.sign(&signing_message);
-        let has_quorum = bridge.submit_validator_signature(
-            transfer_id,
-            validators[0].info.id.clone(),
-            sig1.to_bytes().to_vec(),
-        ).unwrap();
+        let has_quorum = bridge
+            .submit_validator_signature(
+                transfer_id,
+                validators[0].info.id.clone(),
+                sig1.to_bytes().to_vec(),
+            )
+            .unwrap();
         assert!(!has_quorum);
-        
+
         // Submit second validator signature - reaches quorum
         let sig2 = validators[1].signing_key.sign(&signing_message);
-        let has_quorum = bridge.submit_validator_signature(
-            transfer_id,
-            validators[1].info.id.clone(),
-            sig2.to_bytes().to_vec(),
-        ).unwrap();
+        let has_quorum = bridge
+            .submit_validator_signature(
+                transfer_id,
+                validators[1].info.id.clone(),
+                sig2.to_bytes().to_vec(),
+            )
+            .unwrap();
         assert!(has_quorum);
-        
+
         let transfer = bridge.get_transfer(transfer_id).unwrap();
         assert!(matches!(transfer.status, BridgeTransferStatus::Executing));
     }
@@ -809,31 +836,31 @@ mod tests {
     fn test_invalid_signature_rejected() {
         let (config, validators) = create_test_config_with_signers();
         let mut bridge = SolanaBridge::new(config).unwrap();
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let source = UniversalAddress::from_public_key(
             keypair.public_key(),
             crate::wallet::AddressFormat::DchatNative,
         );
-        
+
         let dest_keypair = KeyPair::try_generate().unwrap();
         let dest = SolanaAddress::from_public_key(dest_keypair.public_key());
-        
-        let transfer_id = bridge.initiate_dchat_to_solana(
-            source,
-            &dest.to_base58(),
-            1_000_000_000,
-        ).unwrap();
-        
-        bridge.record_source_confirmation(transfer_id, "tx_hash_123".to_string()).unwrap();
-        
+
+        let transfer_id = bridge
+            .initiate_dchat_to_solana(source, &dest.to_base58(), 1_000_000_000)
+            .unwrap();
+
+        bridge
+            .record_source_confirmation(transfer_id, "tx_hash_123".to_string())
+            .unwrap();
+
         // Try to submit an invalid signature (all zeros)
         let result = bridge.submit_validator_signature(
             transfer_id,
             validators[0].info.id.clone(),
             vec![0u8; 64],
         );
-        
+
         // Should fail signature verification
         assert!(result.is_err());
     }
@@ -843,16 +870,16 @@ mod tests {
         let mut config = create_test_config();
         config.min_transfer = 1_000_000_000;
         let mut bridge = SolanaBridge::new(config).unwrap();
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let source = UniversalAddress::from_public_key(
             keypair.public_key(),
             crate::wallet::AddressFormat::DchatNative,
         );
-        
+
         let dest_keypair = KeyPair::try_generate().unwrap();
         let dest = SolanaAddress::from_public_key(dest_keypair.public_key());
-        
+
         // Below minimum
         let result = bridge.initiate_dchat_to_solana(
             source,

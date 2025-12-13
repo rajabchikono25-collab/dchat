@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 use super::solana_compat::SolanaAddress;
+use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 
 /// Multi-signature wallet configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,23 +46,25 @@ impl MultiSigConfig {
         chain_id: u32,
     ) -> Result<Self> {
         let total_signers = signers.len();
-        
+
         if threshold == 0 {
             return Err(Error::validation("Threshold must be at least 1"));
         }
         if threshold > total_signers {
-            return Err(Error::validation("Threshold cannot exceed number of signers"));
+            return Err(Error::validation(
+                "Threshold cannot exceed number of signers",
+            ));
         }
         if total_signers > 10 {
             return Err(Error::validation("Maximum 10 signers allowed"));
         }
-        
+
         // Check for duplicate public keys
         let unique_keys: HashSet<_> = signers.iter().map(|s| s.public_key.as_bytes()).collect();
         if unique_keys.len() != signers.len() {
             return Err(Error::validation("Duplicate signer public keys"));
         }
-        
+
         Ok(Self {
             threshold,
             total_signers,
@@ -106,7 +108,7 @@ impl SignerInfo {
     /// Create a new signer info
     pub fn new(public_key: PublicKey, name: String, index: u32) -> Self {
         let solana_address = SolanaAddress::from_public_key(&public_key);
-        
+
         Self {
             public_key,
             name,
@@ -194,13 +196,12 @@ impl MultiSigWallet {
     pub fn new(config: MultiSigConfig) -> Result<Self> {
         // Derive wallet address from signer public keys and threshold
         let address = Self::derive_address(&config);
-        
+
         // Create Solana-compatible address using first signer's key for compatibility
         // Real multi-sig would use a Program Derived Address (PDA)
-        let solana_address = SolanaAddress::from_bytes(
-            &blake3::hash(address.as_bytes()).as_bytes()[..32]
-        )?;
-        
+        let solana_address =
+            SolanaAddress::from_bytes(&blake3::hash(address.as_bytes()).as_bytes()[..32])?;
+
         Ok(Self {
             id: Uuid::new_v4(),
             config,
@@ -220,17 +221,19 @@ impl MultiSigWallet {
         let mut data = Vec::new();
         data.push(config.threshold as u8);
         data.push(config.total_signers as u8);
-        
+
         // Sort public keys for deterministic ordering
-        let mut sorted_keys: Vec<_> = config.signers.iter()
+        let mut sorted_keys: Vec<_> = config
+            .signers
+            .iter()
             .map(|s| s.public_key.as_bytes())
             .collect();
         sorted_keys.sort();
-        
+
         for key in sorted_keys {
             data.extend_from_slice(key);
         }
-        
+
         let hash = blake3::hash(&data);
         format!("0x{}", hex::encode(&hash.as_bytes()[..20]))
     }
@@ -314,20 +317,16 @@ impl MultiSigWallet {
             self.reset_daily_limit_if_needed();
             if self.daily_spent + amount > limit && self.config.threshold > 1 {
                 // Requires additional approvals beyond threshold
-                tracing::info!("Transaction exceeds daily limit, additional approvals may be needed");
+                tracing::info!(
+                    "Transaction exceeds daily limit, additional approvals may be needed"
+                );
             }
         }
 
-        let transaction = WalletTransaction::new(
-            to,
-            amount,
-            fee,
-            self.nonce,
-            self.config.chain_id,
-        );
+        let transaction = WalletTransaction::new(to, amount, fee, self.nonce, self.config.chain_id);
 
         let expires_at = Utc::now() + chrono::Duration::hours(expiration_hours as i64);
-        
+
         let pending = PendingMultiSigTx {
             id: Uuid::new_v4(),
             transaction,
@@ -359,11 +358,16 @@ impl MultiSigWallet {
         signature: Vec<u8>,
     ) -> Result<bool> {
         // First validate signer and get public key
-        let signer = self.config.signers.get(signer_index as usize)
+        let signer = self
+            .config
+            .signers
+            .get(signer_index as usize)
             .ok_or_else(|| Error::validation("Invalid signer index"))?
             .clone();
 
-        let pending = self.pending_transactions.get(&tx_id)
+        let pending = self
+            .pending_transactions
+            .get(&tx_id)
             .ok_or_else(|| Error::validation("Transaction not found"))?;
 
         // Check expiration
@@ -383,11 +387,14 @@ impl MultiSigWallet {
 
         // Now get mutable reference and add signature
         let pending = self.pending_transactions.get_mut(&tx_id).unwrap();
-        pending.signatures.insert(signer_index, TransactionSignature {
-            public_key: signer.public_key.as_bytes().to_vec(),
-            signature,
-            signer_index: Some(signer_index),
-        });
+        pending.signatures.insert(
+            signer_index,
+            TransactionSignature {
+                public_key: signer.public_key.as_bytes().to_vec(),
+                signature,
+                signer_index: Some(signer_index),
+            },
+        );
 
         let has_quorum = pending.has_quorum();
 
@@ -426,9 +433,7 @@ impl MultiSigWallet {
         let pending = self.pending_transactions.remove(&tx_id).unwrap();
 
         // Collect signatures in order
-        let mut signatures: Vec<TransactionSignature> = pending.signatures
-            .into_values()
-            .collect();
+        let mut signatures: Vec<TransactionSignature> = pending.signatures.into_values().collect();
         signatures.sort_by_key(|s| s.signer_index);
 
         // Increment nonce
@@ -456,14 +461,16 @@ impl MultiSigWallet {
 
     /// Cancel a pending transaction
     pub fn cancel_transaction(&mut self, tx_id: Uuid) -> Result<()> {
-        self.pending_transactions.remove(&tx_id)
+        self.pending_transactions
+            .remove(&tx_id)
             .ok_or_else(|| Error::validation("Transaction not found"))?;
         Ok(())
     }
 
     /// Clean up expired transactions
     pub fn cleanup_expired(&mut self) -> usize {
-        let expired: Vec<Uuid> = self.pending_transactions
+        let expired: Vec<Uuid> = self
+            .pending_transactions
             .iter()
             .filter(|(_, tx)| tx.is_expired())
             .map(|(id, _)| *id)
@@ -489,17 +496,21 @@ impl MultiSigWallet {
         }
 
         let verifying_key = VerifyingKey::from_bytes(
-            public_key.as_bytes()
+            public_key
+                .as_bytes()
                 .try_into()
-                .map_err(|_| Error::crypto("Invalid public key"))?
-        ).map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
+                .map_err(|_| Error::crypto("Invalid public key"))?,
+        )
+        .map_err(|e| Error::crypto(format!("Invalid public key: {}", e)))?;
 
         let sig = Signature::from_bytes(
-            signature.try_into()
-                .map_err(|_| Error::crypto("Invalid signature format"))?
+            signature
+                .try_into()
+                .map_err(|_| Error::crypto("Invalid signature format"))?,
         );
 
-        verifying_key.verify_strict(message, &sig)
+        verifying_key
+            .verify_strict(message, &sig)
             .map_err(|e| Error::crypto(format!("Signature verification failed: {}", e)))?;
 
         Ok(())
@@ -509,7 +520,7 @@ impl MultiSigWallet {
     fn reset_daily_limit_if_needed(&mut self) {
         let now = Utc::now();
         let elapsed = now.signed_duration_since(self.daily_limit_reset);
-        
+
         if elapsed.num_hours() >= 24 {
             self.daily_spent = 0;
             self.daily_limit_reset = now;
@@ -525,13 +536,18 @@ impl MultiSigWallet {
             total_signers: self.config.total_signers,
             address: self.address.clone(),
             solana_address: self.solana_address.to_string(),
-            signers: self.config.signers.iter().map(|s| SignerExport {
-                name: s.name.clone(),
-                index: s.index,
-                public_key_hex: hex::encode(s.public_key.as_bytes()),
-                solana_address: s.solana_address.to_string(),
-                is_hardware: s.is_hardware,
-            }).collect(),
+            signers: self
+                .config
+                .signers
+                .iter()
+                .map(|s| SignerExport {
+                    name: s.name.clone(),
+                    index: s.index,
+                    public_key_hex: hex::encode(s.public_key.as_bytes()),
+                    solana_address: s.solana_address.to_string(),
+                    is_hardware: s.is_hardware,
+                })
+                .collect(),
             created_at: self.created_at,
         }
     }
@@ -565,7 +581,10 @@ impl std::fmt::Debug for MultiSigWallet {
         f.debug_struct("MultiSigWallet")
             .field("id", &self.id)
             .field("name", &self.config.name)
-            .field("threshold", &format!("{}-of-{}", self.config.threshold, self.config.total_signers))
+            .field(
+                "threshold",
+                &format!("{}-of-{}", self.config.threshold, self.config.total_signers),
+            )
             .field("address", &self.address)
             .field("pending_txs", &self.pending_transactions.len())
             .field("nonce", &self.nonce)
@@ -579,30 +598,26 @@ mod tests {
     use dchat_crypto::keys::KeyPair;
 
     fn create_test_signers(count: usize) -> Vec<(SignerInfo, ed25519_dalek::SigningKey)> {
-        (0..count).map(|i| {
-            let keypair = KeyPair::try_generate().unwrap();
-            let public_key = keypair.public_key().clone();
-            let signing_key = ed25519_dalek::SigningKey::from_bytes(
-                keypair.private_key().as_bytes()
-            );
-            
-            let signer = SignerInfo::new(public_key, format!("Signer {}", i), i as u32);
-            (signer, signing_key)
-        }).collect()
+        (0..count)
+            .map(|i| {
+                let keypair = KeyPair::try_generate().unwrap();
+                let public_key = keypair.public_key().clone();
+                let signing_key =
+                    ed25519_dalek::SigningKey::from_bytes(keypair.private_key().as_bytes());
+
+                let signer = SignerInfo::new(public_key, format!("Signer {}", i), i as u32);
+                (signer, signing_key)
+            })
+            .collect()
     }
 
     #[test]
     fn test_multisig_creation() {
         let signers: Vec<_> = create_test_signers(3).into_iter().map(|(s, _)| s).collect();
-        let config = MultiSigConfig::new(
-            "Test Wallet".to_string(),
-            2,
-            signers,
-            1337,
-        ).unwrap();
+        let config = MultiSigConfig::new("Test Wallet".to_string(), 2, signers, 1337).unwrap();
 
         let wallet = MultiSigWallet::new(config).unwrap();
-        
+
         assert_eq!(wallet.threshold(), 2);
         assert_eq!(wallet.total_signers(), 3);
         assert!(wallet.address().starts_with("0x"));
@@ -614,36 +629,37 @@ mod tests {
 
         let signers_with_keys = create_test_signers(3);
         let signers: Vec<_> = signers_with_keys.iter().map(|(s, _)| s.clone()).collect();
-        
-        let config = MultiSigConfig::new(
-            "Test Wallet".to_string(),
-            2,
-            signers,
-            1337,
-        ).unwrap();
+
+        let config = MultiSigConfig::new("Test Wallet".to_string(), 2, signers, 1337).unwrap();
 
         let mut wallet = MultiSigWallet::new(config).unwrap();
 
         // Initiate transaction
-        let tx_id = wallet.initiate_transaction(
-            "0x1234".to_string(),
-            1000,
-            10,
-            0, // initiated by signer 0
-            24, // 24 hours expiration
-        ).unwrap();
+        let tx_id = wallet
+            .initiate_transaction(
+                "0x1234".to_string(),
+                1000,
+                10,
+                0,  // initiated by signer 0
+                24, // 24 hours expiration
+            )
+            .unwrap();
 
         // First signature
         let pending = wallet.pending_transactions().get(&tx_id).unwrap();
         let message = pending.transaction.signing_message();
         let sig1 = signers_with_keys[0].1.sign(&message);
-        
-        let has_quorum = wallet.add_signature(tx_id, 0, sig1.to_bytes().to_vec()).unwrap();
+
+        let has_quorum = wallet
+            .add_signature(tx_id, 0, sig1.to_bytes().to_vec())
+            .unwrap();
         assert!(!has_quorum);
 
         // Second signature - reaches quorum
         let sig2 = signers_with_keys[1].1.sign(&message);
-        let has_quorum = wallet.add_signature(tx_id, 1, sig2.to_bytes().to_vec()).unwrap();
+        let has_quorum = wallet
+            .add_signature(tx_id, 1, sig2.to_bytes().to_vec())
+            .unwrap();
         assert!(has_quorum);
 
         // Finalize
@@ -655,23 +671,13 @@ mod tests {
     #[test]
     fn test_invalid_threshold() {
         let signers: Vec<_> = create_test_signers(2).into_iter().map(|(s, _)| s).collect();
-        
+
         // Threshold > total signers
-        let result = MultiSigConfig::new(
-            "Test".to_string(),
-            3,
-            signers.clone(),
-            1337,
-        );
+        let result = MultiSigConfig::new("Test".to_string(), 3, signers.clone(), 1337);
         assert!(result.is_err());
 
         // Zero threshold
-        let result = MultiSigConfig::new(
-            "Test".to_string(),
-            0,
-            signers,
-            1337,
-        );
+        let result = MultiSigConfig::new("Test".to_string(), 0, signers, 1337);
         assert!(result.is_err());
     }
 }

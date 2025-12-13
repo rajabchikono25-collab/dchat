@@ -246,9 +246,9 @@ impl ValidatorStake {
             return Err(Error::validation("Validator not in unstaking status"));
         }
 
-        let unstaking_initiated = self.unstaking_initiated_at.ok_or_else(|| {
-            Error::validation("Unstaking initiated timestamp missing")
-        })?;
+        let unstaking_initiated = self
+            .unstaking_initiated_at
+            .ok_or_else(|| Error::validation("Unstaking initiated timestamp missing"))?;
 
         let elapsed = Utc::now().signed_duration_since(unstaking_initiated);
         if elapsed.num_seconds() < UNSTAKE_COOLDOWN_SECONDS {
@@ -276,7 +276,7 @@ impl ValidatorStake {
     /// Apply slashing for misbehavior
     pub fn slash(&mut self, event: SlashingEvent) -> Result<u64> {
         let slash_amount = (self.staked_amount * event.severity.slash_percentage() as u64) / 100;
-        
+
         self.staked_amount = self.staked_amount.saturating_sub(slash_amount);
         self.total_slashed += slash_amount;
         self.slashing_events.push(event.clone());
@@ -427,7 +427,7 @@ impl StakingManager {
     }
 
     /// Create staking manager with currency chain integration (production)
-    /// 
+    ///
     /// PRODUCTION: Use this constructor in production to ensure all stake
     /// operations are persisted on the currency chain.
     pub fn with_currency_chain(currency_chain: Arc<CurrencyChainClient>) -> Self {
@@ -440,9 +440,9 @@ impl StakingManager {
             governance_council_keys: Vec::new(), // Must be set via set_governance_council
         }
     }
-    
+
     /// Set governance council public keys for slashing verification
-    /// 
+    ///
     /// # Security Note
     /// This MUST be called during initialization with the correct council keys.
     /// The keys should be loaded from a secure, auditable configuration source.
@@ -456,9 +456,9 @@ impl StakingManager {
         }
         self.governance_council_keys = keys;
     }
-    
+
     /// Verify council signatures for a slashing event
-    /// 
+    ///
     /// # Security Note
     /// This performs ACTUAL cryptographic verification of Ed25519 signatures.
     /// Each signature must be from a unique council member.
@@ -471,14 +471,14 @@ impl StakingManager {
         signatures: &[Signature],
     ) -> Result<()> {
         use ed25519_dalek::Verifier;
-        
+
         // Check we have enough council keys configured
         if self.governance_council_keys.is_empty() {
             return Err(Error::validation(
                 "Governance council keys not configured - cannot verify slashing".to_string(),
             ));
         }
-        
+
         // Check minimum signature count
         if signatures.len() < MIN_COUNCIL_SIGNATURES {
             return Err(Error::validation(format!(
@@ -487,7 +487,7 @@ impl StakingManager {
                 MIN_COUNCIL_SIGNATURES
             )));
         }
-        
+
         // Construct the message that was signed
         // Format: validator_id || severity || reason || evidence_hash
         let mut message = Vec::new();
@@ -497,11 +497,11 @@ impl StakingManager {
         // Hash evidence to prevent message length issues
         let evidence_hash = blake3::hash(evidence);
         message.extend_from_slice(evidence_hash.as_bytes());
-        
+
         // Track which council members have signed (prevent duplicate signatures)
         let mut signed_by: Vec<usize> = Vec::new();
         let mut valid_count = 0;
-        
+
         for signature in signatures {
             // Try to verify against each council member's key
             for (idx, council_key) in self.governance_council_keys.iter().enumerate() {
@@ -509,7 +509,7 @@ impl StakingManager {
                 if signed_by.contains(&idx) {
                     continue;
                 }
-                
+
                 // Verify the signature
                 if council_key.verify(&message, signature).is_ok() {
                     valid_count += 1;
@@ -518,27 +518,26 @@ impl StakingManager {
                 }
             }
         }
-        
+
         // Check if we have enough valid, unique signatures
         if valid_count < MIN_COUNCIL_SIGNATURES {
             return Err(Error::validation(format!(
                 "Only {} valid council signatures verified, {} required",
-                valid_count,
-                MIN_COUNCIL_SIGNATURES
+                valid_count, MIN_COUNCIL_SIGNATURES
             )));
         }
-        
+
         tracing::info!(
             "Slashing signatures verified: {}/{} council members approved",
             valid_count,
             self.governance_council_keys.len()
         );
-        
+
         Ok(())
     }
 
     /// Submit validator stake (register new validator)
-    /// 
+    ///
     /// PRODUCTION: This now calls currency_chain.stake() to lock tokens on-chain.
     /// The stake transaction must be confirmed before the validator becomes active.
     pub async fn submit_validator_stake(
@@ -577,7 +576,8 @@ impl StakingManager {
             let tx_id = currency_chain.stake(&validator_id, amount, UNSTAKE_COOLDOWN_SECONDS)?;
             tracing::info!(
                 "Currency chain stake transaction submitted: {} for {} tokens",
-                tx_id, amount
+                tx_id,
+                amount
             );
             Some(tx_id)
         } else {
@@ -621,7 +621,7 @@ impl StakingManager {
     }
 
     /// Submit validator unstake
-    /// 
+    ///
     /// PRODUCTION: Initiates unstaking. Tokens remain locked until cooldown
     /// period expires and complete_unstake() is called.
     pub async fn submit_validator_unstake(
@@ -665,7 +665,7 @@ impl StakingManager {
     }
 
     /// Update stake amount (increase only - decrease via unstake)
-    /// 
+    ///
     /// PRODUCTION: Additional stake is locked on the currency chain.
     pub async fn update_stake_amount(
         &self,
@@ -688,10 +688,12 @@ impl StakingManager {
 
         // PRODUCTION: Lock additional tokens on currency chain
         let _currency_chain_tx_id = if let Some(ref currency_chain) = self.currency_chain {
-            let tx_id = currency_chain.stake(validator_id, additional_amount, UNSTAKE_COOLDOWN_SECONDS)?;
+            let tx_id =
+                currency_chain.stake(validator_id, additional_amount, UNSTAKE_COOLDOWN_SECONDS)?;
             tracing::info!(
                 "Currency chain additional stake transaction: {} for {} tokens",
-                tx_id, additional_amount
+                tx_id,
+                additional_amount
             );
             Some(tx_id)
         } else {
@@ -754,10 +756,10 @@ impl StakingManager {
     /// Get validator set for consensus (top N by stake)
     pub fn get_validator_set(&self, max_validators: usize) -> Vec<ValidatorStake> {
         let mut eligible: Vec<ValidatorStake> = self.get_active_validators();
-        
+
         // Sort by stake (descending)
         eligible.sort_by(|a, b| b.staked_amount.cmp(&a.staked_amount));
-        
+
         // Take top N
         eligible.truncate(max_validators);
         eligible
@@ -795,7 +797,7 @@ impl StakingManager {
     }
 
     /// Slash validator for misbehavior
-    /// 
+    ///
     /// # Security Note
     /// This performs ACTUAL cryptographic verification of council signatures.
     /// Each signature is verified against the governance council's public keys.
@@ -1004,7 +1006,7 @@ impl Default for StakingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{SigningKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
 
     fn create_test_keypair() -> SigningKey {
@@ -1169,11 +1171,7 @@ mod tests {
 
         let initial_stake = MIN_VALIDATOR_STAKE * 2;
         manager
-            .submit_validator_stake(
-                validator_id.clone(),
-                initial_stake,
-                keypair.verifying_key(),
-            )
+            .submit_validator_stake(validator_id.clone(), initial_stake, keypair.verifying_key())
             .await
             .unwrap();
 

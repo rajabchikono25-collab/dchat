@@ -100,11 +100,7 @@ mod option_bytes {
 
 impl SignedStateUpdate {
     /// Create a new signed update from sender
-    pub fn new_from_sender(
-        state: ChannelState,
-        channel_id: &str,
-        sender_key: &SigningKey,
-    ) -> Self {
+    pub fn new_from_sender(state: ChannelState, channel_id: &str, sender_key: &SigningKey) -> Self {
         let message = Self::compute_message(channel_id, &state);
         let signature = sender_key.sign(&message);
 
@@ -140,7 +136,10 @@ impl SignedStateUpdate {
         sender_key: &VerifyingKey,
     ) -> Result<()> {
         let message = Self::compute_message(channel_id, &self.state);
-        let sig_bytes: [u8; 64] = self.sender_signature.as_slice().try_into()
+        let sig_bytes: [u8; 64] = self
+            .sender_signature
+            .as_slice()
+            .try_into()
             .map_err(|_| Error::validation("Invalid signature length"))?;
         let signature = Signature::from_bytes(&sig_bytes);
 
@@ -161,7 +160,9 @@ impl SignedStateUpdate {
             .ok_or_else(|| Error::validation("No receiver signature present"))?;
 
         let message = Self::compute_message(channel_id, &self.state);
-        let sig_bytes: [u8; 64] = sig_vec.as_slice().try_into()
+        let sig_bytes: [u8; 64] = sig_vec
+            .as_slice()
+            .try_into()
             .map_err(|_| Error::validation("Invalid signature length"))?;
         let signature = Signature::from_bytes(&sig_bytes);
 
@@ -295,10 +296,7 @@ impl PaymentChannel {
         if total != self.capacity {
             return Err(Error::validation(format!(
                 "Balance invariant violation: {} + {} = {}, expected {}",
-                update.state.sender_balance,
-                update.state.receiver_balance,
-                total,
-                self.capacity
+                update.state.sender_balance, update.state.receiver_balance, total, self.capacity
             )));
         }
 
@@ -325,7 +323,11 @@ impl PaymentChannel {
     }
 
     /// Create a payment (sender to receiver transfer)
-    pub fn create_payment(&self, amount: u64, sender_key: &SigningKey) -> Result<SignedStateUpdate> {
+    pub fn create_payment(
+        &self,
+        amount: u64,
+        sender_key: &SigningKey,
+    ) -> Result<SignedStateUpdate> {
         if self.status != ChannelStatus::Open {
             return Err(Error::validation("Channel not open"));
         }
@@ -474,13 +476,8 @@ impl PaymentChannelManager {
         receiver_key: VerifyingKey,
         capacity: u64,
     ) -> Result<PaymentChannel> {
-        let channel = PaymentChannel::new(
-            sender_id,
-            receiver_id,
-            sender_key,
-            receiver_key,
-            capacity,
-        )?;
+        let channel =
+            PaymentChannel::new(sender_id, receiver_id, sender_key, receiver_key, capacity)?;
 
         let channel_id = channel.channel_id.clone();
         self.channels
@@ -508,11 +505,7 @@ impl PaymentChannelManager {
     }
 
     /// Update channel state
-    pub fn update_channel_state(
-        &self,
-        channel_id: &str,
-        update: SignedStateUpdate,
-    ) -> Result<()> {
+    pub fn update_channel_state(&self, channel_id: &str, update: SignedStateUpdate) -> Result<()> {
         let mut channels = self.channels.write().unwrap();
         let channel = channels
             .get_mut(channel_id)
@@ -522,10 +515,10 @@ impl PaymentChannelManager {
     }
 
     /// Process a micropayment through the channel (off-chain)
-    /// 
+    ///
     /// SECURITY: This method requires a properly signed state update.
     /// The sender must sign the new state to authorize the payment.
-    /// 
+    ///
     /// Returns a transaction ID for tracking
     pub fn process_payment(
         &self,
@@ -568,7 +561,9 @@ impl PaymentChannelManager {
             .map_err(|_| ChannelError::InvalidSenderSignature)?;
 
         // Calculate payment amount for logging
-        let amount = channel.current_state.sender_balance
+        let amount = channel
+            .current_state
+            .sender_balance
             .saturating_sub(signed_update.state.sender_balance);
 
         // Update state
@@ -1074,7 +1069,8 @@ mod tests {
             sender_balance: 800_000,
             receiver_balance: 200_000,
         };
-        let update2 = SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
+        let update2 =
+            SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
 
         let result = channel.update_state(update2);
         assert!(result.is_err());
@@ -1100,7 +1096,8 @@ mod tests {
             sender_balance: 800_000,
             receiver_balance: 300_000, // Total = 1,100,000 != capacity
         };
-        let update = SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
+        let update =
+            SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
 
         let result = channel.update_state(update);
         assert!(result.is_err());
@@ -1195,7 +1192,8 @@ mod tests {
             sender_balance: 700_000,
             receiver_balance: 300_000,
         };
-        let mut update = SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
+        let mut update =
+            SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
         update.add_receiver_signature(&channel.channel_id, &receiver_signing);
 
         assert!(update.is_bilateral());

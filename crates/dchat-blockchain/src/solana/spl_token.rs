@@ -52,11 +52,7 @@ impl SplToken {
         let token_program = Self::program_id()?;
         let ata_program = Self::associated_token_program_id()?;
 
-        let seeds: &[&[u8]] = &[
-            owner.as_bytes(),
-            token_program.as_bytes(),
-            mint.as_bytes(),
-        ];
+        let seeds: &[&[u8]] = &[owner.as_bytes(), token_program.as_bytes(), mint.as_bytes()];
 
         let (pda, _) = SolanaAddress::derive_pda(seeds, &ata_program)?;
         Ok(pda)
@@ -77,7 +73,7 @@ impl SplToken {
         let mut data = vec![0]; // InitializeMint instruction
         data.push(decimals);
         data.extend_from_slice(mint_authority.as_bytes());
-        
+
         // Freeze authority (COption<Pubkey>)
         if let Some(freeze) = freeze_authority {
             data.push(1); // Some
@@ -271,10 +267,7 @@ impl SplToken {
     }
 
     /// Create Revoke instruction
-    pub fn revoke(
-        source: &SolanaAddress,
-        owner: &SolanaAddress,
-    ) -> Result<Instruction> {
+    pub fn revoke(source: &SolanaAddress, owner: &SolanaAddress) -> Result<Instruction> {
         let program_id = Self::program_id()?;
 
         let data = vec![5]; // Revoke instruction
@@ -298,7 +291,7 @@ impl SplToken {
 
         let mut data = vec![6]; // SetAuthority instruction
         data.push(authority_type as u8);
-        
+
         if let Some(new_auth) = new_authority {
             data.push(1); // Some
             data.extend_from_slice(new_auth.as_bytes());
@@ -519,7 +512,7 @@ impl TokenAccount {
         let mint = SolanaAddress::from_bytes(&data[0..32])?;
         let owner = SolanaAddress::from_bytes(&data[32..64])?;
         let amount = u64::from_le_bytes(data[64..72].try_into().unwrap());
-        
+
         let delegate = if data[72] == 1 {
             Some(SolanaAddress::from_bytes(&data[76..108])?)
         } else {
@@ -672,7 +665,7 @@ mod tests {
     fn test_associated_token_derivation() {
         let owner = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
         let mint = SolanaAddress::from_bytes(&[2u8; 32]).unwrap();
-        
+
         let ata = SplToken::get_associated_token_address(&owner, &mint);
         assert!(ata.is_ok());
     }
@@ -685,7 +678,7 @@ mod tests {
 
         let ix = SplToken::transfer(&source, &dest, &authority, 1000);
         assert!(ix.is_ok());
-        
+
         let ix = ix.unwrap();
         assert_eq!(ix.data[0], 3); // Transfer instruction
         assert_eq!(ix.accounts.len(), 3);

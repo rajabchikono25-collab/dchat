@@ -210,16 +210,14 @@ impl TransactionMessage {
 
         // Sort accounts: signers first, then non-signers
         // Within each group: writable first, then readonly
-        accounts.sort_by(|a, b| {
-            match (a.is_signer, b.is_signer) {
+        accounts.sort_by(|a, b| match (a.is_signer, b.is_signer) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => match (a.is_writable, b.is_writable) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => match (a.is_writable, b.is_writable) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => std::cmp::Ordering::Equal,
-                }
-            }
+                _ => std::cmp::Ordering::Equal,
+            },
         });
 
         // Rebuild the index map after sorting
@@ -230,10 +228,12 @@ impl TransactionMessage {
 
         // Calculate header
         let num_required_signatures = accounts.iter().filter(|a| a.is_signer).count() as u8;
-        let num_readonly_signed = accounts.iter()
+        let num_readonly_signed = accounts
+            .iter()
             .filter(|a| a.is_signer && !a.is_writable)
             .count() as u8;
-        let num_readonly_unsigned = accounts.iter()
+        let num_readonly_unsigned = accounts
+            .iter()
             .filter(|a| !a.is_signer && !a.is_writable)
             .count() as u8;
 
@@ -247,13 +247,19 @@ impl TransactionMessage {
         let compiled_instructions: Vec<CompiledInstruction> = instructions
             .iter()
             .map(|ix| {
-                let program_id_index = *seen.get(&ix.program_id.to_base58())
-                    .expect("Program ID should be in accounts") as u8;
-                
-                let account_indices: Vec<u8> = ix.accounts
+                let program_id_index = *seen
+                    .get(&ix.program_id.to_base58())
+                    .expect("Program ID should be in accounts")
+                    as u8;
+
+                let account_indices: Vec<u8> = ix
+                    .accounts
                     .iter()
-                    .map(|a| *seen.get(&a.pubkey.to_base58())
-                        .expect("Account should be in accounts") as u8)
+                    .map(|a| {
+                        *seen
+                            .get(&a.pubkey.to_base58())
+                            .expect("Account should be in accounts") as u8
+                    })
                     .collect();
 
                 CompiledInstruction {
@@ -264,10 +270,7 @@ impl TransactionMessage {
             })
             .collect();
 
-        let account_keys: Vec<SolanaAddress> = accounts
-            .into_iter()
-            .map(|a| a.pubkey)
-            .collect();
+        let account_keys: Vec<SolanaAddress> = accounts.into_iter().map(|a| a.pubkey).collect();
 
         Ok(Self {
             header,
@@ -297,11 +300,11 @@ impl TransactionMessage {
         data.push(self.instructions.len() as u8);
         for ix in &self.instructions {
             data.push(ix.program_id_index);
-            
+
             // Account indices (compact array)
             data.push(ix.accounts.len() as u8);
             data.extend_from_slice(&ix.accounts);
-            
+
             // Data (compact array)
             encode_compact_u16(&mut data, ix.data.len() as u16);
             data.extend_from_slice(&ix.data);
@@ -450,7 +453,9 @@ impl TransactionBuilder {
 
     /// Build the transaction
     pub fn build(self, recent_blockhash: [u8; 32]) -> Result<SolanaTransaction> {
-        let payer = self.payer.ok_or_else(|| Error::validation("Payer not set"))?;
+        let payer = self
+            .payer
+            .ok_or_else(|| Error::validation("Payer not set"))?;
 
         if self.instructions.is_empty() {
             return Err(Error::validation("No instructions provided"));
@@ -520,7 +525,7 @@ mod tests {
     #[test]
     fn test_account_meta_constructors() {
         let addr = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
-        
+
         let signer = AccountMeta::signer_writable(addr.clone());
         assert!(signer.is_signer);
         assert!(signer.is_writable);

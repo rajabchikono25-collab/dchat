@@ -8,31 +8,28 @@
 //! - Account management
 //! - High-level client API
 
-pub mod rpc;
-pub mod transaction;
-pub mod spl_token;
-pub mod program;
 pub mod accounts;
 pub mod client;
+pub mod program;
+pub mod rpc;
+pub mod spl_token;
+pub mod transaction;
 
-pub use rpc::{SolanaRpcClient, SolanaRpcConfig, Commitment, RpcError};
-pub use transaction::{
-    SolanaTransaction, TransactionBuilder, Instruction, CompiledInstruction,
-    MessageHeader, TransactionMessage, TransactionStatus as SolanaTxStatus,
-};
-pub use spl_token::{
-    SplToken, TokenAccount, TokenInstruction, MintInfo, TokenTransfer,
-    AssociatedTokenAccount,
-};
+pub use accounts::{AccountInfo, Rent, SolanaAccount, SystemProgram};
+pub use client::{create_shared_client, SharedSolanaClient, SolanaClient};
 pub use program::{
-    BridgeProgram, BridgeInstruction, LockAccounts, UnlockAccounts,
-    BridgeState, DepositRecord, WithdrawRecord,
+    BridgeInstruction, BridgeProgram, BridgeState, DepositRecord, LockAccounts, UnlockAccounts,
+    WithdrawRecord,
 };
-pub use accounts::{
-    SolanaAccount, AccountInfo, SystemProgram, Rent,
+pub use rpc::{Commitment, RpcError, SolanaRpcClient, SolanaRpcConfig};
+pub use spl_token::{
+    AssociatedTokenAccount, MintInfo, SplToken, TokenAccount, TokenInstruction, TokenTransfer,
 };
 pub use transaction::AccountMeta;
-pub use client::{SolanaClient, SharedSolanaClient, create_shared_client};
+pub use transaction::{
+    CompiledInstruction, Instruction, MessageHeader, SolanaTransaction, TransactionBuilder,
+    TransactionMessage, TransactionStatus as SolanaTxStatus,
+};
 
 /// Solana network cluster
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,8 +6,8 @@
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-use super::transaction::{AccountMeta, Instruction};
 use super::spl_token::SplToken;
+use super::transaction::{AccountMeta, Instruction};
 use crate::wallet::solana_compat::SolanaAddress;
 
 /// Bridge program seed for PDA derivation
@@ -90,7 +90,8 @@ impl BridgeProgram {
             min_transfer,
             max_transfer,
             required_confirmations,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::signer_writable(admin.clone()),
@@ -125,7 +126,8 @@ impl BridgeProgram {
             amount,
             dchat_tx_hash,
             signatures: validator_signatures,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::writable(bridge_state),
@@ -152,7 +154,7 @@ impl BridgeProgram {
         let bridge_state = self.get_bridge_state_address()?;
         let user_ata = SplToken::get_associated_token_address(user, &self.wdchat_mint)?;
         let token_program = SplToken::program_id()?;
-        
+
         // Generate transfer ID from user + timestamp
         let transfer_id = generate_transfer_id(user, dchat_recipient);
         let withdrawal_record = self.get_withdrawal_address(&transfer_id)?;
@@ -161,7 +163,8 @@ impl BridgeProgram {
         let data = BridgeInstruction::BurnWrapped {
             amount,
             dchat_recipient,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::signer_writable(user.clone()),
@@ -189,7 +192,8 @@ impl BridgeProgram {
         let data = BridgeInstruction::FinalizeWithdrawal {
             transfer_id,
             dchat_tx_hash,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::writable(bridge_state),
@@ -211,7 +215,8 @@ impl BridgeProgram {
         let data = BridgeInstruction::AddValidator {
             validator: *validator.as_bytes(),
             weight,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::signer_readonly(admin.clone()),
@@ -232,7 +237,8 @@ impl BridgeProgram {
 
         let data = BridgeInstruction::RemoveValidator {
             validator: *validator.as_bytes(),
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::signer_readonly(admin.clone()),
@@ -258,7 +264,8 @@ impl BridgeProgram {
             min_transfer,
             max_transfer,
             paused,
-        }.serialize();
+        }
+        .serialize();
 
         let accounts = vec![
             AccountMeta::signer_readonly(admin.clone()),
@@ -286,7 +293,8 @@ impl BridgeProgram {
     ) -> Result<Instruction> {
         let bridge_state = self.get_bridge_state_address()?;
         let fee_ata = SplToken::get_associated_token_address(fee_collector, &self.wdchat_mint)?;
-        let bridge_fee_ata = SplToken::get_associated_token_address(&self.bridge_authority, &self.wdchat_mint)?;
+        let bridge_fee_ata =
+            SplToken::get_associated_token_address(&self.bridge_authority, &self.wdchat_mint)?;
         let token_program = SplToken::program_id()?;
 
         let data = BridgeInstruction::CollectFees.serialize();
@@ -332,14 +340,9 @@ pub enum BridgeInstruction {
         dchat_tx_hash: [u8; 32],
     },
     /// Add validator
-    AddValidator {
-        validator: [u8; 32],
-        weight: u32,
-    },
+    AddValidator { validator: [u8; 32], weight: u32 },
     /// Remove validator
-    RemoveValidator {
-        validator: [u8; 32],
-    },
+    RemoveValidator { validator: [u8; 32] },
     /// Update configuration
     UpdateConfig {
         fee_bps: Option<u16>,
@@ -355,16 +358,26 @@ impl BridgeInstruction {
     /// Serialize instruction to bytes
     pub fn serialize(&self) -> Vec<u8> {
         let mut data = Vec::new();
-        
+
         match self {
-            BridgeInstruction::Initialize { fee_bps, min_transfer, max_transfer, required_confirmations } => {
+            BridgeInstruction::Initialize {
+                fee_bps,
+                min_transfer,
+                max_transfer,
+                required_confirmations,
+            } => {
                 data.push(0); // Instruction discriminator
                 data.extend_from_slice(&fee_bps.to_le_bytes());
                 data.extend_from_slice(&min_transfer.to_le_bytes());
                 data.extend_from_slice(&max_transfer.to_le_bytes());
                 data.extend_from_slice(&required_confirmations.to_le_bytes());
             }
-            BridgeInstruction::MintWrapped { transfer_id, amount, dchat_tx_hash, signatures } => {
+            BridgeInstruction::MintWrapped {
+                transfer_id,
+                amount,
+                dchat_tx_hash,
+                signatures,
+            } => {
                 data.push(1);
                 data.extend_from_slice(transfer_id);
                 data.extend_from_slice(&amount.to_le_bytes());
@@ -374,12 +387,18 @@ impl BridgeInstruction {
                     data.extend_from_slice(sig);
                 }
             }
-            BridgeInstruction::BurnWrapped { amount, dchat_recipient } => {
+            BridgeInstruction::BurnWrapped {
+                amount,
+                dchat_recipient,
+            } => {
                 data.push(2);
                 data.extend_from_slice(&amount.to_le_bytes());
                 data.extend_from_slice(dchat_recipient);
             }
-            BridgeInstruction::FinalizeWithdrawal { transfer_id, dchat_tx_hash } => {
+            BridgeInstruction::FinalizeWithdrawal {
+                transfer_id,
+                dchat_tx_hash,
+            } => {
                 data.push(3);
                 data.extend_from_slice(transfer_id);
                 data.extend_from_slice(dchat_tx_hash);
@@ -393,9 +412,14 @@ impl BridgeInstruction {
                 data.push(5);
                 data.extend_from_slice(validator);
             }
-            BridgeInstruction::UpdateConfig { fee_bps, min_transfer, max_transfer, paused } => {
+            BridgeInstruction::UpdateConfig {
+                fee_bps,
+                min_transfer,
+                max_transfer,
+                paused,
+            } => {
                 data.push(6);
-                
+
                 // Option encoding
                 if let Some(v) = fee_bps {
                     data.push(1);
@@ -403,21 +427,21 @@ impl BridgeInstruction {
                 } else {
                     data.push(0);
                 }
-                
+
                 if let Some(v) = min_transfer {
                     data.push(1);
                     data.extend_from_slice(&v.to_le_bytes());
                 } else {
                     data.push(0);
                 }
-                
+
                 if let Some(v) = max_transfer {
                     data.push(1);
                     data.extend_from_slice(&v.to_le_bytes());
                 } else {
                     data.push(0);
                 }
-                
+
                 if let Some(v) = paused {
                     data.push(1);
                     data.push(if *v { 1 } else { 0 });
@@ -429,7 +453,7 @@ impl BridgeInstruction {
                 data.push(7);
             }
         }
-        
+
         data
     }
 }
@@ -610,7 +634,7 @@ fn generate_transfer_id(user: &SolanaAddress, dchat_recipient: [u8; 32]) -> [u8;
     hasher.update(user.as_bytes());
     hasher.update(&dchat_recipient);
     hasher.update(&chrono::Utc::now().timestamp().to_le_bytes());
-    
+
     let hash = hasher.finalize();
     let mut id = [0u8; 16];
     id.copy_from_slice(&hash.as_bytes()[..16]);
@@ -625,7 +649,7 @@ mod tests {
     fn test_bridge_program_creation() {
         let program_id = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
         let mint = SolanaAddress::from_bytes(&[2u8; 32]).unwrap();
-        
+
         let bridge = BridgeProgram::new(program_id, mint);
         assert!(bridge.is_ok());
     }
@@ -638,7 +662,7 @@ mod tests {
             max_transfer: 1_000_000_000,
             required_confirmations: 12,
         };
-        
+
         let data = ix.serialize();
         assert_eq!(data[0], 0); // Initialize discriminator
     }
@@ -649,7 +673,7 @@ mod tests {
             amount: 1_000_000_000,
             dchat_recipient: [3u8; 32],
         };
-        
+
         let data = ix.serialize();
         assert_eq!(data[0], 2); // BurnWrapped discriminator
     }

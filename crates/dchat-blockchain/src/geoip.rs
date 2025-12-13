@@ -152,9 +152,7 @@ impl GeoIPManager {
             })?;
 
         // Find ASN database (optional)
-        let asn_path = possible_asn_paths
-            .iter()
-            .find(|p| Path::new(p).exists());
+        let asn_path = possible_asn_paths.iter().find(|p| Path::new(p).exists());
 
         if let Some(asn) = asn_path {
             Self::with_asn_database(city_path, asn)
@@ -209,13 +207,14 @@ impl GeoIPManager {
 
     /// Lookup ASN information for an IP address
     pub fn lookup_asn(&self, ip: IpAddr) -> Result<(Option<u32>, Option<String>)> {
-        let asn_reader = self.asn_reader.as_ref().ok_or_else(|| {
-            GeoIPError::AddressNotFound("ASN database not loaded".to_string())
-        })?;
+        let asn_reader = self
+            .asn_reader
+            .as_ref()
+            .ok_or_else(|| GeoIPError::AddressNotFound("ASN database not loaded".to_string()))?;
 
-        let asn: geoip2::Asn = asn_reader
-            .lookup(ip)
-            .map_err(|e| GeoIPError::AddressNotFound(format!("ASN lookup failed for {}: {}", ip, e)))?;
+        let asn: geoip2::Asn = asn_reader.lookup(ip).map_err(|e| {
+            GeoIPError::AddressNotFound(format!("ASN lookup failed for {}: {}", ip, e))
+        })?;
 
         Ok((
             asn.autonomous_system_number,

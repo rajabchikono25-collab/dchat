@@ -5,9 +5,7 @@
 //! - Finality is synchronized across chains
 //! - Cross-chain transactions achieve atomic finality
 
-use crate::chain_synchronizer::{
-    ChainSyncConfig, ChainSynchronizer, CrossChainFinalityStatus,
-};
+use crate::chain_synchronizer::{ChainSyncConfig, ChainSynchronizer, CrossChainFinalityStatus};
 use crate::chat_chain::ChatChainClient;
 use crate::currency_chain::CurrencyChainClient;
 use chrono::Utc;
@@ -108,7 +106,10 @@ impl CrossChainBridge {
             .map_err(|e| e.to_string())?;
 
         // Step 2: Register identity on chat chain
-        let chat_tx = self.chat_chain.register_user(user_id, public_key).await
+        let chat_tx = self
+            .chat_chain
+            .register_user(user_id, public_key)
+            .await
             .map_err(|e| e.to_string())?;
 
         // Step 3: Stake tokens on currency chain
@@ -163,7 +164,8 @@ impl CrossChainBridge {
         // Step 2: Create channel on chat chain
         let chat_tx = self
             .chat_chain
-            .create_channel(owner, &channel_id, channel_name).await
+            .create_channel(owner, &channel_id, channel_name)
+            .await
             .map_err(|e| e.to_string())?;
 
         // Record cross-chain transaction
@@ -197,7 +199,7 @@ impl CrossChainBridge {
     }
 
     /// Initiate a cross-chain transfer to another chain
-    /// 
+    ///
     /// Locks tokens on the source chain and creates a bridge transaction
     /// that can be claimed on the target chain.
     pub async fn initiate_transfer(
@@ -207,14 +209,17 @@ impl CrossChainBridge {
         target_chain: &str,
     ) -> Result<Uuid, String> {
         let bridge_tx_id = Uuid::new_v4();
-        
+
         // Lock tokens on currency chain
-        let currency_tx = self.currency_chain.transfer(
-            user_id,
-            &UserId(Uuid::nil()), // Bridge escrow address
-            amount,
-        ).map_err(|e| e.to_string())?;
-        
+        let currency_tx = self
+            .currency_chain
+            .transfer(
+                user_id,
+                &UserId(Uuid::nil()), // Bridge escrow address
+                amount,
+            )
+            .map_err(|e| e.to_string())?;
+
         // Record bridge transaction
         let cross_tx = CrossChainTransaction {
             id: bridge_tx_id,
@@ -226,14 +231,17 @@ impl CrossChainBridge {
             created_at: Utc::now().timestamp(),
             finalized_at: None,
         };
-        
-        self.transactions.write().unwrap().insert(bridge_tx_id, cross_tx);
-        
+
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(bridge_tx_id, cross_tx);
+
         // Register with synchronizer for finality tracking
         if let Some(ref synchronizer) = self.synchronizer {
             synchronizer.register_cross_chain_tx(bridge_tx_id).await;
         }
-        
+
         Ok(bridge_tx_id)
     }
 
@@ -260,9 +268,10 @@ impl CrossChainBridge {
         } else {
             // Fall back to legacy finality checking
             self.finalize_pending_transactions()?;
-            let tx = self.get_status(bridge_tx_id)?
+            let tx = self
+                .get_status(bridge_tx_id)?
                 .ok_or_else(|| "Transaction not found".to_string())?;
-            
+
             if tx.status == CrossChainStatus::AtomicSuccess {
                 Ok(CrossChainFinalityStatus::Finalized {
                     chat_height: 0, // Unknown without synchronizer
@@ -285,7 +294,9 @@ impl CrossChainBridge {
     }
 
     /// Get throughput report for both chains
-    pub async fn get_throughput_report(&self) -> Option<crate::chain_synchronizer::ThroughputReport> {
+    pub async fn get_throughput_report(
+        &self,
+    ) -> Option<crate::chain_synchronizer::ThroughputReport> {
         if let Some(ref synchronizer) = self.synchronizer {
             Some(synchronizer.calculate_throughput().await)
         } else {
@@ -354,14 +365,16 @@ mod tests {
     #[tokio::test]
     async fn test_register_user_with_stake() {
         let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let bridge = CrossChainBridge::new(chat_chain, currency_chain);
 
         let user_id = UserId(Uuid::new_v4());
         let public_key = vec![1, 2, 3, 4];
 
         let bridge_tx_id = bridge
-            .register_user_with_stake(&user_id, public_key, 1000).await
+            .register_user_with_stake(&user_id, public_key, 1000)
+            .await
             .unwrap();
         let status = bridge.get_status(&bridge_tx_id).unwrap();
 
@@ -374,11 +387,12 @@ mod tests {
     #[tokio::test]
     async fn test_bridge_with_synchronizer() {
         let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let sync_config = ChainSyncConfig::default();
-        
+
         let bridge = CrossChainBridge::with_synchronizer(chat_chain, currency_chain, sync_config);
-        
+
         // Verify synchronizer is attached
         assert!(bridge.get_synchronizer().is_some());
     }
@@ -386,9 +400,10 @@ mod tests {
     #[tokio::test]
     async fn test_cross_chain_with_finality_tracking() {
         let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let sync_config = ChainSyncConfig::default();
-        
+
         let bridge = CrossChainBridge::with_synchronizer(
             chat_chain.clone(),
             currency_chain.clone(),
@@ -399,27 +414,32 @@ mod tests {
         let public_key = vec![1, 2, 3, 4];
 
         let bridge_tx_id = bridge
-            .register_user_with_stake(&user_id, public_key, 1000).await
+            .register_user_with_stake(&user_id, public_key, 1000)
+            .await
             .unwrap();
 
         // Verify transaction is tracked by synchronizer
         let sync = bridge.get_synchronizer().unwrap();
         let finality = sync.check_cross_chain_finality(&bridge_tx_id).await;
-        
+
         // Initially should be pending (no finality updates yet)
-        assert!(matches!(finality, CrossChainFinalityStatus::Pending | CrossChainFinalityStatus::Unknown));
+        assert!(matches!(
+            finality,
+            CrossChainFinalityStatus::Pending | CrossChainFinalityStatus::Unknown
+        ));
     }
 
     #[tokio::test]
     async fn test_throughput_report() {
         let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let sync_config = ChainSyncConfig::default();
-        
+
         let bridge = CrossChainBridge::with_synchronizer(chat_chain, currency_chain, sync_config);
-        
+
         let report = bridge.get_throughput_report().await.unwrap();
-        
+
         // With hierarchical blocks enabled for both chains
         assert_eq!(report.chat_chain.base_tps, 12_500);
         assert_eq!(report.currency_chain.base_tps, 12_500);

@@ -351,7 +351,7 @@ impl BlockVotes {
 impl Default for BlockVotes {
     fn default() -> Self {
         Self {
-            block_hash: Hash::default(),
+            block_hash: Hash::from([0u8; 32]),
             votes: Vec::new(),
             total_weight: 0.0,
             geographic_representation: HashMap::new(),
@@ -412,7 +412,7 @@ pub enum ConsensusError {
     #[error("Insufficient stake")]
     InsufficientStake,
 
-    #[error("Block not found: {0}")]
+    #[error("Block not found: {:?}", .0)]
     BlockNotFound(Hash),
 
     #[error("Vote for unknown block")]

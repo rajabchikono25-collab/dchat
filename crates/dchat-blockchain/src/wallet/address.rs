@@ -35,9 +35,12 @@ impl AddressFormat {
             Some(AddressFormat::DchatNative)
         } else if s.starts_with("bridge:") {
             Some(AddressFormat::Bridge)
-        } else if s.chars().all(|c| {
-            c.is_ascii_alphanumeric() && c != '0' && c != 'O' && c != 'I' && c != 'l'
-        }) && s.len() >= 32 && s.len() <= 44 {
+        } else if s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() && c != '0' && c != 'O' && c != 'I' && c != 'l')
+            && s.len() >= 32
+            && s.len() <= 44
+        {
             Some(AddressFormat::Solana)
         } else {
             None
@@ -90,7 +93,7 @@ impl UniversalAddress {
                     format,
                     chain_id: Some(1337),
                 }
-            },
+            }
             AddressFormat::Bridge => {
                 // Bridge format includes both formats
                 let address = public_key.to_address();
@@ -105,15 +108,15 @@ impl UniversalAddress {
 
     /// Parse from string (auto-detects format)
     pub fn parse(s: &str) -> Result<Self> {
-        let format = AddressFormat::detect(s)
-            .ok_or_else(|| Error::validation("Unknown address format"))?;
+        let format =
+            AddressFormat::detect(s).ok_or_else(|| Error::validation("Unknown address format"))?;
 
         match format {
             AddressFormat::DchatNative | AddressFormat::Ethereum => {
                 let hex_str = s.strip_prefix("0x").unwrap_or(s);
                 let bytes = hex::decode(hex_str)
                     .map_err(|e| Error::validation(format!("Invalid hex: {}", e)))?;
-                
+
                 if bytes.len() != 20 {
                     return Err(Error::validation("Invalid address length"));
                 }
@@ -121,7 +124,11 @@ impl UniversalAddress {
                 Ok(Self {
                     bytes,
                     format,
-                    chain_id: if format == AddressFormat::DchatNative { Some(1337) } else { None },
+                    chain_id: if format == AddressFormat::DchatNative {
+                        Some(1337)
+                    } else {
+                        None
+                    },
                 })
             }
             AddressFormat::Solana => {
@@ -141,10 +148,10 @@ impl UniversalAddress {
                 if parts.len() != 3 {
                     return Err(Error::validation("Invalid bridge address format"));
                 }
-                
+
                 let chain = parts[1];
                 let addr = parts[2];
-                
+
                 let (bytes, chain_id) = match chain {
                     "dchat" => {
                         let hex_str = addr.strip_prefix("0x").unwrap_or(addr);
@@ -212,14 +219,12 @@ impl UniversalAddress {
     /// Convert to Solana address (if compatible)
     pub fn to_solana_address(&self) -> Result<SolanaAddress> {
         match self.format {
-            AddressFormat::Solana => {
-                SolanaAddress::from_bytes(&self.bytes)
-            }
+            AddressFormat::Solana => SolanaAddress::from_bytes(&self.bytes),
             AddressFormat::DchatNative | AddressFormat::Ethereum | AddressFormat::Bridge => {
                 // Cannot directly convert 20-byte address to 32-byte Solana pubkey
                 // Would need the original public key
                 Err(Error::validation(
-                    "Cannot convert to Solana address without public key"
+                    "Cannot convert to Solana address without public key",
                 ))
             }
         }
@@ -281,7 +286,10 @@ impl fmt::Display for UniversalAddress {
                     AddressFormat::Solana => "solana",
                     _ => "dchat",
                 };
-                write!(f, "bridge:{}:{}", chain, 
+                write!(
+                    f,
+                    "bridge:{}:{}",
+                    chain,
                     if self.bytes.len() == 32 {
                         base58_encode(&self.bytes)
                     } else {
@@ -363,12 +371,8 @@ impl AddressMapping {
     /// Get universal address for bridge operations
     pub fn to_universal(&self, preferred_format: AddressFormat) -> Option<UniversalAddress> {
         match preferred_format {
-            AddressFormat::Solana => {
-                self.solana.as_ref().map(UniversalAddress::from_solana)
-            }
-            AddressFormat::DchatNative => {
-                self.dchat.as_ref().map(UniversalAddress::from_dchat)
-            }
+            AddressFormat::Solana => self.solana.as_ref().map(UniversalAddress::from_solana),
+            AddressFormat::DchatNative => self.dchat.as_ref().map(UniversalAddress::from_dchat),
             _ => None,
         }
     }
@@ -407,7 +411,7 @@ mod tests {
 
         // Solana should be 32 bytes
         assert_eq!(solana_addr.as_bytes().len(), 32);
-        
+
         // dchat should be 20 bytes
         assert_eq!(dchat_addr.as_bytes().len(), 20);
     }
@@ -431,7 +435,7 @@ mod tests {
         let pubkey = keypair.public_key();
 
         let mapping = AddressMapping::from_public_key(pubkey);
-        
+
         assert!(mapping.is_complete());
         assert!(mapping.dchat.is_some());
         assert!(mapping.solana.is_some());
@@ -440,10 +444,8 @@ mod tests {
     #[test]
     fn test_bridge_format() {
         let keypair = KeyPair::try_generate().unwrap();
-        let addr = UniversalAddress::from_public_key(
-            keypair.public_key(),
-            AddressFormat::DchatNative
-        );
+        let addr =
+            UniversalAddress::from_public_key(keypair.public_key(), AddressFormat::DchatNative);
 
         let bridge_str = addr.format_for(AddressFormat::Bridge).unwrap();
         assert!(bridge_str.starts_with("bridge:dchat:0x"));

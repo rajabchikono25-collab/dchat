@@ -178,9 +178,10 @@ impl MerkleTree {
             ));
         }
 
-        let root = self.root.as_ref().ok_or_else(|| {
-            StateValidationError::InvalidMerkleProof("Empty tree".to_string())
-        })?;
+        let root = self
+            .root
+            .as_ref()
+            .ok_or_else(|| StateValidationError::InvalidMerkleProof("Empty tree".to_string()))?;
 
         let mut path = Vec::new();
         let mut indices = Vec::new();
@@ -289,16 +290,16 @@ impl StateValidator {
                 if let Some(first_subblock) = block.subblocks.first() {
                     if let Some(first_miniblock) = first_subblock.miniblocks.first() {
                         let first_pre_state = first_miniblock.pre_state_hash.as_bytes().to_vec();
-                        
+
                         // For full state continuity, we need the previous block's last post-state
                         // This requires either:
                         // 1. Caching the last post-state of each block, or
                         // 2. Fetching the previous block to get its last miniblock's post-state
-                        // 
+                        //
                         // For now, we verify that the chain is well-formed by checking the
                         // state root was correctly verified. Full state continuity will be
                         // enforced when the consensus layer passes complete Block structures.
-                        
+
                         tracing::debug!(
                             "State continuity: Block {} first pre-state = {}",
                             block.height,
@@ -316,8 +317,9 @@ impl StateValidator {
         }
 
         // 7. Cache verified root and last post-state
-        self.verified_roots.insert(block.height, computed_root.clone());
-        
+        self.verified_roots
+            .insert(block.height, computed_root.clone());
+
         // Cache the last miniblock's post-state for continuity verification
         if let Some(last_subblock) = block.subblocks.last() {
             if let Some(last_miniblock) = last_subblock.miniblocks.last() {
@@ -371,12 +373,11 @@ impl StateValidator {
         claimed_state_root: &[u8],
     ) -> Result<()> {
         // Convert block height from bytes
-        let block_height = u64::from_le_bytes(
-            block_height_bytes[..8]
-                .try_into()
-                .map_err(|_| StateValidationError::InvalidBlock("Invalid block height bytes".to_string()))?
-        );
-        
+        let block_height =
+            u64::from_le_bytes(block_height_bytes[..8].try_into().map_err(|_| {
+                StateValidationError::InvalidBlock("Invalid block height bytes".to_string())
+            })?);
+
         if let Some(verified_root) = self.verified_roots.get(&block_height) {
             if claimed_state_root != verified_root.as_slice() {
                 let fault_description = format!(
@@ -402,7 +403,8 @@ impl StateValidator {
             }
         } else {
             // Store the claimed root as the first verified root for this height
-            self.verified_roots.insert(block_height, claimed_state_root.to_vec());
+            self.verified_roots
+                .insert(block_height, claimed_state_root.to_vec());
         }
 
         Ok(())
@@ -414,22 +416,24 @@ impl StateValidator {
     }
 
     /// Get Byzantine faults for a specific block height
-    pub fn get_byzantine_faults_at_height(&self, block_height_bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
-        let block_height = u64::from_le_bytes(
-            block_height_bytes.get(..8)?
-                .try_into()
-                .ok()?
-        );
-        
+    pub fn get_byzantine_faults_at_height(
+        &self,
+        block_height_bytes: &[u8],
+    ) -> Option<Vec<Vec<u8>>> {
+        let block_height = u64::from_le_bytes(block_height_bytes.get(..8)?.try_into().ok()?);
+
         // Return validators who have faults at this height
-        let faulted_validators: Vec<Vec<u8>> = self.byzantine_faults
+        let faulted_validators: Vec<Vec<u8>> = self
+            .byzantine_faults
             .iter()
             .filter(|(_, faults)| {
-                faults.iter().any(|f| f.contains(&format!("Block {}", block_height)))
+                faults
+                    .iter()
+                    .any(|f| f.contains(&format!("Block {}", block_height)))
             })
             .map(|(validator_id, _)| validator_id.clone())
             .collect();
-        
+
         if faulted_validators.is_empty() {
             None
         } else {
@@ -445,7 +449,7 @@ impl StateValidator {
             self.last_post_states.retain(|&height, _| height > cutoff);
         }
     }
-    
+
     /// Get slashing recommendations for Byzantine validators
     /// Returns: Vec<(validator_id, slash_amount_percentage, reason)>
     pub fn get_slashing_recommendations(&self) -> Vec<(Vec<u8>, u8, String)> {
@@ -455,17 +459,17 @@ impl StateValidator {
                 // Calculate slash percentage based on fault severity
                 let fault_count = faults.len();
                 let slash_percentage = match fault_count {
-                    1 => 5,      // 5% for first offense
-                    2 => 10,     // 10% for second offense
-                    3 => 25,     // 25% for third offense
-                    _ => 100,    // 100% (full slash) for persistent Byzantine behavior
+                    1 => 5,   // 5% for first offense
+                    2 => 10,  // 10% for second offense
+                    3 => 25,  // 25% for third offense
+                    _ => 100, // 100% (full slash) for persistent Byzantine behavior
                 };
-                
+
                 let reason = format!(
                     "Byzantine fault: {} instances of conflicting state claims",
                     fault_count
                 );
-                
+
                 (validator_id.clone(), slash_percentage, reason)
             })
             .collect()
@@ -481,7 +485,7 @@ impl Default for StateValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_hierarchy::{Block, Subblock, Hash};
+    use crate::block_hierarchy::{Block, Hash, Subblock};
     use std::time::SystemTime;
 
     #[test]
@@ -536,7 +540,13 @@ mod tests {
         };
 
         // Build merkle tree to get correct state root
-        let transition = vec![0u16.to_le_bytes().to_vec(), vec![0u8; 32], vec![1u8; 32], 1000u64.to_le_bytes().to_vec()].concat();
+        let transition = vec![
+            0u16.to_le_bytes().to_vec(),
+            vec![0u8; 32],
+            vec![1u8; 32],
+            1000u64.to_le_bytes().to_vec(),
+        ]
+        .concat();
         let tree = MerkleTree::from_state_transitions(vec![transition]);
         let state_root = tree.root_hash().unwrap();
 
@@ -569,7 +579,8 @@ mod tests {
         let wrong_root = vec![5, 6, 7, 8];
         let block_height_bytes = 100u64.to_le_bytes();
 
-        let result = validator.detect_byzantine_fault(&block_height_bytes, validator_id_str, &wrong_root);
+        let result =
+            validator.detect_byzantine_fault(&block_height_bytes, validator_id_str, &wrong_root);
 
         assert!(result.is_err());
         assert_eq!(validator.byzantine_faults.len(), 1);

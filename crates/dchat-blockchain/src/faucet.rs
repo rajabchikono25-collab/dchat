@@ -136,9 +136,8 @@ impl FaucetState {
             // Reset IP limits for new day
             self.ip_limits.clear();
             // Clear old address rate limits (older than cooldown + 1 day)
-            self.address_limits.retain(|_, v| {
-                now.signed_duration_since(v.last_request) < Duration::hours(48)
-            });
+            self.address_limits
+                .retain(|_, v| now.signed_duration_since(v.last_request) < Duration::hours(48));
         }
     }
 }
@@ -280,10 +279,13 @@ impl Faucet {
 
         // Check IP rate limit
         if let Some(ip) = client_ip {
-            let ip_limit = state.ip_limits.entry(ip.to_string()).or_insert(IpRateLimit {
-                first_request_today: Utc::now(),
-                request_count_today: 0,
-            });
+            let ip_limit = state
+                .ip_limits
+                .entry(ip.to_string())
+                .or_insert(IpRateLimit {
+                    first_request_today: Utc::now(),
+                    request_count_today: 0,
+                });
 
             if ip_limit.request_count_today >= self.config.max_requests_per_ip {
                 return Err(FaucetError::IpRateLimitExceeded {
@@ -309,7 +311,11 @@ impl Faucet {
         // 5. Mint tokens via tokenomics (if available)
         if let Some(ref tokenomics) = self.tokenomics {
             tokenomics
-                .mint_tokens(self.config.drip_amount, MintReason::Faucet, Some(recipient_id.clone()))
+                .mint_tokens(
+                    self.config.drip_amount,
+                    MintReason::Faucet,
+                    Some(recipient_id.clone()),
+                )
                 .map_err(|e| FaucetError::MintFailed(e.to_string()))?;
         }
 
@@ -545,9 +551,7 @@ impl Faucet {
         let mut state = self.state.write().await;
         let cutoff = Utc::now() - Duration::hours(self.config.cleanup_interval_hours as i64);
 
-        state
-            .address_limits
-            .retain(|_, v| v.last_request > cutoff);
+        state.address_limits.retain(|_, v| v.last_request > cutoff);
 
         tracing::debug!(
             "Faucet cleanup: {} address entries remaining",
@@ -594,7 +598,8 @@ mod tests {
     use crate::currency_chain::CurrencyChainConfig;
 
     fn create_test_faucet() -> Faucet {
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         Faucet::new_for_testing(currency_chain)
     }
 
@@ -602,9 +607,7 @@ mod tests {
     async fn test_faucet_request_tokens() {
         let faucet = create_test_faucet();
 
-        let result = faucet
-            .request_tokens("test_address_123", None, None)
-            .await;
+        let result = faucet.request_tokens("test_address_123", None, None).await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
@@ -630,7 +633,8 @@ mod tests {
     async fn test_faucet_ip_rate_limiting() {
         let mut config = FaucetConfig::for_testing();
         config.max_requests_per_ip = 2;
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new(config, currency_chain, None);
 
         let ip = "192.168.1.1";
@@ -644,7 +648,10 @@ mod tests {
 
         // Third request should fail due to IP limit
         let result3 = faucet.request_tokens("addr3", None, Some(ip)).await;
-        assert!(matches!(result3, Err(FaucetError::IpRateLimitExceeded { .. })));
+        assert!(matches!(
+            result3,
+            Err(FaucetError::IpRateLimitExceeded { .. })
+        ));
     }
 
     #[tokio::test]
@@ -652,7 +659,8 @@ mod tests {
         let mut config = FaucetConfig::for_testing();
         config.daily_limit = 2;
         config.cooldown_hours = 0; // No cooldown for this test
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new(config, currency_chain, None);
 
         // First two requests should succeed
@@ -661,7 +669,10 @@ mod tests {
 
         // Third request should fail due to daily limit
         let result3 = faucet.request_tokens("addr3", None, None).await;
-        assert!(matches!(result3, Err(FaucetError::DailyLimitReached { .. })));
+        assert!(matches!(
+            result3,
+            Err(FaucetError::DailyLimitReached { .. })
+        ));
     }
 
     #[tokio::test]
@@ -700,7 +711,8 @@ mod tests {
         let mut config = FaucetConfig::for_testing();
         config.require_captcha = true;
         config.hcaptcha_secret = Some("test_secret".to_string());
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new(config, currency_chain, None);
 
         // Request without captcha should fail
@@ -710,7 +722,8 @@ mod tests {
 
     #[test]
     fn test_parse_address_uuid() {
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new_for_testing(currency_chain);
 
         let uuid = Uuid::new_v4();
@@ -721,7 +734,8 @@ mod tests {
 
     #[test]
     fn test_parse_address_string() {
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new_for_testing(currency_chain);
 
         let result = faucet.parse_address("my_test_address");
@@ -736,7 +750,8 @@ mod tests {
         let mut config = FaucetConfig::default();
         config.testnet_only = true;
         config.require_captcha = false;
-        let currency_chain = Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+        let currency_chain =
+            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
         let faucet = Faucet::new(config, currency_chain, None);
 
         // In mainnet mode (DCHAT_NETWORK not set to "testnet"), should fail

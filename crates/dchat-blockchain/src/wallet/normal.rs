@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use zeroize::ZeroizeOnDrop;
 
-use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 use super::solana_compat::SolanaAddress;
+use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 
 /// Wallet type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,9 +116,9 @@ impl Wallet {
     ) -> Result<(Self, String)> {
         let mnemonic = Mnemonic::generate(mnemonic_length)?;
         let phrase = mnemonic.phrase();
-        
+
         let wallet = Self::from_mnemonic(&phrase, passphrase, config)?;
-        
+
         Ok((wallet, phrase))
     }
 
@@ -131,7 +131,7 @@ impl Wallet {
         let mnemonic = Mnemonic::from_phrase(phrase)?;
         let seed = Seed::from_mnemonic(&mnemonic, passphrase)?;
         let master_key = seed.to_master_key()?;
-        
+
         Self::from_master_key(master_key, config)
     }
 
@@ -140,16 +140,16 @@ impl Wallet {
         // Derive account key using BIP-44 path: m/44'/1337'/account'/0/index
         let path = [44, 1337, config.account_index, 0, config.address_index];
         let derived_key = KeyDerivation::derive_key_path(&master_key, &path)?;
-        
+
         // Create signing key
         let signing_key = SigningKey::from_bytes(derived_key.as_bytes());
         let verifying_key = signing_key.verifying_key();
-        
+
         // Create public key and addresses
         let public_key = PublicKey::from_bytes(verifying_key.to_bytes());
         let address = public_key.to_address();
         let solana_address = SolanaAddress::from_public_key(&public_key);
-        
+
         Ok(Self {
             id: uuid::Uuid::new_v4(),
             config,
@@ -169,7 +169,7 @@ impl Wallet {
     pub fn watch_only(public_key: PublicKey, config: WalletConfig) -> Self {
         let address = public_key.to_address();
         let solana_address = SolanaAddress::from_public_key(&public_key);
-        
+
         Self {
             id: uuid::Uuid::new_v4(),
             config: WalletConfig {
@@ -245,21 +245,25 @@ impl Wallet {
 
     /// Sign a transaction
     pub fn sign_transaction(&mut self, tx: WalletTransaction) -> Result<SignedTransaction> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Wallet cannot sign (watch-only or locked)"))?;
-        
-        let public_key = self.public_key.as_ref()
+
+        let public_key = self
+            .public_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Public key not available"))?;
 
         // Get message to sign
         let message = tx.signing_message();
-        
+
         // Sign with Ed25519
         let signature = signing_key.sign(&message);
-        
+
         // Increment nonce after successful signing
         self.nonce += 1;
-        
+
         Ok(SignedTransaction {
             transaction: tx,
             signatures: vec![TransactionSignature {
@@ -272,21 +276,25 @@ impl Wallet {
 
     /// Sign arbitrary message (for authentication)
     pub fn sign_message(&self, message: &[u8]) -> Result<Vec<u8>> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Wallet cannot sign"))?;
-        
+
         // Hash message first for consistent length
         let hash = blake3::hash(message);
         let signature = signing_key.sign(hash.as_bytes());
-        
+
         Ok(signature.to_bytes().to_vec())
     }
 
     /// Sign raw message without hashing (for Solana transactions)
     pub fn sign_raw(&self, message: &[u8]) -> Result<[u8; 64]> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Wallet cannot sign"))?;
-        
+
         let signature = signing_key.sign(message);
         Ok(signature.to_bytes())
     }
@@ -297,16 +305,18 @@ impl Wallet {
     }
 
     /// Sign a Solana transaction
-    /// 
+    ///
     /// This signs a Solana transaction and places the signature at the specified index
     pub fn sign_solana_transaction(
         &self,
         tx: &mut crate::solana::SolanaTransaction,
         signer_index: usize,
     ) -> Result<()> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Wallet cannot sign (watch-only or locked)"))?;
-        
+
         tx.sign(signing_key, signer_index)?;
         Ok(())
     }
@@ -318,7 +328,9 @@ impl Wallet {
             return Ok(addr.clone());
         }
 
-        let master_key = self.master_key.as_ref()
+        let master_key = self
+            .master_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Master key not available for derivation"))?;
 
         // Derive key at new index
@@ -326,10 +338,10 @@ impl Wallet {
         let derived_key = KeyDerivation::derive_key_path(master_key, &path)?;
         let public_key = derived_key.public_key();
         let address = public_key.to_address();
-        
+
         // Cache the address
         self.derived_addresses.insert(index, address.clone());
-        
+
         Ok(address)
     }
 
@@ -351,9 +363,11 @@ impl Wallet {
 
     /// Export public key in various formats
     pub fn export_public_key(&self) -> Result<WalletExport> {
-        let public_key = self.public_key.as_ref()
+        let public_key = self
+            .public_key
+            .as_ref()
             .ok_or_else(|| Error::crypto("Public key not available"))?;
-        
+
         Ok(WalletExport {
             wallet_id: self.id,
             name: self.config.name.clone(),
@@ -385,7 +399,10 @@ impl std::fmt::Debug for Wallet {
             .field("name", &self.config.name)
             .field("wallet_type", &self.config.wallet_type)
             .field("address", &self.address.as_ref().map(|a| a.to_hex()))
-            .field("solana_address", &self.solana_address.as_ref().map(|a| a.to_string()))
+            .field(
+                "solana_address",
+                &self.solana_address.as_ref().map(|a| a.to_string()),
+            )
             .field("can_sign", &self.can_sign())
             .field("nonce", &self.nonce)
             .finish()
@@ -400,16 +417,16 @@ mod tests {
     fn test_wallet_creation() {
         let config = WalletConfig::default();
         let (wallet, phrase) = Wallet::create(config, MnemonicLength::Words12, None).unwrap();
-        
+
         assert!(wallet.can_sign());
         assert!(wallet.address().is_some());
         assert!(wallet.solana_address().is_some());
         assert!(!phrase.is_empty());
-        
+
         // Verify mnemonic restoration produces same address
         let config2 = WalletConfig::default();
         let wallet2 = Wallet::from_mnemonic(&phrase, None, config2).unwrap();
-        
+
         assert_eq!(
             wallet.address().unwrap().to_hex(),
             wallet2.address().unwrap().to_hex()
@@ -420,13 +437,9 @@ mod tests {
     fn test_wallet_signing() {
         let config = WalletConfig::default();
         let (mut wallet, _) = Wallet::create(config, MnemonicLength::Words12, None).unwrap();
-        
-        let tx = wallet.create_transfer(
-            "0x1234567890abcdef1234567890abcdef12345678",
-            1000,
-            10,
-        );
-        
+
+        let tx = wallet.create_transfer("0x1234567890abcdef1234567890abcdef12345678", 1000, 10);
+
         let signed = wallet.sign_transaction(tx).unwrap();
         assert!(signed.verify().unwrap());
         assert_eq!(wallet.nonce(), 1); // Nonce incremented
@@ -436,11 +449,11 @@ mod tests {
     fn test_address_derivation() {
         let config = WalletConfig::default();
         let (mut wallet, _) = Wallet::create(config, MnemonicLength::Words24, None).unwrap();
-        
+
         let addr0 = wallet.derive_address(0).unwrap();
         let addr1 = wallet.derive_address(1).unwrap();
         let addr2 = wallet.derive_address(0).unwrap(); // Should use cache
-        
+
         assert_ne!(addr0.to_hex(), addr1.to_hex());
         assert_eq!(addr0.to_hex(), addr2.to_hex());
     }
@@ -449,9 +462,9 @@ mod tests {
     fn test_watch_only_wallet() {
         let config = WalletConfig::default();
         let (wallet, _) = Wallet::create(config.clone(), MnemonicLength::Words12, None).unwrap();
-        
+
         let watch = Wallet::watch_only(wallet.public_key().unwrap().clone(), config);
-        
+
         assert!(!watch.can_sign());
         assert_eq!(watch.wallet_type(), WalletType::WatchOnly);
         assert_eq!(

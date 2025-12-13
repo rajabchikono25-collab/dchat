@@ -384,7 +384,7 @@ impl PaymentProcessor {
     /// Process all pending payments
     async fn process_pending_payments(&self) -> Result<(), PaymentProcessorError> {
         let streams = self.streams.read().await;
-        
+
         // Get streams due for payment
         let due_streams: Vec<String> = streams
             .iter()
@@ -406,7 +406,9 @@ impl PaymentProcessor {
                 Ok(receipt) => {
                     tracing::debug!(
                         "Processed payment: stream={}, amount={}, tx={}",
-                        receipt.stream_id, receipt.amount, receipt.tx_id
+                        receipt.stream_id,
+                        receipt.amount,
+                        receipt.tx_id
                     );
                 }
                 Err(PaymentProcessorError::InsufficientFunds) => {
@@ -425,12 +427,14 @@ impl PaymentProcessor {
         {
             let mut stats = self.stats.write().await;
             stats.last_processed = Some(Utc::now());
-            
+
             let streams = self.streams.read().await;
-            stats.active_streams = streams.values()
+            stats.active_streams = streams
+                .values()
                 .filter(|s| s.status == StreamStatus::Active)
                 .count();
-            stats.suspended_streams = streams.values()
+            stats.suspended_streams = streams
+                .values()
                 .filter(|s| s.status == StreamStatus::Suspended)
                 .count();
         }
@@ -439,7 +443,7 @@ impl PaymentProcessor {
     }
 
     /// Process a single stream payment
-    /// 
+    ///
     /// # Security
     ///
     /// For payment channel streams, this method uses pre-authorized signed updates:
@@ -462,14 +466,16 @@ impl PaymentProcessor {
         };
 
         if stream.status != StreamStatus::Active {
-            return Err(PaymentProcessorError::StreamSuspended(stream_id.to_string()));
+            return Err(PaymentProcessorError::StreamSuspended(
+                stream_id.to_string(),
+            ));
         }
 
         let amount = stream.amount_per_interval;
 
         // Try to use payment channel with pre-signed update
-        let tx_id = if let (Some(ref channel_manager), Some(ref channel_id)) = 
-            (&self.channel_manager, &stream.channel_id) 
+        let tx_id = if let (Some(ref channel_manager), Some(ref channel_id)) =
+            (&self.channel_manager, &stream.channel_id)
         {
             // Try to consume a pre-signed update
             let pre_signed_update = {
@@ -494,7 +500,10 @@ impl PaymentProcessor {
                             stream_id,
                             {
                                 let streams = self.streams.read().await;
-                                streams.get(stream_id).map(|s| s.remaining_updates()).unwrap_or(0)
+                                streams
+                                    .get(stream_id)
+                                    .map(|s| s.remaining_updates())
+                                    .unwrap_or(0)
                             }
                         );
                         tx_id
@@ -503,7 +512,8 @@ impl PaymentProcessor {
                         // Payment channel failed - log and fall back to on-chain
                         tracing::warn!(
                             "Payment channel failed for stream {}: {}, falling back to on-chain",
-                            stream_id, e
+                            stream_id,
+                            e
                         );
                         self.currency_chain
                             .transfer(&stream.payer, &stream.payee, amount)
@@ -596,7 +606,9 @@ impl PaymentProcessor {
 
         tracing::info!(
             "Created on-chain payment stream {}: {} tokens every {}s",
-            stream_id, amount_per_interval, interval_seconds
+            stream_id,
+            amount_per_interval,
+            interval_seconds
         );
 
         Ok(stream_id)
@@ -654,14 +666,14 @@ impl PaymentProcessor {
         // Validate that we have a payment channel manager
         if self.channel_manager.is_none() {
             return Err(PaymentProcessorError::InternalError(
-                "Payment channel manager not configured".to_string()
+                "Payment channel manager not configured".to_string(),
             ));
         }
 
         // Validate pre-signed updates exist
         if pre_signed_updates.is_empty() {
             return Err(PaymentProcessorError::InternalError(
-                "At least one pre-signed update is required for channel streams".to_string()
+                "At least one pre-signed update is required for channel streams".to_string(),
             ));
         }
 
@@ -704,7 +716,7 @@ impl PaymentProcessor {
 
         if stream.channel_id.is_none() {
             return Err(PaymentProcessorError::InternalError(
-                "Cannot add pre-signed updates to non-channel stream".to_string()
+                "Cannot add pre-signed updates to non-channel stream".to_string(),
             ));
         }
 
@@ -713,7 +725,9 @@ impl PaymentProcessor {
 
         tracing::info!(
             "Added {} pre-signed updates to stream {} (total remaining: {})",
-            added_count, stream_id, stream.remaining_updates()
+            added_count,
+            stream_id,
+            stream.remaining_updates()
         );
 
         Ok(stream.remaining_updates())
@@ -727,7 +741,7 @@ impl PaymentProcessor {
             .ok_or_else(|| PaymentProcessorError::StreamNotFound(stream_id.to_string()))?;
 
         stream.status = StreamStatus::Suspended;
-        
+
         let mut stats = self.stats.write().await;
         stats.failed_payments += 1;
 
@@ -743,7 +757,7 @@ impl PaymentProcessor {
 
         if stream.status != StreamStatus::Suspended {
             return Err(PaymentProcessorError::InternalError(
-                "Stream is not suspended".to_string()
+                "Stream is not suspended".to_string(),
             ));
         }
 
@@ -821,14 +835,8 @@ mod tests {
     fn test_payment_stream_creation() {
         let payer = UserId::new();
         let payee = UserId::new();
-        
-        let stream = PaymentStream::new(
-            payer.clone(),
-            payee.clone(),
-            1000,
-            60,
-            10000,
-        );
+
+        let stream = PaymentStream::new(payer.clone(), payee.clone(), 1000, 60, 10000);
 
         assert_eq!(stream.payer, payer);
         assert_eq!(stream.payee, payee);
@@ -840,13 +848,7 @@ mod tests {
 
     #[test]
     fn test_payment_recording() {
-        let mut stream = PaymentStream::new(
-            UserId::new(),
-            UserId::new(),
-            1000,
-            60,
-            5000,
-        );
+        let mut stream = PaymentStream::new(UserId::new(), UserId::new(), 1000, 60, 5000);
 
         stream.record_payment(1000);
         assert_eq!(stream.total_paid, 1000);

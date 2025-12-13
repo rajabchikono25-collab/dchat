@@ -1,15 +1,15 @@
 //! Chat Chain client for identity, messaging, channels, permissions, governance, and reputation
 
+use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
 use chrono::Utc;
 use dchat_chain::{Transaction, TransactionStatus, TransactionType};
+use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
 use dchat_privacy::zk_proofs::BlockchainClient as PrivacyBlockchainClient;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
-use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
-use dchat_core::error::{Error, Result};
 
 /// Configuration for Chat Chain client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,7 +74,7 @@ impl ChatChainClient {
     /// Create new chat chain client with production RPC
     pub fn new(config: ChatChainConfig) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
-        
+
         Ok(Self {
             config,
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -85,11 +85,11 @@ impl ChatChainClient {
             spent_nullifiers: Arc::new(RwLock::new(HashSet::new())),
         })
     }
-    
+
     /// Create new chat chain client with mock RPC for testing
     pub fn new_mock(config: ChatChainConfig) -> Self {
         let rpc_client = MockRpcClient::new();
-        
+
         Self {
             config,
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -122,11 +122,17 @@ impl ChatChainClient {
         };
 
         // Submit to blockchain via RPC
-        let tx_hash = self.rpc_client.submit_transaction(payload).await
+        let tx_hash = self
+            .rpc_client
+            .submit_transaction(payload)
+            .await
             .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
 
         // Store transaction with hash
-        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, (tx, Some(tx_hash)));
 
         // Initialize reputation score
         self.reputation_scores
@@ -172,11 +178,17 @@ impl ChatChainClient {
         };
 
         // Submit to blockchain via RPC
-        let tx_hash = self.rpc_client.submit_transaction(payload).await
+        let tx_hash = self
+            .rpc_client
+            .submit_transaction(payload)
+            .await
             .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
 
         // Store transaction with hash
-        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, (tx, Some(tx_hash)));
         Ok(tx_id)
     }
 
@@ -207,11 +219,17 @@ impl ChatChainClient {
         };
 
         // Submit to blockchain via RPC
-        let tx_hash = self.rpc_client.submit_transaction(payload).await
+        let tx_hash = self
+            .rpc_client
+            .submit_transaction(payload)
+            .await
             .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
 
         // Store transaction with hash
-        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, (tx, Some(tx_hash)));
 
         // Store channel metadata
         let channel_meta = ChannelMetadata {
@@ -254,11 +272,17 @@ impl ChatChainClient {
         };
 
         // Submit to blockchain via RPC
-        let tx_hash = self.rpc_client.submit_transaction(payload).await
+        let tx_hash = self
+            .rpc_client
+            .submit_transaction(payload)
+            .await
             .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
 
         // Store transaction with hash
-        self.transactions.write().unwrap().insert(tx_id, (tx, Some(tx_hash)));
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, (tx, Some(tx_hash)));
         Ok(tx_id)
     }
 
@@ -323,23 +347,33 @@ impl ChatChainClient {
         // Get transaction hash for RPC queries
         let tx_hash = {
             let transactions = self.transactions.read().unwrap();
-            let tx_data = transactions.get(tx_id)
+            let tx_data = transactions
+                .get(tx_id)
                 .ok_or_else(|| Error::NotFound(format!("Transaction {}", tx_id)))?;
-            tx_data.1.clone()
-                .ok_or_else(|| Error::Chain(format!("Transaction not yet submitted to blockchain: {}", tx_id)))?
+            tx_data.1.clone().ok_or_else(|| {
+                Error::Chain(format!(
+                    "Transaction not yet submitted to blockchain: {}",
+                    tx_id
+                ))
+            })?
         };
 
         while attempts < max_attempts {
             // Query blockchain for transaction status
-            let status = self.rpc_client.get_transaction_status(&tx_hash).await
+            let status = self
+                .rpc_client
+                .get_transaction_status(&tx_hash)
+                .await
                 .map_err(|e| Error::Chain(format!("RPC error querying status: {}", e)))?;
 
             match status {
                 TransactionStatus::Confirmed { block_height, .. } => {
                     // Check if we have enough confirmations
-                    let current_height = self.rpc_client.get_current_height().await
-                        .map_err(|e| Error::Chain(format!("RPC error querying height: {}", e)))?;
-                    
+                    let current_height =
+                        self.rpc_client.get_current_height().await.map_err(|e| {
+                            Error::Chain(format!("RPC error querying height: {}", e))
+                        })?;
+
                     let confirmations = current_height.saturating_sub(block_height);
                     if confirmations >= required_confirmations as u64 {
                         // Update local cache
@@ -391,12 +425,12 @@ impl PrivacyBlockchainClient for ChatChainClient {
             .copied()
             .ok_or_else(|| Error::NotFound(format!("User public key not found: {}", user_id)))
     }
-    
+
     /// Check if nullifier has been spent (prevents ZK proof double-use)
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool> {
         Ok(self.spent_nullifiers.read().unwrap().contains(nullifier))
     }
-    
+
     /// Mark nullifier as spent on-chain
     fn mark_nullifier_spent(&mut self, nullifier: [u8; 32]) -> Result<()> {
         self.spent_nullifiers.write().unwrap().insert(nullifier);
@@ -428,7 +462,9 @@ mod tests {
 
         let owner = UserId(Uuid::new_v4());
         let channel_id = ChannelId(Uuid::new_v4());
-        let result = client.create_channel(&owner, &channel_id, "Test Channel".to_string()).await;
+        let result = client
+            .create_channel(&owner, &channel_id, "Test Channel".to_string())
+            .await;
         assert!(result.is_ok());
     }
 
@@ -471,10 +507,13 @@ mod tests {
 
         let user_id = UserId(Uuid::new_v4());
         let public_key: [u8; 32] = [42u8; 32];
-        
+
         // Register user with 32-byte public key
-        client.register_user(&user_id, public_key.to_vec()).await.unwrap();
-        
+        client
+            .register_user(&user_id, public_key.to_vec())
+            .await
+            .unwrap();
+
         // Verify identity is stored via privacy trait
         let retrieved_key = client.get_user_public_key(&user_id).unwrap();
         assert_eq!(retrieved_key, public_key);
@@ -486,13 +525,13 @@ mod tests {
         let mut client = ChatChainClient::new_mock(config);
 
         let nullifier: [u8; 32] = [0xAB; 32];
-        
+
         // Initially not spent
         assert!(!client.is_nullifier_spent(&nullifier).unwrap());
-        
+
         // Mark as spent
         client.mark_nullifier_spent(nullifier).unwrap();
-        
+
         // Now should be spent
         assert!(client.is_nullifier_spent(&nullifier).unwrap());
     }

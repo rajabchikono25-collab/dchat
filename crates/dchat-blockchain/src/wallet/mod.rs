@@ -13,17 +13,19 @@
 //! - Constant-time cryptographic operations
 //! - Production-ready error handling
 
-pub mod normal;
-pub mod multisig;
-pub mod burner;
-pub mod solana_compat;
 pub mod address;
+pub mod burner;
+pub mod multisig;
+pub mod normal;
+pub mod solana_compat;
 
-pub use normal::{Wallet, WalletConfig, WalletType, WalletExport};
-pub use multisig::{MultiSigWallet, MultiSigConfig, SignerInfo, PendingMultiSigTx};
-pub use burner::{BurnerWallet, BurnerWalletConfig, BurnerWalletManager, BurnerStats, DestructionReason};
-pub use solana_compat::{SolanaAddress, SolanaSignature, SolanaCompatible, TokenMint};
-pub use address::{UniversalAddress, AddressFormat, AddressMapping};
+pub use address::{AddressFormat, AddressMapping, UniversalAddress};
+pub use burner::{
+    BurnerStats, BurnerWallet, BurnerWalletConfig, BurnerWalletManager, DestructionReason,
+};
+pub use multisig::{MultiSigConfig, MultiSigWallet, PendingMultiSigTx, SignerInfo};
+pub use normal::{Wallet, WalletConfig, WalletExport, WalletType};
+pub use solana_compat::{SolanaAddress, SolanaCompatible, SolanaSignature, TokenMint};
 
 use dchat_core::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -130,7 +132,7 @@ impl WalletTransaction {
             msg.extend_from_slice(memo.as_bytes());
         }
         msg.extend_from_slice(&self.timestamp.timestamp().to_le_bytes());
-        
+
         // Hash for consistent length
         blake3::hash(&msg).as_bytes().to_vec()
     }

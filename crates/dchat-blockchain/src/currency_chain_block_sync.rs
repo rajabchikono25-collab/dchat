@@ -11,7 +11,7 @@ use dchat_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
@@ -175,7 +175,7 @@ impl BlockSyncManager {
 
         // Sync recent blocks (last 1000 or configured max)
         let start_block = latest_block.saturating_sub(self.config.max_cache_size as u64);
-        
+
         for block_num in start_block..=latest_block {
             match self.fetch_block_rpc(block_num).await {
                 Ok(block) => {
@@ -194,21 +194,26 @@ impl BlockSyncManager {
         }
 
         *self.latest_confirmed_block.write().await = latest_block;
-        info!("✅ Initial sync complete: {} blocks cached", self.block_cache.read().await.len());
+        info!(
+            "✅ Initial sync complete: {} blocks cached",
+            self.block_cache.read().await.len()
+        );
 
         Ok(())
     }
 
     /// Start WebSocket streaming for real-time updates
     async fn start_websocket_streaming(&self) -> Result<()> {
-        
+        use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-        use futures_util::{StreamExt, SinkExt};
-        
-        info!("🔌 Connecting to currency chain WebSocket: {}", self.config.ws_url);
+
+        info!(
+            "🔌 Connecting to currency chain WebSocket: {}",
+            self.config.ws_url
+        );
 
         let sync_manager = self.clone_refs();
-        
+
         tokio::spawn(async move {
             loop {
                 match connect_async(&sync_manager.config.ws_url).await {
@@ -265,7 +270,7 @@ impl BlockSyncManager {
                     Err(e) => {
                         error!("Failed to connect WebSocket: {}", e);
                         sync_manager.handle_connection_failure().await;
-                        
+
                         let delay = sync_manager.config.reconnect_delay_ms;
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                     }
@@ -279,7 +284,7 @@ impl BlockSyncManager {
     /// Handle incoming WebSocket message
     async fn handle_ws_message(&self, text: &str) -> Result<()> {
         use dchat_core::error::Error;
-        
+
         let json: serde_json::Value = serde_json::from_str(text)
             .map_err(|e| Error::chain(format!("Failed to parse WebSocket message: {}", e)))?;
 
@@ -287,10 +292,10 @@ impl BlockSyncManager {
         if let Some(params) = json.get("params") {
             if let Some(result) = params.get("result") {
                 // Parse block header from notification
-                let block_number_hex = result["number"]
-                    .as_str()
-                    .ok_or_else(|| Error::chain("Missing block number in WebSocket notification"))?;
-                
+                let block_number_hex = result["number"].as_str().ok_or_else(|| {
+                    Error::chain("Missing block number in WebSocket notification")
+                })?;
+
                 let block_number_hex = block_number_hex.trim_start_matches("0x");
                 let block_number = u64::from_str_radix(block_number_hex, 16)
                     .map_err(|e| Error::chain(format!("Failed to parse block number: {}", e)))?;
@@ -349,7 +354,7 @@ impl BlockSyncManager {
             match self.fetch_latest_block_number_rpc().await {
                 Ok(latest_block) => {
                     let current_latest = *self.latest_confirmed_block.read().await;
-                    
+
                     if latest_block > current_latest {
                         // Fetch new blocks
                         for block_num in (current_latest + 1)..=latest_block {
@@ -423,7 +428,7 @@ impl BlockSyncManager {
     /// Check if block represents a fork
     async fn is_fork(&self, block: &CurrencyBlock) -> Result<bool> {
         let cache = self.block_cache.read().await;
-        
+
         // Check if parent block exists and matches
         if let Some(parent) = cache.get(&(block.header.block_number - 1)) {
             Ok(parent.header.block_hash != block.header.parent_hash)
@@ -435,19 +440,25 @@ impl BlockSyncManager {
 
     /// Handle fork detection
     async fn handle_fork(&self, conflicting_block: CurrencyBlock) -> Result<()> {
-        warn!("🍴 Handling fork at block {}", conflicting_block.header.block_number);
-        
+        warn!(
+            "🍴 Handling fork at block {}",
+            conflicting_block.header.block_number
+        );
+
         *self.status.write().await = SyncStatus::ResolvingFork;
 
         // Find common ancestor
         let common_ancestor = self.find_common_ancestor(&conflicting_block).await?;
-        
+
         // Fetch competing chain blocks from common ancestor to conflicting block
-        let chain_b_headers = self.fetch_competing_chain_headers(
-            common_ancestor,
-            conflicting_block.header.parent_hash.clone()
-        ).await.unwrap_or_default();
-        
+        let chain_b_headers = self
+            .fetch_competing_chain_headers(
+                common_ancestor,
+                conflicting_block.header.parent_hash.clone(),
+            )
+            .await
+            .unwrap_or_default();
+
         // Build fork info
         let fork_info = ForkInfo {
             common_ancestor,
@@ -463,7 +474,7 @@ impl BlockSyncManager {
 
         Ok(())
     }
-    
+
     /// Fetch competing chain headers by walking back from parent hash
     async fn fetch_competing_chain_headers(
         &self,
@@ -473,7 +484,7 @@ impl BlockSyncManager {
         let cache = self.block_cache.read().await;
         let mut headers = Vec::new();
         let mut current_parent_hash = start_parent_hash;
-        
+
         // Walk back through cached blocks to build competing chain
         for block_num in (common_ancestor + 1..=*self.latest_confirmed_block.read().await).rev() {
             if let Some(block) = cache.get(&block_num) {
@@ -487,7 +498,7 @@ impl BlockSyncManager {
                 }
             }
         }
-        
+
         // Reverse to get chronological order
         headers.reverse();
         Ok(headers)
@@ -513,25 +524,32 @@ impl BlockSyncManager {
         info!("🔧 Resolving fork");
 
         let fork_opt = self.active_fork.read().await.clone();
-        
+
         if let Some(fork) = fork_opt {
             // Calculate total difficulty for each chain (using length as proxy in PoS context)
             // In production, this would use actual difficulty or stake weight
             let chain_a_weight = fork.chain_a.len();
             let chain_b_weight = fork.chain_b.len();
-            
+
             if chain_a_weight >= chain_b_weight {
-                info!("✅ Chain A selected as canonical (weight: {} vs {})", chain_a_weight, chain_b_weight);
+                info!(
+                    "✅ Chain A selected as canonical (weight: {} vs {})",
+                    chain_a_weight, chain_b_weight
+                );
                 // Chain A is already in our cache, no reorg needed
             } else {
-                info!("✅ Chain B selected as canonical (weight: {} vs {})", chain_b_weight, chain_a_weight);
+                info!(
+                    "✅ Chain B selected as canonical (weight: {} vs {})",
+                    chain_b_weight, chain_a_weight
+                );
                 // Reorganize cache: remove chain_a blocks and apply chain_b blocks
-                self.reorganize_to_chain(&fork.chain_b, fork.common_ancestor).await?;
+                self.reorganize_to_chain(&fork.chain_b, fork.common_ancestor)
+                    .await?;
             }
 
             // Clear fork state
             *self.active_fork.write().await = None;
-            
+
             // Emit fork resolution event for monitoring
             info!(
                 "🔗 Fork resolved: common_ancestor={}, chain_a_len={}, chain_b_len={}",
@@ -544,7 +562,7 @@ impl BlockSyncManager {
         *self.status.write().await = SyncStatus::Live;
         Ok(())
     }
-    
+
     /// Reorganize chain to apply winning fork
     async fn reorganize_to_chain(
         &self,
@@ -552,37 +570,44 @@ impl BlockSyncManager {
         common_ancestor: u64,
     ) -> Result<()> {
         let mut cache = self.block_cache.write().await;
-        
+
         // Remove blocks after common ancestor (orphaned blocks)
         let latest = *self.latest_confirmed_block.read().await;
         for block_num in (common_ancestor + 1)..=latest {
             if let Some(removed) = cache.remove(&block_num) {
-                info!("🗑️ Removed orphaned block {} ({})", block_num, removed.header.block_hash);
+                info!(
+                    "🗑️ Removed orphaned block {} ({})",
+                    block_num, removed.header.block_hash
+                );
             }
         }
         drop(cache);
-        
+
         // Fetch and apply canonical chain blocks
         for header in canonical_headers {
             match self.fetch_block_rpc(header.block_number).await {
                 Ok(block) => {
                     let mut cache = self.block_cache.write().await;
                     cache.insert(block.header.block_number, block.clone());
-                    info!("✅ Applied canonical block {} ({})", 
-                          block.header.block_number, 
-                          block.header.block_hash);
+                    info!(
+                        "✅ Applied canonical block {} ({})",
+                        block.header.block_number, block.header.block_hash
+                    );
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to fetch canonical block {}: {}", header.block_number, e);
+                    warn!(
+                        "⚠️ Failed to fetch canonical block {}: {}",
+                        header.block_number, e
+                    );
                 }
             }
         }
-        
+
         // Update latest confirmed block to end of canonical chain
         if let Some(last_header) = canonical_headers.last() {
             *self.latest_confirmed_block.write().await = last_header.block_number;
         }
-        
+
         Ok(())
     }
 
@@ -603,7 +628,10 @@ impl BlockSyncManager {
                 if block_num > 1 {
                     if let Some(parent) = cache.get(&(block_num - 1)) {
                         if parent.header.block_hash != block.header.parent_hash {
-                            warn!("⚠️ Fork detected: parent hash mismatch at block {}", block_num);
+                            warn!(
+                                "⚠️ Fork detected: parent hash mismatch at block {}",
+                                block_num
+                            );
                             return self.handle_fork(block.clone()).await;
                         }
                     }
@@ -622,12 +650,14 @@ impl BlockSyncManager {
         // Confirm blocks that have enough confirmations
         while let Some(block) = pending.front() {
             let confirmations = latest.saturating_sub(block.header.block_number) as u32;
-            
+
             if confirmations >= self.config.confirmation_threshold {
                 let confirmed = pending.pop_front().unwrap();
-                info!("✅ Block {} confirmed ({} confirmations)", 
-                      confirmed.header.block_number, confirmations);
-                
+                info!(
+                    "✅ Block {} confirmed ({} confirmations)",
+                    confirmed.header.block_number, confirmations
+                );
+
                 // Emit confirmation event
                 self.emit_block_confirmed(&confirmed).await;
             } else {
@@ -643,13 +673,17 @@ impl BlockSyncManager {
         // Broadcast block confirmation to all subscribers
         match self.block_tx.send(block.clone()) {
             Ok(receiver_count) => {
-                debug!("Block {} confirmation event sent to {} subscribers", 
-                      block.header.block_number, receiver_count);
+                debug!(
+                    "Block {} confirmation event sent to {} subscribers",
+                    block.header.block_number, receiver_count
+                );
             }
             Err(e) => {
                 // No active subscribers, which is fine
-                debug!("No subscribers for block {} confirmation: {}", 
-                      block.header.block_number, e);
+                debug!(
+                    "No subscribers for block {} confirmation: {}",
+                    block.header.block_number, e
+                );
             }
         }
     }
@@ -657,7 +691,7 @@ impl BlockSyncManager {
     /// Add block to cache
     async fn add_block_to_cache(&self, block: CurrencyBlock) -> Result<()> {
         let mut cache = self.block_cache.write().await;
-        
+
         // Remove oldest blocks if cache is full
         while cache.len() >= self.config.max_cache_size {
             if let Some(&min_key) = cache.keys().min() {
@@ -672,7 +706,7 @@ impl BlockSyncManager {
     /// Handle connection failure
     async fn handle_connection_failure(&self) {
         warn!("⚠️ Connection failure detected");
-        
+
         let mut attempts = self.reconnect_attempts.write().await;
         *attempts += 1;
 
@@ -683,9 +717,12 @@ impl BlockSyncManager {
         }
 
         *self.status.write().await = SyncStatus::Reconnecting;
-        
-        info!("🔄 Reconnecting (attempt {}/{})", *attempts, self.config.max_reconnect_attempts);
-        
+
+        info!(
+            "🔄 Reconnecting (attempt {}/{})",
+            *attempts, self.config.max_reconnect_attempts
+        );
+
         tokio::time::sleep(Duration::from_millis(self.config.reconnect_delay_ms)).await;
     }
 
@@ -693,7 +730,7 @@ impl BlockSyncManager {
     async fn fetch_latest_block_number_rpc(&self) -> Result<u64> {
         use dchat_core::error::Error;
         use serde_json::json;
-        
+
         let client = reqwest::Client::new();
         let request_body = json!({
             "jsonrpc": "2.0",
@@ -718,7 +755,7 @@ impl BlockSyncManager {
         let block_hex = json["result"]
             .as_str()
             .ok_or_else(|| Error::chain("Missing or invalid result field"))?;
-        
+
         // Parse hex string (with or without 0x prefix)
         let block_hex = block_hex.trim_start_matches("0x");
         let block_number = u64::from_str_radix(block_hex, 16)
@@ -731,12 +768,12 @@ impl BlockSyncManager {
     async fn fetch_block_rpc(&self, block_number: u64) -> Result<CurrencyBlock> {
         use dchat_core::error::Error;
         use serde_json::json;
-        
+
         let client = reqwest::Client::new();
-        
+
         // Convert block number to hex
         let block_param = format!("0x{:x}", block_number);
-        
+
         let request_body = json!({
             "jsonrpc": "2.0",
             "method": "eth_getBlockByNumber",
@@ -766,29 +803,29 @@ impl BlockSyncManager {
             .as_str()
             .ok_or_else(|| Error::chain("Missing block hash"))?
             .to_string();
-        
+
         let parent_hash = block_data["parentHash"]
             .as_str()
             .ok_or_else(|| Error::chain("Missing parent hash"))?
             .to_string();
-        
+
         let timestamp_hex = block_data["timestamp"]
             .as_str()
             .ok_or_else(|| Error::chain("Missing timestamp"))?
             .trim_start_matches("0x");
         let timestamp = u64::from_str_radix(timestamp_hex, 16)
             .map_err(|e| Error::chain(format!("Failed to parse timestamp: {}", e)))?;
-        
+
         let state_root = block_data["stateRoot"]
             .as_str()
             .unwrap_or("0x0000000000000000000000000000000000000000000000000000000000000000")
             .to_string();
-        
+
         let transactions_root = block_data["transactionsRoot"]
             .as_str()
             .unwrap_or("0x0000000000000000000000000000000000000000000000000000000000000000")
             .to_string();
-        
+
         let proposer = block_data["miner"]
             .as_str()
             .unwrap_or("unknown")
@@ -796,7 +833,7 @@ impl BlockSyncManager {
 
         // Parse transactions using dedicated parser
         use dchat_chain::CurrencyTransactionParser;
-        
+
         // Convert Map back to Value for the parser
         let block_value = serde_json::Value::Object(block_data.clone());
         let parsed_transactions = CurrencyTransactionParser::parse_block_transactions(&block_value)
@@ -809,22 +846,22 @@ impl BlockSyncManager {
         let transactions: Vec<dchat_chain::Transaction> = parsed_transactions
             .into_iter()
             .map(|parsed_tx| {
-                use dchat_chain::{TransactionType, TransactionStatus};
+                use dchat_chain::{TransactionStatus, TransactionType};
                 use uuid::Uuid;
-                
+
                 // Serialize transaction data to bytes for the Transaction payload
-                let payload_bytes = bincode::serialize(&format!("{:?}", parsed_tx.data))
-                    .unwrap_or_default();
-                
+                let payload_bytes =
+                    bincode::serialize(&format!("{:?}", parsed_tx.data)).unwrap_or_default();
+
                 // Create a generic transaction from parsed currency transaction
                 dchat_chain::Transaction {
                     tx_id: Uuid::new_v4(),
                     tx_type: TransactionType::SendDirectMessage, // Currency txs don't map directly
                     payload: payload_bytes,
                     tx_hash: parsed_tx.tx_hash.clone(),
-                    status: TransactionStatus::Confirmed { 
-                        block_height: block_number, 
-                        block_hash: block_hash.clone() 
+                    status: TransactionStatus::Confirmed {
+                        block_height: block_number,
+                        block_hash: block_hash.clone(),
                     },
                     submitted_at: chrono::Utc::now(),
                     confirmed_at: Some(chrono::Utc::now()),
@@ -891,7 +928,7 @@ mod tests {
     async fn test_block_sync_manager_creation() {
         let config = BlockSyncConfig::default();
         let manager = BlockSyncManager::new(config);
-        
+
         assert_eq!(manager.get_status().await, SyncStatus::Idle);
         assert_eq!(manager.get_latest_confirmed_block().await, 0);
     }
@@ -916,7 +953,7 @@ mod tests {
         };
 
         manager.add_block_to_cache(block.clone()).await.unwrap();
-        
+
         let retrieved = manager.get_block(1).await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().header.block_number, 1);

@@ -31,7 +31,7 @@ impl SolanaAddress {
                 bytes.len()
             )));
         }
-        
+
         let mut arr = [0u8; 32];
         arr.copy_from_slice(bytes);
         Ok(Self { bytes: arr })
@@ -72,7 +72,7 @@ impl SolanaAddress {
     }
 
     /// Derive a Program Derived Address (PDA) - Solana-style
-    /// 
+    ///
     /// PDAs are off-curve addresses derived from seeds and a program ID.
     /// Used for deterministic account addresses in Solana programs.
     pub fn derive_pda(seeds: &[&[u8]], program_id: &SolanaAddress) -> Result<(Self, u8)> {
@@ -84,16 +84,16 @@ impl SolanaAddress {
             hasher.update(&[bump]);
             hasher.update(program_id.as_bytes());
             hasher.update(b"ProgramDerivedAddress");
-            
+
             let hash = hasher.finalize();
             let candidate = Self::from_bytes(hash.as_bytes())?;
-            
+
             // PDA must be off-curve
             if !candidate.is_on_curve() {
                 return Ok((candidate, bump));
             }
         }
-        
+
         Err(Error::crypto("Could not find valid PDA bump seed"))
     }
 
@@ -108,15 +108,14 @@ impl SolanaAddress {
             token_program.as_bytes(),
             token_mint.as_bytes(),
         ];
-        
+
         // Use a deterministic program ID for dchat token program
         let ata_program = SolanaAddress::from_bytes(&[
-            0x8c, 0x97, 0x25, 0x8f, 0x4e, 0x24, 0x89, 0xf1,
-            0xbb, 0x3d, 0x10, 0x29, 0x14, 0x8e, 0x0d, 0x83,
-            0x0b, 0x5a, 0x13, 0x99, 0xda, 0xff, 0x10, 0x84,
-            0x04, 0x8e, 0x7b, 0xd8, 0xdb, 0xe9, 0xf8, 0x59,
+            0x8c, 0x97, 0x25, 0x8f, 0x4e, 0x24, 0x89, 0xf1, 0xbb, 0x3d, 0x10, 0x29, 0x14, 0x8e,
+            0x0d, 0x83, 0x0b, 0x5a, 0x13, 0x99, 0xda, 0xff, 0x10, 0x84, 0x04, 0x8e, 0x7b, 0xd8,
+            0xdb, 0xe9, 0xf8, 0x59,
         ])?;
-        
+
         let (pda, _) = Self::derive_pda(seeds, &ata_program)?;
         Ok(pda)
     }
@@ -176,7 +175,7 @@ impl SolanaSignature {
                 bytes.len()
             )));
         }
-        
+
         let mut arr = [0u8; 64];
         arr.copy_from_slice(bytes);
         Ok(Self { bytes: arr })
@@ -207,7 +206,8 @@ impl SolanaSignature {
 
         let signature = Signature::from_bytes(&self.bytes);
 
-        verifying_key.verify_strict(message, &signature)
+        verifying_key
+            .verify_strict(message, &signature)
             .map_err(|e| Error::crypto(format!("Signature verification failed: {}", e)))?;
 
         Ok(true)
@@ -231,7 +231,7 @@ impl fmt::Debug for SolanaSignature {
 pub trait SolanaCompatible {
     /// Get Solana-compatible address
     fn to_solana_address(&self) -> SolanaAddress;
-    
+
     /// Sign message in Solana-compatible format
     fn sign_solana(&self, message: &[u8]) -> Result<SolanaSignature>;
 }
@@ -296,10 +296,13 @@ pub fn base58_decode(s: &str) -> Result<Vec<u8>> {
         if c >= 128 {
             return Err(Error::crypto("Invalid Base58 character"));
         }
-        
+
         let digit = alphabet_map[c as usize];
         if digit == 255 {
-            return Err(Error::crypto(format!("Invalid Base58 character: {}", c as char)));
+            return Err(Error::crypto(format!(
+                "Invalid Base58 character: {}",
+                c as char
+            )));
         }
 
         let mut carry = digit as u32;
@@ -343,7 +346,7 @@ impl TokenMint {
         // Deterministic mint address for wrapped DCHAT
         let seed = b"dchat_wrapped_token_mint_v1";
         let hash = blake3::hash(seed);
-        
+
         Ok(Self {
             address: SolanaAddress::from_bytes(&hash.as_bytes()[..32])?,
             symbol: "wDCHAT".to_string(),
@@ -361,38 +364,37 @@ mod tests {
     #[test]
     fn test_base58_roundtrip() {
         let original = [
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-            0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+            0x1c, 0x1d, 0x1e, 0x1f,
         ];
-        
+
         let encoded = base58_encode(&original);
         let decoded = base58_decode(&encoded).unwrap();
-        
+
         assert_eq!(original.to_vec(), decoded);
     }
 
     #[test]
     fn test_solana_address_from_pubkey() {
         use dchat_crypto::keys::KeyPair;
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let public_key = keypair.public_key();
-        
+
         let solana_addr = SolanaAddress::from_public_key(public_key);
         let roundtrip = SolanaAddress::from_base58(&solana_addr.to_base58()).unwrap();
-        
+
         assert_eq!(solana_addr.as_bytes(), roundtrip.as_bytes());
     }
 
     #[test]
     fn test_solana_address_is_on_curve() {
         use dchat_crypto::keys::KeyPair;
-        
+
         let keypair = KeyPair::try_generate().unwrap();
         let solana_addr = SolanaAddress::from_public_key(keypair.public_key());
-        
+
         // Valid Ed25519 public key should be on curve
         assert!(solana_addr.is_on_curve());
     }
@@ -401,9 +403,9 @@ mod tests {
     fn test_pda_derivation() {
         let program_id = SolanaAddress::from_bytes(&[1u8; 32]).unwrap();
         let seeds: &[&[u8]] = &[b"test", b"seed"];
-        
+
         let (pda, bump) = SolanaAddress::derive_pda(seeds, &program_id).unwrap();
-        
+
         // PDA should be off curve
         assert!(!pda.is_on_curve());
         // Bump should be valid u8 (this is always true for u8, but verifies the type)
@@ -413,31 +415,28 @@ mod tests {
     #[test]
     fn test_signature_verification() {
         use ed25519_dalek::{Signer, SigningKey};
-        
+
         let signing_key = SigningKey::generate(&mut rand::thread_rng());
         let verifying_key = signing_key.verifying_key();
-        
+
         let message = b"test message";
         let signature = signing_key.sign(message);
-        
+
         let solana_addr = SolanaAddress::from_bytes(&verifying_key.to_bytes()).unwrap();
         let solana_sig = SolanaSignature::from_bytes(&signature.to_bytes()).unwrap();
-        
+
         assert!(solana_sig.verify(message, &solana_addr).unwrap());
     }
 
     #[test]
     fn test_base58_known_vectors() {
         // Test with known Base58 values
-        let test_cases = [
-            (vec![0u8], "1"),
-            (vec![0, 0, 0, 1], "1112"),
-        ];
-        
+        let test_cases = [(vec![0u8], "1"), (vec![0, 0, 0, 1], "1112")];
+
         for (bytes, expected) in test_cases {
             let encoded = base58_encode(&bytes);
             assert_eq!(encoded, expected);
-            
+
             let decoded = base58_decode(expected).unwrap();
             assert_eq!(decoded, bytes);
         }

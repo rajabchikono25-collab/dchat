@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use zeroize::ZeroizeOnDrop;
 
-use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 use super::solana_compat::SolanaAddress;
+use super::{SignedTransaction, TransactionSignature, WalletBalance, WalletTransaction};
 
 /// Burner wallet configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,18 +158,19 @@ impl BurnerWallet {
     pub fn create(config: BurnerWalletConfig) -> Result<Self> {
         let keypair = KeyPair::try_generate()
             .map_err(|e| Error::crypto(format!("Failed to generate keypair: {}", e)))?;
-        
+
         let signing_key = SigningKey::from_bytes(keypair.private_key().as_bytes());
         let verifying_key = signing_key.verifying_key();
-        
+
         let public_key = PublicKey::from_bytes(verifying_key.to_bytes());
         let address = public_key.to_address();
         let solana_address = SolanaAddress::from_public_key(&public_key);
-        
+
         let created_at = Utc::now();
-        let expires_at = config.max_lifetime_seconds
+        let expires_at = config
+            .max_lifetime_seconds
             .map(|secs| created_at + Duration::seconds(secs as i64));
-        
+
         Ok(Self {
             id: Uuid::new_v4(),
             config,
@@ -276,9 +277,9 @@ impl BurnerWallet {
 
     /// Get remaining transactions (if transaction-limited)
     pub fn remaining_transactions(&self) -> Option<u32> {
-        self.config.max_transactions.map(|max| {
-            max.saturating_sub(self.stats.transaction_count)
-        })
+        self.config
+            .max_transactions
+            .map(|max| max.saturating_sub(self.stats.transaction_count))
     }
 
     /// Check if wallet can execute a transaction
@@ -309,19 +310,19 @@ impl BurnerWallet {
     /// Sign a transaction
     pub fn sign_transaction(&mut self, tx: WalletTransaction) -> Result<SignedTransaction> {
         self.can_transact(tx.amount)?;
-        
+
         let message = tx.signing_message();
         let signature = self.signing_key.sign(&message);
-        
+
         // Update statistics
         self.stats.transaction_count += 1;
         self.stats.total_value_sent += tx.amount;
         self.stats.last_activity = Some(Utc::now());
         self.nonce += 1;
-        
+
         // Check if limits are now reached
         self.check_and_handle_limits();
-        
+
         Ok(SignedTransaction {
             transaction: tx,
             signatures: vec![TransactionSignature {
@@ -337,7 +338,7 @@ impl BurnerWallet {
         if !self.is_active() {
             return Err(Error::validation("Burner wallet is not active"));
         }
-        
+
         let hash = blake3::hash(message);
         let signature = self.signing_key.sign(hash.as_bytes());
         Ok(signature.to_bytes().to_vec())
@@ -346,7 +347,7 @@ impl BurnerWallet {
     /// Create a transfer transaction
     pub fn create_transfer(&self, to: &str, amount: u64, fee: u64) -> Result<WalletTransaction> {
         self.can_transact(amount)?;
-        
+
         Ok(WalletTransaction::new(
             to.to_string(),
             amount,
@@ -366,7 +367,7 @@ impl BurnerWallet {
     pub fn destroy(mut self) -> BurnerWalletSummary {
         self.destruction_reason = Some(DestructionReason::ManualDestruction);
         self.is_active = false;
-        
+
         self.create_summary()
     }
 
@@ -496,10 +497,12 @@ impl BurnerWalletManager {
 
         // Check per-parent limit
         if let Some(parent_id) = config.parent_wallet_id {
-            let parent_count = self.wallets.values()
+            let parent_count = self
+                .wallets
+                .values()
                 .filter(|w| w.config.parent_wallet_id == Some(parent_id))
                 .count();
-            
+
             if parent_count >= self.max_per_parent {
                 return Err(Error::validation("Maximum burners per parent reached"));
             }
@@ -507,9 +510,9 @@ impl BurnerWalletManager {
 
         let wallet = BurnerWallet::create(config)?;
         let id = wallet.id();
-        
+
         self.wallets.insert(id, wallet);
-        
+
         Ok(id)
     }
 
@@ -525,18 +528,22 @@ impl BurnerWalletManager {
 
     /// Destroy a burner wallet
     pub fn destroy(&mut self, id: Uuid) -> Result<BurnerWalletSummary> {
-        let wallet = self.wallets.remove(&id)
+        let wallet = self
+            .wallets
+            .remove(&id)
             .ok_or_else(|| Error::validation("Burner wallet not found"))?;
-        
+
         let summary = wallet.destroy();
         self.destroyed.push(summary.clone());
-        
+
         Ok(summary)
     }
 
     /// Cleanup expired wallets
     pub fn cleanup_expired(&mut self) -> Vec<BurnerWalletSummary> {
-        let expired: Vec<Uuid> = self.wallets.iter()
+        let expired: Vec<Uuid> = self
+            .wallets
+            .iter()
             .filter(|(_, w)| w.is_expired())
             .map(|(id, _)| *id)
             .collect();
@@ -585,7 +592,7 @@ mod tests {
     fn test_burner_creation() {
         let config = BurnerWalletConfig::default();
         let wallet = BurnerWallet::create(config).unwrap();
-        
+
         assert!(wallet.is_active());
         assert!(wallet.expires_at().is_some());
         assert_eq!(wallet.stats().transaction_count, 0);
@@ -598,19 +605,19 @@ mod tests {
             max_lifetime_seconds: None,
             ..Default::default()
         };
-        
+
         let mut wallet = BurnerWallet::create(config).unwrap();
-        
+
         // First transaction
         let tx1 = wallet.create_transfer("0x1234", 100, 1).unwrap();
         wallet.sign_transaction(tx1).unwrap();
         assert!(wallet.is_active());
-        
+
         // Second transaction (reaches limit)
         let tx2 = wallet.create_transfer("0x1234", 100, 1).unwrap();
         wallet.sign_transaction(tx2).unwrap();
         assert!(!wallet.is_active());
-        
+
         // Third transaction should fail
         let result = wallet.can_transact(100);
         assert!(result.is_err());
@@ -624,14 +631,14 @@ mod tests {
             max_lifetime_seconds: None,
             ..Default::default()
         };
-        
+
         let mut wallet = BurnerWallet::create(config).unwrap();
-        
+
         // Transaction within limit
         let tx1 = wallet.create_transfer("0x1234", 400, 1).unwrap();
         wallet.sign_transaction(tx1).unwrap();
         assert!(wallet.is_active());
-        
+
         // Transaction that would exceed limit
         let result = wallet.can_transact(200);
         assert!(result.is_err());
@@ -640,15 +647,15 @@ mod tests {
     #[test]
     fn test_burner_manager() {
         let mut manager = BurnerWalletManager::new();
-        
+
         let config = BurnerWalletConfig::daily_session();
         let id = manager.create_burner(config).unwrap();
-        
+
         assert_eq!(manager.active_count(), 1);
-        
+
         let wallet = manager.get(id).unwrap();
         assert!(wallet.is_active());
-        
+
         let summary = manager.destroy(id).unwrap();
         assert_eq!(summary.id, id);
         assert_eq!(manager.active_count(), 0);
@@ -659,12 +666,12 @@ mod tests {
     fn test_one_time_burner() {
         let config = BurnerWalletConfig::one_time();
         let mut wallet = BurnerWallet::create(config).unwrap();
-        
+
         assert_eq!(wallet.remaining_transactions(), Some(1));
-        
+
         let tx = wallet.create_transfer("0x1234", 100, 1).unwrap();
         wallet.sign_transaction(tx).unwrap();
-        
+
         assert!(!wallet.is_active());
         assert_eq!(wallet.remaining_transactions(), Some(0));
     }
