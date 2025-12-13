@@ -552,7 +552,7 @@ mod tests {
             reputation_score: 1.0,
             geographic_region: GeographicRegion::Europe,
             asn: 12345,
-            ip_address_hash: Hash::default(),
+            ip_address_hash: Hash::from([0u8; 32]),
             registration_time: SystemTime::now(),
             last_active: SystemTime::now(),
             slashing_count: 0,
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_block_votes_quorum() {
-        let mut votes = BlockVotes::new(Hash::default());
+        let mut votes = BlockVotes::new(Hash::from([0u8; 32]));
 
         // Not enough weight
         assert!(!votes.check_quorum(0.67, 3));
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn test_delivery_proof_latency_bounds() {
         let proof = DeliveryProof {
-            message_hash: Hash::default(),
+            message_hash: Hash::from([0u8; 32]),
             relay_id: VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
             timestamp: SystemTime::now(),
             route_path: vec![],

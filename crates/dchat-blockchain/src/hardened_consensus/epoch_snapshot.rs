@@ -776,7 +776,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_finalization() {
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
 
         // Add enough relays
         for i in 0..MIN_ACTIVE_RELAYS + 5 {
@@ -799,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_weight_caps() {
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
 
         // Add one huge relay and many small ones
         let mut big_relay = create_test_relay(0, true);
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_participants() {
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
 
         // Add only a few relays
         for i in 0..5 {
@@ -845,7 +845,7 @@ mod tests {
         let store = SnapshotStore::new(10);
 
         // Create and store snapshot
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
         for i in 0..(MIN_ACTIVE_RELAYS + 1) as u8 {
             snapshot.upsert_relay(create_test_relay(i, true));
         }
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_regional_diversity() {
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
 
         // Add relays from different regions
         let regions = [
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let mut snapshot = Snapshot::new(0, Hash::default());
+        let mut snapshot = Snapshot::new(0, Hash::from([0u8; 32]));
         for i in 0..(MIN_ACTIVE_RELAYS + 1) as u8 {
             snapshot.upsert_relay(create_test_relay(i, true));
         }
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let mut builder = SnapshotBuilder::new(0, Hash::default());
+        let mut builder = SnapshotBuilder::new(0, Hash::from([0u8; 32]));
 
         for i in 0..(MIN_ACTIVE_RELAYS + 1) as u8 {
             builder.add_relay(create_test_relay(i, true));

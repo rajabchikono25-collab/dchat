@@ -748,7 +748,7 @@ mod tests {
     }
 
     fn create_test_snapshot() -> EpochSnapshot {
-        let mut snapshot = EpochSnapshot::new(0, 0, Hash::default());
+        let mut snapshot = EpochSnapshot::new(0, 0, Hash::from([0u8; 32]));
 
         // Add 10 relays with equal weight
         for i in 0..10 {
@@ -858,7 +858,7 @@ mod tests {
         assert_eq!(EpochSnapshotManager::epoch_for_block(1800), 1);
 
         // Create snapshot
-        let snapshot = manager.get_or_create_snapshot(0, Hash::default());
+        let snapshot = manager.get_or_create_snapshot(0, Hash::from([0u8; 32]));
         assert!(!snapshot.finalized);
 
         // Set current block triggers epoch transition

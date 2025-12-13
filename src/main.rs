@@ -10013,12 +10013,13 @@ async fn run_staking_command(_config: Config, action: StakingCommand) -> Result<
                         amount
                     };
 
-                    match currency_chain
-                        .initiate_stake_unbonding(&uid, actual_amount)
-                        .await
-                    {
+                    match currency_chain.initiate_stake_unbonding(&uid, actual_amount) {
                         Ok(unbonding_record) => {
-                            let cooldown_days = unbonding_record.cooldown_seconds / 86400;
+                            // Calculate cooldown from available_at - initiated_at
+                            let cooldown_seconds = (unbonding_record.available_at
+                                - unbonding_record.initiated_at)
+                                as u64;
+                            let cooldown_days = cooldown_seconds / 86400;
                             println!();
                             println!("⏳ Unbonding period: {} days", cooldown_days);
                             println!();

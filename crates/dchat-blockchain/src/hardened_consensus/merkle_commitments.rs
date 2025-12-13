@@ -845,7 +845,7 @@ pub mod tsc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::SigningKey;
+    use ed25519_dalek::{Signer, SigningKey};
     use rand::thread_rng;
 
     #[test]
@@ -917,7 +917,7 @@ mod tests {
         let committer = SigningKey::generate(&mut thread_rng());
 
         let mut builder = MerkleTreeBuilder::new();
-        for i in 0..50 {
+        for i in 0u32..50 {
             builder.add_leaf(&i.to_le_bytes());
         }
         let root = builder.build();

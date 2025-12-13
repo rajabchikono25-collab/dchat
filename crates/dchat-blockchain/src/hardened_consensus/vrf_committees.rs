@@ -218,6 +218,7 @@ pub enum CommitteeError {
 }
 
 /// VRF seed derivation from finalized chain state
+#[derive(Clone)]
 pub struct VrfSeedDeriver {
     /// Previous block hashes (for seed derivation)
     block_hashes: HashMap<u64, Hash>,

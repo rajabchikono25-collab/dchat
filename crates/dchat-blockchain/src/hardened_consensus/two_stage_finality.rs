@@ -127,7 +127,7 @@ impl FinalityStage {
 }
 
 /// Escalation level for attack response
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum EscalationLevel {
     /// Normal operation

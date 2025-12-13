@@ -971,7 +971,7 @@ mod tests {
     fn test_hash(n: u8) -> Hash {
         let mut h = [0u8; 32];
         h[0] = n;
-        h
+        Hash::from(h)
     }
 
     #[test]
@@ -984,19 +984,19 @@ mod tests {
 
         // Hash pairs
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&leaf0);
-        hasher.update(&leaf1);
-        let node01 = *hasher.finalize().as_bytes();
+        hasher.update(leaf0.as_bytes());
+        hasher.update(leaf1.as_bytes());
+        let node01 = Hash::from(*hasher.finalize().as_bytes());
 
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&leaf2);
-        hasher.update(&leaf3);
-        let node23 = *hasher.finalize().as_bytes();
+        hasher.update(leaf2.as_bytes());
+        hasher.update(leaf3.as_bytes());
+        let node23 = Hash::from(*hasher.finalize().as_bytes());
 
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&node01);
-        hasher.update(&node23);
-        let root = *hasher.finalize().as_bytes();
+        hasher.update(node01.as_bytes());
+        hasher.update(node23.as_bytes());
+        let root = Hash::from(*hasher.finalize().as_bytes());
 
         // Proof for leaf0: [leaf1, node23]
         let proof = vec![leaf1, node23];
