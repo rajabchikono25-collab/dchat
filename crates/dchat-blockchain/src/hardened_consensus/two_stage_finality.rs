@@ -1160,7 +1160,7 @@ mod tests {
     fn test_hash(n: u8) -> Hash {
         let mut h = [0u8; 32];
         h[0] = n;
-        h
+        Hash::from(h)
     }
 
     fn test_id(n: u8) -> [u8; 32] {
@@ -1312,7 +1312,7 @@ mod tests {
         manager.maybe_create_checkpoint(20, test_hash(20), test_hash(200));
         manager.finalize_checkpoint(20).unwrap();
 
-        manager.maybe_create_checkpoint(30, test_hash(30), test_hash(300));
+        manager.maybe_create_checkpoint(30, test_hash(30), test_hash(250));
 
         // Verify chain
         assert!(manager.verify_checkpoint_chain(10, 30).is_ok());

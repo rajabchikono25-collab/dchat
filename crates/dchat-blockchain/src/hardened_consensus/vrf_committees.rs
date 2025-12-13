@@ -813,6 +813,7 @@ impl Default for CommitteeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
     use rand::thread_rng;
 
     fn create_test_relays(count: usize) -> Vec<RelayEligibility> {
