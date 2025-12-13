@@ -13,7 +13,7 @@
 //! - Diversity requirements prevent geographic/ASN concentration
 
 use crate::block_hierarchy::Hash;
-use crate::proof_of_relay_work::RelayScore;
+use crate::consensus_types::RelayScore;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -60,16 +60,16 @@ pub struct VrfOutput {
 pub struct Committee {
     /// Block unit this committee is for
     pub scope: CommitteeScope,
-    
+
     /// Selected relay IDs with their selection proofs
     pub members: Vec<CommitteeMember>,
-    
+
     /// Total normalized weight of committee
     pub total_weight: u64,
-    
+
     /// VRF that was used for selection
     pub vrf_output: VrfOutput,
-    
+
     /// Diversity metrics for verification
     pub diversity: DiversityMetrics,
 }
@@ -101,25 +101,25 @@ pub enum CommitteeType {
 pub struct CommitteeMember {
     /// Relay ID
     pub relay_id: RelayId,
-    
+
     /// Relay's public key
     pub public_key: VerifyingKey,
-    
+
     /// Normalized weight (capped at 5%)
     pub weight: u64,
-    
+
     /// Selection position (derived from VRF)
     pub selection_index: u64,
-    
+
     /// Selection proof (hash chain from VRF output)
     pub selection_proof: Hash,
-    
+
     /// Geographic region
     pub region: GeographicRegion,
-    
+
     /// Autonomous System Number
     pub asn: u32,
-    
+
     /// Operator ID (for stake attribution)
     pub operator_id: Hash,
 }
@@ -132,7 +132,7 @@ impl RelayId {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
-    
+
     pub fn from_public_key(pk: &VerifyingKey) -> Self {
         let hash = blake3::hash(pk.as_bytes());
         Self(*hash.as_bytes())
@@ -197,22 +197,22 @@ pub struct RelayEligibility {
 pub enum CommitteeError {
     #[error("Insufficient eligible relays: {0} < {1}")]
     InsufficientRelays(usize, usize),
-    
+
     #[error("Diversity requirements not met: {0}")]
     DiversityNotMet(String),
-    
+
     #[error("Invalid VRF proof")]
     InvalidVrfProof,
-    
+
     #[error("Invalid selection proof for relay {0:?}")]
     InvalidSelectionProof(RelayId),
-    
+
     #[error("Weight cap exceeded for relay {0:?}")]
     WeightCapExceeded(RelayId),
-    
+
     #[error("Committee scope mismatch")]
     ScopeMismatch,
-    
+
     #[error("VRF seed not available for height {0}")]
     VrfSeedNotAvailable(u64),
 }
@@ -232,46 +232,44 @@ impl VrfSeedDeriver {
             min_confirmations,
         }
     }
-    
+
     /// Record a finalized block hash
     pub fn record_finalized_block(&mut self, height: u64, hash: Hash) {
         self.block_hashes.insert(height, hash);
-        
+
         // Prune old entries (keep last 1000 blocks)
         if self.block_hashes.len() > 1000 {
             let min_to_keep = height.saturating_sub(1000);
             self.block_hashes.retain(|h, _| *h >= min_to_keep);
         }
     }
-    
+
     /// Derive VRF seed for a target block height
     /// Uses hash from (target_height - min_confirmations) block
     pub fn get_seed(&self, target_height: u64) -> Result<Hash, CommitteeError> {
         let seed_height = target_height.saturating_sub(self.min_confirmations);
-        
-        self.block_hashes.get(&seed_height)
+
+        self.block_hashes
+            .get(&seed_height)
             .copied()
             .ok_or(CommitteeError::VrfSeedNotAvailable(seed_height))
     }
-    
+
     /// Derive VRF input for a specific committee
-    pub fn derive_vrf_input(
-        &self,
-        scope: &CommitteeScope,
-    ) -> Result<[u8; 64], CommitteeError> {
+    pub fn derive_vrf_input(&self, scope: &CommitteeScope) -> Result<[u8; 64], CommitteeError> {
         let seed = self.get_seed(scope.block_height)?;
-        
+
         let mut input = [0u8; 64];
         input[0..32].copy_from_slice(seed.as_bytes());
         input[32..40].copy_from_slice(&scope.block_height.to_le_bytes());
         input[40] = scope.subblock_index;
         input[41] = scope.miniblock_index.unwrap_or(255);
         input[42] = scope.committee_type as u8;
-        
+
         // Mix with BLAKE3
         let hash = blake3::hash(&input);
         input[43..64].copy_from_slice(&hash.as_bytes()[0..21]);
-        
+
         Ok(input)
     }
 }
@@ -280,16 +278,16 @@ impl VrfSeedDeriver {
 pub struct CommitteeSelector {
     /// All eligible relays for current epoch
     eligible_relays: Vec<RelayEligibility>,
-    
+
     /// Total normalized weight (after caps)
     total_weight: u64,
-    
+
     /// VRF seed deriver
     seed_deriver: VrfSeedDeriver,
-    
+
     /// Target committee size
     target_size: usize,
-    
+
     /// Index of relays by various attributes for diversity lookup
     relays_by_region: HashMap<GeographicRegion, Vec<usize>>,
     relays_by_asn: HashMap<u32, Vec<usize>>,
@@ -314,11 +312,11 @@ impl CommitteeSelector {
             relays_by_prefix: HashMap::new(),
             relays_by_operator: HashMap::new(),
         };
-        
+
         selector.set_eligible_relays(relays);
         selector
     }
-    
+
     /// Set eligible relays with normalized weights
     pub fn set_eligible_relays(&mut self, relays: Vec<RelayEligibility>) {
         self.eligible_relays.clear();
@@ -327,28 +325,37 @@ impl CommitteeSelector {
         self.relays_by_prefix.clear();
         self.relays_by_operator.clear();
         self.total_weight = 0;
-        
+
         // Calculate total raw weight for cap calculation
         let total_raw: u64 = relays.iter().map(|r| r.raw_weight).sum();
         let max_weight_per_relay = total_raw * MAX_RELAY_WEIGHT_BPS / 10000;
-        
+
         for (i, mut relay) in relays.into_iter().enumerate() {
             // Apply weight cap
             let capped_weight = relay.raw_weight.min(max_weight_per_relay);
             relay.raw_weight = capped_weight;
-            
+
             self.total_weight += capped_weight;
-            
+
             // Build indices
-            self.relays_by_region.entry(relay.region).or_default().push(i);
+            self.relays_by_region
+                .entry(relay.region)
+                .or_default()
+                .push(i);
             self.relays_by_asn.entry(relay.asn).or_default().push(i);
-            self.relays_by_prefix.entry(relay.ip_prefix).or_default().push(i);
-            self.relays_by_operator.entry(relay.operator_id).or_default().push(i);
-            
+            self.relays_by_prefix
+                .entry(relay.ip_prefix)
+                .or_default()
+                .push(i);
+            self.relays_by_operator
+                .entry(relay.operator_id)
+                .or_default()
+                .push(i);
+
             self.eligible_relays.push(relay);
         }
     }
-    
+
     /// Select a committee using VRF output
     pub fn select_committee(
         &self,
@@ -362,7 +369,7 @@ impl CommitteeSelector {
                 MIN_COMMITTEE_SIZE,
             ));
         }
-        
+
         // Generate deterministic selection using VRF output
         let mut selected_indices = Vec::new();
         let mut selected_set = HashSet::new();
@@ -370,29 +377,32 @@ impl CommitteeSelector {
         let mut asn_counts: HashMap<u32, usize> = HashMap::new();
         let mut prefix_counts: HashMap<[u8; 3], usize> = HashMap::new();
         let mut operator_counts: HashMap<Hash, usize> = HashMap::new();
-        
+
         // Weighted selection using hash chain from VRF output
         let mut hash_state = vrf_output.output;
         let mut selection_counter = 0u64;
-        
+
         while selected_indices.len() < self.target_size && selection_counter < 10000 {
             // Derive selection value from hash chain
             let selection_hash = self.derive_selection_hash(&hash_state, selection_counter);
             let selection_value = u64::from_le_bytes(selection_hash[0..8].try_into().unwrap());
-            
+
             // Select relay based on weight
             let selected_idx = self.weighted_select(selection_value % self.total_weight);
-            
+
             if let Some(idx) = selected_idx {
                 if !selected_set.contains(&idx) {
                     let relay = &self.eligible_relays[idx];
-                    
+
                     // Check diversity constraints
                     let region_count = region_counts.get(&relay.region).copied().unwrap_or(0);
                     let asn_count = asn_counts.get(&relay.asn).copied().unwrap_or(0);
                     let prefix_count = prefix_counts.get(&relay.ip_prefix).copied().unwrap_or(0);
-                    let operator_count = operator_counts.get(&relay.operator_id).copied().unwrap_or(0);
-                    
+                    let operator_count = operator_counts
+                        .get(&relay.operator_id)
+                        .copied()
+                        .unwrap_or(0);
+
                     // Apply diversity limits
                     if asn_count < MAX_RELAYS_PER_ASN
                         && prefix_count < MAX_RELAYS_PER_IP_PREFIX
@@ -400,7 +410,7 @@ impl CommitteeSelector {
                     {
                         selected_set.insert(idx);
                         selected_indices.push((idx, selection_counter, Hash::from(selection_hash)));
-                        
+
                         *region_counts.entry(relay.region).or_insert(0) += 1;
                         *asn_counts.entry(relay.asn).or_insert(0) += 1;
                         *prefix_counts.entry(relay.ip_prefix).or_insert(0) += 1;
@@ -408,12 +418,14 @@ impl CommitteeSelector {
                     }
                 }
             }
-            
+
             // Advance hash chain
-            hash_state = *blake3::hash(&[hash_state.as_slice(), &[selection_counter as u8]].concat()).as_bytes();
+            hash_state =
+                *blake3::hash(&[hash_state.as_slice(), &[selection_counter as u8]].concat())
+                    .as_bytes();
             selection_counter += 1;
         }
-        
+
         // Verify diversity requirements
         if region_counts.len() < MIN_REQUIRED_REGIONS {
             return Err(CommitteeError::DiversityNotMet(format!(
@@ -422,14 +434,14 @@ impl CommitteeSelector {
                 MIN_REQUIRED_REGIONS
             )));
         }
-        
+
         // Build committee members
         let mut members = Vec::new();
         let mut total_selected_weight = 0u64;
-        
+
         for (idx, selection_index, selection_proof) in selected_indices {
             let relay = &self.eligible_relays[idx];
-            
+
             let member = CommitteeMember {
                 relay_id: relay.relay_id,
                 public_key: relay.public_key,
@@ -440,11 +452,11 @@ impl CommitteeSelector {
                 asn: relay.asn,
                 operator_id: relay.operator_id,
             };
-            
+
             total_selected_weight += relay.raw_weight;
             members.push(member);
         }
-        
+
         // Calculate diversity metrics
         let diversity = DiversityMetrics {
             region_count: region_counts.len(),
@@ -453,7 +465,7 @@ impl CommitteeSelector {
             ip_prefix_count: prefix_counts.len(),
             weight_gini: self.calculate_gini(&members),
         };
-        
+
         Ok(Committee {
             scope,
             members,
@@ -462,7 +474,7 @@ impl CommitteeSelector {
             diversity,
         })
     }
-    
+
     /// Derive selection hash from VRF output and counter
     fn derive_selection_hash(&self, vrf_output: &[u8; 32], counter: u64) -> [u8; 32] {
         let mut input = Vec::with_capacity(40);
@@ -470,18 +482,18 @@ impl CommitteeSelector {
         input.extend_from_slice(&counter.to_le_bytes());
         *blake3::hash(&input).as_bytes()
     }
-    
+
     /// Weighted selection of relay index
     fn weighted_select(&self, value: u64) -> Option<usize> {
         let mut cumulative = 0u64;
-        
+
         for (i, relay) in self.eligible_relays.iter().enumerate() {
             cumulative += relay.raw_weight;
             if value < cumulative {
                 return Some(i);
             }
         }
-        
+
         // Fallback to last relay if weights don't sum correctly
         if !self.eligible_relays.is_empty() {
             Some(self.eligible_relays.len() - 1)
@@ -489,33 +501,31 @@ impl CommitteeSelector {
             None
         }
     }
-    
+
     /// Calculate Gini coefficient for weight distribution
     fn calculate_gini(&self, members: &[CommitteeMember]) -> f64 {
         if members.is_empty() {
             return 0.0;
         }
-        
-        let mut weights: Vec<f64> = members.iter()
-            .map(|m| m.weight as f64)
-            .collect();
+
+        let mut weights: Vec<f64> = members.iter().map(|m| m.weight as f64).collect();
         weights.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let n = weights.len() as f64;
         let total: f64 = weights.iter().sum();
-        
+
         if total == 0.0 {
             return 0.0;
         }
-        
+
         let mut gini_sum = 0.0;
         for (i, w) in weights.iter().enumerate() {
             gini_sum += (2.0 * (i + 1) as f64 - n - 1.0) * w;
         }
-        
+
         gini_sum / (n * total)
     }
-    
+
     /// Verify a committee selection is valid
     pub fn verify_committee(&self, committee: &Committee) -> Result<(), CommitteeError> {
         // Verify VRF output matches scope
@@ -525,27 +535,27 @@ impl CommitteeSelector {
         {
             return Err(CommitteeError::ScopeMismatch);
         }
-        
+
         // Verify each member's selection proof
         let mut hash_state = committee.vrf_output.output;
         let mut verified_indices = HashSet::new();
-        
+
         for member in &committee.members {
             // Verify selection proof
             let expected_hash = self.derive_selection_hash(&hash_state, member.selection_index);
             if member.selection_proof != Hash::from(expected_hash) {
                 return Err(CommitteeError::InvalidSelectionProof(member.relay_id));
             }
-            
+
             // Verify weight cap
             let max_weight = self.total_weight * MAX_RELAY_WEIGHT_BPS / 10000;
             if member.weight > max_weight {
                 return Err(CommitteeError::WeightCapExceeded(member.relay_id));
             }
-            
+
             verified_indices.insert(member.selection_index);
         }
-        
+
         // Verify diversity
         if committee.diversity.region_count < MIN_REQUIRED_REGIONS {
             return Err(CommitteeError::DiversityNotMet(format!(
@@ -553,7 +563,7 @@ impl CommitteeSelector {
                 committee.diversity.region_count
             )));
         }
-        
+
         Ok(())
     }
 }
@@ -563,19 +573,19 @@ impl CommitteeSelector {
 pub struct CommitteeVote {
     /// Committee this vote is from
     pub committee_scope: CommitteeScope,
-    
+
     /// Block/commitment being voted on
     pub target: VoteTarget,
-    
+
     /// Member casting the vote
     pub member: RelayId,
-    
+
     /// Vote decision
     pub decision: VoteDecision,
-    
+
     /// Signature over vote
     pub signature: Signature,
-    
+
     /// Timestamp
     pub timestamp: u64,
 }
@@ -609,28 +619,28 @@ pub enum VoteDecision {
 pub struct AggregatedVotes {
     /// Committee scope
     pub committee_scope: CommitteeScope,
-    
+
     /// Target being voted on
     pub target: VoteTarget,
-    
+
     /// Total weight that voted
     pub voting_weight: u64,
-    
+
     /// Weight that approved
     pub approve_weight: u64,
-    
+
     /// Weight that rejected
     pub reject_weight: u64,
-    
+
     /// Weight that abstained
     pub abstain_weight: u64,
-    
+
     /// Individual votes (for verification)
     pub votes: Vec<CommitteeVote>,
-    
+
     /// Whether threshold was met
     pub threshold_met: bool,
-    
+
     /// Required threshold (basis points)
     pub required_threshold_bps: u64,
 }
@@ -654,25 +664,25 @@ impl AggregatedVotes {
             required_threshold_bps,
         }
     }
-    
+
     /// Add a vote
     pub fn add_vote(&mut self, vote: CommitteeVote, member_weight: u64) {
         self.voting_weight += member_weight;
-        
+
         match vote.decision {
             VoteDecision::Approve => self.approve_weight += member_weight,
             VoteDecision::Reject(_) => self.reject_weight += member_weight,
             VoteDecision::Abstain => self.abstain_weight += member_weight,
         }
-        
+
         self.votes.push(vote);
-        
+
         // Check if threshold is met
         // Threshold is based on approve weight vs total voting weight
         let approve_bps = self.approve_weight * 10000 / self.voting_weight.max(1);
         self.threshold_met = approve_bps >= self.required_threshold_bps;
     }
-    
+
     /// Check if quorum is met (>50% of committee voted)
     pub fn quorum_met(&self, committee_total_weight: u64) -> bool {
         self.voting_weight * 2 > committee_total_weight
@@ -683,13 +693,13 @@ impl AggregatedVotes {
 pub struct CommitteeManager {
     /// Current epoch's eligible relays
     epoch_relays: Vec<RelayEligibility>,
-    
+
     /// Active committees by scope
     active_committees: HashMap<CommitteeScope, Committee>,
-    
+
     /// Committee selector
     selector: Option<CommitteeSelector>,
-    
+
     /// Vote aggregations in progress
     vote_aggregations: HashMap<(CommitteeScope, VoteTarget), AggregatedVotes>,
 }
@@ -703,7 +713,7 @@ impl CommitteeManager {
             vote_aggregations: HashMap::new(),
         }
     }
-    
+
     /// Update eligible relays for new epoch
     pub fn update_epoch_relays(
         &mut self,
@@ -714,7 +724,7 @@ impl CommitteeManager {
         self.epoch_relays = relays.clone();
         self.selector = Some(CommitteeSelector::new(relays, seed_deriver, committee_size));
     }
-    
+
     /// Get or create committee for scope
     pub fn get_or_create_committee(
         &mut self,
@@ -723,50 +733,56 @@ impl CommitteeManager {
         signer: &SigningKey,
     ) -> Result<&Committee, CommitteeError> {
         if !self.active_committees.contains_key(&scope) {
-            let selector = self.selector.as_ref()
+            let selector = self
+                .selector
+                .as_ref()
                 .ok_or(CommitteeError::InsufficientRelays(0, MIN_COMMITTEE_SIZE))?;
-            
+
             let committee = selector.select_committee(scope, vrf_output, signer)?;
             self.active_committees.insert(scope, committee);
         }
-        
+
         Ok(self.active_committees.get(&scope).unwrap())
     }
-    
+
     /// Get existing committee
     pub fn get_committee(&self, scope: &CommitteeScope) -> Option<&Committee> {
         self.active_committees.get(scope)
     }
-    
+
     /// Process incoming vote
     pub fn process_vote(
         &mut self,
         vote: CommitteeVote,
         required_threshold_bps: u64,
     ) -> Result<bool, CommitteeError> {
-        let committee = self.active_committees.get(&vote.committee_scope)
+        let committee = self
+            .active_committees
+            .get(&vote.committee_scope)
             .ok_or(CommitteeError::ScopeMismatch)?;
-        
+
         // Find member weight
-        let member = committee.members.iter()
+        let member = committee
+            .members
+            .iter()
             .find(|m| m.relay_id == vote.member)
             .ok_or(CommitteeError::InvalidSelectionProof(vote.member))?;
-        
+
         let key = (vote.committee_scope, vote.target.clone());
-        
-        let aggregation = self.vote_aggregations
-            .entry(key)
-            .or_insert_with(|| AggregatedVotes::new(
+
+        let aggregation = self.vote_aggregations.entry(key).or_insert_with(|| {
+            AggregatedVotes::new(
                 vote.committee_scope,
                 vote.target.clone(),
                 required_threshold_bps,
-            ));
-        
+            )
+        });
+
         aggregation.add_vote(vote, member.weight);
-        
+
         Ok(aggregation.threshold_met && aggregation.quorum_met(committee.total_weight))
     }
-    
+
     /// Get vote aggregation status
     pub fn get_vote_status(
         &self,
@@ -775,13 +791,15 @@ impl CommitteeManager {
     ) -> Option<&AggregatedVotes> {
         self.vote_aggregations.get(&(*scope, target.clone()))
     }
-    
+
     /// Clean up old committees
     pub fn cleanup_old_committees(&mut self, current_height: u64, keep_blocks: u64) {
         let min_height = current_height.saturating_sub(keep_blocks);
-        
-        self.active_committees.retain(|scope, _| scope.block_height >= min_height);
-        self.vote_aggregations.retain(|(scope, _), _| scope.block_height >= min_height);
+
+        self.active_committees
+            .retain(|scope, _| scope.block_height >= min_height);
+        self.vote_aggregations
+            .retain(|(scope, _), _| scope.block_height >= min_height);
     }
 }
 
@@ -795,48 +813,50 @@ impl Default for CommitteeManager {
 mod tests {
     use super::*;
     use rand::thread_rng;
-    
+
     fn create_test_relays(count: usize) -> Vec<RelayEligibility> {
         let mut rng = thread_rng();
         let regions = GeographicRegion::all();
-        
-        (0..count).map(|i| {
-            let sk = SigningKey::generate(&mut rng);
-            let pk = sk.verifying_key();
-            
-            RelayEligibility {
-                relay_id: RelayId::from_public_key(&pk),
-                public_key: pk,
-                stake: 10000 + (i as u64 * 100),
-                uptime_score: 0.95 + (i as f64 * 0.001).min(0.049),
-                region: regions[i % regions.len()],
-                asn: (i / 3) as u32 + 1000,
-                ip_prefix: [(i % 256) as u8, ((i / 256) % 256) as u8, 0],
-                operator_id: Hash::from(*blake3::hash(&i.to_le_bytes()).as_bytes()),
-                raw_weight: 100 + (i as u64 * 10),
-            }
-        }).collect()
+
+        (0..count)
+            .map(|i| {
+                let sk = SigningKey::generate(&mut rng);
+                let pk = sk.verifying_key();
+
+                RelayEligibility {
+                    relay_id: RelayId::from_public_key(&pk),
+                    public_key: pk,
+                    stake: 10000 + (i as u64 * 100),
+                    uptime_score: 0.95 + (i as f64 * 0.001).min(0.049),
+                    region: regions[i % regions.len()],
+                    asn: (i / 3) as u32 + 1000,
+                    ip_prefix: [(i % 256) as u8, ((i / 256) % 256) as u8, 0],
+                    operator_id: Hash::from(*blake3::hash(&i.to_le_bytes()).as_bytes()),
+                    raw_weight: 100 + (i as u64 * 10),
+                }
+            })
+            .collect()
     }
-    
+
     #[test]
     fn test_committee_selection() {
         let relays = create_test_relays(100);
         let mut seed_deriver = VrfSeedDeriver::new(6);
-        
+
         // Record some finalized blocks
         for i in 0..10 {
             seed_deriver.record_finalized_block(i, Hash::from([i as u8; 32]));
         }
-        
+
         let selector = CommitteeSelector::new(relays, seed_deriver, 21);
-        
+
         let scope = CommitteeScope {
             block_height: 10,
             subblock_index: 0,
             miniblock_index: Some(0),
             committee_type: CommitteeType::PoRWAttestation,
         };
-        
+
         let vrf_output = VrfOutput {
             output: *blake3::hash(b"vrf_seed").as_bytes(),
             proof: vec![],
@@ -844,15 +864,15 @@ mod tests {
             subblock: 0,
             miniblock: Some(0),
         };
-        
+
         let sk = SigningKey::generate(&mut thread_rng());
         let committee = selector.select_committee(scope, vrf_output, &sk).unwrap();
-        
+
         assert!(committee.members.len() >= MIN_COMMITTEE_SIZE);
         assert!(committee.members.len() <= MAX_COMMITTEE_SIZE);
         assert!(committee.diversity.region_count >= MIN_REQUIRED_REGIONS);
     }
-    
+
     #[test]
     fn test_diversity_constraints() {
         // Create relays all from same region (should fail diversity)
@@ -860,21 +880,21 @@ mod tests {
         for relay in &mut relays {
             relay.region = GeographicRegion::NorthAmerica;
         }
-        
+
         let mut seed_deriver = VrfSeedDeriver::new(6);
         for i in 0..10 {
             seed_deriver.record_finalized_block(i, Hash::from([i as u8; 32]));
         }
-        
+
         let selector = CommitteeSelector::new(relays, seed_deriver, 21);
-        
+
         let scope = CommitteeScope {
             block_height: 10,
             subblock_index: 0,
             miniblock_index: None,
             committee_type: CommitteeType::PoRWAttestation,
         };
-        
+
         let vrf_output = VrfOutput {
             output: *blake3::hash(b"vrf_seed").as_bytes(),
             proof: vec![],
@@ -882,33 +902,33 @@ mod tests {
             subblock: 0,
             miniblock: None,
         };
-        
+
         let sk = SigningKey::generate(&mut thread_rng());
         let result = selector.select_committee(scope, vrf_output, &sk);
-        
+
         assert!(matches!(result, Err(CommitteeError::DiversityNotMet(_))));
     }
-    
+
     #[test]
     fn test_weight_cap() {
         let mut relays = create_test_relays(20);
         // Make one relay have 50% of weight (should be capped)
         relays[0].raw_weight = 100000;
-        
+
         let mut seed_deriver = VrfSeedDeriver::new(6);
         for i in 0..10 {
             seed_deriver.record_finalized_block(i, Hash::from([i as u8; 32]));
         }
-        
+
         let selector = CommitteeSelector::new(relays, seed_deriver, 15);
-        
+
         // Verify weight was capped
         let max_weight = selector.total_weight * MAX_RELAY_WEIGHT_BPS / 10000;
         for relay in &selector.eligible_relays {
             assert!(relay.raw_weight <= max_weight);
         }
     }
-    
+
     #[test]
     fn test_vote_aggregation() {
         let mut aggregation = AggregatedVotes::new(
@@ -924,9 +944,9 @@ mod tests {
             },
             6700, // 67% threshold
         );
-        
+
         let rng = &mut thread_rng();
-        
+
         // Add votes
         for i in 0..10 {
             let sk = SigningKey::generate(rng);
@@ -934,14 +954,18 @@ mod tests {
                 committee_scope: aggregation.committee_scope,
                 target: aggregation.target.clone(),
                 member: RelayId::from_public_key(&sk.verifying_key()),
-                decision: if i < 7 { VoteDecision::Approve } else { VoteDecision::Reject(0) },
+                decision: if i < 7 {
+                    VoteDecision::Approve
+                } else {
+                    VoteDecision::Reject(0)
+                },
                 signature: sk.sign(b"vote"),
                 timestamp: 12345,
             };
-            
+
             aggregation.add_vote(vote, 100);
         }
-        
+
         // 70% approved, should meet 67% threshold
         assert!(aggregation.threshold_met);
         assert_eq!(aggregation.approve_weight, 700);

@@ -12,7 +12,7 @@
 //! - Integration with PoRW for dual-consensus finality
 
 use crate::block_hierarchy::Hash;
-use crate::proof_of_relay_work::GeographicRegion;
+use crate::consensus_types::GeographicRegion;
 use ed25519_dalek::{Signature, VerifyingKey};
 use pqcrypto_dilithium::dilithium3;
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey as PQPublicKey};

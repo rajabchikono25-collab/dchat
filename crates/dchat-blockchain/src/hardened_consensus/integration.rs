@@ -19,9 +19,11 @@ use super::batch_verification::{
     Ed25519BatchVerifier, HybridVerifier, SignatureJob, VerificationPipeline, VerificationResult,
 };
 use super::challenge_response::{Dispute, DisputeManager, DisputeState, Evidence};
-use super::epoch_snapshot::{Region, RelayState, Snapshot, SnapshotBuilder, SnapshotStore, StakerState};
+use super::epoch_snapshot::{
+    Region, RelayState, Snapshot, SnapshotBuilder, SnapshotStore, StakerState,
+};
 use super::merkle_commitments::{
-    CommitmentManager, DeterministicSampler, FraudChallenge, MerkleCommitment, SamplingConfig,
+    CommitmentManager, DeterministicSampler, FraudChallenge, MerkleCommitment, DEFAULT_SAMPLE_COUNT,
 };
 use super::sharded_state::{ConsistentHashRing, ShardedState};
 use super::threshold_normalization::{
@@ -33,10 +35,12 @@ use super::two_stage_finality::{
     AttackDetector, BlockFinalityStatus, CheckpointManager, EscalationLevel, EscalationPreset,
     FinalityStage, TSCCheckpoint, TwoStageFinality,
 };
-use super::vrf_committees::{Committee, CommitteeMember, CommitteeSelector, VrfSeedDeriver, GeographicRegion as VrfRegion};
+use super::vrf_committees::{
+    Committee, CommitteeMember, CommitteeSelector, GeographicRegion as VrfRegion, VrfSeedDeriver,
+};
 
 use crate::block_hierarchy::Hash;
-use crate::proof_of_relay_work::GeographicRegion;
+use crate::consensus_types::GeographicRegion;
 use ed25519_dalek::{Signature, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -212,7 +216,7 @@ impl HardenedPoRW {
         batch_verifier: Arc<VerificationPipeline>,
     ) -> Self {
         let epoch_manager = Arc::new(EpochSnapshotManager::new());
-        
+
         Self {
             snapshot_store,
             epoch_manager,
@@ -231,14 +235,18 @@ impl HardenedPoRW {
     }
 
     /// Process new block and update epoch if needed
-    pub fn process_block(&self, block_height: u64, block_hash: Hash) -> Result<(), IntegrationError> {
+    pub fn process_block(
+        &self,
+        block_height: u64,
+        block_hash: Hash,
+    ) -> Result<(), IntegrationError> {
         self.current_block.store(block_height, Ordering::Release);
-        
+
         // Check for epoch transition
         if let Some(new_epoch) = self.snapshot_store.process_block(block_height) {
             tracing::info!("Epoch transition to {}", new_epoch);
         }
-        
+
         // Initialize vote aggregation for this block
         let votes = AggregatedVotes {
             block_hash,
@@ -250,10 +258,10 @@ impl HardenedPoRW {
             finality_stage: FinalityStage::Pending,
             regions: Vec::new(),
         };
-        
+
         self.active_votes.insert(block_hash, votes);
         self.finality_tracker.track_block(block_hash);
-        
+
         Ok(())
     }
 
@@ -264,18 +272,20 @@ impl HardenedPoRW {
         parent_hash: &Hash,
     ) -> Result<[u8; 32], IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         // Get finalized chain state for seed derivation
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|e| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Domain-separate by layer and block
         let mut hasher = blake3::Hasher::new();
         hasher.update(ConsensusLayer::PoRW.domain_separator());
         hasher.update(&block_height.to_le_bytes());
         hasher.update(parent_hash);
         hasher.update(&snapshot.merkle_root);
-        
+
         Ok(*hasher.finalize().as_bytes())
     }
 
@@ -286,9 +296,11 @@ impl HardenedPoRW {
         seed: &[u8; 32],
     ) -> Result<Committee, IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|e| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Convert snapshot relays to committee candidates
         let candidates: Vec<([u8; 32], u64, VrfRegion)> = snapshot
             .relays
@@ -307,8 +319,9 @@ impl HardenedPoRW {
                 (*id, r.normalized_weight_bps, region)
             })
             .collect();
-        
-        self.committee_selector.select_committee(seed, &candidates)
+
+        self.committee_selector
+            .select_committee(seed, &candidates)
             .map_err(|e| IntegrationError::CommitteeSelectionFailed(format!("{:?}", e)))
     }
 
@@ -316,22 +329,24 @@ impl HardenedPoRW {
     pub fn submit_vote(&self, vote: CommitteeVote) -> Result<(), IntegrationError> {
         let block_height = self.current_block.load(Ordering::Acquire);
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         // Verify committee membership via VRF proof
         // (In production, verify the VRF proof cryptographically)
-        
+
         // Get current snapshot for weight verification
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Verify voter weight matches snapshot
         let stored_weight = snapshot.get_relay_weight(&vote.voter_id);
         if stored_weight != vote.normalized_weight_bps {
             return Err(IntegrationError::ThresholdCheckFailed(
-                "Weight mismatch with epoch snapshot".to_string()
+                "Weight mismatch with epoch snapshot".to_string(),
             ));
         }
-        
+
         // Queue signature for batch verification
         let job = SignatureJob {
             message: vote.block_hash.to_vec(),
@@ -339,9 +354,9 @@ impl HardenedPoRW {
             public_key: vote.voter_id.to_vec(),
             metadata: Some(format!("porw-vote-{}", hex::encode(&vote.block_hash[..8]))),
         };
-        
+
         self.batch_verifier.submit_ed25519(job);
-        
+
         // Update aggregated votes
         if let Some(mut votes) = self.active_votes.get_mut(&vote.block_hash) {
             if vote.approve {
@@ -350,23 +365,21 @@ impl HardenedPoRW {
                 votes.reject_weight_bps += vote.normalized_weight_bps;
             }
             votes.votes.push(vote);
-            
+
             // Check quorum against snapshot total
             let quorum_result = self.threshold_calc.check_quorum(
                 votes.approve_weight_bps,
                 snapshot.total_relay_weight,
                 snapshot.active_relay_count,
             );
-            
+
             if quorum_result.quorum_reached {
                 votes.quorum_reached = true;
-                self.finality_tracker.upgrade_finality(
-                    &votes.block_hash,
-                    FinalityStage::Local,
-                );
+                self.finality_tracker
+                    .upgrade_finality(&votes.block_hash, FinalityStage::Local);
             }
         }
-        
+
         Ok(())
     }
 
@@ -376,15 +389,17 @@ impl HardenedPoRW {
         commitment: UnifiedProofCommitment,
     ) -> Result<Hash, IntegrationError> {
         if commitment.layer != ConsensusLayer::PoRW {
-            return Err(IntegrationError::CommitmentInvalid("Wrong layer".to_string()));
+            return Err(IntegrationError::CommitmentInvalid(
+                "Wrong layer".to_string(),
+            ));
         }
-        
+
         let commitment_id = self.commitment_manager.register_commitment(
             &commitment.merkle_root,
             commitment.proof_count as usize,
             &commitment.signature,
         );
-        
+
         Ok(commitment_id)
     }
 
@@ -395,9 +410,11 @@ impl HardenedPoRW {
         block_height: u64,
     ) -> Result<SampledProofRequest, IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Create deterministic seed from chain state
         let mut seed = [0u8; 32];
         let mut hasher = blake3::Hasher::new();
@@ -406,17 +423,21 @@ impl HardenedPoRW {
         hasher.update(&snapshot.merkle_root);
         hasher.update(&block_height.to_le_bytes());
         seed.copy_from_slice(hasher.finalize().as_bytes());
-        
+
         // Get commitment metadata
         if let Some(commitment) = self.commitment_manager.get_commitment(commitment_id) {
-            let sampler = DeterministicSampler::new(SamplingConfig::default());
-            let indices = sampler.sample(&seed, commitment.total_items, sampler.config.sample_count);
-            
+            let sampler = DeterministicSampler::new(
+                seed,
+                commitment.total_items as u64,
+                DEFAULT_SAMPLE_COUNT,
+            );
+            let indices = sampler.generate_indices();
+
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             Ok(SampledProofRequest {
                 layer: ConsensusLayer::PoRW,
                 commitment: UnifiedProofCommitment {
@@ -429,11 +450,13 @@ impl HardenedPoRW {
                     signature: Vec::new(),
                 },
                 sample_indices: indices,
-                requester: [0u8; 32], // Fill with actual requester
+                requester: [0u8; 32],      // Fill with actual requester
                 deadline: timestamp + 300, // 5 minute deadline
             })
         } else {
-            Err(IntegrationError::CommitmentInvalid("Commitment not found".to_string()))
+            Err(IntegrationError::CommitmentInvalid(
+                "Commitment not found".to_string(),
+            ))
         }
     }
 
@@ -445,17 +468,19 @@ impl HardenedPoRW {
     ) -> Result<bool, IntegrationError> {
         if response.proofs.len() != request.sample_indices.len() {
             return Err(IntegrationError::VerificationFailed(
-                "Proof count mismatch".to_string()
+                "Proof count mismatch".to_string(),
             ));
         }
-        
+
         // Verify each proof against Merkle root
-        for (i, (proof, merkle_path)) in response.proofs.iter()
+        for (i, (proof, merkle_path)) in response
+            .proofs
+            .iter()
             .zip(response.merkle_proofs.iter())
             .enumerate()
         {
             let index = request.sample_indices[i];
-            
+
             // Verify Merkle inclusion
             if !self.commitment_manager.verify_merkle_proof(
                 proof,
@@ -466,7 +491,7 @@ impl HardenedPoRW {
                 return Ok(false);
             }
         }
-        
+
         Ok(true)
     }
 
@@ -489,14 +514,15 @@ impl HardenedPoRW {
             EscalationLevel::Critical => EscalationPreset::critical(),
             EscalationLevel::Emergency => EscalationPreset::emergency(),
         };
-        
-        *self.escalation_preset.write() = preset;
-        
-        tracing::warn!("Escalated to {:?} preset: PoRW {}%, TSC {}%",
+
+        tracing::warn!(
+            "Escalated to {:?} preset: PoRW {}%, TSC {}%",
             level,
             preset.porw_threshold_bps / 100,
             preset.tsc_threshold_bps / 100,
         );
+
+        *self.escalation_preset.write() = preset;
     }
 }
 
@@ -540,7 +566,7 @@ impl HardenedPoT {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let commitment = UnifiedProofCommitment {
             layer: ConsensusLayer::PoT,
             merkle_root: paths_merkle_root,
@@ -550,16 +576,16 @@ impl HardenedPoT {
             timestamp,
             signature: signature.clone(),
         };
-        
+
         let commitment_id = self.commitment_manager.register_commitment(
             &paths_merkle_root,
             path_count as usize,
             &signature,
         );
-        
+
         self.transit_commitments.insert(message_hash, commitment);
         self.finality_tracker.track_block(message_hash);
-        
+
         Ok(commitment_id)
     }
 
@@ -579,7 +605,7 @@ impl HardenedPoT {
             };
             self.batch_verifier.submit_ed25519(job);
         }
-        
+
         Ok(())
     }
 
@@ -660,7 +686,7 @@ impl HardenedTSC {
     /// Initialize voting for a block
     pub fn initialize_block(&self, block_hash: Hash, block_height: u64) {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         let votes = TSCVotes {
             block_hash,
             epoch,
@@ -670,7 +696,7 @@ impl HardenedTSC {
             quorum_reached: false,
             checkpoint_included: false,
         };
-        
+
         self.active_votes.insert(block_hash, votes);
         self.finality_tracker.track_block(block_hash);
     }
@@ -679,19 +705,21 @@ impl HardenedTSC {
     pub fn submit_vote(&self, vote: TSCVote) -> Result<(), IntegrationError> {
         let block_height = self.snapshot_store.current_block();
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         // Get snapshot for weight verification
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Verify staker power matches snapshot
         let stored_power = snapshot.get_staker_power(&vote.staker_id);
         if stored_power != vote.normalized_power_bps {
             return Err(IntegrationError::ThresholdCheckFailed(
-                "Power mismatch with epoch snapshot".to_string()
+                "Power mismatch with epoch snapshot".to_string(),
             ));
         }
-        
+
         // Queue signature for batch verification
         let job = SignatureJob {
             message: vote.block_hash.to_vec(),
@@ -700,7 +728,7 @@ impl HardenedTSC {
             metadata: Some(format!("tsc-vote-{}", hex::encode(&vote.block_hash[..8]))),
         };
         self.batch_verifier.submit_ed25519(job);
-        
+
         // Update aggregated votes
         if let Some(mut votes) = self.active_votes.get_mut(&vote.block_hash) {
             if vote.approve {
@@ -709,25 +737,23 @@ impl HardenedTSC {
                 votes.reject_power_bps += vote.normalized_power_bps;
             }
             votes.votes.push(vote);
-            
+
             // Check quorum
             let quorum_result = self.threshold_calc.check_quorum(
                 votes.approve_power_bps,
                 snapshot.total_stake_power,
                 snapshot.active_staker_count,
             );
-            
+
             if quorum_result.quorum_reached {
                 votes.quorum_reached = true;
-                
+
                 // TSC quorum enables Global/Deep finality
-                self.finality_tracker.upgrade_finality(
-                    &votes.block_hash,
-                    FinalityStage::Global,
-                );
+                self.finality_tracker
+                    .upgrade_finality(&votes.block_hash, FinalityStage::Global);
             }
         }
-        
+
         Ok(())
     }
 
@@ -738,9 +764,11 @@ impl HardenedTSC {
         block_height: u64,
     ) -> Result<TSCCheckpoint, IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         if let Some(votes) = self.active_votes.get(&block_hash) {
             if votes.quorum_reached {
                 let checkpoint = self.checkpoint_manager.create_checkpoint(
@@ -749,17 +777,15 @@ impl HardenedTSC {
                     votes.approve_power_bps,
                     snapshot.merkle_root,
                 );
-                
+
                 // Mark finality as Deep once checkpoint is created
-                self.finality_tracker.upgrade_finality(
-                    &block_hash,
-                    FinalityStage::Deep,
-                );
-                
+                self.finality_tracker
+                    .upgrade_finality(&block_hash, FinalityStage::Deep);
+
                 return Ok(checkpoint);
             }
         }
-        
+
         Err(IntegrationError::FinalityNotReached)
     }
 
@@ -769,8 +795,11 @@ impl HardenedTSC {
         from_height: u64,
         to_height: u64,
     ) -> Result<bool, IntegrationError> {
-        self.checkpoint_manager.verify_chain(from_height, to_height)
-            .map_err(|_| IntegrationError::VerificationFailed("Checkpoint chain broken".to_string()))
+        self.checkpoint_manager
+            .verify_chain(from_height, to_height)
+            .map_err(|_| {
+                IntegrationError::VerificationFailed("Checkpoint chain broken".to_string())
+            })
     }
 
     /// Get finality stage
@@ -804,20 +833,22 @@ impl IntegratedThresholdChecker {
         achieved_weight_bps: u64,
     ) -> Result<PoRWQuorumResult, IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Apply current escalation preset
         let preset = self.current_preset.read();
         let adjusted_threshold = preset.porw_threshold_bps;
-        
+
         let result = self.porw_calc.check_quorum_with_threshold(
             achieved_weight_bps,
             snapshot.total_relay_weight,
             snapshot.active_relay_count,
             adjusted_threshold,
         );
-        
+
         Ok(result)
     }
 
@@ -828,20 +859,22 @@ impl IntegratedThresholdChecker {
         achieved_power_bps: u64,
     ) -> Result<TSCQuorumResult, IntegrationError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| IntegrationError::SnapshotNotAvailable(epoch))?;
-        
+
         // Apply current escalation preset
         let preset = self.current_preset.read();
         let adjusted_threshold = preset.tsc_threshold_bps;
-        
+
         let result = self.tsc_calc.check_quorum_with_threshold(
             achieved_power_bps,
             snapshot.total_stake_power,
             snapshot.active_staker_count,
             adjusted_threshold,
         );
-        
+
         Ok(result)
     }
 
@@ -883,7 +916,7 @@ impl HardenedConsensusCoordinator {
     pub fn new() -> Self {
         let snapshot_store = Arc::new(SnapshotStore::default());
         let batch_verifier = Arc::new(VerificationPipeline::new(4)); // 4 worker threads
-        
+
         Self {
             snapshot_store: snapshot_store.clone(),
             batch_verifier: batch_verifier.clone(),
@@ -910,25 +943,28 @@ impl HardenedConsensusCoordinator {
             ConsensusLayer::PoT => Priority::Finality,
             ConsensusLayer::TSC => Priority::Finality,
         };
-        
+
         // Check admission
-        match self.admission.check_admission(peer_id, priority, message.len()) {
-            AdmissionDecision::Accept => {},
+        match self
+            .admission
+            .check_admission(peer_id, priority, message.len())
+        {
+            AdmissionDecision::Accept => {}
             AdmissionDecision::Reject(reason) => {
                 return Err(IntegrationError::AdmissionDenied(reason));
-            },
+            }
             AdmissionDecision::Defer => {
                 return Err(IntegrationError::AdmissionDenied("Deferred".to_string()));
-            },
+            }
         }
-        
+
         Ok(())
     }
 
     /// Check if attack is detected and escalate if needed
     pub fn check_and_escalate(&self) {
         let level = self.attack_detector.current_level();
-        
+
         if level != EscalationLevel::Normal {
             let preset = match level {
                 EscalationLevel::Elevated => EscalationPreset::elevated(),
@@ -937,10 +973,10 @@ impl HardenedConsensusCoordinator {
                 EscalationLevel::Emergency => EscalationPreset::emergency(),
                 _ => EscalationPreset::normal(),
             };
-            
+
             self.threshold_checker.apply_preset(preset);
             self.porw.escalate(level);
-            
+
             tracing::warn!("Attack detected, escalated to {:?}", level);
         }
     }
@@ -950,7 +986,7 @@ impl HardenedConsensusCoordinator {
         let porw_finality = self.porw.check_finality(block_hash);
         let pot_finality = self.pot.get_finality(block_hash);
         let tsc_finality = self.tsc.get_finality(block_hash);
-        
+
         // Return highest achieved finality
         [porw_finality, pot_finality, tsc_finality]
             .into_iter()
@@ -1000,7 +1036,10 @@ mod tests {
     #[test]
     fn test_coordinator_creation() {
         let coordinator = HardenedConsensusCoordinator::new();
-        assert_eq!(coordinator.get_finality(&test_hash(1)), FinalityStage::Pending);
+        assert_eq!(
+            coordinator.get_finality(&test_hash(1)),
+            FinalityStage::Pending
+        );
     }
 
     #[test]
@@ -1019,41 +1058,37 @@ mod tests {
     fn test_threshold_escalation() {
         let snapshot_store = Arc::new(SnapshotStore::default());
         let checker = IntegratedThresholdChecker::new(snapshot_store);
-        
+
         // Normal thresholds
         let (porw, tsc) = checker.current_thresholds();
         assert_eq!(porw, 6667); // 66.67%
-        assert_eq!(tsc, 5100);  // 51%
-        
+        assert_eq!(tsc, 5100); // 51%
+
         // Escalate to critical
         checker.apply_preset(EscalationPreset::critical());
         let (porw, tsc) = checker.current_thresholds();
         assert_eq!(porw, 8000); // 80%
-        assert_eq!(tsc, 6700);  // 67%
+        assert_eq!(tsc, 6700); // 67%
     }
 
     #[test]
     fn test_admission_control_priority() {
         let coordinator = HardenedConsensusCoordinator::new();
-        
+
         let peer = test_id(1);
-        
+
         // Consensus messages should be accepted
-        let result = coordinator.process_message(
-            &peer,
-            ConsensusLayer::PoRW,
-            &[0u8; 100],
-        );
+        let result = coordinator.process_message(&peer, ConsensusLayer::PoRW, &[0u8; 100]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_cookie_generation_verification() {
         let coordinator = HardenedConsensusCoordinator::new();
-        
+
         let peer_addr = b"192.168.1.1:8080";
         let cookie = coordinator.generate_cookie(peer_addr);
-        
+
         assert!(coordinator.verify_cookie(&cookie, peer_addr));
         assert!(!coordinator.verify_cookie(&cookie, b"10.0.0.1:9090"));
     }
@@ -1069,7 +1104,7 @@ mod tests {
             timestamp: 1000,
             signature: vec![0u8; 64],
         };
-        
+
         assert_eq!(commitment.layer, ConsensusLayer::PoRW);
         assert_eq!(commitment.proof_count, 100);
     }

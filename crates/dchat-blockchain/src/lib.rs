@@ -5,6 +5,7 @@ pub mod block_hierarchy;
 pub mod chain_synchronizer;
 pub mod chat_chain;
 pub mod client;
+pub mod consensus_types;
 pub mod cross_chain;
 pub mod currency_chain;
 pub mod currency_chain_block_sync;
@@ -30,9 +31,9 @@ pub mod staking_backend;
 pub mod watchtower;
 
 // Wallet infrastructure (production wallets with Solana compatibility)
-pub mod wallet;
-pub mod solana_bridge;
 pub mod solana;
+pub mod solana_bridge;
+pub mod wallet;
 
 pub use block_hierarchy::{
     Block, BlockError, ExecutionResult, FinalityProof, Miniblock, StateDelta, Subblock,
@@ -43,21 +44,21 @@ pub use chain_synchronizer::{
     CurrencyHierarchicalBlock, CurrencyMiniblock, CurrencySubblock, CurrencyTransaction,
     CurrencyTxType, FinalityAnchor, SyncEpoch, SyncError, SyncStatusReport, ThroughputReport,
 };
-pub use dchat_chain::{Transaction, TransactionStatus, TransactionType};
 pub use chat_chain::{ChatChainClient, ChatChainConfig};
 pub use client::{BlockchainClient, BlockchainConfig};
+pub use consensus_types::{
+    BlockVotes, ConsensusError, DeliveryProof, GeographicRegion, RelayScore, RelayVote,
+};
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};
 pub use currency_chain::{
-    CreateStorageBondResult, CurrencyChainClient, CurrencyChainConfig,
-    StorageBondRecord, StorageBondStatus,
+    CreateStorageBondResult, CurrencyChainClient, CurrencyChainConfig, StorageBondRecord,
+    StorageBondStatus,
 };
 pub use currency_chain_block_sync::{
     BlockSyncConfig, BlockSyncManager, CurrencyBlock, CurrencyBlockHeader, ForkInfo, SyncStatus,
 };
-pub use proof_of_relay_work::{
-    BlockVotes, ConsensusError, DeliveryProof, GeographicRegion, ProofOfRelayWork, RelayScore,
-    RelayVote,
-};
+pub use dchat_chain::{Transaction, TransactionStatus, TransactionType};
+pub use proof_of_relay_work::ProofOfRelayWork;
 pub use proof_of_transit::{
     Dilithium3Signature, FinalityLevel, GeoLocation, HybridSignature, PoTError, ProofOfTransit,
     TransitPath, TransitProof,
@@ -65,8 +66,8 @@ pub use proof_of_transit::{
 pub use rpc::{RpcClient, RpcConfig};
 pub use staking::{
     ClaimReceipt, SlashingEvent, SlashingSeverity, StakingManager, StakingTransaction,
-    StakingTxType, ValidatorStake, ValidatorStatus, MAX_ACTIVE_VALIDATORS,
-    MAX_VALIDATOR_STAKE, MIN_VALIDATOR_STAKE, UNSTAKE_COOLDOWN_SECONDS,
+    StakingTxType, ValidatorStake, ValidatorStatus, MAX_ACTIVE_VALIDATORS, MAX_VALIDATOR_STAKE,
+    MIN_VALIDATOR_STAKE, UNSTAKE_COOLDOWN_SECONDS,
 };
 pub use state_validation::{
     MerkleNode, MerkleProof, MerkleTree, StateValidationError, StateValidator,
@@ -97,61 +98,104 @@ pub use payment_channels::{
     ChannelError, ChannelState, CloseChallenge, FraudEvent, MessageCreditsChannel, PaymentChannel,
     PaymentChannelManager, SignedStateUpdate, UnilateralCloseRequest,
 };
-pub use watchtower::{
-    AlertSeverity, AlertType, FraudAttemptRecord, WatchedChannel, WatchedChannelState,
-    Watchtower, WatchtowerAlert, WatchtowerConfig, WatchtowerError, WatchtowerMonitor,
-    WatchtowerStats,
-};
 pub use payment_processor::{
-    PaymentProcessor, PaymentProcessorConfig, PaymentReceipt, PaymentProcessorStats,
+    PaymentProcessor, PaymentProcessorConfig, PaymentProcessorStats, PaymentReceipt,
 };
 pub use staking_backend::CurrencyChainStakingBackend;
+pub use watchtower::{
+    AlertSeverity, AlertType, FraudAttemptRecord, WatchedChannel, WatchedChannelState, Watchtower,
+    WatchtowerAlert, WatchtowerConfig, WatchtowerError, WatchtowerMonitor, WatchtowerStats,
+};
 
 // Wallet infrastructure exports (production wallets with Solana compatibility)
 pub use wallet::{
-    // Core wallet types
-    WalletBalance, TokenBalance, WalletTransaction, SignedTransaction, TransactionSignature,
-    // Normal wallet
-    Wallet, WalletConfig, WalletType, WalletExport,
-    // Multi-sig wallet
-    MultiSigWallet, MultiSigConfig, SignerInfo, PendingMultiSigTx,
+    AddressFormat,
+    AddressMapping,
+    BurnerStats,
     // Burner wallet
-    BurnerWallet, BurnerWalletConfig, BurnerWalletManager, BurnerStats, DestructionReason,
+    BurnerWallet,
+    BurnerWalletConfig,
+    BurnerWalletManager,
+    DestructionReason,
+    MultiSigConfig,
+    // Multi-sig wallet
+    MultiSigWallet,
+    PendingMultiSigTx,
+    SignedTransaction,
+    SignerInfo,
     // Solana compatibility
-    SolanaAddress, SolanaSignature, SolanaCompatible, TokenMint,
+    SolanaAddress,
+    SolanaCompatible,
+    SolanaSignature,
+    TokenBalance,
+    TokenMint,
+    TransactionSignature,
     // Universal addressing
-    UniversalAddress, AddressFormat, AddressMapping,
+    UniversalAddress,
+    // Normal wallet
+    Wallet,
+    // Core wallet types
+    WalletBalance,
+    WalletConfig,
+    WalletExport,
+    WalletTransaction,
+    WalletType,
 };
 
 pub use solana_bridge::{
-    SolanaBridge, SolanaBridgeConfig, BridgeValidator, BridgeDirection,
-    BridgeTransferStatus, BridgeTransfer, ValidatorSignature as BridgeValidatorSignature,
-    BridgeStatistics,
+    BridgeDirection, BridgeStatistics, BridgeTransfer, BridgeTransferStatus, BridgeValidator,
+    SolanaBridge, SolanaBridgeConfig, ValidatorSignature as BridgeValidatorSignature,
 };
 
 // Solana integration exports
 pub use solana::{
-    // High-level client
-    SolanaClient, SharedSolanaClient, create_shared_client,
-    // RPC client
-    SolanaRpcClient, SolanaRpcConfig, Commitment, RpcError,
-    // Transaction building
-    SolanaTransaction, TransactionBuilder, Instruction, CompiledInstruction,
-    MessageHeader, TransactionMessage, SolanaTxStatus,
-    // SPL Token
-    SplToken, TokenAccount, TokenInstruction, MintInfo, TokenTransfer,
+    create_shared_client,
+    lamports_to_sol,
+    sol_to_lamports,
+    AccountInfo as SolanaAccountInfo,
+    AccountMeta,
     AssociatedTokenAccount,
+    BridgeInstruction,
     // Bridge program
-    BridgeProgram, BridgeInstruction, LockAccounts, UnlockAccounts,
-    BridgeState, DepositRecord, WithdrawRecord,
-    // Accounts
-    SolanaAccount, AccountInfo as SolanaAccountInfo, AccountMeta, SystemProgram, Rent,
+    BridgeProgram,
+    BridgeState,
     // Helpers
-    Cluster, lamports_to_sol, sol_to_lamports, LAMPORTS_PER_SOL,
+    Cluster,
+    Commitment,
+    CompiledInstruction,
+    DepositRecord,
+    Instruction,
+    LockAccounts,
+    MessageHeader,
+    MintInfo,
+    Rent,
+    RpcError,
+    SharedSolanaClient,
+    // Accounts
+    SolanaAccount,
+    // High-level client
+    SolanaClient,
+    // RPC client
+    SolanaRpcClient,
+    SolanaRpcConfig,
+    // Transaction building
+    SolanaTransaction,
+    SolanaTxStatus,
+    // SPL Token
+    SplToken,
+    SystemProgram,
+    TokenAccount,
+    TokenInstruction,
+    TokenTransfer,
+    TransactionBuilder,
+    TransactionMessage,
+    UnlockAccounts,
+    WithdrawRecord,
+    LAMPORTS_PER_SOL,
 };
 
 // Re-export privacy trait implementations for integration
 // ChatChainClient implements dchat_privacy::zk_proofs::BlockchainClient
 // CurrencyChainClient implements dchat_privacy::blind_tokens::CurrencyChainClient
-pub use dchat_privacy::zk_proofs::BlockchainClient as PrivacyBlockchainClient;
 pub use dchat_privacy::blind_tokens::CurrencyChainClient as PrivacyCurrencyChainClient;
+pub use dchat_privacy::zk_proofs::BlockchainClient as PrivacyBlockchainClient;

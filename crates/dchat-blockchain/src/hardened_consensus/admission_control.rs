@@ -404,6 +404,17 @@ impl PriorityQueue {
         self.sizes.values().map(|s| s.load(Ordering::Relaxed)).sum()
     }
 
+    /// Check if a priority lane is full
+    pub fn is_full_for_priority(&self, priority: Priority) -> bool {
+        let current_size = self
+            .sizes
+            .get(&priority)
+            .map(|s| s.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let capacity = priority.queue_capacity();
+        current_size >= capacity
+    }
+
     /// Get stats
     pub fn stats(&self) -> QueueStats {
         QueueStats {

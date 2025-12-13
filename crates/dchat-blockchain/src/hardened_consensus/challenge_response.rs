@@ -34,25 +34,25 @@ pub const SLASH_PERCENTAGE_BPS: u64 = 5000; // 50%
 pub enum ChallengeResponseError {
     #[error("Challenge not found: {0:?}")]
     ChallengeNotFound([u8; 32]),
-    
+
     #[error("Response timeout")]
     ResponseTimeout,
-    
+
     #[error("Invalid state transition: {0}")]
     InvalidStateTransition(String),
-    
+
     #[error("Insufficient bond: {0} < {1}")]
     InsufficientBond(u64, u64),
-    
+
     #[error("Invalid evidence: {0}")]
     InvalidEvidence(String),
-    
+
     #[error("Not authorized: {0}")]
     NotAuthorized(String),
-    
+
     #[error("Bisection limit exceeded")]
     BisectionLimitExceeded,
-    
+
     #[error("Invalid merkle proof")]
     InvalidMerkleProof,
 }
@@ -182,17 +182,17 @@ impl BisectionState {
             history: Vec::new(),
         }
     }
-    
+
     /// Get midpoint
     pub fn midpoint(&self) -> u64 {
         self.lower_bound + (self.upper_bound - self.lower_bound) / 2
     }
-    
+
     /// Is bisection complete?
     pub fn is_complete(&self) -> bool {
         self.upper_bound - self.lower_bound <= 1
     }
-    
+
     /// Apply bisection choice
     pub fn apply_choice(
         &mut self,
@@ -203,16 +203,16 @@ impl BisectionState {
         if self.round >= MAX_BISECTION_ROUNDS {
             return Err(ChallengeResponseError::BisectionLimitExceeded);
         }
-        
+
         let midpoint = self.midpoint();
-        
+
         let choice = BisectionChoice {
             round: self.round,
             midpoint,
             midpoint_state,
             chosen_side: side,
         };
-        
+
         match side {
             BisectionSide::Lower => {
                 self.upper_bound = midpoint;
@@ -223,11 +223,11 @@ impl BisectionState {
                 self.lower_state = midpoint_state;
             }
         }
-        
+
         self.history.push(choice);
         self.round += 1;
         self.turn = other_party;
-        
+
         Ok(())
     }
 }
@@ -295,14 +295,14 @@ impl Dispute {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Generate dispute ID
         let mut hasher = blake3::Hasher::new();
         hasher.update(&target_id);
         hasher.update(&challenger_id);
         hasher.update(&now.to_le_bytes());
         let id = *hasher.finalize().as_bytes();
-        
+
         Self {
             id,
             target_id,
@@ -327,17 +327,17 @@ impl Dispute {
             result: None,
         }
     }
-    
+
     /// Is response deadline passed?
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         now > self.response_deadline
     }
-    
+
     /// Update timestamp
     pub fn touch(&mut self) {
         self.updated_at = SystemTime::now()
@@ -345,7 +345,7 @@ impl Dispute {
             .unwrap()
             .as_secs();
     }
-    
+
     /// Transition to new state
     pub fn transition_to(&mut self, new_state: DisputeState) -> Result<(), ChallengeResponseError> {
         let valid = match (self.state, new_state) {
@@ -361,18 +361,19 @@ impl Dispute {
             (DisputeState::Expired, DisputeState::ChallengerWon) => true,
             _ => false,
         };
-        
+
         if !valid {
-            return Err(ChallengeResponseError::InvalidStateTransition(
-                format!("{:?} -> {:?}", self.state, new_state)
-            ));
+            return Err(ChallengeResponseError::InvalidStateTransition(format!(
+                "{:?} -> {:?}",
+                self.state, new_state
+            )));
         }
-        
+
         self.state = new_state;
         self.touch();
         Ok(())
     }
-    
+
     /// Submit response
     pub fn submit_response(
         &mut self,
@@ -381,21 +382,21 @@ impl Dispute {
     ) -> Result<(), ChallengeResponseError> {
         if responder_id != self.defender.id {
             return Err(ChallengeResponseError::NotAuthorized(
-                "Only defender can respond".into()
+                "Only defender can respond".into(),
             ));
         }
-        
+
         if self.is_expired() {
             self.state = DisputeState::Expired;
             return Err(ChallengeResponseError::ResponseTimeout);
         }
-        
+
         self.response_evidence = Some(evidence);
         self.transition_to(DisputeState::AwaitingArbitration)?;
-        
+
         Ok(())
     }
-    
+
     /// Start bisection protocol
     pub fn start_bisection(
         &mut self,
@@ -405,7 +406,7 @@ impl Dispute {
         upper_state: Hash,
     ) -> Result<(), ChallengeResponseError> {
         self.transition_to(DisputeState::Bisecting)?;
-        
+
         self.bisection = Some(BisectionState::new(
             lower_bound,
             upper_bound,
@@ -413,18 +414,18 @@ impl Dispute {
             upper_state,
             self.defender.id, // Defender goes first
         ));
-        
+
         // Extend deadline for bisection
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         self.response_deadline = now + RESPONSE_TIMEOUT_SECS;
-        
+
         Ok(())
     }
-    
+
     /// Submit bisection step
     pub fn submit_bisection_step(
         &mut self,
@@ -432,31 +433,36 @@ impl Dispute {
         midpoint_state: Hash,
         side: BisectionSide,
     ) -> Result<bool, ChallengeResponseError> {
-        let bisection = self.bisection.as_mut()
-            .ok_or(ChallengeResponseError::InvalidStateTransition(
-                "No bisection active".into()
-            ))?;
-        
-        if submitter_id != bisection.turn {
-            return Err(ChallengeResponseError::NotAuthorized(
-                "Not your turn".into()
-            ));
-        }
-        
+        // Check expiry first (before mutable borrow of bisection)
         if self.is_expired() {
             self.state = DisputeState::Expired;
             return Err(ChallengeResponseError::ResponseTimeout);
         }
-        
+
+        let bisection =
+            self.bisection
+                .as_mut()
+                .ok_or(ChallengeResponseError::InvalidStateTransition(
+                    "No bisection active".into(),
+                ))?;
+
+        if submitter_id != bisection.turn {
+            return Err(ChallengeResponseError::NotAuthorized(
+                "Not your turn".into(),
+            ));
+        }
+
         // Determine next party
         let other = if submitter_id == self.challenger.id {
             self.defender.id
         } else {
             self.challenger.id
         };
-        
+
         bisection.apply_choice(midpoint_state, side, other)?;
-        
+
+        let is_complete = bisection.is_complete();
+
         // Extend deadline
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -464,16 +470,16 @@ impl Dispute {
             .as_secs();
         self.response_deadline = now + RESPONSE_TIMEOUT_SECS;
         self.touch();
-        
+
         // Check if bisection is complete
-        if bisection.is_complete() {
+        if is_complete {
             self.transition_to(DisputeState::AwaitingArbitration)?;
             return Ok(true); // Ready for final arbitration
         }
-        
+
         Ok(false)
     }
-    
+
     /// Resolve the dispute
     pub fn resolve(
         &mut self,
@@ -486,10 +492,10 @@ impl Dispute {
         } else {
             (self.defender.clone(), self.challenger.clone())
         };
-        
+
         let slash_amount = loser.bond * SLASH_PERCENTAGE_BPS / 10000;
         let reward_amount = slash_amount / 2; // Half to winner, half burned
-        
+
         let result = DisputeResult {
             winner: winner.id,
             loser: loser.id,
@@ -498,46 +504,41 @@ impl Dispute {
             reason,
             finalized_block,
         };
-        
+
         self.result = Some(result.clone());
-        
+
         let new_state = if challenger_wins {
             DisputeState::ChallengerWon
         } else {
             DisputeState::DefenderWon
         };
-        
+
         self.transition_to(new_state)?;
-        
+
         Ok(result)
     }
 }
 
 /// Merkle proof verification
-pub fn verify_merkle_proof(
-    root: &Hash,
-    leaf: &Hash,
-    proof: &[Hash],
-    leaf_index: u64,
-) -> bool {
+pub fn verify_merkle_proof(root: &Hash, leaf: &Hash, proof: &[Hash], leaf_index: u64) -> bool {
     let mut current = *leaf;
     let mut index = leaf_index;
-    
+
     for sibling in proof {
         let mut hasher = blake3::Hasher::new();
-        
+
         if index % 2 == 0 {
-            hasher.update(&current);
-            hasher.update(sibling);
+            hasher.update(current.as_bytes());
+            hasher.update(sibling.as_bytes());
         } else {
-            hasher.update(sibling);
-            hasher.update(&current);
+            hasher.update(sibling.as_bytes());
+            hasher.update(current.as_bytes());
         }
-        
-        current = *hasher.finalize().as_bytes();
+
+        current = Hash::from(*hasher.finalize().as_bytes());
         index /= 2;
     }
-    
+
     current == *root
 }
 
@@ -558,7 +559,7 @@ impl EvidenceVerifier {
             Err(ChallengeResponseError::InvalidMerkleProof)
         }
     }
-    
+
     /// Verify double signature evidence
     pub fn verify_double_signature(
         message_a: &[u8],
@@ -568,39 +569,39 @@ impl EvidenceVerifier {
         public_key: &[u8; 32],
     ) -> Result<bool, ChallengeResponseError> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        
+
         // Parse key
-        let verifying_key = VerifyingKey::from_bytes(public_key)
-            .map_err(|e| ChallengeResponseError::InvalidEvidence(
-                format!("Invalid public key: {}", e)
-            ))?;
-        
+        let verifying_key = VerifyingKey::from_bytes(public_key).map_err(|e| {
+            ChallengeResponseError::InvalidEvidence(format!("Invalid public key: {}", e))
+        })?;
+
         // Parse signatures
-        let sig_a = Signature::from_slice(signature_a)
-            .map_err(|e| ChallengeResponseError::InvalidEvidence(
-                format!("Invalid signature A: {}", e)
-            ))?;
-        
-        let sig_b = Signature::from_slice(signature_b)
-            .map_err(|e| ChallengeResponseError::InvalidEvidence(
-                format!("Invalid signature B: {}", e)
-            ))?;
-        
+        let sig_a = Signature::from_slice(signature_a).map_err(|e| {
+            ChallengeResponseError::InvalidEvidence(format!("Invalid signature A: {}", e))
+        })?;
+
+        let sig_b = Signature::from_slice(signature_b).map_err(|e| {
+            ChallengeResponseError::InvalidEvidence(format!("Invalid signature B: {}", e))
+        })?;
+
         // Verify both signatures
         let valid_a = verifying_key.verify(message_a, &sig_a).is_ok();
         let valid_b = verifying_key.verify(message_b, &sig_b).is_ok();
-        
+
         // Both must be valid and messages must be different
         // for it to be a valid double-signing proof
         Ok(valid_a && valid_b && message_a != message_b)
     }
-    
+
     /// Verify general evidence
     pub fn verify_evidence(evidence: &Evidence) -> Result<(), ChallengeResponseError> {
         match evidence {
-            Evidence::MerkleProof { root, leaf, proof, leaf_index } => {
-                Self::verify_merkle_evidence(root, leaf, proof, *leaf_index)
-            }
+            Evidence::MerkleProof {
+                root,
+                leaf,
+                proof,
+                leaf_index,
+            } => Self::verify_merkle_evidence(root, leaf, proof, *leaf_index),
             Evidence::DoubleSignature {
                 message_a,
                 message_b,
@@ -618,16 +619,20 @@ impl EvidenceVerifier {
                     Ok(())
                 } else {
                     Err(ChallengeResponseError::InvalidEvidence(
-                        "Double signature verification failed".into()
+                        "Double signature verification failed".into(),
                     ))
                 }
             }
-            Evidence::TimestampProof { claimed_time, actual_time, .. } => {
+            Evidence::TimestampProof {
+                claimed_time,
+                actual_time,
+                ..
+            } => {
                 if actual_time != claimed_time {
                     Ok(()) // Timestamp mismatch proven
                 } else {
                     Err(ChallengeResponseError::InvalidEvidence(
-                        "Timestamps match, no violation".into()
+                        "Timestamps match, no violation".into(),
                     ))
                 }
             }
@@ -671,7 +676,7 @@ impl DisputeManager {
             total_slashed: AtomicU64::new(0),
         }
     }
-    
+
     /// Submit a new challenge
     pub fn submit_challenge(
         &self,
@@ -688,10 +693,10 @@ impl DisputeManager {
                 MIN_CHALLENGE_BOND,
             ));
         }
-        
+
         // Verify evidence is valid
         EvidenceVerifier::verify_evidence(&evidence)?;
-        
+
         let dispute = Dispute::new(
             target_id,
             target_type,
@@ -701,35 +706,34 @@ impl DisputeManager {
             0, // Defender bond collected later
             evidence,
         );
-        
+
         let id = dispute.id;
-        
+
         {
             let mut disputes = self.disputes.write();
             disputes.insert(id, dispute);
         }
-        
+
         {
             let mut by_target = self.by_target.write();
-            by_target.entry(target_id)
-                .or_insert_with(Vec::new)
-                .push(id);
+            by_target.entry(target_id).or_insert_with(Vec::new).push(id);
         }
-        
+
         Ok(id)
     }
-    
+
     /// Get dispute by ID
     pub fn get_dispute(&self, id: &[u8; 32]) -> Option<Dispute> {
         self.disputes.read().get(id).cloned()
     }
-    
+
     /// Get disputes for target
     pub fn get_disputes_for_target(&self, target_id: &[u8; 32]) -> Vec<Dispute> {
         let by_target = self.by_target.read();
         let disputes = self.disputes.read();
-        
-        by_target.get(target_id)
+
+        by_target
+            .get(target_id)
             .map(|ids| {
                 ids.iter()
                     .filter_map(|id| disputes.get(id).cloned())
@@ -737,7 +741,7 @@ impl DisputeManager {
             })
             .unwrap_or_default()
     }
-    
+
     /// Submit response to challenge
     pub fn submit_response(
         &self,
@@ -747,19 +751,20 @@ impl DisputeManager {
         evidence: Evidence,
     ) -> Result<(), ChallengeResponseError> {
         let mut disputes = self.disputes.write();
-        
-        let dispute = disputes.get_mut(&dispute_id)
+
+        let dispute = disputes
+            .get_mut(&dispute_id)
             .ok_or(ChallengeResponseError::ChallengeNotFound(dispute_id))?;
-        
+
         // Update defender bond
         dispute.defender.bond = responder_bond;
-        
+
         // Verify response evidence
         EvidenceVerifier::verify_evidence(&evidence)?;
-        
+
         dispute.submit_response(responder_id, evidence)
     }
-    
+
     /// Start bisection protocol
     pub fn start_bisection(
         &self,
@@ -770,13 +775,14 @@ impl DisputeManager {
         upper_state: Hash,
     ) -> Result<(), ChallengeResponseError> {
         let mut disputes = self.disputes.write();
-        
-        let dispute = disputes.get_mut(&dispute_id)
+
+        let dispute = disputes
+            .get_mut(&dispute_id)
             .ok_or(ChallengeResponseError::ChallengeNotFound(dispute_id))?;
-        
+
         dispute.start_bisection(lower_bound, upper_bound, lower_state, upper_state)
     }
-    
+
     /// Submit bisection step
     pub fn submit_bisection_step(
         &self,
@@ -786,13 +792,14 @@ impl DisputeManager {
         side: BisectionSide,
     ) -> Result<bool, ChallengeResponseError> {
         let mut disputes = self.disputes.write();
-        
-        let dispute = disputes.get_mut(&dispute_id)
+
+        let dispute = disputes
+            .get_mut(&dispute_id)
             .ok_or(ChallengeResponseError::ChallengeNotFound(dispute_id))?;
-        
+
         dispute.submit_bisection_step(submitter_id, midpoint_state, side)
     }
-    
+
     /// Arbitrate and resolve dispute
     pub fn arbitrate(
         &self,
@@ -803,27 +810,29 @@ impl DisputeManager {
     ) -> Result<DisputeResult, ChallengeResponseError> {
         let result = {
             let mut disputes = self.disputes.write();
-            
-            let dispute = disputes.get_mut(&dispute_id)
+
+            let dispute = disputes
+                .get_mut(&dispute_id)
                 .ok_or(ChallengeResponseError::ChallengeNotFound(dispute_id))?;
-            
+
             dispute.resolve(challenger_wins, reason, finalized_block)?
         };
-        
+
         // Update stats
         self.resolved_count.fetch_add(1, Ordering::Relaxed);
-        
+
         if challenger_wins {
             self.challenger_wins.fetch_add(1, Ordering::Relaxed);
         } else {
             self.defender_wins.fetch_add(1, Ordering::Relaxed);
         }
-        
-        self.total_slashed.fetch_add(result.slash_amount, Ordering::Relaxed);
-        
+
+        self.total_slashed
+            .fetch_add(result.slash_amount, Ordering::Relaxed);
+
         Ok(result)
     }
-    
+
     /// Check for expired disputes
     pub fn check_expired(&self) -> Vec<([u8; 32], DisputeResult)> {
         let mut expired = Vec::new();
@@ -831,9 +840,9 @@ impl DisputeManager {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let mut disputes = self.disputes.write();
-        
+
         for (id, dispute) in disputes.iter_mut() {
             if dispute.is_expired() && dispute.state == DisputeState::AwaitingResponse {
                 // Defender didn't respond - challenger wins
@@ -846,10 +855,10 @@ impl DisputeManager {
                 }
             }
         }
-        
+
         expired
     }
-    
+
     /// Get stats
     pub fn stats(&self) -> DisputeStats {
         DisputeStats {
@@ -887,48 +896,63 @@ impl AutomatedArbitrator {
         // Check if we can automatically resolve
         match (&dispute.challenge_evidence, &dispute.response_evidence) {
             // No response - challenger wins
-            (_, None) if dispute.is_expired() => {
-                Some((true, "No response within deadline".into()))
-            }
-            
+            (_, None) if dispute.is_expired() => Some((true, "No response within deadline".into())),
+
             // Merkle proof disputes
             (
-                Evidence::MerkleProof { root, leaf, proof, leaf_index },
-                Some(Evidence::MerkleProof { root: resp_root, .. }),
+                Evidence::MerkleProof {
+                    root,
+                    leaf,
+                    proof,
+                    leaf_index,
+                },
+                Some(Evidence::MerkleProof {
+                    root: resp_root, ..
+                }),
             ) => {
                 // Verify challenger's proof
                 let challenger_valid = verify_merkle_proof(root, leaf, proof, *leaf_index);
-                
+
                 if challenger_valid && root != resp_root {
-                    Some((true, "Challenger's merkle proof valid, root mismatch".into()))
+                    Some((
+                        true,
+                        "Challenger's merkle proof valid, root mismatch".into(),
+                    ))
                 } else if !challenger_valid {
                     Some((false, "Challenger's merkle proof invalid".into()))
                 } else {
                     None // Need manual review
                 }
             }
-            
+
             // Double signature - automatic if valid
             (Evidence::DoubleSignature { .. }, _) => {
                 // Already verified during submission
                 Some((true, "Double signature proven".into()))
             }
-            
+
             // Timestamp violations
             (
-                Evidence::TimestampProof { claimed_time, actual_time, .. },
+                Evidence::TimestampProof {
+                    claimed_time,
+                    actual_time,
+                    ..
+                },
                 _,
             ) => {
                 if claimed_time != actual_time {
-                    Some((true, format!(
-                        "Timestamp violation: claimed {} vs actual {}",
-                        claimed_time, actual_time
-                    )))
+                    Some((
+                        true,
+                        format!(
+                            "Timestamp violation: claimed {} vs actual {}",
+                            claimed_time, actual_time
+                        ),
+                    ))
                 } else {
                     Some((false, "No timestamp violation".into()))
                 }
             }
-            
+
             _ => None, // Requires manual/committee arbitration
         }
     }
@@ -937,19 +961,19 @@ impl AutomatedArbitrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn test_id(n: u8) -> [u8; 32] {
         let mut id = [0u8; 32];
         id[0] = n;
         id
     }
-    
+
     fn test_hash(n: u8) -> Hash {
         let mut h = [0u8; 32];
         h[0] = n;
         h
     }
-    
+
     #[test]
     fn test_merkle_proof_verification() {
         // Build a simple merkle tree
@@ -957,132 +981,133 @@ mod tests {
         let leaf1 = test_hash(1);
         let leaf2 = test_hash(2);
         let leaf3 = test_hash(3);
-        
+
         // Hash pairs
         let mut hasher = blake3::Hasher::new();
         hasher.update(&leaf0);
         hasher.update(&leaf1);
         let node01 = *hasher.finalize().as_bytes();
-        
+
         let mut hasher = blake3::Hasher::new();
         hasher.update(&leaf2);
         hasher.update(&leaf3);
         let node23 = *hasher.finalize().as_bytes();
-        
+
         let mut hasher = blake3::Hasher::new();
         hasher.update(&node01);
         hasher.update(&node23);
         let root = *hasher.finalize().as_bytes();
-        
+
         // Proof for leaf0: [leaf1, node23]
         let proof = vec![leaf1, node23];
-        
+
         assert!(verify_merkle_proof(&root, &leaf0, &proof, 0));
         assert!(!verify_merkle_proof(&root, &leaf0, &proof, 1)); // Wrong index
         assert!(!verify_merkle_proof(&root, &test_hash(99), &proof, 0)); // Wrong leaf
     }
-    
+
     #[test]
     fn test_dispute_lifecycle() {
         let manager = DisputeManager::new();
-        
+
         let target = test_id(1);
         let challenger = test_id(10);
         let defender = test_id(20);
-        
+
         // Submit challenge
         let evidence = Evidence::TimestampProof {
             claimed_time: 1000,
             actual_time: 2000,
             signed_claim: vec![1, 2, 3],
         };
-        
-        let dispute_id = manager.submit_challenge(
-            target,
-            "block".into(),
-            challenger,
-            MIN_CHALLENGE_BOND,
-            defender,
-            evidence,
-        ).unwrap();
-        
+
+        let dispute_id = manager
+            .submit_challenge(
+                target,
+                "block".into(),
+                challenger,
+                MIN_CHALLENGE_BOND,
+                defender,
+                evidence,
+            )
+            .unwrap();
+
         // Check dispute exists
         let dispute = manager.get_dispute(&dispute_id).unwrap();
         assert_eq!(dispute.state, DisputeState::Challenged);
-        
+
         // Submit response
         let response_evidence = Evidence::TimestampProof {
             claimed_time: 1000,
             actual_time: 1000, // Defender claims no violation
             signed_claim: vec![4, 5, 6],
         };
-        
-        manager.submit_response(
-            dispute_id,
-            defender,
-            MIN_CHALLENGE_BOND,
-            response_evidence,
-        ).unwrap();
-        
+
+        manager
+            .submit_response(dispute_id, defender, MIN_CHALLENGE_BOND, response_evidence)
+            .unwrap();
+
         // Dispute should be awaiting arbitration
         let dispute = manager.get_dispute(&dispute_id).unwrap();
         assert_eq!(dispute.state, DisputeState::AwaitingArbitration);
-        
+
         // Arbitrate
-        let result = manager.arbitrate(
-            dispute_id,
-            true, // Challenger wins
-            "Timestamp mismatch proven".into(),
-            100,
-        ).unwrap();
-        
+        let result = manager
+            .arbitrate(
+                dispute_id,
+                true, // Challenger wins
+                "Timestamp mismatch proven".into(),
+                100,
+            )
+            .unwrap();
+
         assert_eq!(result.winner, challenger);
         assert!(result.slash_amount > 0);
-        
+
         // Check stats
         let stats = manager.stats();
         assert_eq!(stats.total_resolved, 1);
         assert_eq!(stats.challenger_wins, 1);
     }
-    
+
     #[test]
     fn test_bisection_protocol() {
         let challenger = test_id(1);
         let defender = test_id(2);
-        
-        let mut bisection = BisectionState::new(
-            0,
-            1000,
-            test_hash(0),
-            test_hash(100),
-            defender,
-        );
-        
+
+        let mut bisection = BisectionState::new(0, 1000, test_hash(0), test_hash(100), defender);
+
         // Defender bisects
-        bisection.apply_choice(test_hash(50), BisectionSide::Upper, challenger).unwrap();
+        bisection
+            .apply_choice(test_hash(50), BisectionSide::Upper, challenger)
+            .unwrap();
         assert_eq!(bisection.lower_bound, 500);
         assert_eq!(bisection.upper_bound, 1000);
         assert_eq!(bisection.turn, challenger);
-        
+
         // Challenger bisects
-        bisection.apply_choice(test_hash(75), BisectionSide::Lower, defender).unwrap();
+        bisection
+            .apply_choice(test_hash(75), BisectionSide::Lower, defender)
+            .unwrap();
         assert_eq!(bisection.lower_bound, 500);
         assert_eq!(bisection.upper_bound, 750);
-        
+
         // Continue until completion
         while !bisection.is_complete() {
-            let other = if bisection.turn == challenger { defender } else { challenger };
-            bisection.apply_choice(
-                test_hash(bisection.round + 10),
-                BisectionSide::Lower,
-                other,
-            ).unwrap();
+            let other = if bisection.turn == challenger {
+                defender
+            } else {
+                challenger
+            };
+            bisection
+                .apply_choice(test_hash(bisection.round + 10), BisectionSide::Lower, other)
+                .unwrap();
         }
-        
+
         assert!(bisection.is_complete());
         assert!(bisection.upper_bound - bisection.lower_bound <= 1);
     }
-    
+
     #[test]
     fn test_automated_arbitration() {
         // Test timeout case
@@ -1099,20 +1124,20 @@ mod tests {
                 signed_claim: vec![],
             },
         );
-        
+
         // Simulate expiry
         dispute.response_deadline = 0;
-        
+
         let result = AutomatedArbitrator::arbitrate(&dispute);
         assert!(result.is_some());
         let (challenger_wins, _) = result.unwrap();
         assert!(challenger_wins);
     }
-    
+
     #[test]
     fn test_insufficient_bond_rejected() {
         let manager = DisputeManager::new();
-        
+
         let result = manager.submit_challenge(
             test_id(1),
             "test".into(),
@@ -1125,7 +1150,10 @@ mod tests {
                 signed_claim: vec![],
             },
         );
-        
-        assert!(matches!(result, Err(ChallengeResponseError::InsufficientBond(_, _))));
+
+        assert!(matches!(
+            result,
+            Err(ChallengeResponseError::InsufficientBond(_, _))
+        ));
     }
 }

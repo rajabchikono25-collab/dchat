@@ -28,14 +28,16 @@
 //! - Two-stage finality with automatic attack escalation
 
 use crate::block_hierarchy::Hash;
-use crate::hardened_consensus::{
-    AdmissionController, CommitteeSelector, EpochSnapshotManager,
-    EscalationLevel, EscalationPreset, FinalityStage, PoRWThresholdCalculator,
-    ShardedState, Snapshot, SnapshotStore, TwoStageFinality, VerificationPipeline,
-    VrfSeedDeriver, CommitteeMember, SignatureJob, VerificationResult,
-};
+#[cfg(feature = "hardened-consensus")]
 use crate::hardened_consensus::epoch_snapshot::Region as SnapshotRegion;
+#[cfg(feature = "hardened-consensus")]
 use crate::hardened_consensus::vrf_committees::GeographicRegion as VrfRegion;
+#[cfg(feature = "hardened-consensus")]
+use crate::hardened_consensus::{
+    AdmissionController, CommitteeMember, CommitteeSelector, EpochSnapshotManager, EscalationLevel,
+    EscalationPreset, FinalityStage, PoRWThresholdCalculator, ShardedState, SignatureJob, Snapshot,
+    SnapshotStore, TwoStageFinality, VerificationPipeline, VerificationResult, VrfSeedDeriver,
+};
 use ed25519_dalek::{Signature, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,7 @@ pub struct ProofOfRelayWork {
 }
 
 /// Hardened PoRW consensus engine with full mainnet integration
+#[cfg(feature = "hardened-consensus")]
 pub struct HardenedProofOfRelayWork {
     /// Epoch snapshot store for immutable threshold calculations
     snapshot_store: Arc<SnapshotStore>,
@@ -92,6 +95,7 @@ pub struct HardenedProofOfRelayWork {
 }
 
 /// Hardened block votes with VRF committee tracking
+#[cfg(feature = "hardened-consensus")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardenedBlockVotes {
     pub block_hash: Hash,
@@ -118,6 +122,7 @@ pub struct HardenedBlockVotes {
 }
 
 /// Hardened relay vote with VRF proof
+#[cfg(feature = "hardened-consensus")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardenedRelayVote {
     pub relay_id: [u8; 32],
@@ -141,6 +146,7 @@ pub struct HardenedRelayVote {
 }
 
 /// Serde module for [u8; 80] VRF proofs
+#[cfg(feature = "hardened-consensus")]
 mod vrf_proof_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -166,6 +172,7 @@ mod vrf_proof_serde {
 }
 
 /// Serde module for [u8; 64] signatures
+#[cfg(feature = "hardened-consensus")]
 mod signature_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -222,6 +229,7 @@ pub enum GeographicRegion {
     Oceania,
 }
 
+#[cfg(feature = "hardened-consensus")]
 impl GeographicRegion {
     /// Convert to snapshot region
     pub fn to_snapshot_region(&self) -> SnapshotRegion {
@@ -234,7 +242,7 @@ impl GeographicRegion {
             GeographicRegion::Oceania => SnapshotRegion::Oceania,
         }
     }
-    
+
     /// Convert from snapshot region
     pub fn from_snapshot_region(region: SnapshotRegion) -> Self {
         match region {
@@ -346,26 +354,27 @@ pub enum ConsensusError {
 
     #[error("Serialization failed")]
     SerializationError,
-    
+
     #[error("Not a committee member for this block")]
     NotCommitteeMember,
-    
+
     #[error("VRF proof verification failed")]
     InvalidVrfProof,
-    
+
     #[error("Epoch snapshot not available: {0}")]
     SnapshotNotAvailable(u64),
-    
+
     #[error("Admission denied: {0}")]
     AdmissionDenied(String),
-    
+
     #[error("Weight mismatch with epoch snapshot")]
     WeightMismatch,
-    
+
     #[error("Attack detected, escalated to level {0}")]
     AttackEscalation(u8),
 }
 
+#[cfg(feature = "hardened-consensus")]
 impl HardenedProofOfRelayWork {
     /// Create new hardened PoRW consensus engine
     pub fn new(
@@ -390,13 +399,13 @@ impl HardenedProofOfRelayWork {
             legacy: None,
         }
     }
-    
+
     /// Create with legacy fallback
     pub fn with_legacy(mut self, legacy: Arc<ProofOfRelayWork>) -> Self {
         self.legacy = Some(legacy);
         self
     }
-    
+
     /// Process new block and initialize vote collection
     pub fn process_block(
         &self,
@@ -405,23 +414,23 @@ impl HardenedProofOfRelayWork {
         parent_hash: &Hash,
     ) -> Result<Vec<[u8; 32]>, ConsensusError> {
         self.current_block.store(block_height, Ordering::Release);
-        
+
         // Check for epoch transition
         if let Some(new_epoch) = self.snapshot_store.process_block(block_height) {
             tracing::info!("PoRW: Epoch transition to {}", new_epoch);
         }
-        
+
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         // Derive VRF seed from finalized chain state
         let seed = self.derive_committee_seed(block_height, parent_hash)?;
-        
+
         // Select committee for this block
         let committee = self.select_committee(block_height, &seed)?;
-        
+
         // Extract committee member IDs
         let committee_members: Vec<[u8; 32]> = committee.iter().map(|m| m.id).collect();
-        
+
         // Initialize vote tracking
         let votes = HardenedBlockVotes {
             block_hash,
@@ -437,13 +446,13 @@ impl HardenedProofOfRelayWork {
             first_vote_time: None,
             quorum_time: None,
         };
-        
+
         self.sharded_votes.insert(block_hash, votes);
         self.finality_tracker.track_block(block_hash);
-        
+
         Ok(committee_members)
     }
-    
+
     /// Derive deterministic VRF seed from finalized chain state
     fn derive_committee_seed(
         &self,
@@ -451,10 +460,12 @@ impl HardenedProofOfRelayWork {
         parent_hash: &Hash,
     ) -> Result<[u8; 32], ConsensusError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| ConsensusError::SnapshotNotAvailable(epoch))?;
-        
+
         // Domain-separated seed derivation
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"dchat.porw.committee.v1");
@@ -462,10 +473,10 @@ impl HardenedProofOfRelayWork {
         hasher.update(parent_hash.as_bytes());
         hasher.update(&snapshot.merkle_root);
         hasher.update(&epoch.to_le_bytes());
-        
+
         Ok(*hasher.finalize().as_bytes())
     }
-    
+
     /// Select VRF committee for block
     fn select_committee(
         &self,
@@ -473,9 +484,11 @@ impl HardenedProofOfRelayWork {
         seed: &[u8; 32],
     ) -> Result<Vec<CommitteeMember>, ConsensusError> {
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| ConsensusError::SnapshotNotAvailable(epoch))?;
-        
+
         // Convert snapshot relays to committee candidates
         let candidates: Vec<([u8; 32], u64, VrfRegion)> = snapshot
             .relays
@@ -494,77 +507,84 @@ impl HardenedProofOfRelayWork {
                 (*id, r.normalized_weight_bps, region)
             })
             .collect();
-        
+
         if candidates.is_empty() {
             // Fallback: no relays in snapshot
             tracing::warn!("No active relays in epoch snapshot");
             return Ok(Vec::new());
         }
-        
-        self.committee_selector.select_committee(seed, &candidates)
+
+        self.committee_selector
+            .select_committee(seed, &candidates)
             .map_err(|e| ConsensusError::SerializationError)
     }
-    
+
     /// Submit vote from committee member
     pub fn submit_vote(&self, vote: HardenedRelayVote) -> Result<(), ConsensusError> {
         let block_height = self.current_block.load(Ordering::Acquire);
         let epoch = SnapshotStore::epoch_for_block(block_height);
-        
+
         // Get snapshot for weight verification
-        let snapshot = self.snapshot_store.get_for_threshold(block_height)
+        let snapshot = self
+            .snapshot_store
+            .get_for_threshold(block_height)
             .map_err(|_| ConsensusError::SnapshotNotAvailable(epoch))?;
-        
+
         // Verify voter weight matches snapshot
         let stored_weight = snapshot.get_relay_weight(&vote.relay_id);
         if stored_weight != vote.normalized_weight_bps {
             return Err(ConsensusError::WeightMismatch);
         }
-        
+
         // Queue signature for batch verification
         let job = crate::hardened_consensus::SignatureJob {
             message: vote.block_hash.as_bytes().to_vec(),
             signature: vote.signature.to_vec(),
             public_key: vote.relay_id.to_vec(),
-            metadata: Some(format!("porw-vote-{}", hex::encode(&vote.block_hash.as_bytes()[..8]))),
+            metadata: Some(format!(
+                "porw-vote-{}",
+                hex::encode(&vote.block_hash.as_bytes()[..8])
+            )),
         };
         self.batch_verifier.submit_ed25519(job);
-        
+
         // Get current escalation for threshold adjustment
         let preset = self.escalation_preset.read().clone();
         let adjusted_threshold_bps = preset.porw_threshold_bps;
-        
+
         // Update vote aggregation
         if let Some(mut votes) = self.sharded_votes.get_mut(&vote.block_hash) {
             // Check for double voting
             if votes.votes.iter().any(|v| v.relay_id == vote.relay_id) {
                 return Err(ConsensusError::DoubleVote);
             }
-            
+
             // Verify committee membership
             if !votes.committee_members.contains(&vote.relay_id) {
                 return Err(ConsensusError::NotCommitteeMember);
             }
-            
+
             // Record first vote time
             if votes.first_vote_time.is_none() {
                 votes.first_vote_time = Some(vote.timestamp);
             }
-            
+
             // Update weights
             if vote.approve {
                 votes.approve_weight_bps += vote.normalized_weight_bps;
             } else {
                 votes.reject_weight_bps += vote.normalized_weight_bps;
             }
-            
+
             // Update geographic representation
             if let Some(relay_state) = snapshot.relays.get(&vote.relay_id) {
                 let region = GeographicRegion::from_snapshot_region(relay_state.region);
-                *votes.geographic_representation.entry(region).or_insert(0) += vote.normalized_weight_bps;
+                *votes.geographic_representation.entry(region).or_insert(0) +=
+                    vote.normalized_weight_bps;
             }
-            
+
             votes.votes.push(vote);
-            
+
             // Check quorum using epoch snapshot total
             let quorum_result = self.threshold_calc.check_quorum_with_threshold(
                 votes.approve_weight_bps,
@@ -572,32 +592,39 @@ impl HardenedProofOfRelayWork {
                 snapshot.active_relay_count,
                 adjusted_threshold_bps,
             );
-            
+
             if quorum_result.quorum_reached && !votes.quorum_reached {
                 // Verify geographic diversity
-                let diverse_regions = votes.geographic_representation.iter()
+                let diverse_regions = votes
+                    .geographic_representation
+                    .iter()
                     .filter(|(_, w)| **w > 500) // At least 5% weight
                     .count();
-                
+
                 // Check no region dominates (max 40%)
-                let max_region_weight = votes.geographic_representation.values()
+                let max_region_weight = votes
+                    .geographic_representation
+                    .values()
                     .max()
                     .copied()
                     .unwrap_or(0);
-                
+
                 let region_dominance_ok = max_region_weight <= 4000; // 40%
-                
+
                 if diverse_regions >= self.geographic_diversity_required && region_dominance_ok {
                     votes.quorum_reached = true;
-                    votes.quorum_time = Some(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs());
-                    
+                    votes.quorum_time = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                    );
+
                     // Upgrade finality stage
                     votes.finality_stage = FinalityStage::Local;
-                    self.finality_tracker.upgrade_finality(&votes.block_hash, FinalityStage::Local);
-                    
+                    self.finality_tracker
+                        .upgrade_finality(&votes.block_hash, FinalityStage::Local);
+
                     tracing::info!(
                         "Block {} reached PoRW Local finality: {:.2}% approve, {} regions",
                         hex::encode(&votes.block_hash.as_bytes()[..8]),
@@ -607,24 +634,28 @@ impl HardenedProofOfRelayWork {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get finality stage for block
     pub fn get_finality(&self, block_hash: &Hash) -> FinalityStage {
-        self.finality_tracker.get_finality_stage(block_hash)
+        self.finality_tracker
+            .get_finality_stage(block_hash)
             .unwrap_or(FinalityStage::Pending)
     }
-    
+
     /// Check if block is finalized (Local or higher)
     pub fn is_finalized(&self, block_hash: &Hash) -> bool {
         matches!(
             self.get_finality(block_hash),
-            FinalityStage::Local | FinalityStage::Continental | FinalityStage::Global | FinalityStage::Deep
+            FinalityStage::Local
+                | FinalityStage::Continental
+                | FinalityStage::Global
+                | FinalityStage::Deep
         )
     }
-    
+
     /// Escalate thresholds due to detected attack
     pub fn escalate(&self, level: EscalationLevel) {
         let preset = match level {
@@ -634,21 +665,21 @@ impl HardenedProofOfRelayWork {
             EscalationLevel::Critical => EscalationPreset::critical(),
             EscalationLevel::Emergency => EscalationPreset::emergency(),
         };
-        
+
         *self.escalation_preset.write() = preset;
-        
+
         tracing::warn!(
             "PoRW escalated to {:?}: threshold now {}%",
             level,
             preset.porw_threshold_bps / 100
         );
     }
-    
+
     /// Get current escalation preset
     pub fn current_preset(&self) -> EscalationPreset {
         self.escalation_preset.read().clone()
     }
-    
+
     /// Flush batch verifications
     pub fn flush_verifications(&self) -> Vec<VerificationResult> {
         self.batch_verifier.flush()
@@ -1000,7 +1031,7 @@ mod tests {
         // Should fail due to lack of geographic diversity
         assert!(!porw.check_finality(&votes));
     }
-    
+
     #[test]
     fn test_region_conversion() {
         let region = GeographicRegion::Europe;
@@ -1009,4 +1040,3 @@ mod tests {
         assert_eq!(region, back);
     }
 }
-

@@ -22,6 +22,7 @@ pub mod admission_control;
 pub mod batch_verification;
 pub mod challenge_response;
 pub mod epoch_snapshot;
+#[cfg(feature = "hardened-consensus-integration")]
 pub mod integration;
 pub mod merkle_commitments;
 pub mod sharded_state;
@@ -35,6 +36,7 @@ pub use admission_control::*;
 pub use batch_verification::*;
 pub use challenge_response::*;
 pub use epoch_snapshot::*;
+#[cfg(feature = "hardened-consensus-integration")]
 pub use integration::*;
 pub use merkle_commitments::*;
 pub use sharded_state::*;

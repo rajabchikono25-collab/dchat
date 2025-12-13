@@ -12,7 +12,7 @@
 //! Security: Commitments are binding, challenges use unbiased VRF randomness
 
 use crate::block_hierarchy::Hash;
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -671,7 +671,7 @@ impl Default for CommitmentManager {
 /// PoRW-specific commitment helpers
 pub mod porw {
     use super::*;
-    use crate::proof_of_relay_work::DeliveryProof;
+    use crate::consensus_types::DeliveryProof;
 
     /// Create a commitment for PoRW delivery proofs from a relay for a miniblock
     pub fn create_delivery_proof_commitment(
