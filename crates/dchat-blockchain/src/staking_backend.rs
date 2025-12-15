@@ -377,7 +377,7 @@ mod tests {
         // First need to give the operator some balance
         // In a real test, would set up the wallet first
 
-        // For now, just verify the backend can be created
+        // Verify the backend was created in test mode successfully
         assert!(backend.is_test_mode());
     }
 

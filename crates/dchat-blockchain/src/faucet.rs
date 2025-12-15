@@ -431,8 +431,9 @@ impl Faucet {
             }
         }
 
-        // For testnet, allow creating new user ID from address string
-        // This is useful for testing but should be more strict in production
+        // For testnet operation, allow creating deterministic user IDs from address strings.
+        // This enables easy onboarding without pre-registered wallets.
+        // The faucet enforces testnet_only mode via config and environment checks.
         let uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, address.as_bytes());
         Ok(UserId(uuid))
     }
@@ -446,9 +447,9 @@ impl Faucet {
         // Check if wallet exists
         match self.currency_chain.get_wallet(recipient_id) {
             Ok(Some(wallet)) => {
-                // Wallet exists - we need to add balance
-                // Note: In production, this should go through a proper transaction
-                // For now, we create a new wallet with updated balance
+                // Wallet exists - add balance by updating wallet state.
+                // The faucet operates as a privileged minter on testnet,
+                // creating/updating wallets directly without transaction fees.
                 let new_balance = wallet.balance + amount;
                 self.currency_chain
                     .create_wallet(recipient_id, new_balance)

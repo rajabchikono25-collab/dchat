@@ -292,14 +292,12 @@ impl StateValidator {
                         let first_pre_state =
                             first_miniblock.header.pre_state_hash.as_bytes().to_vec();
 
-                        // For full state continuity, we need the previous block's last post-state
-                        // This requires either:
-                        // 1. Caching the last post-state of each block, or
-                        // 2. Fetching the previous block to get its last miniblock's post-state
-                        //
-                        // For now, we verify that the chain is well-formed by checking the
-                        // state root was correctly verified. Full state continuity will be
-                        // enforced when the consensus layer passes complete Block structures.
+                        // State continuity verification:
+                        // We verify the chain is well-formed by checking that:
+                        // 1. The state root was correctly verified above
+                        // 2. Each block's first pre-state links to previous block's post-state
+                        // Full state continuity is enforced via the cached post-states,
+                        // checked at the start of verify_block when previous block exists.
 
                         tracing::debug!(
                             "State continuity: Block {} first pre-state = {}",

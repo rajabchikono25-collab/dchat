@@ -1,0 +1,82 @@
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:3:use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:89:    /// Create new chat chain client with mock RPC for testing
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:90:    pub fn new_mock(config: ChatChainConfig) -> Self {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:91:        let rpc_client = MockRpcClient::new();
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:448:        let client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:461:        let client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:474:        let client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:493:        let client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:498:        // With MockRpcClient, transactions confirm immediately
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:506:        let client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\chat_chain.rs:525:        let mut client = ChatChainClient::new_mock(config);
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:350:/// Mock RPC client for testing (simulated responses)
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:351:pub struct MockRpcClient {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:356:impl MockRpcClient {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:366:impl ChainRpcClient for MockRpcClient {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:368:        // Generate mock transaction hash
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:402:        // Mock returns empty events - tests can override this behavior
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:411:        // Mock returns null result - specific tests can override
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:469:    /// Create a client with mock RPC for testing
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:470:    pub fn new_mock(config: BlockchainConfig) -> Self {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:471:        let rpc_client = MockRpcClient::new();
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:885:        let client = BlockchainClient::new_mock(BlockchainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:898:        let client = BlockchainClient::new_mock(BlockchainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:906:        // Note: wait_for_confirmation polls actual RPC which will fail in mock
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:915:        let client = BlockchainClient::new_mock(BlockchainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\client.rs:930:        let client = BlockchainClient::new_mock(BlockchainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:367:        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:369:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:389:        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:391:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:402:        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:404:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:434:        let chat_chain = Arc::new(ChatChainClient::new_mock(ChatChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\cross_chain.rs:436:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain_block_sync.rs:530:            // In production, this would use actual difficulty or stake weight
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:13:use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:534:    /// Create new currency chain client with mock RPC for testing
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:535:    pub fn new_mock(config: CurrencyChainConfig) -> Self {
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:536:        let rpc_client = MockRpcClient::new();
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2528:        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2536:        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2553:        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2568:        let mut client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2582:        let client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\currency_chain.rs:2612:        let mut client = CurrencyChainClient::new_mock(CurrencyChainConfig::default());
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:435:        // This is useful for testing but should be more strict in production
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:450:                // Note: In production, this should go through a proper transaction
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:451:                // For now, we create a new wallet with updated balance
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:602:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:637:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:663:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:715:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:726:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:738:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\faucet.rs:754:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\rpc.rs:15:    /// In production, this should be false to enforce HTTPS
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\rpc.rs:65:        // Enforce HTTPS in production (release builds with non-localhost URLs)
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking_backend.rs:372:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking_backend.rs:380:        // For now, just verify the backend can be created
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking_backend.rs:387:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking.rs:404:    /// SECURITY: These MUST be loaded from secure configuration in production
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking.rs:431:    /// PRODUCTION: Use this constructor in production to ensure all stake
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\staking.rs:905:    /// Use this instead of `claim_rewards()` in production code.
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\state_validation.rs:300:                        // For now, we verify that the chain is well-formed by checking the
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\tokenomics.rs:511:    /// Advance block (for simulation and testing)
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\watchtower.rs:920:            Arc::new(CurrencyChainClient::new_mock(CurrencyChainConfig::default()));
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\block_hierarchy\fraud_proofs.rs:147:        // In production, this would actually execute the transaction
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\block_hierarchy\fraud_proofs.rs:148:        // For now, we trust the correct_receipt if provided
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\block_hierarchy\fraud_proofs.rs:175:        // In production, this would verify the state transition is invalid
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\block_hierarchy\lane_sharding.rs:275:        // Simulate execution (in production, this would call WorldState)
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\block_hierarchy\subblock_certificates.rs:111:        // In production, this would use blst crate
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\batch_verification.rs:152:/// This function is used for creating ephemeral signing keys in production
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\integration.rs:398:        // (In production, verify the VRF proof cryptographically)
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\integration.rs:491:        // Create a placeholder verifying key for now - in production this would come from the
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\integration.rs:839:        // Create a placeholder verifying key - in production from submitter's identity
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\mod.rs:19://! consensus operations in production.
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\threshold_normalization.rs:606:        // Need to mutate through Arc - in production use Arc<RwLock<>>
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\threshold_normalization.rs:607:        // For now, we create a new finalized snapshot
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\transport_framing.rs:853:        // In production, this would verify the server's identity
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\hardened_consensus\two_stage_finality.rs:1024:            // In production, this would trigger chain reorganization
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\solana\client.rs:370:            .map_err(|e| Error::network(format!("Simulation failed: {}", e)))?;
+C:\Users\USER\dchat\dchat\crates\dchat-blockchain\src\solana\rpc.rs:157:        // Enforce HTTPS in production (release builds with non-localhost URLs)

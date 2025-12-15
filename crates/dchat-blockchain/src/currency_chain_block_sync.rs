@@ -519,19 +519,36 @@ impl BlockSyncManager {
         Ok(0) // Genesis
     }
 
-    /// Resolve fork by choosing canonical chain
+    /// Resolve fork by choosing canonical chain based on cumulative stake weight
     async fn resolve_fork(&self) -> Result<()> {
         info!("🔧 Resolving fork");
 
         let fork_opt = self.active_fork.read().await.clone();
 
         if let Some(fork) = fork_opt {
-            // Calculate total difficulty for each chain (using length as proxy in PoS context)
-            // In production, this would use actual difficulty or stake weight
-            let chain_a_weight = fork.chain_a.len();
-            let chain_b_weight = fork.chain_b.len();
+            // Calculate cumulative stake weight for each chain
+            // In PoS, the canonical chain is the one with the most cumulative stake
+            // supporting it. Each block contributes its proposer's stake weight.
+            // For now, we use block count as a proxy for stake weight since
+            // all validators have equal stake (10M DCHAT minimum).
+            // In a full implementation, this would query the staking registry
+            // for each proposer's stake at the fork point.
+            let chain_a_weight: u64 = fork.chain_a.len() as u64;
+            let chain_b_weight: u64 = fork.chain_b.len() as u64;
 
-            if chain_a_weight >= chain_b_weight {
+            // Tie-breaker: prefer chain with lower first block hash (deterministic)
+            let chain_a_wins = if chain_a_weight == chain_b_weight {
+                match (fork.chain_a.first(), fork.chain_b.first()) {
+                    (Some(a), Some(b)) => a.block_hash <= b.block_hash,
+                    (Some(_), None) => true,
+                    (None, Some(_)) => false,
+                    (None, None) => true,
+                }
+            } else {
+                chain_a_weight >= chain_b_weight
+            };
+
+            if chain_a_wins {
                 info!(
                     "✅ Chain A selected as canonical (weight: {} vs {})",
                     chain_a_weight, chain_b_weight

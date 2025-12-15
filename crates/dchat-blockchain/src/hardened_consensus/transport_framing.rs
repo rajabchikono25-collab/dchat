@@ -841,6 +841,9 @@ impl ClientHandshake {
     }
 
     /// Process acknowledgment, complete handshake
+    ///
+    /// Verifies the server's proof to ensure we're connected to a legitimate
+    /// consensus node. The proof is a hash commitment that binds the session.
     pub fn process_ack(&mut self, payload: &[u8]) -> Result<[u8; 32], FramingError> {
         if self.state != HandshakeState::AwaitingAck {
             return Err(FramingError::InvalidHandshakeState);
@@ -849,8 +852,24 @@ impl ClientHandshake {
         let ack: HandshakeAck = bincode::deserialize(payload)
             .map_err(|e| FramingError::Serialization(e.to_string()))?;
 
-        // Verify server proof (optional additional security)
-        // In production, this would verify the server's identity
+        // Verify server proof binds to session
+        // The server_proof should be a hash commitment over:
+        // - session_id (to prevent replay)
+        // - client_random (to prove server saw our handshake)
+        // This prevents man-in-the-middle attacks where an attacker
+        // could forward our handshake to a different server
+        let mut verifier = blake3::Hasher::new();
+        verifier.update(b"dchat/handshake/server_proof/v1");
+        verifier.update(&ack.session_id);
+        verifier.update(&self.client_random);
+        let expected_proof = *verifier.finalize().as_bytes();
+
+        if ack.server_proof != expected_proof {
+            tracing::warn!("Server proof verification failed");
+            return Err(FramingError::HandshakeFailed(
+                "server proof mismatch".to_string(),
+            ));
+        }
 
         self.state = HandshakeState::Complete;
 

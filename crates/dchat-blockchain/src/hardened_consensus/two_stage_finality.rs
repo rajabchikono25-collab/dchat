@@ -1020,11 +1020,22 @@ impl TwoStageFinality {
         // Check for expired challenges
         let expired = self.challenge_manager.check_expired();
         for challenge in expired {
-            // Expired challenges without response = block invalidated
-            // In production, this would trigger chain reorganization
+            // Expired challenges without response indicate the block is invalid
+            // Mark the block as needing reorganization by resetting to Pending
+            tracing::warn!(
+                "Challenge expired without response for block {}, triggering reorg",
+                challenge.block_number
+            );
+
+            // Update the block's finality status to trigger chain reorganization
+            if let Some(status) = statuses.get_mut(&challenge.block_number) {
+                status.stage = FinalityStage::Pending;
+                status.last_update = std::time::Instant::now();
+            }
+
             advancements.push((
                 challenge.block_number,
-                FinalityStage::Pending, // Roll back
+                FinalityStage::Pending, // Roll back finality
             ));
         }
 

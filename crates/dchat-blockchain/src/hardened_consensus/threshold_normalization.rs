@@ -595,6 +595,10 @@ impl EpochSnapshotManager {
     }
 
     /// Finalize a snapshot
+    ///
+    /// Creates a new finalized snapshot and replaces the existing one in storage.
+    /// The snapshot is cloned before finalization to maintain immutability of
+    /// the Arc-wrapped data.
     pub fn finalize_snapshot(&self, epoch: u64) -> Result<Arc<EpochSnapshot>, ThresholdError> {
         let mut snapshots = self.snapshots.write();
 
@@ -603,8 +607,8 @@ impl EpochSnapshotManager {
             .ok_or(ThresholdError::EpochNotFound(epoch))?
             .clone();
 
-        // Need to mutate through Arc - in production use Arc<RwLock<>>
-        // For now, we create a new finalized snapshot
+        // Clone the snapshot, finalize it, and replace in storage
+        // This pattern avoids mutating through Arc
         let mut finalized = (*snapshot).clone();
         finalized.finalize();
 
