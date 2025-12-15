@@ -2179,6 +2179,7 @@ dependencies = [
  "futures-util",
  "hex",
  "maxminddb",
+ "once_cell",
  "parking_lot 0.12.5",
  "pqcrypto-dilithium",
  "pqcrypto-traits",

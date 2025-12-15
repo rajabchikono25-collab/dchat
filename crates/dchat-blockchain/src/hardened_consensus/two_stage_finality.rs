@@ -1079,8 +1079,8 @@ impl TwoStageFinality {
         // The parent block number encodes the subblock index
         let subblock_number = parent_block_height * 100 + subblock_idx as u64;
 
-        // Register the subblock with its merkle root as hash
-        self.register_block(subblock_number, subblock.merkle_root)?;
+        // Register the subblock with its miniblock headers root as the commitment
+        self.register_block(subblock_number, subblock.miniblock_headers_root)?;
 
         Ok(())
     }

@@ -13,6 +13,10 @@
 use crate::user_management::{
     CreateChannelResponse, CreateUserResponse, DirectMessageResponse, UserProfile,
 };
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce,
+};
 use dchat_blockchain::{ChatChainClient, CrossChainBridge, CurrencyChainClient};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
@@ -22,6 +26,7 @@ use dchat_storage::provider::{
     BlobRef, MessageMetadata, MessageType, StorageRouter, StorageRouterConfig,
 };
 use dchat_storage::Database;
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
@@ -831,7 +836,7 @@ impl StorageRoutedUserManager {
 
         let key_path = user_key_dir.join(format!("{}.key", key_hash));
 
-        // Encrypt key material before storing (in production, use proper KDF)
+        // Encrypt key material using ChaCha20-Poly1305 AEAD with derived key
         let encrypted_key = self.encrypt_key_material(user_id, key_material)?;
 
         fs::write(&key_path, &encrypted_key).map_err(|e| {
@@ -925,28 +930,66 @@ impl StorageRoutedUserManager {
         Ok(())
     }
 
-    /// Encrypt key material using user-derived key
+    /// Encrypt key material using user-derived key with ChaCha20-Poly1305 AEAD
     fn encrypt_key_material(&self, user_id: &str, key_material: &[u8]) -> Result<Vec<u8>> {
-        // Derive encryption key from user ID (in production, use proper KDF with salt)
+        // Derive 32-byte encryption key using HKDF-like construction
         let mut hasher = Sha256::new();
-        hasher.update(b"dchat-key-encryption:");
+        hasher.update(b"dchat-key-encryption-v2:");
         hasher.update(user_id.as_bytes());
-        let derived_key = hasher.finalize();
+        // Add a salt to prevent rainbow table attacks
+        hasher.update(b"\\x00dchat-salt-2025\\x00");
+        let derived_key: [u8; 32] = hasher.finalize().into();
 
-        // Simple XOR encryption (in production, use ChaCha20-Poly1305 or similar)
-        let encrypted: Vec<u8> = key_material
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| b ^ derived_key[i % 32])
-            .collect();
+        // Create cipher with derived key
+        let cipher = ChaCha20Poly1305::new_from_slice(&derived_key)
+            .map_err(|e| Error::internal(format!("Failed to create cipher: {}", e)))?;
+
+        // Generate random 12-byte nonce
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // Encrypt with AEAD (includes authentication tag)
+        let ciphertext = cipher
+            .encrypt(nonce, key_material)
+            .map_err(|e| Error::internal(format!("Encryption failed: {}", e)))?;
+
+        // Prepend nonce to ciphertext: [12-byte nonce][ciphertext+tag]
+        let mut encrypted = Vec::with_capacity(12 + ciphertext.len());
+        encrypted.extend_from_slice(&nonce_bytes);
+        encrypted.extend_from_slice(&ciphertext);
 
         Ok(encrypted)
     }
 
-    /// Decrypt key material
+    /// Decrypt key material using ChaCha20-Poly1305 AEAD
     fn decrypt_key_material(&self, user_id: &str, encrypted: &[u8]) -> Result<Vec<u8>> {
-        // Same as encrypt (XOR is symmetric)
-        self.encrypt_key_material(user_id, encrypted)
+        // Minimum size: 12 (nonce) + 16 (auth tag) + 1 (at least 1 byte of data)
+        if encrypted.len() < 29 {
+            return Err(Error::internal("Encrypted data too short"));
+        }
+
+        // Derive same key as encryption
+        let mut hasher = Sha256::new();
+        hasher.update(b"dchat-key-encryption-v2:");
+        hasher.update(user_id.as_bytes());
+        hasher.update(b"\\x00dchat-salt-2025\\x00");
+        let derived_key: [u8; 32] = hasher.finalize().into();
+
+        // Create cipher
+        let cipher = ChaCha20Poly1305::new_from_slice(&derived_key)
+            .map_err(|e| Error::internal(format!("Failed to create cipher: {}", e)))?;
+
+        // Extract nonce (first 12 bytes) and ciphertext
+        let nonce = Nonce::from_slice(&encrypted[..12]);
+        let ciphertext = &encrypted[12..];
+
+        // Decrypt and verify authentication tag
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| Error::internal(format!("Decryption failed (tampering?): {}", e)))?;
+
+        Ok(plaintext)
     }
 
     // ==================== Blob Threshold Integration ====================

@@ -5301,7 +5301,9 @@ async fn run_validator_node(
             //   5. On StateValidationError::ByzantineFault: slash offending validator
             //   6. Periodically cleanup old state roots
 
-            use dchat_blockchain::block_hierarchy::{Hash as BlockHash, LaneId, MiniblockBody};
+            use dchat_blockchain::block_hierarchy::{
+                ExecutionContext, ExecutionEngine, Hash as BlockHash, LaneId, MiniblockBody,
+            };
             use dchat_blockchain::{Block, MerkleTree, Miniblock, StateValidationError, Subblock};
 
             let mut block_height = 0u64;
@@ -5309,6 +5311,9 @@ async fn run_validator_node(
 
             // World state for transaction execution
             let mut world_state = dchat_blockchain::WorldState::new();
+
+            // Execution engine for parallel transaction processing
+            let execution_engine = ExecutionEngine::new(true); // Enable parallel execution
 
             loop {
                 tokio::select! {
@@ -5335,7 +5340,7 @@ async fn run_validator_node(
                             let mut block = Block::new(block_height, prev_hash);
 
                             // Create subblock with miniblocks containing transactions
-                            let mut subblock = Subblock::new(0);
+                            let mut subblock = Subblock::new(block_height, 0);
                             let mut all_state_transitions: Vec<Vec<u8>> = Vec::new();
 
                             // Deterministically shard transactions by lane, then build one miniblock per lane.
@@ -5382,7 +5387,7 @@ async fn run_validator_node(
                                     receipts: Vec::new(),
                                 };
 
-                                let mut miniblock = match Miniblock::new(next_miniblock_index, lane, body) {
+                                let mut miniblock = match Miniblock::new(block_height, 0, next_miniblock_index, lane, body) {
                                     Ok(mb) => mb,
                                     Err(e) => {
                                         warn!("Failed to build miniblock lane={}: {:?}", lane_u16, e);
@@ -5390,9 +5395,38 @@ async fn run_validator_node(
                                     }
                                 };
 
-                                if let Err(e) = miniblock.execute(&mut world_state).await {
-                                    warn!("Miniblock execution failed lane={}: {:?}", lane_u16, e);
-                                    continue;
+                                // Capture pre-execution state root
+                                let pre_state_hash = world_state.compute_state_root();
+                                miniblock.header.pre_state_hash = pre_state_hash;
+
+                                // Create execution context for this miniblock
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
+                                let mut exec_ctx = ExecutionContext::new(
+                                    block_height,
+                                    timestamp,
+                                    miniblock.header.gas_limit,
+                                );
+
+                                // Execute miniblock transactions
+                                let receipts = match execution_engine.execute_miniblock(&miniblock, &mut world_state, &mut exec_ctx) {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        warn!("Miniblock execution failed lane={}: {:?}", lane_u16, e);
+                                        continue;
+                                    }
+                                };
+
+                                // Update miniblock with execution results
+                                let post_state_hash = world_state.compute_state_root();
+                                miniblock.header.post_state_hash = post_state_hash;
+                                miniblock.header.gas_used = exec_ctx.gas_used;
+
+                                // Store receipts in body
+                                if let Some(ref mut body) = miniblock.body {
+                                    body.receipts = receipts;
                                 }
 
                                 // Collect state transition for Merkle tree
@@ -5418,16 +5452,46 @@ async fn run_validator_node(
                                     transactions: Vec::new(),
                                     receipts: Vec::new(),
                                 };
-                                let mut miniblock = match Miniblock::new(0, LaneId(0), body) {
+                                let mut miniblock = match Miniblock::new(block_height, 0, 0, LaneId(0), body) {
                                     Ok(mb) => mb,
                                     Err(e) => {
                                         warn!("Failed to build empty miniblock: {:?}", e);
                                         continue;
                                     }
                                 };
-                                if let Err(e) = miniblock.execute(&mut world_state).await {
-                                    warn!("Empty miniblock execution failed: {:?}", e);
-                                    continue;
+
+                                // Capture pre-execution state root (even for empty miniblock)
+                                let pre_state_hash = world_state.compute_state_root();
+                                miniblock.header.pre_state_hash = pre_state_hash;
+
+                                // Create execution context
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
+                                let mut exec_ctx = ExecutionContext::new(
+                                    block_height,
+                                    timestamp,
+                                    miniblock.header.gas_limit,
+                                );
+
+                                // Execute (empty miniblock produces no receipts but maintains state consistency)
+                                let receipts = match execution_engine.execute_miniblock(&miniblock, &mut world_state, &mut exec_ctx) {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        warn!("Empty miniblock execution failed: {:?}", e);
+                                        continue;
+                                    }
+                                };
+
+                                // Update miniblock with execution results
+                                let post_state_hash = world_state.compute_state_root();
+                                miniblock.header.post_state_hash = post_state_hash;
+                                miniblock.header.gas_used = exec_ctx.gas_used;
+
+                                // Store receipts in body
+                                if let Some(ref mut body) = miniblock.body {
+                                    body.receipts = receipts;
                                 }
 
                                 let mut transition = Vec::new();

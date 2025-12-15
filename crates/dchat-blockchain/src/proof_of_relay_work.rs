@@ -40,9 +40,12 @@ use crate::hardened_consensus::{
     VrfSeedDeriver,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
-use parking_lot::{Mutex, RwLock};
+#[cfg(feature = "hardened-consensus")]
+use parking_lot::Mutex;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(feature = "hardened-consensus")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

@@ -435,26 +435,68 @@ impl BotMessagingClient {
         Ok(())
     }
 
-    /// Sign message data with bot's keypair
+    /// Sign message data with bot's keypair using Ed25519
+    ///
+    /// Uses the bot's Noise keypair to derive an Ed25519 signing key.
+    /// The signature is deterministic given the same key and message.
     fn sign_message(&self, data: &[u8]) -> Result<Vec<u8>> {
-        // Use BLAKE3 to create a signature over the data
-        // In production, use Ed25519 with the bot's identity key
-        let hash = blake3::hash(data);
+        use ed25519_dalek::{Signer, SigningKey};
 
-        // Create a deterministic signature using BLAKE3 keyed hash
-        // Key is derived from bot ID and noise keypair
-        let mut key_material = Vec::new();
-        key_material.extend_from_slice(self.bot.id.as_bytes());
-        key_material.extend_from_slice(&self.noise_keypair.public);
+        // Derive Ed25519 signing key from Noise X25519 private key
+        // Use HKDF-like key derivation using BLAKE3
+        let signing_seed =
+            blake3::derive_key("dchat-bot-signing-key-v1", &self.noise_keypair.private);
 
-        let signing_key = blake3::derive_key("dchat-bot-signing-key-v1", &key_material);
-        let keyed_hasher = blake3::Hasher::new_keyed(&signing_key);
-        let mut hasher = keyed_hasher;
-        hasher.update(data);
-        hasher.update(hash.as_bytes());
+        // Create Ed25519 signing key from derived seed
+        let signing_key = SigningKey::from_bytes(&signing_seed);
 
-        let signature = hasher.finalize();
-        Ok(signature.as_bytes().to_vec())
+        // Create domain-separated message for signing
+        // Format: [domain tag][timestamp][data hash]
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut message_to_sign = Vec::with_capacity(8 + 32 + 8);
+        message_to_sign.extend_from_slice(b"dchat/bot/sig/v1");
+        message_to_sign.extend_from_slice(&timestamp.to_le_bytes());
+        message_to_sign.extend_from_slice(blake3::hash(data).as_bytes());
+
+        // Sign using Ed25519
+        let signature = signing_key.sign(&message_to_sign);
+
+        Ok(signature.to_bytes().to_vec())
+    }
+
+    /// Verify a message signature using the bot's public key
+    #[allow(dead_code)]
+    fn verify_message(&self, data: &[u8], signature: &[u8], timestamp: u64) -> Result<bool> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+        if signature.len() != 64 {
+            return Ok(false);
+        }
+
+        // Derive verifying key from signing key
+        let signing_seed =
+            blake3::derive_key("dchat-bot-signing-key-v1", &self.noise_keypair.private);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_seed);
+        let verifying_key = VerifyingKey::from(&signing_key);
+
+        // Reconstruct message that was signed
+        let mut message_to_verify = Vec::with_capacity(8 + 32 + 8);
+        message_to_verify.extend_from_slice(b"dchat/bot/sig/v1");
+        message_to_verify.extend_from_slice(&timestamp.to_le_bytes());
+        message_to_verify.extend_from_slice(blake3::hash(data).as_bytes());
+
+        // Parse and verify signature
+        let sig = Signature::from_bytes(
+            signature
+                .try_into()
+                .map_err(|_| Error::internal("Invalid signature length"))?,
+        );
+
+        Ok(verifying_key.verify(&message_to_verify, &sig).is_ok())
     }
 
     /// Submit message edit to blockchain

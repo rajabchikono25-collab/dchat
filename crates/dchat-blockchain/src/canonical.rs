@@ -5,6 +5,7 @@ use serde::Serialize;
 
 pub const DOMAIN_SEP_MINIBLOCK_HEADER_HASH_V1: &[u8] = b"dchat/miniblock/header_hash/v1";
 pub const DOMAIN_SEP_TX_LEAF_V1: &[u8] = b"dchat/miniblock/tx_leaf/v1";
+pub const DOMAIN_SEP_TX_V1: &[u8] = b"dchat/tx/v1";
 pub const DOMAIN_SEP_RECEIPT_LEAF_V1: &[u8] = b"dchat/miniblock/receipt_leaf/v1";
 pub const DOMAIN_SEP_MERKLE_NODE_V1: &[u8] = b"dchat/merkle/node/v1";
 pub const DOMAIN_SEP_DA_CHUNK_LEAF_V1: &[u8] = b"dchat/da/chunk_leaf/v1";
