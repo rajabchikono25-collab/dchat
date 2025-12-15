@@ -1001,8 +1001,11 @@ mod tests {
     #[test]
     fn test_weight_cap() {
         let mut relays = create_test_relays(20);
+        let original_total_raw: u64 = relays.iter().map(|r| r.raw_weight).sum();
+
         // Make one relay have 50% of weight (should be capped)
         relays[0].raw_weight = 100000;
+        let modified_total_raw: u64 = relays.iter().map(|r| r.raw_weight).sum();
 
         let mut seed_deriver = VrfSeedDeriver::new(6);
         for i in 0..10 {
@@ -1011,11 +1014,32 @@ mod tests {
 
         let selector = CommitteeSelector::new(relays, seed_deriver, 15);
 
-        // Verify weight was capped
-        let max_weight = selector.total_weight * MAX_RELAY_WEIGHT_BPS / 10000;
+        // Verify weight was capped: max_weight is calculated from the original raw total
+        // before capping was applied, so we need to check that the largest weight
+        // is now <= the cap that was applied during construction
+        let max_weight = modified_total_raw * MAX_RELAY_WEIGHT_BPS / 10000;
+
         for relay in &selector.eligible_relays {
-            assert!(relay.raw_weight <= max_weight);
+            assert!(
+                relay.raw_weight <= max_weight,
+                "Relay weight {} exceeds max {}",
+                relay.raw_weight,
+                max_weight
+            );
         }
+
+        // Also verify that the whale's weight was actually reduced
+        let whale_capped_weight = selector
+            .eligible_relays
+            .iter()
+            .max_by_key(|r| r.raw_weight)
+            .unwrap()
+            .raw_weight;
+        assert!(
+            whale_capped_weight < 100000,
+            "Whale weight should have been capped from 100000 to {}",
+            whale_capped_weight
+        );
     }
 
     #[test]

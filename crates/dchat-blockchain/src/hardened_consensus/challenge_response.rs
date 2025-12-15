@@ -350,6 +350,7 @@ impl Dispute {
     pub fn transition_to(&mut self, new_state: DisputeState) -> Result<(), ChallengeResponseError> {
         let valid = match (self.state, new_state) {
             (DisputeState::Challenged, DisputeState::AwaitingResponse) => true,
+            (DisputeState::Challenged, DisputeState::AwaitingArbitration) => true, // Direct response
             (DisputeState::Challenged, DisputeState::Cancelled) => true,
             (DisputeState::AwaitingResponse, DisputeState::Bisecting) => true,
             (DisputeState::AwaitingResponse, DisputeState::AwaitingArbitration) => true,
@@ -1039,11 +1040,12 @@ mod tests {
         let dispute = manager.get_dispute(&dispute_id).unwrap();
         assert_eq!(dispute.state, DisputeState::Challenged);
 
-        // Submit response
-        let response_evidence = Evidence::TimestampProof {
-            claimed_time: 1000,
-            actual_time: 1000, // Defender claims no violation
-            signed_claim: vec![4, 5, 6],
+        // Submit response - use StateTransitionProof which is verified during arbitration
+        let response_evidence = Evidence::StateTransitionProof {
+            pre_state_root: test_hash(0),
+            post_state_root: test_hash(1),
+            transition_data: vec![4, 5, 6],
+            witness: vec![7, 8, 9],
         };
 
         manager

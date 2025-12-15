@@ -1030,18 +1030,21 @@ mod tests {
             UserId(Uuid::new_v4()),
             sender_key,
             receiver_key,
-            1_000_000,
+            MIN_CHANNEL_CAPACITY,
         )
         .unwrap();
 
         // Create payment
-        let update = channel.create_payment(100_000, &sender_signing).unwrap();
+        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
 
         // Apply update
         channel.update_state(update).unwrap();
 
-        assert_eq!(channel.current_state.sender_balance, 900_000);
-        assert_eq!(channel.current_state.receiver_balance, 100_000);
+        assert_eq!(
+            channel.current_state.sender_balance,
+            MIN_CHANNEL_CAPACITY - 1_000_000
+        );
+        assert_eq!(channel.current_state.receiver_balance, 1_000_000);
         assert_eq!(channel.current_state.nonce, 1);
     }
 
@@ -1055,19 +1058,19 @@ mod tests {
             UserId(Uuid::new_v4()),
             sender_key,
             receiver_key,
-            1_000_000,
+            MIN_CHANNEL_CAPACITY,
         )
         .unwrap();
 
         // First update succeeds
-        let update1 = channel.create_payment(100_000, &sender_signing).unwrap();
+        let update1 = channel.create_payment(1_000_000, &sender_signing).unwrap();
         channel.update_state(update1).unwrap();
 
         // Create update with same nonce (should fail)
         let state = ChannelState {
             nonce: 1, // Same as current
-            sender_balance: 800_000,
-            receiver_balance: 200_000,
+            sender_balance: MIN_CHANNEL_CAPACITY - 2_000_000,
+            receiver_balance: 2_000_000,
         };
         let update2 =
             SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
@@ -1086,15 +1089,15 @@ mod tests {
             UserId(Uuid::new_v4()),
             sender_key,
             receiver_key,
-            1_000_000,
+            MIN_CHANNEL_CAPACITY,
         )
         .unwrap();
 
         // Create state that violates balance invariant
         let state = ChannelState {
             nonce: 1,
-            sender_balance: 800_000,
-            receiver_balance: 300_000, // Total = 1,100,000 != capacity
+            sender_balance: MIN_CHANNEL_CAPACITY - 1_000_000,
+            receiver_balance: 2_000_000, // Total != capacity
         };
         let update =
             SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
@@ -1116,18 +1119,21 @@ mod tests {
                 UserId(Uuid::new_v4()),
                 sender_key,
                 receiver_key,
-                1_000_000,
+                MIN_CHANNEL_CAPACITY,
             )
             .unwrap();
 
         let channel_id = channel.channel_id.clone();
 
         // Create and apply update
-        let update = channel.create_payment(100_000, &sender_signing).unwrap();
+        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
         manager.update_channel_state(&channel_id, update).unwrap();
 
         let updated = manager.get_channel(&channel_id).unwrap();
-        assert_eq!(updated.current_state.sender_balance, 900_000);
+        assert_eq!(
+            updated.current_state.sender_balance,
+            MIN_CHANNEL_CAPACITY - 1_000_000
+        );
     }
 
     #[test]
@@ -1146,12 +1152,12 @@ mod tests {
                 receiver_id.clone(),
                 sender_key,
                 receiver_key,
-                1_000_000,
+                MIN_CHANNEL_CAPACITY,
             )
             .unwrap();
 
         // Create a payment first
-        let update = channel.create_payment(100_000, &sender_signing).unwrap();
+        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
         manager
             .update_channel_state(&channel.channel_id, update.clone())
             .unwrap();
@@ -1182,15 +1188,15 @@ mod tests {
                 UserId(Uuid::new_v4()),
                 sender_key,
                 receiver_key,
-                1_000_000,
+                MIN_CHANNEL_CAPACITY,
             )
             .unwrap();
 
         // Create bilateral state
         let state = ChannelState {
             nonce: 1,
-            sender_balance: 700_000,
-            receiver_balance: 300_000,
+            sender_balance: MIN_CHANNEL_CAPACITY - 3_000_000,
+            receiver_balance: 3_000_000,
         };
         let mut update =
             SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
@@ -1203,8 +1209,8 @@ mod tests {
             .cooperative_close(&channel.channel_id, update)
             .unwrap();
 
-        assert_eq!(sender_balance, 700_000);
-        assert_eq!(receiver_balance, 300_000);
+        assert_eq!(sender_balance, MIN_CHANNEL_CAPACITY - 3_000_000);
+        assert_eq!(receiver_balance, 3_000_000);
 
         // Verify channel is closed
         let ch = manager.get_channel(&channel.channel_id).unwrap();
