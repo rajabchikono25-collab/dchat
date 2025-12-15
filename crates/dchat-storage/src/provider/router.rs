@@ -148,8 +148,7 @@ pub struct StorageRouter {
     selector: ProviderSelector,
     /// Challenge manager
     challenge_manager: Option<Arc<StorageChallengeManager>>,
-    /// HTTP client for S3/IPFS operations (reserved for IPFS gateway access)
-    #[allow(dead_code)]
+    /// HTTP client for IPFS gateway operations
     http_client: reqwest::Client,
     /// Local blob cache
     blob_cache: Arc<RwLock<HashMap<[u8; 32], Vec<u8>>>>,
@@ -537,17 +536,42 @@ impl StorageRouter {
 
         let selection = self.selector.select_providers(&criteria).await?;
 
-        // Upload to each selected provider
+        // Upload to each selected provider (S3 primary)
         for provider in selection
             .primary_providers
             .iter()
             .chain(selection.backup_providers.iter())
         {
+            // Upload to S3 (primary storage)
             match self
                 .upload_to_provider(&provider.provider, &content, &blob_ref)
                 .await
             {
-                Ok(location) => {
+                Ok(mut location) => {
+                    // Also pin to IPFS if provider supports it
+                    if provider.provider.capabilities.ipfs_pinning.is_some() {
+                        match self
+                            .upload_to_ipfs(&provider.provider, &content, &blob_ref)
+                            .await
+                        {
+                            Ok(ipfs_location) => {
+                                // Merge IPFS CID into S3 location for hybrid access
+                                location.ipfs_cid = ipfs_location.ipfs_cid;
+                                info!(
+                                    "Blob {} also pinned to IPFS via provider {}",
+                                    blob_ref.hash_hex(),
+                                    hex::encode(provider.provider.id)
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "IPFS pinning failed for blob {} (S3 succeeded): {}",
+                                    blob_ref.hash_hex(),
+                                    e
+                                );
+                            }
+                        }
+                    }
                     blob_ref.add_location(location);
                 }
                 Err(e) => {
@@ -582,10 +606,11 @@ impl StorageRouter {
         }
 
         info!(
-            "Stored blob {} ({} bytes) to {} providers",
+            "Stored blob {} ({} bytes) to {} providers (IPFS: {})",
             blob_ref.hash_hex(),
             blob_ref.size,
-            blob_ref.locations.len()
+            blob_ref.locations.len(),
+            blob_ref.has_ipfs()
         );
 
         Ok(blob_ref)
@@ -654,6 +679,247 @@ impl StorageRouter {
         };
 
         Ok(location)
+    }
+
+    /// Upload blob to IPFS via HTTP API using http_client
+    /// Returns the CID (Content Identifier) of the pinned content
+    async fn upload_to_ipfs(
+        &self,
+        provider: &RegisteredProvider,
+        content: &[u8],
+        blob_ref: &BlobRef,
+    ) -> StorageResult<BlobLocation> {
+        let ipfs_cap =
+            provider.capabilities.ipfs_pinning.as_ref().ok_or_else(|| {
+                StorageError::Provider("Provider does not support IPFS".to_string())
+            })?;
+
+        // Check size limits
+        if content.len() as u64 > ipfs_cap.max_pin_size {
+            return Err(StorageError::Provider(format!(
+                "Content size {} exceeds IPFS max pin size {}",
+                content.len(),
+                ipfs_cap.max_pin_size
+            )));
+        }
+
+        // Build multipart form for IPFS add
+        let form = reqwest::multipart::Form::new().part(
+            "file",
+            reqwest::multipart::Part::bytes(content.to_vec())
+                .file_name(blob_ref.hash_hex())
+                .mime_str(&blob_ref.mime_type)
+                .map_err(|e| StorageError::Internal(e.to_string()))?,
+        );
+
+        // Determine API endpoint based on pinning API type
+        let add_url = match ipfs_cap.pinning_api {
+            super::capabilities::PinningApiType::Standard => {
+                format!(
+                    "{}/api/v0/add?pin=true&cid-version=1",
+                    ipfs_cap.api_endpoint
+                )
+            }
+            super::capabilities::PinningApiType::PinningServicesApi => {
+                format!("{}/pins", ipfs_cap.api_endpoint)
+            }
+            super::capabilities::PinningApiType::Pinata => {
+                format!("{}/pinning/pinFileToIPFS", ipfs_cap.api_endpoint)
+            }
+            super::capabilities::PinningApiType::Infura => {
+                format!("{}/api/v0/add?pin=true", ipfs_cap.api_endpoint)
+            }
+            super::capabilities::PinningApiType::Web3Storage => {
+                format!("{}/upload", ipfs_cap.api_endpoint)
+            }
+        };
+
+        // Build request with auth
+        let mut request = self.http_client.post(&add_url).multipart(form);
+
+        // Add authentication header if token provided
+        if !ipfs_cap.auth_token.is_empty() {
+            match ipfs_cap.pinning_api {
+                super::capabilities::PinningApiType::Pinata => {
+                    request =
+                        request.header("Authorization", format!("Bearer {}", ipfs_cap.auth_token));
+                }
+                super::capabilities::PinningApiType::Web3Storage => {
+                    request =
+                        request.header("Authorization", format!("Bearer {}", ipfs_cap.auth_token));
+                }
+                super::capabilities::PinningApiType::Infura => {
+                    // Infura uses project_id:project_secret as basic auth
+                    request =
+                        request.header("Authorization", format!("Basic {}", ipfs_cap.auth_token));
+                }
+                _ => {
+                    request =
+                        request.header("Authorization", format!("Bearer {}", ipfs_cap.auth_token));
+                }
+            }
+        }
+
+        // Execute request
+        let response = request
+            .send()
+            .await
+            .map_err(|e| StorageError::ObjectStorage(format!("IPFS upload failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(StorageError::ObjectStorage(format!(
+                "IPFS upload failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        // Parse response to get CID
+        let body = response.text().await.map_err(|e| {
+            StorageError::ObjectStorage(format!("Failed to read IPFS response: {}", e))
+        })?;
+
+        // Standard IPFS returns: {"Name":"...","Hash":"Qm...","Size":"..."}
+        // Parse CID from response
+        let cid = self.parse_ipfs_cid_response(&body, ipfs_cap.pinning_api)?;
+
+        info!(
+            "Blob {} pinned to IPFS as CID {} via provider {}",
+            blob_ref.hash_hex(),
+            cid,
+            hex::encode(provider.id)
+        );
+
+        // Create location with IPFS CID
+        let location = BlobLocation {
+            provider_id: provider.id,
+            s3_key: None,
+            s3_bucket: None,
+            ipfs_cid: Some(cid),
+            archive_key: None,
+            storage_class: StorageClass::Standard,
+            region: None, // IPFS is location-agnostic
+            status: LocationStatus::Healthy,
+            created_at: Utc::now(),
+            last_accessed: Some(Utc::now()),
+            last_challenged: None,
+            failed_challenges: 0,
+        };
+
+        Ok(location)
+    }
+
+    /// Parse CID from IPFS API response based on API type
+    fn parse_ipfs_cid_response(
+        &self,
+        body: &str,
+        api_type: super::capabilities::PinningApiType,
+    ) -> StorageResult<String> {
+        match api_type {
+            super::capabilities::PinningApiType::Standard
+            | super::capabilities::PinningApiType::Infura => {
+                // Standard IPFS: {"Name":"file","Hash":"Qm...","Size":"123"}
+                #[derive(Deserialize)]
+                struct IpfsAddResponse {
+                    #[serde(rename = "Hash")]
+                    hash: String,
+                }
+                let resp: IpfsAddResponse = serde_json::from_str(body)
+                    .map_err(|e| StorageError::Internal(format!("Invalid IPFS response: {}", e)))?;
+                Ok(resp.hash)
+            }
+            super::capabilities::PinningApiType::PinningServicesApi => {
+                // PSA: {"requestid":"...","status":"pinned","pin":{"cid":"bafy..."}}
+                #[derive(Deserialize)]
+                struct PsaPin {
+                    cid: String,
+                }
+                #[derive(Deserialize)]
+                struct PsaResponse {
+                    pin: PsaPin,
+                }
+                let resp: PsaResponse = serde_json::from_str(body)
+                    .map_err(|e| StorageError::Internal(format!("Invalid PSA response: {}", e)))?;
+                Ok(resp.pin.cid)
+            }
+            super::capabilities::PinningApiType::Pinata => {
+                // Pinata: {"IpfsHash":"Qm...","PinSize":123,"Timestamp":"..."}
+                #[derive(Deserialize)]
+                struct PinataResponse {
+                    #[serde(rename = "IpfsHash")]
+                    ipfs_hash: String,
+                }
+                let resp: PinataResponse = serde_json::from_str(body).map_err(|e| {
+                    StorageError::Internal(format!("Invalid Pinata response: {}", e))
+                })?;
+                Ok(resp.ipfs_hash)
+            }
+            super::capabilities::PinningApiType::Web3Storage => {
+                // Web3.Storage: {"cid":"bafy...","carCid":"..."}
+                #[derive(Deserialize)]
+                struct Web3Response {
+                    cid: String,
+                }
+                let resp: Web3Response = serde_json::from_str(body).map_err(|e| {
+                    StorageError::Internal(format!("Invalid Web3.Storage response: {}", e))
+                })?;
+                Ok(resp.cid)
+            }
+        }
+    }
+
+    /// Download blob from IPFS via gateway using http_client
+    async fn download_from_ipfs(&self, location: &BlobLocation) -> StorageResult<Vec<u8>> {
+        let cid = location
+            .ipfs_cid
+            .as_ref()
+            .ok_or_else(|| StorageError::NotFound("Location missing IPFS CID".to_string()))?;
+
+        // Get provider's gateway URL
+        let provider = self
+            .registry
+            .get_provider(&location.provider_id)
+            .await?
+            .ok_or_else(|| StorageError::NotFound("Provider not found".to_string()))?;
+
+        let ipfs_cap =
+            provider.capabilities.ipfs_pinning.as_ref().ok_or_else(|| {
+                StorageError::Provider("Provider does not support IPFS".to_string())
+            })?;
+
+        // Construct gateway URL
+        let gateway_url = format!(
+            "{}/ipfs/{}",
+            ipfs_cap.gateway_url.trim_end_matches('/'),
+            cid
+        );
+
+        debug!("Downloading from IPFS gateway: {}", gateway_url);
+
+        // Download via HTTP
+        let response = self
+            .http_client
+            .get(&gateway_url)
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| StorageError::ObjectStorage(format!("IPFS download failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(StorageError::ObjectStorage(format!(
+                "IPFS gateway returned status {}",
+                response.status()
+            )));
+        }
+
+        let content = response.bytes().await.map_err(|e| {
+            StorageError::ObjectStorage(format!("Failed to read IPFS response: {}", e))
+        })?;
+
+        info!("Downloaded {} bytes from IPFS CID {}", content.len(), cid);
+
+        Ok(content.to_vec())
     }
 
     /// Persist blob ref to CockroachDB
@@ -799,8 +1065,31 @@ impl StorageRouter {
         })
     }
 
-    /// Download blob from a location
+    /// Download blob from a location (S3 or IPFS)
     async fn download_from_location(&self, location: &BlobLocation) -> StorageResult<Vec<u8>> {
+        // Try IPFS first if CID is available
+        if location.ipfs_cid.is_some() {
+            match self.download_from_ipfs(location).await {
+                Ok(content) => return Ok(content),
+                Err(e) => {
+                    warn!(
+                        "IPFS download failed for CID {:?}, falling back to S3: {}",
+                        location.ipfs_cid, e
+                    );
+                }
+            }
+        }
+
+        // Fall back to S3
+        let s3_key = match &location.s3_key {
+            Some(key) => key,
+            None => {
+                return Err(StorageError::NotFound(
+                    "Location has neither IPFS CID nor S3 key".to_string(),
+                ));
+            }
+        };
+
         // Get provider
         let provider = self
             .registry
@@ -809,11 +1098,6 @@ impl StorageRouter {
             .ok_or_else(|| StorageError::NotFound("Provider not found".to_string()))?;
 
         let s3_cap = &provider.capabilities.object_s3;
-
-        let s3_key = location
-            .s3_key
-            .as_ref()
-            .ok_or_else(|| StorageError::NotFound("Location missing S3 key".to_string()))?;
 
         // Download from S3 using rust-s3 0.35 API
         let region = s3::Region::Custom {
@@ -1198,6 +1482,160 @@ impl StorageRouter {
 
         Ok(synced)
     }
+
+    /// Count total blobs stored by a user
+    pub async fn count_user_blobs(&self, user_id: &[u8; 32]) -> StorageResult<u64> {
+        if let Some(pool) = &self.cockroach_pool {
+            let row = sqlx::query(
+                r#"
+                SELECT COUNT(*) as count
+                FROM messages m
+                INNER JOIN blob_refs b ON m.blob_ref_hash = b.hash
+                WHERE m.sender_id = $1
+                "#,
+            )
+            .bind(&user_id[..])
+            .fetch_one(pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            let count: i64 = row.get("count");
+            return Ok(count as u64);
+        }
+
+        // Fallback to SQLite
+        if let Some(pool) = &self.sqlite_pool {
+            let row = sqlx::query(
+                "SELECT COUNT(*) as count FROM cached_messages WHERE sender_id = ? AND blob_ref IS NOT NULL",
+            )
+            .bind(&user_id[..])
+            .fetch_one(pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            let count: i32 = row.get("count");
+            return Ok(count as u64);
+        }
+
+        Ok(0)
+    }
+
+    /// Sum total blob size for a user
+    pub async fn sum_user_blob_size(&self, user_id: &[u8; 32]) -> StorageResult<u64> {
+        if let Some(pool) = &self.cockroach_pool {
+            let row = sqlx::query(
+                r#"
+                SELECT COALESCE(SUM(b.size), 0) as total_size
+                FROM messages m
+                INNER JOIN blob_refs b ON m.blob_ref_hash = b.hash
+                WHERE m.sender_id = $1
+                "#,
+            )
+            .bind(&user_id[..])
+            .fetch_one(pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            let size: i64 = row.get("total_size");
+            return Ok(size as u64);
+        }
+
+        // For SQLite, we need to parse blob_ref JSON and sum sizes
+        if let Some(pool) = &self.sqlite_pool {
+            let rows = sqlx::query(
+                "SELECT blob_ref FROM cached_messages WHERE sender_id = ? AND blob_ref IS NOT NULL",
+            )
+            .bind(&user_id[..])
+            .fetch_all(pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            let mut total_size: u64 = 0;
+            for row in rows {
+                let blob_ref_json: Option<String> = row.get("blob_ref");
+                if let Some(json) = blob_ref_json {
+                    if let Ok(blob_ref) = serde_json::from_str::<BlobRef>(&json) {
+                        total_size += blob_ref.size;
+                    }
+                }
+            }
+            return Ok(total_size);
+        }
+
+        Ok(0)
+    }
+
+    /// Get storage usage statistics for a user
+    pub async fn get_user_storage_stats(
+        &self,
+        user_id: &[u8; 32],
+    ) -> StorageResult<UserStorageStats> {
+        let blob_count = self.count_user_blobs(user_id).await?;
+        let total_blob_size = self.sum_user_blob_size(user_id).await?;
+
+        // Count messages
+        let message_count = if let Some(pool) = &self.cockroach_pool {
+            let row = sqlx::query("SELECT COUNT(*) as count FROM messages WHERE sender_id = $1")
+                .bind(&user_id[..])
+                .fetch_one(pool)
+                .await
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            let count: i64 = row.get("count");
+            count as u64
+        } else if let Some(pool) = &self.sqlite_pool {
+            let row =
+                sqlx::query("SELECT COUNT(*) as count FROM cached_messages WHERE sender_id = ?")
+                    .bind(&user_id[..])
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| StorageError::Database(e.to_string()))?;
+            let count: i32 = row.get("count");
+            count as u64
+        } else {
+            0
+        };
+
+        // Estimate inline content size
+        let inline_size = if let Some(pool) = &self.cockroach_pool {
+            let row = sqlx::query(
+                "SELECT COALESCE(SUM(LENGTH(inline_content)), 0) as size FROM messages WHERE sender_id = $1 AND inline_content IS NOT NULL"
+            )
+            .bind(&user_id[..])
+            .fetch_one(pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+            let size: i64 = row.get("size");
+            size as u64
+        } else {
+            0
+        };
+
+        Ok(UserStorageStats {
+            user_id: *user_id,
+            message_count,
+            blob_count,
+            total_blob_size,
+            inline_content_size: inline_size,
+            total_storage_size: total_blob_size + inline_size,
+        })
+    }
+}
+
+/// User storage statistics
+#[derive(Debug, Clone)]
+pub struct UserStorageStats {
+    /// User ID
+    pub user_id: [u8; 32],
+    /// Total message count
+    pub message_count: u64,
+    /// Number of blobs stored
+    pub blob_count: u64,
+    /// Total size of blobs in bytes
+    pub total_blob_size: u64,
+    /// Total size of inline content in bytes
+    pub inline_content_size: u64,
+    /// Combined storage size
+    pub total_storage_size: u64,
 }
 
 #[cfg(test)]

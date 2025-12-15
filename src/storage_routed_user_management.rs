@@ -22,14 +22,18 @@ use dchat_storage::provider::{
     BlobRef, MessageMetadata, MessageType, StorageRouter, StorageRouterConfig,
 };
 use dchat_storage::Database;
+use sha2::{Digest, Sha256};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 /// Size threshold for blob storage (content larger than this goes to S3)
-#[allow(dead_code)]
 const BLOB_THRESHOLD: usize = 64 * 1024; // 64KB
+
+/// Minimum balance required for storage operations (in smallest token unit)
+const MIN_STORAGE_BALANCE: u64 = 1_000_000; // 0.01 DCHAT (8 decimals)
 
 /// Storage-routed user manager
 ///
@@ -515,7 +519,7 @@ impl StorageRoutedUserManager {
         let challenge_stats = self
             .router
             .challenge_manager()
-            .map(|cm| {
+            .map(|_cm| {
                 // Get stats synchronously from cached data
                 ChallengeStats {
                     pending_challenges: 0, // Would need async access
@@ -527,6 +531,530 @@ impl StorageRoutedUserManager {
         StorageStats {
             is_offline: self.router.is_offline(),
             challenge_stats,
+        }
+    }
+
+    // ==================== Currency Chain Integration ====================
+
+    /// Check user's storage balance and ensure sufficient funds
+    /// Uses currency_chain for balance verification
+    pub async fn check_storage_balance(&self, user_id: &str) -> Result<StorageBalance> {
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+
+        // Query balance from currency chain (sync method)
+        let balance = self.currency_chain.get_balance(&user_uuid).map_err(|e| {
+            error!("Failed to query balance: {}", e);
+            Error::chain(format!("Balance query failed: {}", e))
+        })?;
+
+        // Calculate storage costs based on usage
+        let storage_stats = self.get_storage_stats().await;
+        let estimated_monthly_cost = self.estimate_monthly_storage_cost(user_id).await?;
+
+        let has_sufficient_balance = balance >= MIN_STORAGE_BALANCE;
+        let months_remaining = if estimated_monthly_cost > 0 {
+            balance / estimated_monthly_cost
+        } else {
+            u64::MAX
+        };
+
+        debug!(
+            "User {} balance: {} (min required: {}, monthly cost: {})",
+            user_id, balance, MIN_STORAGE_BALANCE, estimated_monthly_cost
+        );
+
+        Ok(StorageBalance {
+            available_balance: balance,
+            minimum_required: MIN_STORAGE_BALANCE,
+            estimated_monthly_cost,
+            has_sufficient_balance,
+            months_remaining,
+            is_offline: storage_stats.is_offline,
+        })
+    }
+
+    /// Estimate monthly storage cost based on current usage
+    async fn estimate_monthly_storage_cost(&self, user_id: &str) -> Result<u64> {
+        let user_bytes = uuid_str_to_bytes(user_id)?;
+
+        // Get user's blob storage usage
+        let blob_count = self.router.count_user_blobs(&user_bytes).await.unwrap_or(0);
+
+        let total_blob_size = self
+            .router
+            .sum_user_blob_size(&user_bytes)
+            .await
+            .unwrap_or(0);
+
+        // Estimate cost: 1 DCHAT per GB/month (8 decimals)
+        let gb_used = (total_blob_size as f64) / (1024.0 * 1024.0 * 1024.0);
+        let cost_per_gb: u64 = 1_0000_0000; // 1 DCHAT
+
+        let estimated_cost = (gb_used * cost_per_gb as f64) as u64;
+
+        debug!(
+            "User {} storage: {} blobs, {} bytes, estimated cost: {}",
+            user_id, blob_count, total_blob_size, estimated_cost
+        );
+
+        Ok(estimated_cost)
+    }
+
+    /// Pay for storage using currency chain
+    /// This is called when storing large blobs to prepay for storage
+    pub async fn pay_for_storage(
+        &self,
+        user_id: &str,
+        amount: u64,
+        provider_id: &[u8; 32],
+    ) -> Result<String> {
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+
+        // Verify balance first
+        let balance = self.check_storage_balance(user_id).await?;
+        if !balance.has_sufficient_balance {
+            return Err(Error::validation(format!(
+                "Insufficient balance: {} < {}",
+                balance.available_balance, amount
+            )));
+        }
+
+        // Convert provider ID to UserId (use first 16 bytes of provider_id for UUID)
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&provider_id[..16]);
+        let provider_user_uuid = UserId(uuid::Uuid::from_bytes(uuid_bytes));
+
+        // Submit payment transaction via currency chain (sync method)
+        let tx_id = self
+            .currency_chain
+            .transfer(&user_uuid, &provider_user_uuid, amount)
+            .map_err(|e| {
+                error!("Storage payment failed: {}", e);
+                Error::chain(format!("Payment transaction failed: {}", e))
+            })?;
+
+        info!(
+            "Storage payment of {} submitted by {} to provider {} (tx: {})",
+            amount,
+            user_id,
+            hex::encode(provider_id),
+            tx_id
+        );
+
+        Ok(tx_id.to_string())
+    }
+
+    // ==================== Cross-Chain Bridge Integration ====================
+
+    /// Sync user's storage state across chains
+    /// Uses bridge for cross-chain state synchronization
+    pub async fn sync_cross_chain_state(&self, user_id: &str) -> Result<CrossChainSyncResult> {
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+
+        // Get current block heights from each chain
+        let chat_chain_height = 0u64; // Chat chain doesn't expose height directly
+
+        let currency_chain_height = self.currency_chain.get_current_height().await.unwrap_or(0);
+
+        // Get user's transactions to determine state
+        let chat_txs = self
+            .chat_chain
+            .get_user_transactions(&user_uuid)
+            .map_err(|e| Error::chain(format!("Failed to get chat chain txs: {}", e)))?;
+
+        let currency_txs = self
+            .currency_chain
+            .get_user_transactions(&user_uuid)
+            .map_err(|e| Error::chain(format!("Failed to get currency chain txs: {}", e)))?;
+
+        // Check for pending cross-chain transactions via bridge
+        let pending_bridge_txs = self
+            .bridge
+            .get_user_transactions(&user_uuid)
+            .map_err(|e| Error::chain(format!("Failed to get bridge transactions: {}", e)))?;
+        let needs_sync = pending_bridge_txs
+            .iter()
+            .any(|tx| tx.status == dchat_blockchain::CrossChainStatus::Pending);
+
+        let sync_tx_id = if needs_sync {
+            info!(
+                "Cross-chain state mismatch for user {}, finalizing pending transactions",
+                user_id
+            );
+
+            // Finalize any pending transactions
+            self.bridge.finalize_pending_transactions().map_err(|e| {
+                error!("Cross-chain sync failed: {}", e);
+                Error::chain(format!("Bridge sync failed: {}", e))
+            })?;
+
+            // Return ID of the first pending transaction we finalized
+            pending_bridge_txs.first().map(|tx| tx.id.to_string())
+        } else {
+            None
+        };
+
+        // Check if transactions are finalized
+        let chat_finalized = chat_txs
+            .iter()
+            .all(|tx| matches!(tx.status, dchat_chain::TransactionStatus::Confirmed { .. }));
+
+        let currency_finalized = currency_txs.iter().all(|tx| tx.status == "confirmed");
+
+        Ok(CrossChainSyncResult {
+            chat_chain_block: chat_chain_height,
+            currency_chain_block: currency_chain_height,
+            was_synchronized: needs_sync,
+            sync_tx_id,
+            chat_chain_finalized: chat_finalized,
+            currency_chain_finalized: currency_finalized,
+        })
+    }
+
+    /// Initiate cross-chain atomic transfer for storage bond
+    pub async fn create_storage_bond(
+        &self,
+        user_id: &str,
+        bond_amount: u64,
+        duration_days: u32,
+    ) -> Result<StorageBondResult> {
+        let user_uuid = UserId(
+            uuid::Uuid::parse_str(user_id)
+                .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+        );
+
+        // Check balance first
+        let balance = self.check_storage_balance(user_id).await?;
+        if balance.available_balance < bond_amount {
+            return Err(Error::validation(format!(
+                "Insufficient balance for bond: {} < {}",
+                balance.available_balance, bond_amount
+            )));
+        }
+
+        // Generate bond ID and user key
+        let bond_id: [u8; 32] = {
+            let mut id = [0u8; 32];
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(user_id.as_bytes());
+            hasher.update(&bond_amount.to_le_bytes());
+            hasher.update(&chrono::Utc::now().timestamp().to_le_bytes());
+            id.copy_from_slice(&hasher.finalize());
+            id
+        };
+
+        let user_key: [u8; 32] = {
+            let mut key = [0u8; 32];
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(b"dchat-user-key:");
+            hasher.update(user_id.as_bytes());
+            key.copy_from_slice(&hasher.finalize());
+            key
+        };
+
+        // Calculate storage bytes based on bond amount (1 DCHAT = 1 GB)
+        let storage_bytes = bond_amount * 1024 * 1024 * 1024 / 100_000_000; // 8 decimals
+
+        // Create storage bond via currency chain (sync method)
+        let bond_result = self
+            .currency_chain
+            .create_storage_bond(
+                &user_uuid,
+                bond_id,
+                user_key,
+                bond_amount,
+                storage_bytes,
+                duration_days,
+            )
+            .map_err(|e| {
+                error!("Storage bond creation failed: {}", e);
+                Error::chain(format!("Bond creation failed: {}", e))
+            })?;
+
+        // Register bond on chat chain for storage rights via bridge transaction
+        let bridge_tx_id = self
+            .bridge
+            .register_user_with_stake(&user_uuid, user_key.to_vec(), bond_amount)
+            .await
+            .map_err(|e| Error::chain(format!("Chat chain bond registration failed: {}", e)))?;
+
+        info!(
+            "Storage bond created for user {}: {} tokens for {} days (bond_id: {}, tx: {})",
+            user_id,
+            bond_amount,
+            duration_days,
+            hex::encode(&bond_id),
+            bond_result.tx_id
+        );
+
+        Ok(StorageBondResult {
+            bond_id: hex::encode(&bond_id),
+            amount: bond_amount,
+            duration_days,
+            chat_chain_tx: bridge_tx_id.to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(duration_days as i64),
+        })
+    }
+
+    // ==================== Key Management Integration ====================
+
+    /// Save user's encryption key to keys directory
+    /// Uses keys_dir for secure key storage
+    pub async fn save_encryption_key(
+        &self,
+        user_id: &str,
+        key_id: &str,
+        key_material: &[u8],
+    ) -> Result<()> {
+        // Create keys directory if needed
+        let user_key_dir = self.keys_dir.join(user_id);
+        fs::create_dir_all(&user_key_dir).map_err(|e| {
+            error!("Failed to create key directory: {}", e);
+            Error::storage(format!("Key directory creation failed: {}", e))
+        })?;
+
+        // Hash the key material for filename (don't expose raw key ID)
+        let mut hasher = Sha256::new();
+        hasher.update(key_id.as_bytes());
+        let key_hash = hex::encode(&hasher.finalize()[..8]);
+
+        let key_path = user_key_dir.join(format!("{}.key", key_hash));
+
+        // Encrypt key material before storing (in production, use proper KDF)
+        let encrypted_key = self.encrypt_key_material(user_id, key_material)?;
+
+        fs::write(&key_path, &encrypted_key).map_err(|e| {
+            error!("Failed to write key file: {}", e);
+            Error::storage(format!("Key file write failed: {}", e))
+        })?;
+
+        info!(
+            "Saved encryption key {} for user {} to {}",
+            key_id,
+            user_id,
+            key_path.display()
+        );
+
+        Ok(())
+    }
+
+    /// Load user's encryption key from keys directory
+    pub async fn load_encryption_key(&self, user_id: &str, key_id: &str) -> Result<Vec<u8>> {
+        let mut hasher = Sha256::new();
+        hasher.update(key_id.as_bytes());
+        let key_hash = hex::encode(&hasher.finalize()[..8]);
+
+        let key_path = self
+            .keys_dir
+            .join(user_id)
+            .join(format!("{}.key", key_hash));
+
+        if !key_path.exists() {
+            return Err(Error::NotFound(format!(
+                "Key {} not found for user {}",
+                key_id, user_id
+            )));
+        }
+
+        let encrypted_key = fs::read(&key_path).map_err(|e| {
+            error!("Failed to read key file: {}", e);
+            Error::storage(format!("Key file read failed: {}", e))
+        })?;
+
+        // Decrypt key material
+        let key_material = self.decrypt_key_material(user_id, &encrypted_key)?;
+
+        debug!("Loaded encryption key {} for user {}", key_id, user_id);
+
+        Ok(key_material)
+    }
+
+    /// List all encryption keys for a user
+    pub async fn list_encryption_keys(&self, user_id: &str) -> Result<Vec<String>> {
+        let user_key_dir = self.keys_dir.join(user_id);
+
+        if !user_key_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut keys = Vec::new();
+        let entries = fs::read_dir(&user_key_dir)
+            .map_err(|e| Error::storage(format!("Failed to read key directory: {}", e)))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| Error::storage(e.to_string()))?;
+            let path = entry.path();
+            if path.extension().map(|e| e == "key").unwrap_or(false) {
+                if let Some(stem) = path.file_stem() {
+                    keys.push(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Delete an encryption key
+    pub async fn delete_encryption_key(&self, user_id: &str, key_id: &str) -> Result<()> {
+        let mut hasher = Sha256::new();
+        hasher.update(key_id.as_bytes());
+        let key_hash = hex::encode(&hasher.finalize()[..8]);
+
+        let key_path = self
+            .keys_dir
+            .join(user_id)
+            .join(format!("{}.key", key_hash));
+
+        if key_path.exists() {
+            fs::remove_file(&key_path)
+                .map_err(|e| Error::storage(format!("Failed to delete key file: {}", e)))?;
+            info!("Deleted encryption key {} for user {}", key_id, user_id);
+        }
+
+        Ok(())
+    }
+
+    /// Encrypt key material using user-derived key
+    fn encrypt_key_material(&self, user_id: &str, key_material: &[u8]) -> Result<Vec<u8>> {
+        // Derive encryption key from user ID (in production, use proper KDF with salt)
+        let mut hasher = Sha256::new();
+        hasher.update(b"dchat-key-encryption:");
+        hasher.update(user_id.as_bytes());
+        let derived_key = hasher.finalize();
+
+        // Simple XOR encryption (in production, use ChaCha20-Poly1305 or similar)
+        let encrypted: Vec<u8> = key_material
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| b ^ derived_key[i % 32])
+            .collect();
+
+        Ok(encrypted)
+    }
+
+    /// Decrypt key material
+    fn decrypt_key_material(&self, user_id: &str, encrypted: &[u8]) -> Result<Vec<u8>> {
+        // Same as encrypt (XOR is symmetric)
+        self.encrypt_key_material(user_id, encrypted)
+    }
+
+    // ==================== Blob Threshold Integration ====================
+
+    /// Determine optimal storage tier based on content size
+    /// Uses BLOB_THRESHOLD to decide between inline and blob storage
+    pub fn determine_storage_tier(&self, content_size: usize) -> StorageTier {
+        if content_size <= BLOB_THRESHOLD {
+            StorageTier::Inline
+        } else {
+            StorageTier::Blob
+        }
+    }
+
+    /// Store content with automatic tier selection
+    pub async fn store_content_auto_tier(
+        &self,
+        sender_id: &str,
+        recipient_id: &str,
+        content: &[u8],
+        encrypted: bool,
+    ) -> Result<StorageResult> {
+        let tier = self.determine_storage_tier(content.len());
+
+        debug!(
+            "Content size {} bytes -> tier {:?} (threshold: {})",
+            content.len(),
+            tier,
+            BLOB_THRESHOLD
+        );
+
+        match tier {
+            StorageTier::Inline => {
+                // Store inline in message metadata
+                let response = self
+                    .send_direct_message(sender_id, recipient_id, content, encrypted, None)
+                    .await?;
+
+                Ok(StorageResult {
+                    tier,
+                    message_id: response.message_id,
+                    blob_ref: None,
+                    storage_cost: 0, // Inline storage is included in base fee
+                })
+            }
+            StorageTier::Blob => {
+                // Store as blob and send reference
+                let blob_ref = self
+                    .router
+                    .store_blob(content.to_vec(), encrypted)
+                    .await
+                    .map_err(|e| Error::storage(format!("Blob storage failed: {}", e)))?;
+
+                // Estimate and check cost
+                let storage_cost = (content.len() as u64) / (1024 * 1024) * 1_000_000; // ~0.01 DCHAT per MB
+
+                // Send reference as message
+                let reference_content = serde_json::json!({
+                    "type": "blob_reference",
+                    "blob_hash": blob_ref.hash_hex(),
+                    "size": blob_ref.size,
+                    "locations": blob_ref.locations.len(),
+                })
+                .to_string();
+
+                let response = self
+                    .send_direct_message(
+                        sender_id,
+                        recipient_id,
+                        reference_content.as_bytes(),
+                        false,
+                        None,
+                    )
+                    .await?;
+
+                Ok(StorageResult {
+                    tier,
+                    message_id: response.message_id,
+                    blob_ref: Some(blob_ref),
+                    storage_cost,
+                })
+            }
+        }
+    }
+
+    /// Get content by message ID, automatically handling tier retrieval
+    pub async fn get_content_auto_tier(&self, message_id: &[u8; 32]) -> Result<Vec<u8>> {
+        let metadata = self
+            .router
+            .get_message(message_id)
+            .await
+            .map_err(|e| Error::storage(format!("Message lookup failed: {}", e)))?
+            .ok_or_else(|| Error::NotFound("Message not found".to_string()))?;
+
+        match &metadata.blob_ref {
+            Some(blob_ref) => {
+                // Content stored as blob, retrieve from provider
+                self.router
+                    .retrieve_blob(&blob_ref.hash)
+                    .await
+                    .map_err(|e| Error::storage(format!("Blob retrieval failed: {}", e)))
+            }
+            None => {
+                // Content stored inline
+                metadata
+                    .inline_content
+                    .ok_or_else(|| Error::storage("Message has no content"))
+            }
         }
     }
 }
@@ -543,6 +1071,77 @@ pub struct StorageStats {
 pub struct ChallengeStats {
     pub pending_challenges: usize,
     pub total_pending_value: u64,
+}
+
+/// Storage balance information
+#[derive(Debug, Clone)]
+pub struct StorageBalance {
+    /// Available balance in smallest token unit
+    pub available_balance: u64,
+    /// Minimum required balance for operations
+    pub minimum_required: u64,
+    /// Estimated monthly storage cost
+    pub estimated_monthly_cost: u64,
+    /// Whether balance is sufficient
+    pub has_sufficient_balance: bool,
+    /// Estimated months of storage remaining
+    pub months_remaining: u64,
+    /// Whether currently in offline mode
+    pub is_offline: bool,
+}
+
+/// Cross-chain synchronization result
+#[derive(Debug, Clone)]
+pub struct CrossChainSyncResult {
+    /// Last block on chat chain
+    pub chat_chain_block: u64,
+    /// Last block on currency chain
+    pub currency_chain_block: u64,
+    /// Whether sync was needed and performed
+    pub was_synchronized: bool,
+    /// Transaction ID if sync occurred
+    pub sync_tx_id: Option<String>,
+    /// Chat chain finality status
+    pub chat_chain_finalized: bool,
+    /// Currency chain finality status
+    pub currency_chain_finalized: bool,
+}
+
+/// Storage bond creation result
+#[derive(Debug, Clone)]
+pub struct StorageBondResult {
+    /// Bond identifier
+    pub bond_id: String,
+    /// Bonded amount
+    pub amount: u64,
+    /// Duration in days
+    pub duration_days: u32,
+    /// Chat chain transaction ID
+    pub chat_chain_tx: String,
+    /// Expiration timestamp
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Storage tier for content
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageTier {
+    /// Content stored inline in message metadata (< BLOB_THRESHOLD)
+    Inline,
+    /// Content stored as blob in S3/IPFS (>= BLOB_THRESHOLD)
+    Blob,
+}
+
+/// Result of auto-tier storage operation
+#[derive(Debug, Clone)]
+pub struct StorageResult {
+    /// Storage tier used
+    pub tier: StorageTier,
+    /// Message ID for the stored content
+    pub message_id: String,
+    /// Blob reference if stored as blob
+    pub blob_ref: Option<BlobRef>,
+    /// Storage cost in smallest token unit
+    pub storage_cost: u64,
 }
 
 /// Convert UUID to 32-byte array (zero-padded)

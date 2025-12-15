@@ -107,7 +107,9 @@ impl CircuitBreaker {
                     self.transition_to_half_open();
                     true
                 } else {
-                    self.metrics.rejected_requests.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .rejected_requests
+                        .fetch_add(1, Ordering::Relaxed);
                     false
                 }
             }
@@ -117,7 +119,9 @@ impl CircuitBreaker {
                 if current < self.config.half_open_max_requests as u64 {
                     true
                 } else {
-                    self.metrics.rejected_requests.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .rejected_requests
+                        .fetch_add(1, Ordering::Relaxed);
                     false
                 }
             }
@@ -126,7 +130,9 @@ impl CircuitBreaker {
 
     /// Record a successful operation
     pub fn record_success(&self) {
-        self.metrics.successful_requests.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .successful_requests
+            .fetch_add(1, Ordering::Relaxed);
 
         let state = *self.state.read();
 
@@ -227,7 +233,9 @@ impl CircuitBreaker {
                 self.name
             );
             *state = CircuitState::Open;
-            self.metrics.state_transitions.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .state_transitions
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -241,7 +249,9 @@ impl CircuitBreaker {
             *state = CircuitState::HalfOpen;
             self.success_count.store(0, Ordering::Relaxed);
             self.half_open_requests.store(0, Ordering::Relaxed);
-            self.metrics.state_transitions.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .state_transitions
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -255,7 +265,9 @@ impl CircuitBreaker {
             *state = CircuitState::Closed;
             self.failure_count.store(0, Ordering::Relaxed);
             self.success_count.store(0, Ordering::Relaxed);
-            self.metrics.state_transitions.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .state_transitions
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -520,17 +532,16 @@ impl RetryExecutor {
                 }
                 Err(e) => {
                     if attempt >= self.config.max_retries {
-                        self.metrics.exhausted_retries.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .exhausted_retries
+                            .fetch_add(1, Ordering::Relaxed);
                         return Err(StorageError::Internal(format!(
                             "Operation failed after {} attempts: {}",
                             attempt, e
                         )));
                     }
 
-                    warn!(
-                        "Attempt {} failed, retrying in {:?}: {}",
-                        attempt, delay, e
-                    );
+                    warn!("Attempt {} failed, retrying in {:?}: {}", attempt, delay, e);
 
                     // Apply jitter if enabled
                     let actual_delay = if self.config.jitter {

@@ -110,7 +110,7 @@ pub struct QueuedUpload {
 }
 
 /// Resilient object storage with fault tolerance
-/// 
+///
 /// Provides automatic failover to local storage, circuit breaker pattern,
 /// queued uploads, and LRU caching for S3/MinIO operations to ensure
 /// high availability during network issues or object storage maintenance.
@@ -173,7 +173,10 @@ impl ResilientObjectStorage {
                 Some(storage)
             }
             Err(e) => {
-                warn!("Failed to connect to S3/MinIO, operating in degraded mode: {}", e);
+                warn!(
+                    "Failed to connect to S3/MinIO, operating in degraded mode: {}",
+                    e
+                );
                 None
             }
         };
@@ -264,12 +267,17 @@ impl ResilientObjectStorage {
         if let Some(ref storage) = self.inner {
             let start = Instant::now();
 
-            match storage.upload_file(file_path, object_key, content_type).await {
+            match storage
+                .upload_file(file_path, object_key, content_type)
+                .await
+            {
                 Ok(metadata) => {
                     self.circuit_breaker.record_success();
                     self.health_monitor
                         .record_success("s3", start.elapsed().as_millis() as u64);
-                    self.metrics.upload_successes.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .upload_successes
+                        .fetch_add(1, Ordering::Relaxed);
                     Ok(metadata)
                 }
                 Err(e) => {
@@ -316,11 +324,13 @@ impl ResilientObjectStorage {
         // For bytes upload, we need to write to temp file first if queuing
         if !self.circuit_breaker.can_execute() {
             if self.config.enable_upload_queue {
-                let temp_path = self.config.local_cache_dir.join(format!(
-                    "upload_{}",
-                    uuid::Uuid::new_v4()
-                ));
-                fs::write(&temp_path, data).await.map_err(StorageError::Io)?;
+                let temp_path = self
+                    .config
+                    .local_cache_dir
+                    .join(format!("upload_{}", uuid::Uuid::new_v4()));
+                fs::write(&temp_path, data)
+                    .await
+                    .map_err(StorageError::Io)?;
                 self.queue_upload(&temp_path, object_key, content_type)?;
                 return Ok(ObjectMetadata {
                     key: object_key.to_string(),
@@ -341,7 +351,9 @@ impl ResilientObjectStorage {
                     self.circuit_breaker.record_success();
                     self.health_monitor
                         .record_success("s3", start.elapsed().as_millis() as u64);
-                    self.metrics.upload_successes.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .upload_successes
+                        .fetch_add(1, Ordering::Relaxed);
 
                     // Cache locally if enabled
                     if self.config.enable_local_cache {
@@ -388,7 +400,9 @@ impl ResilientObjectStorage {
                     self.circuit_breaker.record_success();
                     self.health_monitor
                         .record_success("s3", start.elapsed().as_millis() as u64);
-                    self.metrics.download_successes.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .download_successes
+                        .fetch_add(1, Ordering::Relaxed);
 
                     // Cache locally
                     if self.config.enable_local_cache {
@@ -407,7 +421,9 @@ impl ResilientObjectStorage {
                 Err(e) => {
                     self.circuit_breaker.record_failure();
                     self.health_monitor.record_failure("s3", e.to_string());
-                    self.metrics.download_failures.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .download_failures
+                        .fetch_add(1, Ordering::Relaxed);
                     Err(e)
                 }
             }
@@ -484,20 +500,25 @@ impl ResilientObjectStorage {
         }
 
         if let Some(ref storage) = self.inner {
-            storage.generate_presigned_url(object_key, expires_in_seconds).await
+            storage
+                .generate_presigned_url(object_key, expires_in_seconds)
+                .await
         } else {
             Err(StorageError::ConnectionLost("S3 not connected".to_string()))
         }
     }
 
     /// Queue an upload for later
-    fn queue_upload(&self, file_path: &Path, object_key: &str, content_type: &str) -> StorageResult<()> {
+    fn queue_upload(
+        &self,
+        file_path: &Path,
+        object_key: &str,
+        content_type: &str,
+    ) -> StorageResult<()> {
         let mut queue = self.upload_queue.write();
 
         if queue.len() >= self.config.max_queued_uploads {
-            return Err(StorageError::Internal(
-                "Upload queue is full".to_string(),
-            ));
+            return Err(StorageError::Internal("Upload queue is full".to_string()));
         }
 
         queue.push(QueuedUpload {
@@ -561,7 +582,9 @@ impl ResilientObjectStorage {
 
                     // Clean up temp file if it's in our cache dir
                     if upload.local_path.starts_with(&self.config.local_cache_dir)
-                        && upload.local_path.file_name()
+                        && upload
+                            .local_path
+                            .file_name()
                             .map(|n| n.to_string_lossy().starts_with("upload_"))
                             .unwrap_or(false)
                     {
@@ -612,10 +635,13 @@ impl ResilientObjectStorage {
         }
 
         // Write to local file
-        let local_path = self.config.local_cache_dir.join(
-            object_key.replace("/", "_").replace(":", "_")
-        );
-        fs::write(&local_path, data).await.map_err(StorageError::Io)?;
+        let local_path = self
+            .config
+            .local_cache_dir
+            .join(object_key.replace("/", "_").replace(":", "_"));
+        fs::write(&local_path, data)
+            .await
+            .map_err(StorageError::Io)?;
 
         // Update cache index
         self.cache_index.write().insert(
@@ -664,7 +690,8 @@ impl ResilientObjectStorage {
         let mut cache_index = self.cache_index.write();
 
         if let Some(cached) = cache_index.remove(object_key) {
-            self.cache_size.fetch_sub(cached.size_bytes, Ordering::Relaxed);
+            self.cache_size
+                .fetch_sub(cached.size_bytes, Ordering::Relaxed);
             let _ = fs::remove_file(&cached.local_path).await;
         }
     }

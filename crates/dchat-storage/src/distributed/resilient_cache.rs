@@ -83,7 +83,7 @@ pub struct CachedEntry {
 }
 
 /// Resilient cache with fault tolerance
-/// 
+///
 /// Provides automatic failover to local cache, circuit breaker pattern,
 /// and write-behind sync for Redis operations to ensure high availability
 /// during network issues or Redis cluster maintenance.
@@ -124,10 +124,8 @@ impl ResilientCache {
     pub fn new(config: ResilientCacheConfig) -> StorageResult<Self> {
         info!("Initializing resilient cache");
 
-        let circuit_breaker = Arc::new(CircuitBreaker::new(
-            "redis",
-            config.circuit_breaker.clone(),
-        ));
+        let circuit_breaker =
+            Arc::new(CircuitBreaker::new("redis", config.circuit_breaker.clone()));
         let retry_executor = Arc::new(RetryExecutor::new(config.retry.clone()));
         let health_monitor = Arc::new(HealthMonitor::new(config.health_monitor.clone()));
         let local_cache = Arc::new(LocalCache::new(config.local_cache.clone()));
@@ -139,7 +137,10 @@ impl ResilientCache {
                 Some(cache)
             }
             Err(e) => {
-                warn!("Failed to connect to Redis, operating in local-only mode: {}", e);
+                warn!(
+                    "Failed to connect to Redis, operating in local-only mode: {}",
+                    e
+                );
                 None
             }
         };
@@ -181,7 +182,11 @@ impl ResilientCache {
 
     /// Cache a value with default TTL
     pub fn cache<T: Serialize>(&self, key: &str, value: &T) -> StorageResult<()> {
-        self.cache_with_ttl(key, value, Duration::from_secs(self.config.redis.default_ttl_seconds))
+        self.cache_with_ttl(
+            key,
+            value,
+            Duration::from_secs(self.config.redis.default_ttl_seconds),
+        )
     }
 
     /// Cache a value with custom TTL
@@ -191,8 +196,8 @@ impl ResilientCache {
         value: &T,
         ttl: Duration,
     ) -> StorageResult<()> {
-        let serialized = serde_json::to_string(value)
-            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let serialized =
+            serde_json::to_string(value).map_err(|e| StorageError::Serialization(e.to_string()))?;
 
         // Always update local cache
         self.local_cache.insert(
@@ -264,7 +269,9 @@ impl ResilientCache {
                     self.circuit_breaker.record_failure();
                     self.health_monitor.record_failure("redis", e.to_string());
                     warn!("Redis get failed, falling back to local cache: {}", e);
-                    self.metrics.fallback_activations.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .fallback_activations
+                        .fetch_add(1, Ordering::Relaxed);
                     return self.get_from_local(key);
                 }
             }
@@ -409,7 +416,12 @@ impl ResilientCache {
     }
 
     /// Increment a counter (rate limiting, statistics)
-    pub fn increment_counter(&self, key: &str, delta: i64, ttl: Option<Duration>) -> StorageResult<i64> {
+    pub fn increment_counter(
+        &self,
+        key: &str,
+        delta: i64,
+        ttl: Option<Duration>,
+    ) -> StorageResult<i64> {
         // For counters, we need Redis for atomic operations
         if !self.circuit_breaker.can_execute() {
             return Err(StorageError::CircuitOpen(
@@ -433,7 +445,9 @@ impl ResilientCache {
                 }
             }
         } else {
-            Err(StorageError::ConnectionLost("Redis not connected".to_string()))
+            Err(StorageError::ConnectionLost(
+                "Redis not connected".to_string(),
+            ))
         }
     }
 }

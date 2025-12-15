@@ -14,9 +14,8 @@ use tracing::{debug, info, warn};
 use crate::distributed::tikv_backend::{BlockMetadata, ChainState, TiKVConfig, TiKVStorage};
 use crate::error::{StorageError, StorageResult};
 use crate::resilience::{
-    BackendHealth, CircuitBreaker, CircuitBreakerConfig, CircuitState,
-    HealthMonitor, HealthMonitorConfig, HealthStatus, LocalCache, LocalCacheConfig,
-    RetryConfig, RetryExecutor,
+    BackendHealth, CircuitBreaker, CircuitBreakerConfig, CircuitState, HealthMonitor,
+    HealthMonitorConfig, HealthStatus, LocalCache, LocalCacheConfig, RetryConfig, RetryExecutor,
 };
 
 /// Configuration for resilient TiKV storage
@@ -91,7 +90,7 @@ pub struct CachedBlockMetadata {
 }
 
 /// Resilient TiKV storage with fault tolerance
-/// 
+///
 /// Provides automatic failover to local cache, circuit breaker pattern,
 /// and write-behind sync for TiKV operations to ensure high availability
 /// during network partitions or TiKV cluster maintenance.
@@ -128,10 +127,7 @@ impl ResilientTiKVStorage {
     pub async fn new(config: ResilientTiKVConfig) -> StorageResult<Self> {
         info!("Initializing resilient TiKV storage");
 
-        let circuit_breaker = Arc::new(CircuitBreaker::new(
-            "tikv",
-            config.circuit_breaker.clone(),
-        ));
+        let circuit_breaker = Arc::new(CircuitBreaker::new("tikv", config.circuit_breaker.clone()));
         let retry_executor = Arc::new(RetryExecutor::new(config.retry.clone()));
         let health_monitor = Arc::new(HealthMonitor::new(config.health_monitor.clone()));
 
@@ -170,7 +166,10 @@ impl ResilientTiKVStorage {
                 self.health_monitor.record_success("tikv", 0);
             }
             Err(e) => {
-                warn!("Failed to connect to TiKV, operating in degraded mode: {}", e);
+                warn!(
+                    "Failed to connect to TiKV, operating in degraded mode: {}",
+                    e
+                );
                 self.is_connected
                     .store(false, std::sync::atomic::Ordering::SeqCst);
                 self.health_monitor
@@ -191,8 +190,7 @@ impl ResilientTiKVStorage {
 
     /// Check if connected to TiKV
     pub fn is_connected(&self) -> bool {
-        self.is_connected
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.is_connected.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Get circuit breaker state
@@ -248,8 +246,7 @@ impl ResilientTiKVStorage {
                 }
                 Err(e) => {
                     self.circuit_breaker.record_failure();
-                    self.health_monitor
-                        .record_failure("tikv", e.to_string());
+                    self.health_monitor.record_failure("tikv", e.to_string());
 
                     if self.config.write_behind_queue {
                         self.queue_chain_state_write(block_height, state.clone())?;
@@ -318,8 +315,7 @@ impl ResilientTiKVStorage {
                 }
                 Err(e) => {
                     self.circuit_breaker.record_failure();
-                    self.health_monitor
-                        .record_failure("tikv", e.to_string());
+                    self.health_monitor.record_failure("tikv", e.to_string());
                     warn!(
                         "Failed to fetch chain state for block {}: {}",
                         block_height, e
@@ -366,8 +362,7 @@ impl ResilientTiKVStorage {
                 }
                 Err(e) => {
                     self.circuit_breaker.record_failure();
-                    self.health_monitor
-                        .record_failure("tikv", e.to_string());
+                    self.health_monitor.record_failure("tikv", e.to_string());
 
                     if self.config.write_behind_queue {
                         self.queue_block_metadata_write(metadata.clone())?;
@@ -431,9 +426,11 @@ impl ResilientTiKVStorage {
                 }
                 Err(e) => {
                     self.circuit_breaker.record_failure();
-                    self.health_monitor
-                        .record_failure("tikv", e.to_string());
-                    warn!("Failed to fetch block metadata for height {}: {}", height, e);
+                    self.health_monitor.record_failure("tikv", e.to_string());
+                    warn!(
+                        "Failed to fetch block metadata for height {}: {}",
+                        height, e
+                    );
                     Ok(None)
                 }
             }
@@ -597,8 +594,7 @@ impl ResilientTiKVStorage {
                     Ok(healthy)
                 }
                 Err(e) => {
-                    self.health_monitor
-                        .record_failure("tikv", e.to_string());
+                    self.health_monitor.record_failure("tikv", e.to_string());
                     Ok(false)
                 }
             }

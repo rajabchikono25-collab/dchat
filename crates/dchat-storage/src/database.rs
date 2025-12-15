@@ -287,10 +287,7 @@ impl Database {
             .await
             .map_err(|e| Error::storage(format!("Failed to query oldest messages: {}", e)))?;
 
-        let ids = rows
-            .iter()
-            .map(|row| row.get::<String, _>("id"))
-            .collect();
+        let ids = rows.iter().map(|row| row.get::<String, _>("id")).collect();
 
         Ok(ids)
     }
@@ -311,7 +308,10 @@ impl Database {
             .map(|_| "?")
             .collect::<Vec<_>>()
             .join(", ");
-        let query_str = format!("SELECT id, size FROM messages WHERE id IN ({})", placeholders);
+        let query_str = format!(
+            "SELECT id, size FROM messages WHERE id IN ({})",
+            placeholders
+        );
 
         let mut query = sqlx::query(&query_str);
         for id in message_ids {

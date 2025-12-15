@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::distributed::database::{DatabaseConfig, DatabaseStats, DistributedDatabase, MessageRow};
+use crate::distributed::database::{
+    DatabaseConfig, DatabaseStats, DistributedDatabase, MessageRow,
+};
 use crate::error::{StorageError, StorageResult};
 use crate::resilience::{
     CircuitBreaker, CircuitBreakerConfig, CircuitState, HealthMonitor, HealthMonitorConfig,
@@ -102,7 +104,7 @@ pub struct PendingWrite {
 }
 
 /// Resilient database with fault tolerance
-/// 
+///
 /// Provides automatic failover, circuit breaker pattern, and local caching
 /// for CockroachDB operations to ensure high availability during network
 /// partitions or database maintenance.
@@ -309,7 +311,10 @@ impl ResilientDatabase {
 
         // Check read circuit breaker
         if !self.read_circuit.can_execute() {
-            debug!("Read circuit open, returning None for message {}", message_id);
+            debug!(
+                "Read circuit open, returning None for message {}",
+                message_id
+            );
             self.metrics.fallback_reads.fetch_add(1, Ordering::Relaxed);
             return Ok(None);
         }
@@ -367,7 +372,10 @@ impl ResilientDatabase {
     ) -> StorageResult<Vec<MessageRow>> {
         // Check read circuit breaker
         if !self.read_circuit.can_execute() {
-            debug!("Read circuit open, returning empty list for user {}", user_id);
+            debug!(
+                "Read circuit open, returning empty list for user {}",
+                user_id
+            );
             self.metrics.fallback_reads.fetch_add(1, Ordering::Relaxed);
             return Ok(Vec::new());
         }
@@ -559,7 +567,9 @@ impl ResilientDatabase {
                 }
                 Err(e) => {
                     result.failed += 1;
-                    result.errors.push(format!("Message {}: {}", write.message.id, e));
+                    result
+                        .errors
+                        .push(format!("Message {}: {}", write.message.id, e));
                     self.write_circuit.record_failure();
 
                     // Re-queue with incremented retry count

@@ -77,7 +77,10 @@ impl StorageBondManager {
     }
 
     /// Submit storage bond to currency chain
-    pub async fn submit_storage_bond(&self, request: &StorageBondRequest) -> Result<StorageBondReceipt> {
+    pub async fn submit_storage_bond(
+        &self,
+        request: &StorageBondRequest,
+    ) -> Result<StorageBondReceipt> {
         let user_key_hex = hex::encode(request.user_key.as_bytes());
 
         // Calculate required bond
@@ -190,7 +193,9 @@ impl StorageBondManager {
                 if !bond.is_active {
                     return Ok(false);
                 }
-                let available = bond.storage_quota_bytes.saturating_sub(bond.used_storage_bytes);
+                let available = bond
+                    .storage_quota_bytes
+                    .saturating_sub(bond.used_storage_bytes);
                 return Ok(available >= required_bytes);
             }
         }
@@ -203,12 +208,18 @@ impl StorageBondManager {
             return Ok(false);
         }
 
-        let available = bond.storage_quota_bytes.saturating_sub(bond.used_storage_bytes);
+        let available = bond
+            .storage_quota_bytes
+            .saturating_sub(bond.used_storage_bytes);
         Ok(available >= required_bytes)
     }
 
     /// Record storage usage
-    pub async fn record_storage_usage(&self, user_key: &VerifyingKey, bytes_used: u64) -> Result<()> {
+    pub async fn record_storage_usage(
+        &self,
+        user_key: &VerifyingKey,
+        bytes_used: u64,
+    ) -> Result<()> {
         let user_key_hex = hex::encode(user_key.as_bytes());
 
         let mut bonds = self.bonds.write().await;
@@ -269,7 +280,9 @@ impl StorageBondManager {
         let used_storage_bytes = response_body["result"]["used_storage_bytes"]
             .as_u64()
             .unwrap_or(0);
-        let is_active = response_body["result"]["is_active"].as_bool().unwrap_or(false);
+        let is_active = response_body["result"]["is_active"]
+            .as_bool()
+            .unwrap_or(false);
         let created_at = response_body["result"]["created_at"].as_u64().unwrap_or(0);
 
         Ok(StorageBond {
@@ -343,7 +356,7 @@ mod tests {
             println!("Skipping test_storage_bond_creation - CURRENCY_CHAIN_RPC not set");
             return;
         }
-        
+
         let rpc_endpoint = std::env::var("CURRENCY_CHAIN_RPC").unwrap();
         let manager = StorageBondManager::new(rpc_endpoint);
 
@@ -393,15 +406,18 @@ mod tests {
         let user_key_hex = hex::encode(verifying_key.as_bytes());
         {
             let mut bonds = manager.bonds.write().await;
-            bonds.insert(user_key_hex.clone(), StorageBond {
-                user_key: user_key_hex,
-                bond_amount: MIN_STORAGE_BOND_PER_GB * 10,
-                storage_quota_bytes: 10 * 1_073_741_824, // 10 GB
-                used_storage_bytes: 5 * 1_073_741_824,   // 5 GB used
-                created_at: 0,
-                expires_at: None,
-                is_active: true,
-            });
+            bonds.insert(
+                user_key_hex.clone(),
+                StorageBond {
+                    user_key: user_key_hex,
+                    bond_amount: MIN_STORAGE_BOND_PER_GB * 10,
+                    storage_quota_bytes: 10 * 1_073_741_824, // 10 GB
+                    used_storage_bytes: 5 * 1_073_741_824,   // 5 GB used
+                    created_at: 0,
+                    expires_at: None,
+                    is_active: true,
+                },
+            );
         }
 
         // Should have quota for 1 MB (5 GB available)

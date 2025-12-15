@@ -5345,10 +5345,10 @@ async fn run_validator_node(
                                 std::collections::VecDeque<dchat_chain::Transaction>,
                             > = std::collections::BTreeMap::new();
 
-                            for tx in pending_txs {
-                                match dchat_blockchain::block_hierarchy::lane_for_transaction(&tx) {
+                            for tx in pending_txs.iter() {
+                                match dchat_blockchain::block_hierarchy::lane_for_transaction(tx) {
                                     Ok(lane) => {
-                                        txs_by_lane.entry(lane.0).or_default().push_back(tx);
+                                        txs_by_lane.entry(lane.0).or_default().push_back(tx.clone());
                                     }
                                     Err(e) => {
                                         warn!("Dropping invalid tx {:?}: {:?}", tx.tx_id, e);
@@ -10348,22 +10348,22 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
                             + breakdown.referrals
                             + breakdown.governance;
                         let staking_pct = if total > 0 {
-                            (breakdown.staking as f64 / total as f64 * 100.0)
+                            breakdown.staking as f64 / total as f64 * 100.0
                         } else {
                             0.0
                         };
                         let relaying_pct = if total > 0 {
-                            (breakdown.relaying as f64 / total as f64 * 100.0)
+                            breakdown.relaying as f64 / total as f64 * 100.0
                         } else {
                             0.0
                         };
                         let referral_pct = if total > 0 {
-                            (breakdown.referrals as f64 / total as f64 * 100.0)
+                            breakdown.referrals as f64 / total as f64 * 100.0
                         } else {
                             0.0
                         };
                         let governance_pct = if total > 0 {
-                            (breakdown.governance as f64 / total as f64 * 100.0)
+                            breakdown.governance as f64 / total as f64 * 100.0
                         } else {
                             0.0
                         };
