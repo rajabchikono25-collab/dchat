@@ -289,7 +289,8 @@ impl StateValidator {
                 // first pre-state of current block
                 if let Some(first_subblock) = block.subblocks.first() {
                     if let Some(first_miniblock) = first_subblock.miniblocks.first() {
-                        let first_pre_state = first_miniblock.pre_state_hash.as_bytes().to_vec();
+                        let first_pre_state =
+                            first_miniblock.header.pre_state_hash.as_bytes().to_vec();
 
                         // For full state continuity, we need the previous block's last post-state
                         // This requires either:
@@ -323,7 +324,7 @@ impl StateValidator {
         // Cache the last miniblock's post-state for continuity verification
         if let Some(last_subblock) = block.subblocks.last() {
             if let Some(last_miniblock) = last_subblock.miniblocks.last() {
-                let last_post_state = last_miniblock.post_state_hash.as_bytes().to_vec();
+                let last_post_state = last_miniblock.header.post_state_hash.as_bytes().to_vec();
                 self.last_post_states.insert(block.height, last_post_state);
             }
         }
@@ -334,10 +335,10 @@ impl StateValidator {
     /// Encode a state transition for Merkle tree inclusion
     fn encode_state_transition(&self, miniblock: &Miniblock) -> Vec<u8> {
         let mut data = Vec::new();
-        data.extend_from_slice(&miniblock.index.to_le_bytes());
-        data.extend_from_slice(miniblock.pre_state_hash.as_bytes());
-        data.extend_from_slice(miniblock.post_state_hash.as_bytes());
-        data.extend_from_slice(&miniblock.gas_used.to_le_bytes());
+        data.extend_from_slice(&miniblock.header.index.to_le_bytes());
+        data.extend_from_slice(miniblock.header.pre_state_hash.as_bytes());
+        data.extend_from_slice(miniblock.header.post_state_hash.as_bytes());
+        data.extend_from_slice(&miniblock.header.gas_used.to_le_bytes());
         data
     }
 
@@ -516,15 +517,19 @@ mod tests {
         let mut validator = StateValidator::new();
 
         // Create a test block with miniblocks
-        let miniblock = Miniblock {
+        let miniblock = Miniblock::from_header(crate::block_hierarchy::MiniblockHeader {
             index: 0,
             timestamp: SystemTime::now(),
-            transactions: vec![],
+            lane: crate::block_hierarchy::LaneId(0),
+            tx_root: Hash::from([0u8; 32]),
+            receipts_root: Hash::from([0u8; 32]),
+            tx_count: 0,
+            body_bytes: 0,
+            sigchecks: 0,
             pre_state_hash: Hash::from([0u8; 32]),
             post_state_hash: Hash::from([1u8; 32]),
             gas_used: 1000,
-            receipts: vec![],
-        };
+        });
 
         let subblock = Subblock {
             index: 0,
@@ -537,6 +542,7 @@ mod tests {
                 state_delta: vec![],
             },
             merkle_root: Hash::from([0u8; 32]),
+            certificate: None,
         };
 
         // Build merkle tree to get correct state root

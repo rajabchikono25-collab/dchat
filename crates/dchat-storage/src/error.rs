@@ -14,8 +14,14 @@ pub enum StorageError {
     #[error("Object storage error: {0}")]
     ObjectStorage(String),
 
+    #[error("S3 error: {0}")]
+    S3(String),
+
     #[error("TiKV error: {0}")]
     TiKV(String),
+
+    #[error("Chain error: {0}")]
+    Chain(String),
 
     #[error("Serialization error: {0}")]
     Serialization(String),
@@ -76,6 +82,15 @@ pub enum StorageError {
 
     #[error("Degraded mode: {0}")]
     DegradedMode(String),
+
+    #[error("Offline mode: {0}")]
+    Offline(String),
+
+    #[error("Replication error: {0}")]
+    Replication(String),
+
+    #[error("Provider error: {0}")]
+    Provider(String),
 }
 
 /// Result type alias for storage operations

@@ -2,6 +2,7 @@
 //! Supports Chat Chain, Currency Chain, Cross-Chain Bridge, and Tokenomics
 
 pub mod block_hierarchy;
+pub mod canonical;
 pub mod chain_synchronizer;
 pub mod chat_chain;
 pub mod client;
@@ -10,6 +11,7 @@ pub mod cross_chain;
 pub mod currency_chain;
 pub mod currency_chain_block_sync;
 pub mod hardened_consensus;
+pub mod hash_merkle;
 pub mod proof_of_relay_work;
 pub mod proof_of_transit;
 pub mod rpc;

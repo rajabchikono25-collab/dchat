@@ -41,6 +41,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "create_analytics_views",
         sql: include_str!("../migrations/20251103_005_create_analytics_views.sql"),
     },
+    Migration {
+        id: "20251210_001",
+        name: "storage_provider_registry",
+        sql: include_str!("../migrations/20251210_001_storage_provider_registry.sql"),
+    },
 ];
 
 /// Migration runner

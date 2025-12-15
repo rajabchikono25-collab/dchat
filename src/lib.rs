@@ -95,6 +95,8 @@
 
 // User management module
 pub mod user_management;
+// Storage-routed user management (tiered storage via StorageRouter)
+pub mod storage_routed_user_management;
 // Onboarding flows (keyless, enrollment, MPC backups)
 pub mod onboarding;
 
@@ -126,6 +128,9 @@ pub use user_management::{
     CreateChannelRequest, CreateChannelResponse, CreateUserResponse, DirectMessageRequest,
     DirectMessageResponse, UserManager, UserProfile,
 };
+
+// Re-export storage-routed user management
+pub use storage_routed_user_management::{StorageRoutedUserManager, StorageStats};
 
 /// Commonly used types and traits
 pub mod prelude {
@@ -270,22 +275,24 @@ pub mod client {
         pub async fn send_message(&self, message: Message) -> Result<()> {
             use dchat_crypto::hash;
             use dchat_storage::MessageRow;
-            
+
             // Validate message is deliverable
             if !message.is_deliverable() {
-                return Err(Error::validation("Message has expired or is not deliverable"));
+                return Err(Error::validation(
+                    "Message has expired or is not deliverable",
+                ));
             }
-            
+
             tracing::debug!(
                 "Sending message {} ({:?}) with {} bytes",
                 message.id.0,
                 message.message_type,
                 message.encrypted_payload.len()
             );
-            
+
             // 1. Hash message for blockchain ordering
             let message_hash = hash(&message.encrypted_payload);
-            
+
             // 2. Store in local database
             let msg_row = MessageRow {
                 id: message.id.0.to_string(),
@@ -313,13 +320,13 @@ pub mod client {
                 content_hash: Some(hex::encode(&message_hash)),
             };
             self.database.insert_message(&msg_row).await?;
-            
+
             // 3. Queue for network delivery
             {
                 let mut queue = self.message_queue.write().await;
                 queue.push(message.clone())?;
             }
-            
+
             // 4. Route through network based on message type
             match &message.message_type {
                 dchat_messaging::types::MessageType::Direct { recipient, .. } => {
@@ -334,8 +341,12 @@ pub mod client {
                     tracing::info!("Broadcasting system message");
                 }
             }
-            
-            tracing::info!("✓ Message {} sent (hash: {})", message.id.0, hex::encode(&message_hash[..8]));
+
+            tracing::info!(
+                "✓ Message {} sent (hash: {})",
+                message.id.0,
+                hex::encode(&message_hash[..8])
+            );
             Ok(())
         }
 
@@ -349,13 +360,16 @@ pub mod client {
         /// 5. Returns new messages since last check
         pub async fn receive_messages(&self) -> Result<Vec<Message>> {
             tracing::debug!("Fetching received messages from database");
-            
+
             // Get user's identity
             let user_id = &self.identity.user_id;
-            
+
             // Retrieve messages from database for this user
-            let msg_rows = self.database.get_messages_for_user(&user_id.0.to_string(), 100).await?;
-            
+            let msg_rows = self
+                .database
+                .get_messages_for_user(&user_id.0.to_string(), 100)
+                .await?;
+
             // Convert MessageRow to Message (simplified - in production would decrypt)
             let messages: Vec<Message> = msg_rows
                 .into_iter()
@@ -364,13 +378,13 @@ pub mod client {
                     if row.status == "delivered" {
                         return None;
                     }
-                    
+
                     // Build message from row (simplified reconstruction)
                     let message = MessageBuilder::new()
                         .encrypted_payload(row.encrypted_payload)
                         .build()
                         .ok()?;
-                    
+
                     // Filter out expired messages
                     if message.is_deliverable() {
                         Some(message)
@@ -379,13 +393,13 @@ pub mod client {
                     }
                 })
                 .collect();
-            
+
             tracing::info!(
                 "✓ Retrieved {} new messages for user {}",
                 messages.len(),
                 user_id
             );
-            
+
             Ok(messages)
         }
 

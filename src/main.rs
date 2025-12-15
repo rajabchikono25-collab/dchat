@@ -5301,7 +5301,7 @@ async fn run_validator_node(
             //   5. On StateValidationError::ByzantineFault: slash offending validator
             //   6. Periodically cleanup old state roots
 
-            use dchat_blockchain::block_hierarchy::Hash as BlockHash;
+            use dchat_blockchain::block_hierarchy::{Hash as BlockHash, LaneId, MiniblockBody};
             use dchat_blockchain::{Block, MerkleTree, Miniblock, StateValidationError, Subblock};
 
             let mut block_height = 0u64;
@@ -5336,58 +5336,104 @@ async fn run_validator_node(
 
                             // Create subblock with miniblocks containing transactions
                             let mut subblock = Subblock::new(0);
+                            let mut all_state_transitions: Vec<Vec<u8>> = Vec::new();
 
-                            // Split transactions into miniblocks (max 250 per miniblock)
-                            let chunks: Vec<Vec<dchat_chain::Transaction>> = pending_txs
-                                .chunks(250)
-                                .map(|c| c.to_vec())
-                                .collect();
+                            // Deterministically shard transactions by lane, then build one miniblock per lane.
+                            // NOTE: Subblock currently enforces unique lanes, so we take up to 10 lanes.
+                            let mut txs_by_lane: std::collections::BTreeMap<
+                                u16,
+                                std::collections::VecDeque<dchat_chain::Transaction>,
+                            > = std::collections::BTreeMap::new();
 
-                            let mut all_state_transitions = Vec::new();
+                            for tx in pending_txs {
+                                match dchat_blockchain::block_hierarchy::lane_for_transaction(&tx) {
+                                    Ok(lane) => {
+                                        txs_by_lane.entry(lane.0).or_default().push_back(tx);
+                                    }
+                                    Err(e) => {
+                                        warn!("Dropping invalid tx {:?}: {:?}", tx.tx_id, e);
+                                    }
+                                }
+                            }
 
-                            for (idx, tx_chunk) in chunks.iter().enumerate() {
-                                let pre_state_hash = world_state.compute_hash();
+                            let mut next_miniblock_index: u16 = 0;
 
-                                // Execute transactions
-                                let mut miniblock = Miniblock::new(idx as u16, tx_chunk.clone());
-                                miniblock.pre_state_hash = pre_state_hash;
+                            for (lane_u16, queue) in txs_by_lane.iter_mut() {
+                                if next_miniblock_index >= 10 {
+                                    warn!("Subblock miniblock limit reached; leaving remaining txs for next block");
+                                    break;
+                                }
+                                if queue.is_empty() {
+                                    continue;
+                                }
 
-                                // Execute each transaction in the miniblock
-                                let mut gas_used = 0u64;
-                                for tx in tx_chunk {
-                                    match world_state.apply_transaction(tx).await {
-                                        Ok(gas) => gas_used += gas,
-                                        Err(e) => {
-                                            warn!("Transaction {} failed: {:?}", tx.tx_id, e);
-                                        }
+                                // Keep miniblocks small for bounded worst-case cost.
+                                let mut txs: Vec<dchat_chain::Transaction> = Vec::with_capacity(250);
+                                while txs.len() < 250 {
+                                    match queue.pop_front() {
+                                        Some(tx) => txs.push(tx),
+                                        None => break,
                                     }
                                 }
 
-                                miniblock.post_state_hash = world_state.compute_hash();
-                                miniblock.gas_used = gas_used;
+                                let lane = LaneId(*lane_u16);
+                                let body = MiniblockBody {
+                                    transactions: txs,
+                                    receipts: Vec::new(),
+                                };
+
+                                let mut miniblock = match Miniblock::new(next_miniblock_index, lane, body) {
+                                    Ok(mb) => mb,
+                                    Err(e) => {
+                                        warn!("Failed to build miniblock lane={}: {:?}", lane_u16, e);
+                                        continue;
+                                    }
+                                };
+
+                                if let Err(e) = miniblock.execute(&mut world_state).await {
+                                    warn!("Miniblock execution failed lane={}: {:?}", lane_u16, e);
+                                    continue;
+                                }
 
                                 // Collect state transition for Merkle tree
                                 let mut transition = Vec::new();
-                                transition.extend_from_slice(&(idx as u16).to_le_bytes());
-                                transition.extend_from_slice(miniblock.pre_state_hash.as_bytes());
-                                transition.extend_from_slice(miniblock.post_state_hash.as_bytes());
-                                transition.extend_from_slice(&gas_used.to_le_bytes());
+                                transition.extend_from_slice(&miniblock.header.index.to_le_bytes());
+                                transition.extend_from_slice(miniblock.header.pre_state_hash.as_bytes());
+                                transition.extend_from_slice(miniblock.header.post_state_hash.as_bytes());
+                                transition.extend_from_slice(&miniblock.header.gas_used.to_le_bytes());
                                 all_state_transitions.push(transition);
 
-                                let _ = subblock.add_miniblock(miniblock);
+                                match subblock.add_miniblock(miniblock) {
+                                    Ok(()) => next_miniblock_index += 1,
+                                    Err(e) => {
+                                        warn!("Failed to add miniblock to subblock: {:?}", e);
+                                        break;
+                                    }
+                                }
                             }
 
-                            // If no transactions, create an empty miniblock for genesis
-                            if chunks.is_empty() {
-                                let pre_state = world_state.compute_hash();
-                                let mut miniblock = Miniblock::new(0, Vec::new());
-                                miniblock.pre_state_hash = pre_state;
-                                miniblock.post_state_hash = pre_state;
+                            // If no transactions, create an empty miniblock (keeps state_root deterministic).
+                            if subblock.miniblocks.is_empty() {
+                                let body = MiniblockBody {
+                                    transactions: Vec::new(),
+                                    receipts: Vec::new(),
+                                };
+                                let mut miniblock = match Miniblock::new(0, LaneId(0), body) {
+                                    Ok(mb) => mb,
+                                    Err(e) => {
+                                        warn!("Failed to build empty miniblock: {:?}", e);
+                                        continue;
+                                    }
+                                };
+                                if let Err(e) = miniblock.execute(&mut world_state).await {
+                                    warn!("Empty miniblock execution failed: {:?}", e);
+                                    continue;
+                                }
 
                                 let mut transition = Vec::new();
                                 transition.extend_from_slice(&0u16.to_le_bytes());
-                                transition.extend_from_slice(miniblock.pre_state_hash.as_bytes());
-                                transition.extend_from_slice(miniblock.post_state_hash.as_bytes());
+                                transition.extend_from_slice(miniblock.header.pre_state_hash.as_bytes());
+                                transition.extend_from_slice(miniblock.header.post_state_hash.as_bytes());
                                 transition.extend_from_slice(&0u64.to_le_bytes());
                                 all_state_transitions.push(transition);
 
