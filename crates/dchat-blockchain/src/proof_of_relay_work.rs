@@ -634,12 +634,12 @@ impl HardenedProofOfRelayWork {
         // Convert relay_id bytes to VerifyingKey and signature bytes to Signature
         let public_key =
             VerifyingKey::from_bytes(&vote.relay_id).map_err(|_| ConsensusError::SignatureError)?;
-        let signature = Signature::from_bytes(&vote.signature);
+        let sig = Signature::from_bytes(&vote.signature);
 
         // Queue signature for batch verification using proper SignatureType
         let sig_type = SignatureType::Ed25519 {
             public_key,
-            Ed25519Signature: signature,
+            signature: sig,
         };
 
         // Submit to batch verifier (priority 2 = high for consensus votes)
@@ -799,6 +799,80 @@ impl HardenedProofOfRelayWork {
     /// Process pending batch verifications and return completed jobs
     pub fn flush_verifications(&self) -> Vec<crate::hardened_consensus::CompletedJob> {
         self.batch_verifier.lock().process()
+    }
+
+    /// Get the epoch manager for external epoch operations
+    pub fn epoch_manager(&self) -> &Arc<EpochSnapshotManager> {
+        &self.epoch_manager
+    }
+
+    /// Get current epoch from epoch manager
+    pub fn current_epoch(&self) -> u64 {
+        self.epoch_manager.current_epoch()
+    }
+
+    /// Get the threshold calculator for finality threshold queries
+    pub fn threshold_calculator(&self) -> &PoRWThresholdCalculator {
+        &self.threshold_calc
+    }
+
+    /// Calculate PoRW approval percentage using the threshold calculator
+    /// Returns the approval weight in basis points from the threshold calc state
+    pub fn get_approval_weight_bps(&self) -> u64 {
+        self.threshold_calc.approval_bps()
+    }
+
+    /// Check if quorum has been reached based on threshold calculator
+    pub fn has_quorum(&self) -> bool {
+        self.threshold_calc.has_quorum()
+    }
+
+    /// Get the VRF committee selector
+    pub fn committee_selector(&self) -> &CommitteeSelector {
+        &self.committee_selector
+    }
+
+    /// Get a VRF seed for a target block height
+    pub fn get_vrf_seed(&self, target_height: u64) -> Result<Hash, ConsensusError> {
+        self.seed_deriver.get_seed(target_height).map_err(|_| {
+            ConsensusError::SnapshotNotAvailable(SnapshotStore::epoch_for_block(target_height))
+        })
+    }
+
+    /// Record a finalized block for VRF seed derivation
+    pub fn record_finalized_block(&mut self, height: u64, hash: Hash) {
+        self.seed_deriver.record_finalized_block(height, hash);
+    }
+
+    /// Check current admission status (connection count vs max)
+    pub fn admission_capacity_available(&self) -> bool {
+        let stats = self.admission.stats();
+        stats.total_connections < stats.total_peers.max(1) * 10 // Heuristic: max 10 connections per peer
+    }
+
+    /// Get current connection count from admission controller
+    pub fn current_connection_count(&self) -> usize {
+        self.admission.stats().total_connections
+    }
+
+    /// Get relay score by ID from sharded state
+    pub fn get_relay_score(&self, relay_id: &[u8]) -> Option<RelayScore> {
+        self.sharded_scores.get(&relay_id.to_vec()).ok().flatten()
+    }
+
+    /// Update relay score in sharded state
+    pub fn update_relay_score(&self, relay_id: Vec<u8>, score: RelayScore) {
+        let _ = self.sharded_scores.insert(relay_id, score);
+    }
+
+    /// Get the base finality threshold (before escalation adjustments)
+    pub fn base_finality_threshold(&self) -> f64 {
+        self.base_finality_threshold
+    }
+
+    /// Get required geographic diversity count
+    pub fn required_diversity(&self) -> usize {
+        self.geographic_diversity_required
     }
 }
 

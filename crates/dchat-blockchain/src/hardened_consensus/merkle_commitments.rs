@@ -25,7 +25,8 @@ pub const MAX_SAMPLES_PER_BLOCK: usize = 32;
 pub const DEFAULT_SAMPLE_COUNT: usize = 16;
 
 /// Challenge window duration (validators have this long to respond)
-pub const CHALLENGE_WINDOW_SECS: u64 = 300; // 5 minutes
+/// Window for challenging commitments (seconds)
+pub const COMMITMENT_CHALLENGE_WINDOW_SECS: u64 = 300; // 5 minutes
 
 /// Slashing amount for fraud proof failure (basis points of stake)
 pub const FRAUD_SLASH_BPS: u64 = 5000; // 50% slash
@@ -370,8 +371,8 @@ fn combine_hashes(left: &Hash, right: &Hash) -> Hash {
     Hash::from(*blake3::hash(&combined).as_bytes())
 }
 
-/// Verify a Merkle inclusion proof
-pub fn verify_merkle_proof(
+/// Verify a Merkle inclusion proof for commitment verification
+pub fn verify_commitment_proof(
     leaf_hash: &Hash,
     proof: &MerkleInclusionProof,
     root: &Hash,
@@ -536,7 +537,7 @@ impl CommitmentManager {
             leaf_indices,
             vrf_output,
             vrf_proof,
-            deadline: SystemTime::now() + Duration::from_secs(CHALLENGE_WINDOW_SECS),
+            deadline: SystemTime::now() + Duration::from_secs(COMMITMENT_CHALLENGE_WINDOW_SECS),
             commitment_root: commitment.root,
         })
     }
@@ -579,7 +580,7 @@ impl CommitmentManager {
             }
 
             // Verify Merkle inclusion
-            verify_merkle_proof(&leaf.hash, proof, expected_root)?;
+            verify_commitment_proof(&leaf.hash, proof, expected_root)?;
         }
 
         Ok(())
@@ -659,6 +660,50 @@ impl CommitmentManager {
     /// Get commitment by scope
     pub fn get_commitment(&self, scope: &CommitmentScope) -> Option<&MerkleCommitment> {
         self.commitments.get(scope)
+    }
+
+    /// Verify a merkle proof for inclusion at a specific index
+    ///
+    /// # Arguments
+    /// * `leaf_data` - The data at the leaf position
+    /// * `merkle_path` - The sibling hashes along the path to root
+    /// * `index` - The leaf index in the tree
+    /// * `expected_root` - The expected merkle root
+    ///
+    /// # Returns
+    /// `true` if the proof is valid, `false` otherwise
+    pub fn verify_commitment_proof(
+        &self,
+        leaf_data: &[u8],
+        merkle_path: &[Hash],
+        index: usize,
+        expected_root: &Hash,
+    ) -> bool {
+        // Hash the leaf data
+        let leaf_hash = Hash::from(*blake3::hash(leaf_data).as_bytes());
+
+        // Walk up the tree using the merkle path
+        let mut current = leaf_hash;
+        let mut idx = index;
+
+        for sibling in merkle_path {
+            let combined = if idx % 2 == 0 {
+                // Current is left child, sibling is right
+                let mut data = current.as_bytes().to_vec();
+                data.extend_from_slice(sibling.as_bytes());
+                data
+            } else {
+                // Current is right child, sibling is left
+                let mut data = sibling.as_bytes().to_vec();
+                data.extend_from_slice(current.as_bytes());
+                data
+            };
+
+            current = Hash::from(*blake3::hash(&combined).as_bytes());
+            idx /= 2;
+        }
+
+        current == *expected_root
     }
 }
 
@@ -880,11 +925,11 @@ mod tests {
         let proof = builder.generate_proof(2).unwrap();
         let leaf_hash = Hash::from(*blake3::hash(b"leaf2").as_bytes());
 
-        assert!(verify_merkle_proof(&leaf_hash, &proof, &root).is_ok());
+        assert!(verify_commitment_proof(&leaf_hash, &proof, &root).is_ok());
 
         // Wrong hash should fail
         let wrong_hash = Hash::from(*blake3::hash(b"wrong").as_bytes());
-        assert!(verify_merkle_proof(&wrong_hash, &proof, &root).is_err());
+        assert!(verify_commitment_proof(&wrong_hash, &proof, &root).is_err());
     }
 
     #[test]

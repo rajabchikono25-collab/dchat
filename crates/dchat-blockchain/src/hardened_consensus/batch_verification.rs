@@ -63,15 +63,15 @@ pub struct SignatureJob {
 /// Types of signatures supported
 #[derive(Debug, Clone)]
 pub enum SignatureType {
-    /// Ed25519 Ed25519Signature
+    /// Ed25519 signature
     Ed25519 {
         public_key: VerifyingKey,
-        Ed25519Signature: Ed25519Signature,
+        signature: Ed25519Signature,
     },
-    /// Dilithium3 post-quantum Ed25519Signature
+    /// Dilithium3 post-quantum signature
     Dilithium3 {
         public_key: Vec<u8>,
-        Ed25519Signature: Vec<u8>,
+        signature: Vec<u8>,
     },
     /// Hybrid: Ed25519 + Dilithium3 (both must verify)
     Hybrid {
@@ -147,11 +147,28 @@ fn verify_batch(
     Ok(())
 }
 
+/// Generate a fresh Ed25519 keypair for signing operations
+///
+/// This function is used for creating ephemeral signing keys in production
+/// scenarios like relay attestations and committee vote signing.
+pub fn generate_signing_keypair() -> (SigningKey, VerifyingKey) {
+    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let verifying_key = signing_key.verifying_key();
+    (signing_key, verifying_key)
+}
+
+/// Sign a message with the provided signing key
+///
+/// Returns the signature that can be batch-verified later.
+pub fn sign_message(signing_key: &SigningKey, message: &[u8]) -> Ed25519Signature {
+    signing_key.sign(message)
+}
+
 /// Ed25519 batch verification item
 struct Ed25519BatchItem {
     job_id: u64,
     message: Vec<u8>,
-    Ed25519Signature: Ed25519Signature,
+    signature: Ed25519Signature,
     public_key: VerifyingKey,
     submitted_at: Instant,
 }
@@ -189,11 +206,11 @@ impl Ed25519BatchVerifier {
         }
     }
 
-    /// Add a Ed25519Signature for batch verification
+    /// Add a signature for batch verification
     pub fn add(
         &mut self,
         message: Vec<u8>,
-        Ed25519Signature: Ed25519Signature,
+        signature: Ed25519Signature,
         public_key: VerifyingKey,
     ) -> u64 {
         let job_id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
@@ -201,7 +218,7 @@ impl Ed25519BatchVerifier {
         self.pending.push(Ed25519BatchItem {
             job_id,
             message,
-            Ed25519Signature,
+            signature,
             public_key,
             submitted_at: Instant::now(),
         });
@@ -237,7 +254,7 @@ impl Ed25519BatchVerifier {
 
         // Prepare batch verification inputs
         let messages: Vec<&[u8]> = items.iter().map(|i| i.message.as_slice()).collect();
-        let signatures: Vec<Ed25519Signature> = items.iter().map(|i| i.Ed25519Signature).collect();
+        let signatures: Vec<Ed25519Signature> = items.iter().map(|i| i.signature).collect();
         let public_keys: Vec<VerifyingKey> = items.iter().map(|i| i.public_key).collect();
 
         // Attempt batch verification
@@ -283,21 +300,21 @@ impl Ed25519BatchVerifier {
         }
     }
 
-    /// Verify each Ed25519Signature individually (fallback when batch fails)
+    /// Verify each signature individually (fallback when batch fails)
     fn verify_individually(&self, items: Vec<Ed25519BatchItem>) -> Vec<CompletedJob> {
         items
             .into_iter()
             .map(|item| {
                 let result = if item
                     .public_key
-                    .verify(&item.message, &item.Ed25519Signature)
+                    .verify(&item.message, &item.signature)
                     .is_ok()
                 {
                     self.stats.total_valid.fetch_add(1, Ordering::Relaxed);
                     VerificationResult::Valid
                 } else {
                     self.stats.total_invalid.fetch_add(1, Ordering::Relaxed);
-                    VerificationResult::Invalid("Ed25519Signature verification failed".to_string())
+                    VerificationResult::Invalid("Signature verification failed".to_string())
                 };
 
                 CompletedJob {
@@ -332,11 +349,11 @@ impl Dilithium3Verifier {
         }
     }
 
-    /// Verify a single Dilithium3 Ed25519Signature
+    /// Verify a single Dilithium3 signature
     pub fn verify_single(
         &self,
         message: &[u8],
-        Ed25519Signature: &[u8],
+        signature: &[u8],
         public_key: &[u8],
     ) -> Result<(), VerificationError> {
         // Parse public key
@@ -344,12 +361,9 @@ impl Dilithium3Verifier {
             VerificationError::InvalidFormat(format!("Invalid Dilithium3 public key: {:?}", e))
         })?;
 
-        // Parse Ed25519Signature
-        let sig = dilithium3::DetachedSignature::from_bytes(Ed25519Signature).map_err(|e| {
-            VerificationError::InvalidFormat(format!(
-                "Invalid Dilithium3 Ed25519Signature: {:?}",
-                e
-            ))
+        // Parse signature
+        let sig = dilithium3::DetachedSignature::from_bytes(signature).map_err(|e| {
+            VerificationError::InvalidFormat(format!("Invalid Dilithium3 signature: {:?}", e))
         })?;
 
         // Verify
@@ -404,6 +418,36 @@ impl HybridVerifier {
         }
     }
 
+    /// Add an Ed25519 signature to the batch queue for later verification
+    pub fn add_ed25519(
+        &mut self,
+        message: Vec<u8>,
+        signature: Ed25519Signature,
+        public_key: VerifyingKey,
+    ) -> u64 {
+        self.ed25519_batch.add(message, signature, public_key)
+    }
+
+    /// Flush and verify all queued Ed25519 signatures in a batch
+    pub fn flush_ed25519_batch(&mut self) -> Vec<CompletedJob> {
+        self.ed25519_batch.flush()
+    }
+
+    /// Check if the Ed25519 batch should be flushed
+    pub fn should_flush_ed25519(&self) -> bool {
+        self.ed25519_batch.should_flush()
+    }
+
+    /// Get pending count for Ed25519 batch
+    pub fn ed25519_pending_count(&self) -> usize {
+        self.ed25519_batch.pending_count()
+    }
+
+    /// Get Ed25519 verification statistics
+    pub fn ed25519_stats(&self) -> &VerificationStats {
+        self.ed25519_batch.stats()
+    }
+
     /// Verify a hybrid Ed25519Signature (both must pass)
     pub fn verify_hybrid(
         &self,
@@ -453,6 +497,96 @@ pub struct HybridVerificationItem {
     pub ed25519_sig: Ed25519Signature,
     pub dilithium_key: Vec<u8>,
     pub dilithium_sig: Vec<u8>,
+}
+
+/// Serializable verification request for network transmission
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SerializableVerificationRequest {
+    /// Raw message bytes to verify
+    pub message: Vec<u8>,
+    /// Ed25519 public key bytes (32 bytes)
+    pub ed25519_key: Vec<u8>,
+    /// Ed25519 signature bytes (64 bytes)
+    pub ed25519_sig: Vec<u8>,
+    /// Dilithium3 public key bytes
+    pub dilithium_key: Vec<u8>,
+    /// Dilithium3 signature bytes
+    pub dilithium_sig: Vec<u8>,
+    /// Priority level (0-3)
+    pub priority: u8,
+}
+
+impl SerializableVerificationRequest {
+    /// Convert to internal verification item
+    pub fn to_verification_item(&self) -> Result<HybridVerificationItem, VerificationError> {
+        let ed25519_key =
+            VerifyingKey::from_bytes(self.ed25519_key.as_slice().try_into().map_err(|_| {
+                VerificationError::InvalidFormat("Invalid Ed25519 key length".to_string())
+            })?)
+            .map_err(|_| VerificationError::InvalidFormat("Invalid Ed25519 key".to_string()))?;
+
+        let ed25519_sig_bytes: [u8; 64] = self.ed25519_sig.as_slice().try_into().map_err(|_| {
+            VerificationError::InvalidFormat("Invalid Ed25519 signature length".to_string())
+        })?;
+        let ed25519_sig = Ed25519Signature::from_bytes(&ed25519_sig_bytes);
+
+        Ok(HybridVerificationItem {
+            message: self.message.clone(),
+            ed25519_key,
+            ed25519_sig,
+            dilithium_key: self.dilithium_key.clone(),
+            dilithium_sig: self.dilithium_sig.clone(),
+        })
+    }
+}
+
+/// Shared verification pipeline wrapper for concurrent access
+pub struct SharedVerificationPipeline {
+    inner: Arc<parking_lot::RwLock<VerificationPipeline>>,
+}
+
+impl SharedVerificationPipeline {
+    pub fn new(batch_size: usize, max_queue_size: usize) -> Self {
+        Self {
+            inner: Arc::new(parking_lot::RwLock::new(VerificationPipeline::new(
+                batch_size,
+                max_queue_size,
+            ))),
+        }
+    }
+
+    /// Clone the Arc for sharing across threads
+    pub fn clone_arc(&self) -> Arc<parking_lot::RwLock<VerificationPipeline>> {
+        Arc::clone(&self.inner)
+    }
+
+    /// Get pipeline queue statistics
+    pub fn queue_stats(&self) -> VerificationQueueStats {
+        self.inner.read().queue_stats()
+    }
+
+    /// Submit a signature for verification
+    pub fn submit(
+        &self,
+        signature_type: SignatureType,
+        message: Vec<u8>,
+        priority: u8,
+    ) -> Result<u64, VerificationError> {
+        self.inner.write().submit(signature_type, message, priority)
+    }
+
+    /// Process and flush all pending verifications
+    pub fn flush(&self) -> Vec<CompletedJob> {
+        self.inner.write().flush()
+    }
+}
+
+/// Test helper for creating signed messages
+#[cfg(test)]
+pub fn create_test_signature(message: &[u8]) -> (VerifyingKey, Ed25519Signature) {
+    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let signature = signing_key.sign(message);
+    (signing_key.verifying_key(), signature)
 }
 
 /// Verification pipeline with prioritization
@@ -522,25 +656,23 @@ impl VerificationPipeline {
     /// Validate Ed25519Signature format before queuing
     fn validate_signature_format(&self, sig_type: &SignatureType) -> Result<(), VerificationError> {
         match sig_type {
-            SignatureType::Ed25519 {
-                Ed25519Signature, ..
-            } => {
+            SignatureType::Ed25519 { signature, .. } => {
                 // Ed25519 signatures are 64 bytes
-                if Ed25519Signature.to_bytes().len() != 64 {
+                if signature.to_bytes().len() != 64 {
                     return Err(VerificationError::InvalidFormat(
-                        "Ed25519 Ed25519Signature must be 64 bytes".to_string(),
+                        "Ed25519 signature must be 64 bytes".to_string(),
                     ));
                 }
             }
             SignatureType::Dilithium3 {
-                Ed25519Signature,
+                signature,
                 public_key,
             } => {
-                // Dilithium3 Ed25519Signature is 3293 bytes
-                if Ed25519Signature.len() != 3293 {
+                // Dilithium3 signature is 3293 bytes
+                if signature.len() != 3293 {
                     return Err(VerificationError::InvalidFormat(format!(
-                        "Dilithium3 Ed25519Signature must be 3293 bytes, got {}",
-                        Ed25519Signature.len()
+                        "Dilithium3 signature must be 3293 bytes, got {}",
+                        signature.len()
                     )));
                 }
                 // Dilithium3 public key is 1952 bytes
@@ -558,7 +690,7 @@ impl VerificationPipeline {
             } => {
                 if dilithium_sig.len() != 3293 || dilithium_key.len() != 1952 {
                     return Err(VerificationError::InvalidFormat(
-                        "Invalid Dilithium3 dimensions in hybrid Ed25519Signature".to_string(),
+                        "Invalid Dilithium3 dimensions in hybrid signature".to_string(),
                     ));
                 }
             }
@@ -578,11 +710,11 @@ impl VerificationPipeline {
                 let result = match job.signature_type {
                     SignatureType::Ed25519 {
                         public_key,
-                        Ed25519Signature,
+                        signature,
                     } => {
                         // Add to batch verifier
                         self.ed25519_verifier
-                            .add(job.message, Ed25519Signature, public_key);
+                            .add(job.message, signature, public_key);
 
                         // Flush if batch is ready
                         if self.ed25519_verifier.should_flush() {
@@ -593,11 +725,11 @@ impl VerificationPipeline {
                     }
                     SignatureType::Dilithium3 {
                         public_key,
-                        Ed25519Signature,
+                        signature,
                     } => {
                         match self.dilithium_verifier.verify_single(
                             &job.message,
-                            &Ed25519Signature,
+                            &signature,
                             &public_key,
                         ) {
                             Ok(()) => VerificationResult::Valid,
@@ -647,8 +779,8 @@ impl VerificationPipeline {
     }
 
     /// Get queue statistics
-    pub fn queue_stats(&self) -> QueueStats {
-        QueueStats {
+    pub fn queue_stats(&self) -> VerificationQueueStats {
+        VerificationQueueStats {
             total_queued: self.total_queued,
             priority_counts: [
                 self.priority_queues[0].len(),
@@ -659,11 +791,30 @@ impl VerificationPipeline {
             ed25519_pending: self.ed25519_verifier.pending_count(),
         }
     }
+
+    /// Submit an Ed25519 signature job directly (integration layer convenience)
+    pub fn submit_ed25519(&mut self, job: SignatureJob) {
+        // Extract priority and insert into queue
+        let priority_idx = (job.priority.min(3)) as usize;
+        self.priority_queues[priority_idx].push(job);
+        self.total_queued += 1;
+    }
+
+    /// Flush and process all pending jobs (integration layer convenience)
+    pub fn flush(&mut self) -> Vec<CompletedJob> {
+        self.process()
+    }
 }
 
-/// Queue statistics
+impl Default for VerificationPipeline {
+    fn default() -> Self {
+        Self::new(64, 10000) // Default batch size 64, max queue 10k
+    }
+}
+
+/// Queue statistics for batch verification pipeline
 #[derive(Debug, Clone)]
-pub struct QueueStats {
+pub struct VerificationQueueStats {
     pub total_queued: usize,
     pub priority_counts: [usize; 4],
     pub ed25519_pending: usize,
@@ -907,7 +1058,7 @@ mod tests {
                     .submit(
                         SignatureType::Ed25519 {
                             public_key: pk,
-                            Ed25519Signature: sig,
+                            signature: sig,
                         },
                         msg,
                         priority,
@@ -943,7 +1094,7 @@ mod tests {
                 .submit(
                     SignatureType::Ed25519 {
                         public_key: pk,
-                        Ed25519Signature: sig,
+                        signature: sig,
                     },
                     msg,
                     0,
@@ -960,7 +1111,7 @@ mod tests {
         let result = pipeline.submit(
             SignatureType::Ed25519 {
                 public_key: pk,
-                Ed25519Signature: sig,
+                signature: sig,
             },
             msg,
             0,
@@ -973,11 +1124,11 @@ mod tests {
     fn test_format_validation() {
         let mut pipeline = VerificationPipeline::new(16, 100);
 
-        // Invalid Dilithium3 Ed25519Signature size
+        // Invalid Dilithium3 signature size
         let result = pipeline.submit(
             SignatureType::Dilithium3 {
-                public_key: vec![0u8; 1952],      // Correct size
-                Ed25519Signature: vec![0u8; 100], // Wrong size (should be 3293)
+                public_key: vec![0u8; 1952], // Correct size
+                signature: vec![0u8; 100],   // Wrong size (should be 3293)
             },
             b"message".to_vec(),
             0,
@@ -1002,7 +1153,7 @@ mod tests {
                 .submit(
                     SignatureType::Ed25519 {
                         public_key: pk,
-                        Ed25519Signature: sig,
+                        signature: sig,
                     },
                     msg,
                     0, // Low priority
@@ -1021,7 +1172,7 @@ mod tests {
                 .submit(
                     SignatureType::Ed25519 {
                         public_key: pk,
-                        Ed25519Signature: sig,
+                        signature: sig,
                     },
                     msg,
                     3, // High priority

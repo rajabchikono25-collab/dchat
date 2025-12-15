@@ -36,7 +36,8 @@ pub const CONTINENTAL_FINALITY_TIMEOUT_MS: u64 = 2000;
 pub const GLOBAL_FINALITY_TIMEOUT_MS: u64 = 30000;
 
 /// Challenge window (seconds)
-pub const CHALLENGE_WINDOW_SECS: u64 = 300;
+/// Challenge window for finality disputes (seconds)
+pub const FINALITY_CHALLENGE_WINDOW_SECS: u64 = 300;
 
 /// Maximum escalation level
 pub const MAX_ESCALATION_LEVEL: u8 = 4;
@@ -121,7 +122,7 @@ impl FinalityStage {
             Self::Local => Duration::from_millis(LOCAL_FINALITY_TIMEOUT_MS),
             Self::Continental => Duration::from_millis(CONTINENTAL_FINALITY_TIMEOUT_MS),
             Self::Global => Duration::from_millis(GLOBAL_FINALITY_TIMEOUT_MS),
-            Self::Deep => Duration::from_secs(CHALLENGE_WINDOW_SECS),
+            Self::Deep => Duration::from_secs(FINALITY_CHALLENGE_WINDOW_SECS),
         }
     }
 }
@@ -359,8 +360,9 @@ impl BlockFinalityStatus {
                     .copied()
                     .unwrap_or(now);
 
-                let challenge_window =
-                    (CHALLENGE_WINDOW_SECS as f64 * preset.challenge_window_multiplier) as u64;
+                let challenge_window = (FINALITY_CHALLENGE_WINDOW_SECS as f64
+                    * preset.challenge_window_multiplier)
+                    as u64;
 
                 if now >= global_time + challenge_window && !self.challenged {
                     Some(FinalityStage::Deep)
@@ -781,8 +783,10 @@ impl Default for AttackDetector {
 
 /// Two-stage finality tracker
 pub struct TwoStageFinality {
-    /// Block finality statuses
+    /// Block finality statuses (indexed by block number)
     statuses: RwLock<HashMap<u64, BlockFinalityStatus>>,
+    /// Hash to block number index for hash-based lookups
+    hash_index: RwLock<HashMap<Hash, u64>>,
     /// Finalized blocks (deep finality)
     finalized: RwLock<Vec<u64>>,
     /// Last finalized block
@@ -799,14 +803,47 @@ impl TwoStageFinality {
     pub fn new() -> Self {
         Self {
             statuses: RwLock::new(HashMap::new()),
+            hash_index: RwLock::new(HashMap::new()),
             finalized: RwLock::new(Vec::new()),
             last_finalized: AtomicU64::new(0),
             challenge_manager: ChallengeManager::new(
-                CHALLENGE_WINDOW_SECS,
+                FINALITY_CHALLENGE_WINDOW_SECS,
                 1_000_000_000, // 1000 DCHAT minimum bond
             ),
             attack_detector: AttackDetector::new(),
             max_pending: MAX_PENDING_FINALITY,
+        }
+    }
+
+    /// Track a block by hash (for integration layer compatibility)
+    pub fn track_block(&self, block_hash: &Hash) {
+        // Auto-assign next block number
+        let block_number = {
+            let statuses = self.statuses.read();
+            statuses.len() as u64 + 1
+        };
+        let _ = self.register_block(block_number, *block_hash);
+    }
+
+    /// Get finality stage by block hash (for integration layer compatibility)
+    pub fn get_finality_stage(&self, block_hash: &Hash) -> Option<FinalityStage> {
+        let hash_index = self.hash_index.read();
+        if let Some(&block_number) = hash_index.get(block_hash) {
+            Some(self.get_stage(block_number))
+        } else {
+            None
+        }
+    }
+
+    /// Upgrade finality stage directly (for integration layer compatibility)
+    pub fn upgrade_finality(&self, block_hash: &Hash, stage: FinalityStage) {
+        let hash_index = self.hash_index.read();
+        if let Some(&block_number) = hash_index.get(block_hash) {
+            drop(hash_index);
+            let mut statuses = self.statuses.write();
+            if let Some(status) = statuses.get_mut(&block_number) {
+                status.stage = stage;
+            }
         }
     }
 
@@ -820,6 +857,10 @@ impl TwoStageFinality {
 
         let status = BlockFinalityStatus::new(block_number, block_hash);
         statuses.insert(block_number, status);
+        drop(statuses);
+
+        // Update hash index for hash-based lookups
+        self.hash_index.write().insert(block_hash, block_number);
 
         Ok(())
     }
@@ -1003,6 +1044,50 @@ impl TwoStageFinality {
                 statuses.remove(&block);
             }
         }
+    }
+
+    /// Process a full block for finality tracking
+    ///
+    /// Registers the block and all its subblocks for finality tracking.
+    /// Returns the block hash used for registration.
+    pub fn process_block(&self, block: &Block) -> Result<Hash, FinalityError> {
+        // Compute block hash from state root
+        let block_hash = block.state_root;
+
+        // Register the main block
+        self.register_block(block.height, block_hash)?;
+
+        // Track subblocks for fine-grained finality
+        for (subblock_idx, subblock) in block.subblocks.iter().enumerate() {
+            self.process_subblock(block.height, subblock_idx, subblock)?;
+        }
+
+        Ok(block_hash)
+    }
+
+    /// Process a subblock for finality tracking
+    ///
+    /// Subblocks contribute to the overall block finality but may have
+    /// individual finality states during the confirmation process.
+    fn process_subblock(
+        &self,
+        parent_block_height: u64,
+        subblock_idx: usize,
+        subblock: &Subblock,
+    ) -> Result<(), FinalityError> {
+        // Subblocks are tracked within their parent block
+        // The parent block number encodes the subblock index
+        let subblock_number = parent_block_height * 100 + subblock_idx as u64;
+
+        // Register the subblock with its merkle root as hash
+        self.register_block(subblock_number, subblock.merkle_root)?;
+
+        Ok(())
+    }
+
+    /// Create an Arc-wrapped shared finality tracker for concurrent access
+    pub fn into_shared(self) -> Arc<Self> {
+        Arc::new(self)
     }
 }
 

@@ -672,6 +672,13 @@ impl ServerHandshake {
         client_addr: &SocketAddr,
         init: &HandshakeInit,
     ) -> Result<Frame, FramingError> {
+        // Validate protocol version from init
+        if init.protocol_version == 0 {
+            return Err(FramingError::UnsupportedVersion(
+                init.protocol_version as u8,
+            ));
+        }
+
         // Rate limit per IP
         let ip = client_addr.ip();
         let count = *self.pending_count.entry(ip).or_insert(0);

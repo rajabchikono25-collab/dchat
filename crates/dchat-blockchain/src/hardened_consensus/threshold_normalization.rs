@@ -24,6 +24,9 @@ pub const EPOCH_LENGTH_BLOCKS: u64 = 1800; // ~1 hour at 2s blocks
 /// Epoch duration in seconds
 pub const EPOCH_LENGTH_SECS: u64 = 3600;
 
+/// Epoch duration as a Duration type for timeout handling
+pub const EPOCH_DURATION: Duration = Duration::from_secs(EPOCH_LENGTH_SECS);
+
 /// Snapshot finalization delay (blocks after epoch start)
 pub const SNAPSHOT_FINALIZATION_DELAY: u64 = 10;
 

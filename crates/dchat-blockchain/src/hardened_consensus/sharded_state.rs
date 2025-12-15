@@ -21,6 +21,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+/// Type alias for channel receiver - used in partition request/response patterns
+pub type PartitionResponseReceiver<T> = Receiver<T>;
+
 /// Number of virtual nodes per physical partition (for consistent hashing)
 pub const VIRTUAL_NODES_PER_PARTITION: usize = 150;
 
@@ -53,6 +56,79 @@ pub enum ShardingError {
 
     #[error("Invalid partition configuration")]
     InvalidConfig,
+}
+
+/// Serializable partition snapshot for persistence and recovery
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartitionSnapshot<V> {
+    /// Partition identifier
+    pub partition_id: usize,
+    /// Key-value entries
+    pub entries: Vec<(Vec<u8>, V)>,
+    /// Snapshot timestamp
+    pub timestamp: u64,
+    /// Entry count
+    pub entry_count: usize,
+}
+
+impl<V: Clone> PartitionSnapshot<V> {
+    /// Create a new partition snapshot
+    pub fn new(partition_id: usize, entries: Vec<(Vec<u8>, V)>) -> Self {
+        let entry_count = entries.len();
+        Self {
+            partition_id,
+            entries,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            entry_count,
+        }
+    }
+}
+
+/// Block hash based hasher for consistent partition assignment
+/// Uses the block_hierarchy::Hash type for cryptographic key hashing
+pub struct BlockHasher {
+    state: u64,
+}
+
+impl Default for BlockHasher {
+    fn default() -> Self {
+        Self { state: 0 }
+    }
+}
+
+impl Hasher for BlockHasher {
+    fn finish(&self) -> u64 {
+        self.state
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        // Use blake3 hash and convert to u64 (matches the Hash type usage)
+        let hash = blake3::hash(bytes);
+        let hash_bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().unwrap_or([0; 8]);
+        self.state = u64::from_le_bytes(hash_bytes);
+    }
+}
+
+/// BuildHasher implementation for BlockHasher
+#[derive(Clone, Default)]
+pub struct BlockHasherBuilder;
+
+impl BuildHasher for BlockHasherBuilder {
+    type Hasher = BlockHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        BlockHasher::default()
+    }
+}
+
+/// Compute a block-based hash for a key (integrates with block_hierarchy::Hash)
+pub fn compute_block_hash(key: &[u8]) -> Hash {
+    let blake3_hash = blake3::hash(key);
+    // Use Into trait to convert blake3::Hash to block_hierarchy::Hash
+    blake3_hash.into()
 }
 
 /// Consistent hash ring for partition assignment
@@ -161,6 +237,12 @@ pub enum PartitionRequest<V> {
     Clear { response: Sender<()> },
     /// Iterate over all entries
     Iter { response: Sender<Vec<(Vec<u8>, V)>> },
+    /// Create a snapshot of the partition
+    Snapshot {
+        response: Sender<PartitionSnapshot<V>>,
+    },
+    /// Get partition ID
+    GetId { response: Sender<usize> },
     /// Shutdown the partition worker
     Shutdown,
 }
@@ -264,6 +346,16 @@ impl<V: Clone> Partition<V> {
             .collect()
     }
 
+    /// Create a snapshot of this partition for persistence/recovery
+    fn snapshot(&self) -> PartitionSnapshot<V> {
+        PartitionSnapshot::new(self.id, self.iter())
+    }
+
+    /// Get the partition ID
+    fn get_id(&self) -> usize {
+        self.id
+    }
+
     fn touch_key(&mut self, key: &[u8]) {
         // Remove from current position and add to end
         self.access_order.retain(|k| k != key);
@@ -363,6 +455,12 @@ impl<V: Clone + Send + Sync + 'static> ShardedState<V> {
                             }
                             PartitionRequest::Iter { response } => {
                                 let _ = response.send(partition.iter());
+                            }
+                            PartitionRequest::Snapshot { response } => {
+                                let _ = response.send(partition.snapshot());
+                            }
+                            PartitionRequest::GetId { response } => {
+                                let _ = response.send(partition.get_id());
                             }
                             PartitionRequest::Shutdown => break,
                         }
@@ -518,6 +616,52 @@ impl<V: Clone + Send + Sync + 'static> ShardedState<V> {
         }
 
         Ok(all_entries)
+    }
+
+    /// Create a snapshot of a specific partition for persistence/recovery
+    pub fn snapshot_partition(
+        &self,
+        partition: usize,
+    ) -> Result<PartitionSnapshot<V>, ShardingError> {
+        if partition >= self.partition_count {
+            return Err(ShardingError::PartitionNotFound(partition));
+        }
+
+        let (tx, rx) = bounded(1);
+
+        self.partition_senders[partition]
+            .send(PartitionRequest::Snapshot { response: tx })
+            .map_err(|_| ShardingError::ChannelClosed)?;
+
+        rx.recv_timeout(Duration::from_millis(CROSS_PARTITION_TIMEOUT_MS * 10))
+            .map_err(|_| ShardingError::Timeout)
+    }
+
+    /// Get the ID of a specific partition (useful for verification)
+    pub fn get_partition_id(&self, partition: usize) -> Result<usize, ShardingError> {
+        if partition >= self.partition_count {
+            return Err(ShardingError::PartitionNotFound(partition));
+        }
+
+        let (tx, rx) = bounded(1);
+
+        self.partition_senders[partition]
+            .send(PartitionRequest::GetId { response: tx })
+            .map_err(|_| ShardingError::ChannelClosed)?;
+
+        rx.recv_timeout(Duration::from_millis(CROSS_PARTITION_TIMEOUT_MS))
+            .map_err(|_| ShardingError::Timeout)
+    }
+
+    /// Create snapshots of all partitions
+    pub fn snapshot_all(&self) -> Result<Vec<PartitionSnapshot<V>>, ShardingError> {
+        let mut snapshots = Vec::with_capacity(self.partition_count);
+
+        for partition in 0..self.partition_count {
+            snapshots.push(self.snapshot_partition(partition)?);
+        }
+
+        Ok(snapshots)
     }
 
     /// Shutdown all workers

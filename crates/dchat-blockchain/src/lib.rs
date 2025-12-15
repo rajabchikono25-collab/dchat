@@ -58,6 +58,8 @@ pub use currency_chain_block_sync::{
     BlockSyncConfig, BlockSyncManager, CurrencyBlock, CurrencyBlockHeader, ForkInfo, SyncStatus,
 };
 pub use dchat_chain::{Transaction, TransactionStatus, TransactionType};
+#[cfg(feature = "hardened-consensus")]
+pub use proof_of_relay_work::HardenedProofOfRelayWork;
 pub use proof_of_relay_work::ProofOfRelayWork;
 pub use proof_of_transit::{
     Dilithium3Signature, FinalityLevel, GeoLocation, HybridSignature, PoTError, ProofOfTransit,
@@ -79,6 +81,82 @@ pub use temporal_stake_consensus::{
 pub use tokenomics::{
     BurnEvent, BurnReason, DistributionSchedule, LiquidityPool, MintEvent, MintReason,
     RecipientType, TokenSupplyConfig, TokenomicsManager, TokenomicsStats,
+};
+
+// Hardened consensus infrastructure exports (mainnet-critical)
+#[cfg(feature = "hardened-consensus")]
+pub use hardened_consensus::{
+    // Admission control and backpressure
+    AdmissionController,
+    // Merkle commitments and sampling
+    CommitmentManager,
+    // VRF committees
+    Committee,
+    CommitteeMember,
+    CommitteeScope,
+    CommitteeSelector,
+    CommitteeType,
+    // Batch verification
+    CompletedJob,
+    // Transport framing
+    Cookie,
+    CookieSecretManager,
+    DeterministicSampler,
+    // Challenge/response dispute resolution
+    DisputeManager,
+    DisputeState,
+    // Epoch snapshots for threshold calculation
+    EpochSnapshot,
+    // Threshold normalization
+    EpochSnapshotManager,
+    // Two-stage finality
+    EscalationLevel,
+    EscalationPreset,
+    Evidence,
+    FinalityStage,
+    FrameHeader,
+    GeographicRegion as VrfGeographicRegion,
+    MerkleCommitment,
+    PeerBudget,
+    PoRWThresholdCalculator,
+    // Priority levels for admission control (renamed from PriorityLevel)
+    Priority,
+    RelayId,
+    RelayState,
+    SampleRequest,
+    SampleResponse,
+    ServerHandshake,
+    // Sharded state management
+    ShardedState,
+    ShardingError,
+    SignatureJob,
+    SignatureType,
+    SnapshotStore,
+    StakerState,
+    TSCThresholdCalculator,
+    TwoStageFinality,
+    VerificationPipeline,
+    VerificationResult,
+    VrfOutput,
+    VrfSeedDeriver,
+};
+
+// Hardened consensus integration layer exports (unified coordinator)
+#[cfg(feature = "hardened-consensus-integration")]
+pub use hardened_consensus::{
+    // Integration types
+    ConsensusLayer,
+    // Unified coordinator - single entry point for production consensus
+    HardenedConsensusCoordinator,
+    // Individual hardened consensus layers
+    HardenedPoRW,
+    HardenedPoT,
+    HardenedTSC,
+    // Integrated threshold checker
+    IntegratedThresholdChecker,
+    IntegrationError,
+    SampledProofRequest,
+    SampledProofResponse,
 };
 
 // Production gap fix exports

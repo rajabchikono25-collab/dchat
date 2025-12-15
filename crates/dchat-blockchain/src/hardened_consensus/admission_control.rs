@@ -416,8 +416,8 @@ impl PriorityQueue {
     }
 
     /// Get stats
-    pub fn stats(&self) -> QueueStats {
-        QueueStats {
+    pub fn stats(&self) -> AdmissionQueueStats {
+        AdmissionQueueStats {
             total_enqueued: self.total_enqueued.load(Ordering::Relaxed),
             total_dequeued: self.total_dequeued.load(Ordering::Relaxed),
             total_dropped: self.total_dropped.load(Ordering::Relaxed),
@@ -433,9 +433,9 @@ impl Default for PriorityQueue {
     }
 }
 
-/// Queue statistics
+/// Queue statistics for admission control
 #[derive(Debug, Clone)]
-pub struct QueueStats {
+pub struct AdmissionQueueStats {
     pub total_enqueued: u64,
     pub total_dequeued: u64,
     pub total_dropped: u64,
@@ -656,6 +656,10 @@ pub struct AdmissionController {
     total_connections: AtomicUsize,
     /// Max total connections
     max_connections: usize,
+    /// Recent admission events for rate analysis (bounded FIFO)
+    recent_admissions: parking_lot::RwLock<VecDeque<(Instant, PeerId, Priority)>>,
+    /// Maximum recent admission history size
+    max_recent_history: usize,
 }
 
 impl AdmissionController {
@@ -670,7 +674,42 @@ impl AdmissionController {
             default_byte_limit: 10 * 1024 * 1024, // 10 MB/s
             total_connections: AtomicUsize::new(0),
             max_connections,
+            recent_admissions: parking_lot::RwLock::new(VecDeque::with_capacity(1000)),
+            max_recent_history: 1000,
         }
+    }
+
+    /// Record a recent admission event
+    fn record_admission(&self, peer_id: &PeerId, priority: Priority) {
+        let mut recent = self.recent_admissions.write();
+        recent.push_back((Instant::now(), peer_id.clone(), priority));
+
+        // Maintain bounded size using FIFO
+        while recent.len() > self.max_recent_history {
+            recent.pop_front();
+        }
+    }
+
+    /// Get admission rate over the last window
+    pub fn get_admission_rate(&self, window: Duration) -> f64 {
+        let recent = self.recent_admissions.read();
+        let cutoff = Instant::now() - window;
+        let count = recent.iter().filter(|(t, _, _)| *t >= cutoff).count();
+        count as f64 / window.as_secs_f64()
+    }
+
+    /// Get admission count by priority over the last window
+    pub fn get_priority_distribution(&self, window: Duration) -> HashMap<Priority, usize> {
+        let recent = self.recent_admissions.read();
+        let cutoff = Instant::now() - window;
+        let mut distribution = HashMap::new();
+
+        for (t, _, priority) in recent.iter() {
+            if *t >= cutoff {
+                *distribution.entry(*priority).or_insert(0) += 1;
+            }
+        }
+        distribution
     }
 
     /// Register a new peer
@@ -742,6 +781,9 @@ impl AdmissionController {
         if !budget.try_consume(effective_bytes) {
             return Err(AdmissionError::BudgetExhausted(peer_id.to_string()));
         }
+
+        // Record the admission event for rate analysis
+        self.record_admission(peer_id, priority);
 
         // Enqueue
         let msg = QueuedMessage {
@@ -876,7 +918,7 @@ impl AdmissionController {
 pub struct AdmissionStats {
     pub total_peers: usize,
     pub total_connections: usize,
-    pub queue_stats: QueueStats,
+    pub queue_stats: AdmissionQueueStats,
     pub diversity_stats: DiversityStats,
     pub current_load: u64,
     pub is_throttling: bool,

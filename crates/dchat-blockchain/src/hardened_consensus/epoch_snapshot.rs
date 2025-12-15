@@ -24,8 +24,8 @@ pub const BLOCKS_PER_EPOCH: u64 = 1800;
 /// Finalization delay in blocks (snapshot becomes immutable)
 pub const FINALIZATION_DELAY_BLOCKS: u64 = 10;
 
-/// Maximum relay weight cap (basis points)
-pub const MAX_RELAY_WEIGHT_BPS: u64 = 500; // 5%
+/// Maximum relay weight cap for epoch snapshots (basis points)
+pub const EPOCH_MAX_RELAY_WEIGHT_BPS: u64 = 500; // 5%
 
 /// Maximum staker power cap (basis points)
 pub const MAX_STAKER_POWER_BPS: u64 = 500; // 5%
@@ -328,7 +328,7 @@ impl Snapshot {
                 if relay.active {
                     let raw = relay.raw_weight();
                     let normalized = raw * 10000 / self.total_relay_weight;
-                    relay.normalized_weight_bps = normalized.min(MAX_RELAY_WEIGHT_BPS);
+                    relay.normalized_weight_bps = normalized.min(EPOCH_MAX_RELAY_WEIGHT_BPS);
                 }
             }
 
@@ -373,8 +373,8 @@ impl Snapshot {
         for relay in self.relays.values() {
             if relay.active {
                 let raw = relay.raw_weight() * 10000 / self.total_relay_weight;
-                if raw > MAX_RELAY_WEIGHT_BPS {
-                    excess += raw - MAX_RELAY_WEIGHT_BPS;
+                if raw > EPOCH_MAX_RELAY_WEIGHT_BPS {
+                    excess += raw - EPOCH_MAX_RELAY_WEIGHT_BPS;
                 } else {
                     uncapped_total += raw;
                 }
@@ -384,10 +384,10 @@ impl Snapshot {
         // Redistribute proportionally to uncapped relays
         if excess > 0 && uncapped_total > 0 {
             for relay in self.relays.values_mut() {
-                if relay.active && relay.normalized_weight_bps < MAX_RELAY_WEIGHT_BPS {
+                if relay.active && relay.normalized_weight_bps < EPOCH_MAX_RELAY_WEIGHT_BPS {
                     let share = relay.normalized_weight_bps * excess / uncapped_total;
                     relay.normalized_weight_bps =
-                        (relay.normalized_weight_bps + share).min(MAX_RELAY_WEIGHT_BPS);
+                        (relay.normalized_weight_bps + share).min(EPOCH_MAX_RELAY_WEIGHT_BPS);
                 }
             }
         }
@@ -545,6 +545,16 @@ impl SnapshotStore {
         self.current_block.load(Ordering::Acquire)
     }
 
+    /// Check if store is currently in epoch transition
+    pub fn is_in_transition(&self) -> bool {
+        self.in_transition.load(Ordering::Acquire)
+    }
+
+    /// Set transition state
+    fn set_in_transition(&self, transitioning: bool) {
+        self.in_transition.store(transitioning, Ordering::Release);
+    }
+
     /// Process new block
     pub fn process_block(&self, block: u64) -> Option<u64> {
         self.current_block.store(block, Ordering::Release);
@@ -553,7 +563,11 @@ impl SnapshotStore {
         let current = self.current_epoch.load(Ordering::Acquire);
 
         if epoch > current {
+            // Mark transition started
+            self.set_in_transition(true);
             self.current_epoch.store(epoch, Ordering::Release);
+            // Mark transition complete
+            self.set_in_transition(false);
             Some(epoch)
         } else {
             None
@@ -819,7 +833,7 @@ mod tests {
 
         // Big relay should be capped at 5%
         let big_weight = snapshot.get_relay_weight(&test_id(0));
-        assert!(big_weight <= MAX_RELAY_WEIGHT_BPS);
+        assert!(big_weight <= EPOCH_MAX_RELAY_WEIGHT_BPS);
     }
 
     #[test]

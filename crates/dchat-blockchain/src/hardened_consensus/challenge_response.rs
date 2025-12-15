@@ -519,8 +519,8 @@ impl Dispute {
     }
 }
 
-/// Merkle proof verification
-pub fn verify_merkle_proof(root: &Hash, leaf: &Hash, proof: &[Hash], leaf_index: u64) -> bool {
+/// Merkle proof verification for dispute resolution
+pub fn verify_dispute_proof(root: &Hash, leaf: &Hash, proof: &[Hash], leaf_index: u64) -> bool {
     let mut current = *leaf;
     let mut index = leaf_index;
 
@@ -553,7 +553,7 @@ impl EvidenceVerifier {
         proof: &[Hash],
         leaf_index: u64,
     ) -> Result<(), ChallengeResponseError> {
-        if verify_merkle_proof(root, leaf, proof, leaf_index) {
+        if verify_dispute_proof(root, leaf, proof, leaf_index) {
             Ok(())
         } else {
             Err(ChallengeResponseError::InvalidMerkleProof)
@@ -844,7 +844,10 @@ impl DisputeManager {
         let mut disputes = self.disputes.write();
 
         for (id, dispute) in disputes.iter_mut() {
-            if dispute.is_expired() && dispute.state == DisputeState::AwaitingResponse {
+            // Check if dispute has exceeded response deadline using current timestamp
+            let is_timed_out =
+                dispute.response_deadline < now && dispute.state == DisputeState::AwaitingResponse;
+            if is_timed_out {
                 // Defender didn't respond - challenger wins
                 if let Ok(result) = dispute.resolve(
                     true,
@@ -911,7 +914,7 @@ impl AutomatedArbitrator {
                 }),
             ) => {
                 // Verify challenger's proof
-                let challenger_valid = verify_merkle_proof(root, leaf, proof, *leaf_index);
+                let challenger_valid = verify_dispute_proof(root, leaf, proof, *leaf_index);
 
                 if challenger_valid && root != resp_root {
                     Some((
@@ -1001,9 +1004,9 @@ mod tests {
         // Proof for leaf0: [leaf1, node23]
         let proof = vec![leaf1, node23];
 
-        assert!(verify_merkle_proof(&root, &leaf0, &proof, 0));
-        assert!(!verify_merkle_proof(&root, &leaf0, &proof, 1)); // Wrong index
-        assert!(!verify_merkle_proof(&root, &test_hash(99), &proof, 0)); // Wrong leaf
+        assert!(verify_dispute_proof(&root, &leaf0, &proof, 0));
+        assert!(!verify_dispute_proof(&root, &leaf0, &proof, 1)); // Wrong index
+        assert!(!verify_dispute_proof(&root, &test_hash(99), &proof, 0)); // Wrong leaf
     }
 
     #[test]

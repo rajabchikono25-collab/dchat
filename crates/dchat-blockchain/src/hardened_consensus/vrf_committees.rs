@@ -14,7 +14,7 @@
 
 use crate::block_hierarchy::Hash;
 use crate::consensus_types::RelayScore;
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -30,6 +30,9 @@ pub const MAX_RELAY_WEIGHT_BPS: u64 = 500; // 5%
 
 /// Minimum required regions for diversity (geographic)
 pub const MIN_REQUIRED_REGIONS: usize = 3;
+
+/// Maximum relays from same geographic region (ensures distribution)
+pub const MAX_RELAYS_PER_REGION: usize = 10;
 
 /// Maximum relays from same ASN
 pub const MAX_RELAYS_PER_ASN: usize = 3;
@@ -72,6 +75,9 @@ pub struct Committee {
 
     /// Diversity metrics for verification
     pub diversity: DiversityMetrics,
+
+    /// Signature from the selector proving authentic committee creation
+    pub selector_signature: Option<Signature>,
 }
 
 /// Scope of committee authority
@@ -190,6 +196,54 @@ pub struct RelayEligibility {
     pub ip_prefix: [u8; 3], // First 3 bytes of IP (approximates /24)
     pub operator_id: Hash,
     pub raw_weight: u64,
+}
+
+impl From<RelayScore> for RelayEligibility {
+    /// Convert a RelayScore into committee eligibility information
+    fn from(score: RelayScore) -> Self {
+        // Extract IP prefix from the IP hash (first 3 bytes)
+        let ip_prefix: [u8; 3] = score.ip_address_hash.as_bytes()[0..3]
+            .try_into()
+            .unwrap_or([0, 0, 0]);
+
+        // Derive operator_id from relay_id public key
+        let operator_id = Hash::from(*blake3::hash(score.relay_id.as_bytes()).as_bytes());
+
+        // Calculate raw weight from stake and reputation
+        let stake_weight = score.stake_amount / 1_000_000; // Normalize to millions
+        let reputation_factor = (score.reputation_score * 100.0) as u64;
+        let uptime_factor = (score.uptime_percentage) as u64;
+        let raw_weight = stake_weight
+            .saturating_mul(reputation_factor)
+            .saturating_mul(uptime_factor)
+            / 10000; // Normalize
+
+        // Convert consensus_types::GeographicRegion to local GeographicRegion
+        let region = match score.geographic_region {
+            crate::consensus_types::GeographicRegion::NorthAmerica => {
+                GeographicRegion::NorthAmerica
+            }
+            crate::consensus_types::GeographicRegion::SouthAmerica => {
+                GeographicRegion::SouthAmerica
+            }
+            crate::consensus_types::GeographicRegion::Europe => GeographicRegion::Europe,
+            crate::consensus_types::GeographicRegion::Asia => GeographicRegion::Asia,
+            crate::consensus_types::GeographicRegion::Africa => GeographicRegion::Africa,
+            crate::consensus_types::GeographicRegion::Oceania => GeographicRegion::Oceania,
+        };
+
+        Self {
+            relay_id: RelayId::from_public_key(&score.relay_id),
+            public_key: score.relay_id,
+            stake: score.stake_amount,
+            uptime_score: score.uptime_percentage / 100.0,
+            region,
+            asn: score.asn,
+            ip_prefix,
+            operator_id,
+            raw_weight: raw_weight.max(1), // Minimum weight of 1
+        }
+    }
 }
 
 /// Committee selection errors
@@ -357,6 +411,24 @@ impl CommitteeSelector {
         }
     }
 
+    /// Get VRF seed for a specific block height using the internal seed deriver
+    pub fn get_vrf_seed(&self, target_height: u64) -> Result<Hash, CommitteeError> {
+        self.seed_deriver.get_seed(target_height)
+    }
+
+    /// Derive VRF input bytes for a committee scope
+    pub fn derive_vrf_input_for_scope(
+        &self,
+        scope: &CommitteeScope,
+    ) -> Result<[u8; 64], CommitteeError> {
+        self.seed_deriver.derive_vrf_input(scope)
+    }
+
+    /// Record a finalized block hash for VRF seed derivation
+    pub fn record_finalized_block(&mut self, height: u64, hash: Hash) {
+        self.seed_deriver.record_finalized_block(height, hash);
+    }
+
     /// Select a committee using VRF output
     pub fn select_committee(
         &self,
@@ -404,8 +476,9 @@ impl CommitteeSelector {
                         .copied()
                         .unwrap_or(0);
 
-                    // Apply diversity limits
-                    if asn_count < MAX_RELAYS_PER_ASN
+                    // Apply diversity limits (including region constraint)
+                    if region_count < MAX_RELAYS_PER_REGION
+                        && asn_count < MAX_RELAYS_PER_ASN
                         && prefix_count < MAX_RELAYS_PER_IP_PREFIX
                         && operator_count < MAX_RELAYS_PER_OPERATOR
                     {
@@ -467,12 +540,26 @@ impl CommitteeSelector {
             weight_gini: self.calculate_gini(&members),
         };
 
+        // Sign the committee selection for authenticity verification
+        // The signature covers scope, vrf output, and member selection proofs
+        let mut signing_data = Vec::new();
+        signing_data.extend_from_slice(&scope.block_height.to_le_bytes());
+        signing_data.push(scope.subblock_index);
+        signing_data.push(scope.miniblock_index.unwrap_or(255));
+        signing_data.push(scope.committee_type as u8);
+        signing_data.extend_from_slice(&vrf_output.output);
+        for member in &members {
+            signing_data.extend_from_slice(&member.selection_proof.as_bytes()[..16]);
+        }
+        let selector_signature = Some(signer.sign(&signing_data));
+
         Ok(Committee {
             scope,
             members,
             total_weight: total_selected_weight,
             vrf_output,
             diversity,
+            selector_signature,
         })
     }
 
@@ -538,7 +625,7 @@ impl CommitteeSelector {
         }
 
         // Verify each member's selection proof
-        let mut hash_state = committee.vrf_output.output;
+        let hash_state = committee.vrf_output.output;
         let mut verified_indices = HashSet::new();
 
         for member in &committee.members {
