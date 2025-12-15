@@ -286,6 +286,125 @@ pub fn verify_ceremony_reproducibility(
     Ok(artifacts.artifacts_hash == expected_hash)
 }
 
+/// Validated ceremony keys with integrity checks
+#[derive(Debug)]
+pub struct ValidatedCeremonyKeys {
+    /// Contact circuit proving key
+    pub contact_pk: ProvingKey<Bn254>,
+    /// Contact circuit verifying key
+    pub contact_vk: VerifyingKey<Bn254>,
+    /// Contact circuit prepared verifying key (for efficient verification)
+    pub contact_pvk: ark_groth16::PreparedVerifyingKey<Bn254>,
+    /// Reputation circuit proving key
+    pub reputation_pk: ProvingKey<Bn254>,
+    /// Reputation circuit verifying key
+    pub reputation_vk: VerifyingKey<Bn254>,
+    /// Reputation circuit prepared verifying key (for efficient verification)
+    pub reputation_pvk: ark_groth16::PreparedVerifyingKey<Bn254>,
+    /// Field element derived from ceremony seed (for binding proofs)
+    pub ceremony_binding: Bn254Fr,
+}
+
+/// Load and validate ceremony keys from serialized artifacts
+///
+/// This performs full cryptographic validation:
+/// 1. Deserializes proving and verifying keys
+/// 2. Verifies key structure integrity
+/// 3. Prepares verifying keys for efficient verification
+/// 4. Computes ceremony binding field element
+///
+/// # Security
+/// This function validates that keys are mathematically well-formed.
+/// It does NOT validate ceremony participation - that requires
+/// independent verification of the ceremony transcript.
+pub fn validate_ceremony_keys(
+    artifacts: &CeremonyArtifacts,
+) -> Result<ValidatedCeremonyKeys, String> {
+    // Deserialize and validate contact circuit keys
+    let contact_pk: ProvingKey<Bn254> =
+        ProvingKey::deserialize_compressed(&artifacts.contact_pk_bytes[..])
+            .map_err(|e| format!("Contact proving key deserialization failed: {}", e))?;
+
+    let contact_vk: VerifyingKey<Bn254> =
+        VerifyingKey::deserialize_compressed(&artifacts.contact_vk_bytes[..])
+            .map_err(|e| format!("Contact verifying key deserialization failed: {}", e))?;
+
+    // Validate key consistency: proving key contains matching verifying key
+    if contact_pk.vk.alpha_g1 != contact_vk.alpha_g1 {
+        return Err("Contact circuit key mismatch: alpha_g1 differs".to_string());
+    }
+    if contact_pk.vk.beta_g2 != contact_vk.beta_g2 {
+        return Err("Contact circuit key mismatch: beta_g2 differs".to_string());
+    }
+
+    // Deserialize and validate reputation circuit keys
+    let reputation_pk: ProvingKey<Bn254> =
+        ProvingKey::deserialize_compressed(&artifacts.reputation_pk_bytes[..])
+            .map_err(|e| format!("Reputation proving key deserialization failed: {}", e))?;
+
+    let reputation_vk: VerifyingKey<Bn254> =
+        VerifyingKey::deserialize_compressed(&artifacts.reputation_vk_bytes[..])
+            .map_err(|e| format!("Reputation verifying key deserialization failed: {}", e))?;
+
+    // Validate reputation key consistency
+    if reputation_pk.vk.alpha_g1 != reputation_vk.alpha_g1 {
+        return Err("Reputation circuit key mismatch: alpha_g1 differs".to_string());
+    }
+    if reputation_pk.vk.beta_g2 != reputation_vk.beta_g2 {
+        return Err("Reputation circuit key mismatch: beta_g2 differs".to_string());
+    }
+
+    // Prepare verifying keys for efficient batch verification
+    let contact_pvk = prepare_verifying_key(&contact_vk);
+    let reputation_pvk = prepare_verifying_key(&reputation_vk);
+
+    // Compute ceremony binding field element
+    // This binds proofs to this specific ceremony instance
+    let ceremony_binding = compute_ceremony_binding(&artifacts.artifacts_hash)?;
+
+    Ok(ValidatedCeremonyKeys {
+        contact_pk,
+        contact_vk,
+        contact_pvk,
+        reputation_pk,
+        reputation_vk,
+        reputation_pvk,
+        ceremony_binding,
+    })
+}
+
+/// Compute a field element from ceremony hash for binding proofs
+///
+/// This creates a unique field element derived from the ceremony artifacts
+/// that can be used as a public input to bind proofs to this ceremony.
+fn compute_ceremony_binding(artifacts_hash: &str) -> Result<Bn254Fr, String> {
+    let hash_bytes =
+        hex::decode(artifacts_hash).map_err(|e| format!("Invalid ceremony hash hex: {}", e))?;
+
+    // Reduce hash to field element using PrimeField trait
+    // This ensures the value is a valid field element
+    Ok(Bn254Fr::from_le_bytes_mod_order(&hash_bytes))
+}
+
+/// Verify ceremony binding matches expected field element
+///
+/// Used to ensure a proof was generated with keys from the expected ceremony.
+pub fn verify_ceremony_binding(
+    expected_hash: &str,
+    proof_binding: &Bn254Fr,
+) -> Result<bool, String> {
+    let expected_binding = compute_ceremony_binding(expected_hash)?;
+    Ok(*proof_binding == expected_binding)
+}
+
+/// Get the modulus of the BN254 scalar field
+///
+/// Returns the prime p where Fr = Z/pZ for the BN254 curve.
+/// Useful for cryptographic operations that need field parameters.
+pub fn get_field_modulus() -> ark_ff::BigInt<4> {
+    <Bn254Fr as PrimeField>::MODULUS
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

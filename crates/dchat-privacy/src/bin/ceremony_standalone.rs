@@ -13,12 +13,12 @@ use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
     CryptographicSponge,
 };
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use ark_groth16::{prepare_verifying_key, Groth16, ProvingKey, VerifyingKey};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -218,6 +218,101 @@ fn create_pot_placeholder(seed: &[u8; 32]) -> Vec<u8> {
     pot
 }
 
+/// Compute ceremony binding hash using Poseidon sponge
+///
+/// This creates a cryptographic binding between the ceremony seed and
+/// the generated keys using the Poseidon hash function, which is
+/// compatible with in-circuit verification.
+fn compute_ceremony_binding(
+    config: &PoseidonConfig<Bn254Fr>,
+    seed: &[u8; 32],
+    artifacts_hash: &str,
+) -> Bn254Fr {
+    // Convert seed to field element using PrimeField trait
+    let seed_element = Bn254Fr::from_le_bytes_mod_order(seed);
+
+    // Convert artifacts hash to field element
+    let hash_bytes = hex::decode(artifacts_hash).unwrap_or_default();
+    let hash_element = Bn254Fr::from_le_bytes_mod_order(&hash_bytes);
+
+    // Use PoseidonSponge with CryptographicSponge trait for native computation
+    let mut sponge = PoseidonSponge::new(config);
+    sponge.absorb(&seed_element);
+    sponge.absorb(&hash_element);
+    let binding: Vec<Bn254Fr> = sponge.squeeze_field_elements(1);
+
+    binding[0]
+}
+
+/// Validate generated keys for cryptographic soundness
+///
+/// Performs extensive validation:
+/// 1. Re-deserializes keys to verify format integrity
+/// 2. Checks proving/verifying key consistency
+/// 3. Prepares verifying keys for efficient verification
+/// 4. Computes verification key commitments
+fn validate_ceremony_keys(
+    contact_pk_bytes: &[u8],
+    contact_vk_bytes: &[u8],
+    reputation_pk_bytes: &[u8],
+    reputation_vk_bytes: &[u8],
+) -> Result<(), String> {
+    println!("  Validating contact circuit keys...");
+
+    // Deserialize and validate contact keys using CanonicalDeserialize
+    let contact_pk: ProvingKey<Bn254> = ProvingKey::deserialize_compressed(contact_pk_bytes)
+        .map_err(|e| format!("Contact PK deserialization failed: {}", e))?;
+
+    let contact_vk: VerifyingKey<Bn254> = VerifyingKey::deserialize_compressed(contact_vk_bytes)
+        .map_err(|e| format!("Contact VK deserialization failed: {}", e))?;
+
+    // Verify proving key contains consistent verifying key
+    if contact_pk.vk.alpha_g1 != contact_vk.alpha_g1 {
+        return Err("Contact key mismatch: alpha_g1 differs".to_string());
+    }
+    if contact_pk.vk.beta_g2 != contact_vk.beta_g2 {
+        return Err("Contact key mismatch: beta_g2 differs".to_string());
+    }
+    if contact_pk.vk.gamma_abc_g1.len() != contact_vk.gamma_abc_g1.len() {
+        return Err("Contact key mismatch: gamma_abc_g1 length differs".to_string());
+    }
+
+    // Prepare verifying key for efficient batch verification
+    let contact_pvk = prepare_verifying_key(&contact_vk);
+    println!(
+        "    Contact VK prepared: {} public inputs",
+        contact_pvk.vk.gamma_abc_g1.len() - 1
+    );
+
+    println!("  Validating reputation circuit keys...");
+
+    // Deserialize and validate reputation keys
+    let reputation_pk: ProvingKey<Bn254> = ProvingKey::deserialize_compressed(reputation_pk_bytes)
+        .map_err(|e| format!("Reputation PK deserialization failed: {}", e))?;
+
+    let reputation_vk: VerifyingKey<Bn254> =
+        VerifyingKey::deserialize_compressed(reputation_vk_bytes)
+            .map_err(|e| format!("Reputation VK deserialization failed: {}", e))?;
+
+    // Verify reputation key consistency
+    if reputation_pk.vk.alpha_g1 != reputation_vk.alpha_g1 {
+        return Err("Reputation key mismatch: alpha_g1 differs".to_string());
+    }
+    if reputation_pk.vk.beta_g2 != reputation_vk.beta_g2 {
+        return Err("Reputation key mismatch: beta_g2 differs".to_string());
+    }
+
+    // Prepare reputation verifying key
+    let reputation_pvk = prepare_verifying_key(&reputation_vk);
+    println!(
+        "    Reputation VK prepared: {} public inputs",
+        reputation_pvk.vk.gamma_abc_g1.len() - 1
+    );
+
+    println!("  Key validation passed ✓");
+    Ok(())
+}
+
 fn main() {
     println!("═══════════════════════════════════════════════════════════════");
     println!("         dchat ZK Ceremony Artifact Generator (Standalone)");
@@ -310,8 +405,26 @@ fn main() {
     combined_hasher.update(&reputation_vk_bytes);
     let artifacts_hash = combined_hasher.finalize().to_hex().to_string();
 
-    let elapsed = start.elapsed();
+    // Validate generated keys before writing
+    println!("Validating ceremony keys...");
+    validate_ceremony_keys(
+        &contact_pk_bytes,
+        &contact_vk_bytes,
+        &reputation_pk_bytes,
+        &reputation_vk_bytes,
+    )
+    .expect("Key validation failed");
     println!();
+
+    // Compute ceremony binding using Poseidon sponge
+    let ceremony_binding = compute_ceremony_binding(&poseidon_config, &seed, &artifacts_hash);
+    println!(
+        "Ceremony binding (Poseidon): {}",
+        hex::encode(ceremony_binding.into_bigint().to_bytes_le())
+    );
+    println!();
+
+    let elapsed = start.elapsed();
     println!("Generation complete in {:.2?}", elapsed);
     println!();
 

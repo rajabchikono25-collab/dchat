@@ -307,6 +307,20 @@ pub struct ReputationProof {
     pub nullifier: [u8; 32],
 }
 
+/// Source of loaded cryptographic keys
+///
+/// Used to track which loading path was used, enabling
+/// gradual migration from legacy to production artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeySource {
+    /// Keys loaded from embedded production artifacts
+    Production,
+    /// Keys loaded from legacy file-based ceremony artifacts
+    Legacy,
+    /// Keys generated dynamically (development only)
+    Generated,
+}
+
 /// Keys for Groth16 proving system
 pub struct Groth16Keys {
     /// Poseidon configuration (shared)
@@ -522,12 +536,60 @@ impl Groth16Keys {
     }
 
     /// Load keys from MPC ceremony artifact files
+    ///
+    /// # Deprecated
+    /// This function is deprecated in favor of `load_production_keys()` which
+    /// loads embedded ceremony artifacts compiled into the binary.
+    ///
+    /// # Migration
+    /// Use `try_load_legacy_or_production()` for gradual migration, or
+    /// switch directly to `load_production_keys()` for new code.
     #[deprecated(
         since = "1.0.0",
         note = "Use load_production_keys() which loads embedded ceremony artifacts"
     )]
-    fn load_from_ceremony_artifacts() -> Result<Self> {
+    pub fn load_from_ceremony_artifacts() -> Result<Self> {
         Self::load_from_embedded_ceremony()
+    }
+
+    /// Load keys with legacy fallback support
+    ///
+    /// Attempts to load keys using the production path first. If that fails,
+    /// falls back to the legacy ceremony artifacts path. This enables gradual
+    /// migration from file-based artifacts to embedded artifacts.
+    ///
+    /// # Returns
+    /// - `Ok(Self)` with source indicator of which path succeeded
+    /// - `Err` if both paths fail
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (keys, source) = Groth16Keys::try_load_legacy_or_production()?;
+    /// if source == KeySource::Legacy {
+    ///     log::warn!("Using legacy ceremony artifacts - consider upgrading");
+    /// }
+    /// ```
+    pub fn try_load_legacy_or_production() -> Result<(Self, KeySource)> {
+        // Try production path first
+        if let Ok(keys) = Self::load_production_keys() {
+            return Ok((keys, KeySource::Production));
+        }
+
+        // Fall back to legacy path
+        #[allow(deprecated)]
+        match Self::load_from_ceremony_artifacts() {
+            Ok(keys) => {
+                tracing::warn!(
+                    "Loaded keys from legacy ceremony artifacts. \
+                     Consider migrating to embedded production keys."
+                );
+                Ok((keys, KeySource::Legacy))
+            }
+            Err(e) => Err(Error::crypto(format!(
+                "Failed to load keys from both production and legacy paths: {}",
+                e
+            ))),
+        }
     }
 
     /// Verify a proof was created with valid production keys

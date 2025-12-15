@@ -10,8 +10,11 @@ pub mod zk_proofs;
 
 pub use blind_tokens::{BlindSigner, BlindToken, TokenIssuer};
 pub use ceremony_gen::{
-    generate_ceremony_artifacts, verify_ceremony_artifacts, verify_ceremony_reproducibility,
-    CeremonyArtifacts, CeremonyMetadata, CeremonySeedConfig,
+    generate_ceremony_artifacts, get_field_modulus, validate_ceremony_keys,
+    verify_ceremony_artifacts, verify_ceremony_binding, verify_ceremony_reproducibility,
+    CeremonyArtifacts, CeremonyMetadata, CeremonySeedConfig, ValidatedCeremonyKeys,
 };
 pub use stealth::{StealthAddress, StealthPayload};
-pub use zk_proofs::{ContactProof, Groth16Keys, ReputationProof, ZkProof, ZkProver, ZkVerifier};
+pub use zk_proofs::{
+    ContactProof, Groth16Keys, KeySource, ReputationProof, ZkProof, ZkProver, ZkVerifier,
+};
