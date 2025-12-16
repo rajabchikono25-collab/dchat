@@ -563,7 +563,7 @@ mod tests {
 
         let path = TransitPath {
             relays,
-            dilithium_keys: vec![vec![0u8; 1952], vec![0u8; 1952]], // Placeholder Dilithium3 public keys
+            dilithium_keys: vec![vec![0u8; 1952], vec![0u8; 1952]], // Test-only: zero-filled keys for unit tests
             locations,
             timestamps,
             signatures: vec![

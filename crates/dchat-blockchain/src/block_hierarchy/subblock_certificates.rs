@@ -320,23 +320,33 @@ impl AggregateSignature {
     }
 
     /// Aggregate another signature (fallback without BLS)
+    ///
+    /// # Production Note
+    /// In release builds, this returns an error requiring the `bls-aggregation` feature.
+    /// BLS aggregate signatures are mandatory for production consensus security.
     #[cfg(not(feature = "bls-aggregation"))]
     pub fn aggregate(&mut self, signature: &[u8]) -> Result<(), BlockError> {
-        // Without BLS, just concatenate signatures (not production-ready)
-        if self.bytes.is_empty() {
-            self.bytes = signature.to_vec();
-        } else {
-            // XOR aggregation (placeholder)
-            if signature.len() == self.bytes.len() {
-                for (i, b) in signature.iter().enumerate() {
-                    self.bytes[i] ^= b;
-                }
+        // In release builds without BLS, aggregation is not supported
+        #[cfg(not(debug_assertions))]
+        {
+            return Err(BlockError::SignatureVerification(
+                "BLS aggregation required for production. Enable the 'bls-aggregation' feature."
+                    .to_string(),
+            ));
+        }
+
+        // Debug builds allow testing without full BLS (stores signatures concatenated)
+        #[cfg(debug_assertions)]
+        {
+            if self.bytes.is_empty() {
+                self.bytes = signature.to_vec();
             } else {
+                // Concatenate for testing - each signature is 64 bytes (Ed25519)
                 self.bytes.extend_from_slice(signature);
             }
+            self.count += 1;
+            Ok(())
         }
-        self.count += 1;
-        Ok(())
     }
 
     /// Verify aggregate signature against public keys and message
@@ -369,10 +379,27 @@ impl AggregateSignature {
     }
 
     /// Verify aggregate signature (fallback without BLS)
+    ///
+    /// # Production Note
+    /// In release builds, this returns an error requiring the `bls-aggregation` feature.
+    /// BLS aggregate signature verification is mandatory for production consensus security.
     #[cfg(not(feature = "bls-aggregation"))]
     pub fn verify(&self, _pubkeys: &[Vec<u8>], _message: &[u8]) -> Result<bool, BlockError> {
-        // Without BLS, just check non-empty
-        Ok(!self.bytes.is_empty())
+        // In release builds without BLS, verification is not supported
+        #[cfg(not(debug_assertions))]
+        {
+            return Err(BlockError::SignatureVerification(
+                "BLS verification required for production. Enable the 'bls-aggregation' feature."
+                    .to_string(),
+            ));
+        }
+
+        // Debug builds allow testing without full BLS (check non-empty and count matches)
+        #[cfg(debug_assertions)]
+        {
+            // Verify we have signatures and the count is reasonable
+            Ok(!self.bytes.is_empty() && self.count > 0)
+        }
     }
 }
 

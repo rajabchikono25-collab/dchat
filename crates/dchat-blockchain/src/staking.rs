@@ -398,10 +398,10 @@ pub struct StakingManager {
     active_set: Arc<RwLock<BTreeMap<u64, Vec<UserId>>>>,
     /// Slashing events history
     slashing_history: Arc<RwLock<Vec<SlashingEvent>>>,
-    /// Currency chain client for on-chain token operations (production mode)
+    /// Currency chain client for on-chain token operations (required for mainnet)
     currency_chain: Option<Arc<CurrencyChainClient>>,
     /// Governance council public keys for slashing verification (7 members)
-    /// SECURITY: These MUST be loaded from secure configuration in production
+    /// SECURITY: Must be loaded from secure, auditable configuration.
     governance_council_keys: Vec<VerifyingKey>,
 }
 
@@ -426,10 +426,9 @@ impl StakingManager {
         }
     }
 
-    /// Create staking manager with currency chain integration (production)
+    /// Create staking manager with currency chain integration
     ///
-    /// PRODUCTION: Use this constructor in production to ensure all stake
-    /// operations are persisted on the currency chain.
+    /// Required for mainnet: all stake operations persist on-chain.
     pub fn with_currency_chain(currency_chain: Arc<CurrencyChainClient>) -> Self {
         Self {
             validators: Arc::new(RwLock::new(HashMap::new())),
@@ -896,13 +895,14 @@ impl StakingManager {
 
     /// Claim validator rewards with actual currency chain transfer
     ///
-    /// This is the production method that:
+    /// This method performs the complete rewards claim flow:
     /// 1. Checks pending rewards amount
     /// 2. Mints rewards to validator's wallet via currency chain
     /// 3. Clears pending rewards
     /// 4. Returns a ClaimReceipt with transaction details
     ///
-    /// Use this instead of `claim_rewards()` in production code.
+    /// Note: For mainnet operations, use this method over `claim_rewards()`
+    /// to ensure rewards are persisted on-chain.
     pub async fn claim_rewards_with_transfer(
         &self,
         validator_id: &UserId,

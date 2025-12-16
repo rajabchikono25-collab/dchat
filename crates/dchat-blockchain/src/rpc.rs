@@ -11,8 +11,8 @@ pub struct RpcConfig {
     pub url: String,
     /// Request timeout (seconds)
     pub timeout: u64,
-    /// Allow insecure HTTP connections (only for localhost/testing)
-    /// In production, this should be false to enforce HTTPS
+    /// Allow insecure HTTP connections (localhost/testing only)
+    /// HTTPS is enforced in release builds for non-localhost URLs.
     #[serde(default)]
     pub allow_insecure: bool,
 }
@@ -62,7 +62,7 @@ pub struct RpcClient {
 impl RpcClient {
     /// Create a new RPC client
     pub fn new(config: RpcConfig) -> Result<Self> {
-        // Enforce HTTPS in production (release builds with non-localhost URLs)
+        // HTTPS enforcement: release builds require HTTPS for non-localhost URLs
         #[cfg(not(debug_assertions))]
         {
             if !config.allow_insecure && !config.url.starts_with("https://") {

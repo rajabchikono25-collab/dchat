@@ -10,6 +10,9 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+#[cfg(not(any(test, feature = "test-mocks")))]
+use crate::client::{ChainRpcClient, HttpRpcClient};
+#[cfg(any(test, feature = "test-mocks"))]
 use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
 use crate::tokenomics::{BurnReason, MintReason, TokenomicsManager};
 
@@ -532,6 +535,9 @@ impl CurrencyChainClient {
     }
 
     /// Create new currency chain client with mock RPC for testing
+    ///
+    /// Only available in test builds or with the `test-mocks` feature.
+    #[cfg(any(test, feature = "test-mocks"))]
     pub fn new_mock(config: CurrencyChainConfig) -> Self {
         let rpc_client = MockRpcClient::new();
 

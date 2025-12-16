@@ -577,6 +577,7 @@ mod tests {
     #[test]
     fn test_transaction() {
         let tx = Transaction {
+            tx_id: uuid::Uuid::new_v4(),
             hash: Hash::ZERO,
             sender: [1u8; 32],
             recipient: Some([2u8; 32]),

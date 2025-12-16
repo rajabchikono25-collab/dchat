@@ -78,6 +78,9 @@ pub enum FramingError {
 
     #[error("Connection rate limited")]
     RateLimited,
+
+    #[error("Handshake failed: {0}")]
+    HandshakeFailed(String),
 }
 
 /// Frame types
@@ -853,15 +856,42 @@ impl ClientHandshake {
             .map_err(|e| FramingError::Serialization(e.to_string()))?;
 
         // Verify server proof binds to session
-        // The server_proof should be a hash commitment over:
-        // - session_id (to prevent replay)
-        // - client_random (to prove server saw our handshake)
-        // This prevents man-in-the-middle attacks where an attacker
-        // could forward our handshake to a different server
+        // The server computes: hash(session_id || client_proof || server_random)
+        // We reconstruct session_id and client_proof to verify
+        let cookie = self
+            .received_cookie
+            .ok_or_else(|| FramingError::InvalidHandshakeState)?;
+        let server_random = self
+            .server_random
+            .ok_or_else(|| FramingError::InvalidHandshakeState)?;
+
+        // Reconstruct session_id as server computes it
+        let mut session_hasher = blake3::Hasher::new();
+        session_hasher.update(&self.client_random);
+        session_hasher.update(&server_random);
+        session_hasher.update(&cookie);
+        let expected_session_id = *session_hasher.finalize().as_bytes();
+
+        // Verify session_id matches
+        if ack.session_id != expected_session_id {
+            tracing::warn!("Session ID verification failed");
+            return Err(FramingError::HandshakeFailed(
+                "session ID mismatch".to_string(),
+            ));
+        }
+
+        // Reconstruct client_proof as we computed it
+        let mut proof_hasher = blake3::Hasher::new();
+        proof_hasher.update(&self.client_random);
+        proof_hasher.update(&server_random);
+        proof_hasher.update(&cookie);
+        let client_proof = *proof_hasher.finalize().as_bytes();
+
+        // Verify server_proof matches what server should have computed
         let mut verifier = blake3::Hasher::new();
-        verifier.update(b"dchat/handshake/server_proof/v1");
         verifier.update(&ack.session_id);
-        verifier.update(&self.client_random);
+        verifier.update(&client_proof);
+        verifier.update(&server_random);
         let expected_proof = *verifier.finalize().as_bytes();
 
         if ack.server_proof != expected_proof {

@@ -24,7 +24,8 @@ pub use dchat_network::relay_network::StakingBackend;
 pub struct CurrencyChainStakingBackend {
     /// Currency chain client for blockchain operations
     currency_chain: Arc<CurrencyChainClient>,
-    /// Whether to simulate operations (for testing)
+    /// Whether to run in test mode (only available in test builds)
+    #[cfg(any(test, feature = "test-mocks"))]
     test_mode: bool,
 }
 
@@ -33,11 +34,13 @@ impl CurrencyChainStakingBackend {
     pub fn new(currency_chain: Arc<CurrencyChainClient>) -> Self {
         Self {
             currency_chain,
+            #[cfg(any(test, feature = "test-mocks"))]
             test_mode: false,
         }
     }
 
-    /// Create a testing backend that simulates operations
+    /// Create a testing backend (test builds only)
+    #[cfg(any(test, feature = "test-mocks"))]
     pub fn new_test_mode(currency_chain: Arc<CurrencyChainClient>) -> Self {
         Self {
             currency_chain,
@@ -45,9 +48,16 @@ impl CurrencyChainStakingBackend {
         }
     }
 
-    /// Check if running in test mode
+    /// Check if running in test mode (always false in production)
+    #[cfg(any(test, feature = "test-mocks"))]
     pub fn is_test_mode(&self) -> bool {
         self.test_mode
+    }
+
+    /// Check if running in test mode (always false in production)
+    #[cfg(not(any(test, feature = "test-mocks")))]
+    pub fn is_test_mode(&self) -> bool {
+        false
     }
 }
 
@@ -105,7 +115,8 @@ impl StakingBackend for CurrencyChainStakingBackend {
                         return Ok(true);
                     }
 
-                    // In test mode, auto-confirm after first check
+                    // Auto-confirm in test mode for faster test execution
+                    #[cfg(any(test, feature = "test-mocks"))]
                     if self.test_mode {
                         tracing::debug!("Test mode: auto-confirming transaction {}", tx_id);
                         return Ok(true);

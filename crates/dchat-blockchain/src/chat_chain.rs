@@ -1,5 +1,8 @@
 //! Chat Chain client for identity, messaging, channels, permissions, governance, and reputation
 
+#[cfg(not(any(test, feature = "test-mocks")))]
+use crate::client::{ChainRpcClient, HttpRpcClient};
+#[cfg(any(test, feature = "test-mocks"))]
 use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
 use chrono::Utc;
 use dchat_chain::{Transaction, TransactionStatus, TransactionType};
@@ -87,6 +90,9 @@ impl ChatChainClient {
     }
 
     /// Create new chat chain client with mock RPC for testing
+    ///
+    /// Only available in test builds or with the `test-mocks` feature.
+    #[cfg(any(test, feature = "test-mocks"))]
     pub fn new_mock(config: ChatChainConfig) -> Self {
         let rpc_client = MockRpcClient::new();
 

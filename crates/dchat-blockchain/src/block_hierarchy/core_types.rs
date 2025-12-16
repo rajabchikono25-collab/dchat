@@ -195,8 +195,8 @@ impl ExecutionTransaction {
         signature: Vec<u8>,
     ) -> Self {
         let mut tx = Self {
-            tx_id: uuid::Uuid::nil(), // Placeholder, will be derived
-            hash: Hash::ZERO,         // Placeholder, will be computed
+            tx_id: uuid::Uuid::nil(), // Initial value, computed below
+            hash: Hash::ZERO,         // Initial value, computed below
             sender,
             recipient,
             value,

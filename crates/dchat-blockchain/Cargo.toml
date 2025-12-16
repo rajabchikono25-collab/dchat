@@ -63,3 +63,7 @@ bls-aggregation = ["blst"]
 hardened-consensus = []
 # Enable full hardened consensus integration (coordinator, all modules wired)
 hardened-consensus-integration = ["hardened-consensus"]
+# Enable mock RPC clients for testing - NEVER enable in production builds
+# This feature is automatically enabled for tests but must be explicitly
+# enabled for integration tests in other crates
+test-mocks = []

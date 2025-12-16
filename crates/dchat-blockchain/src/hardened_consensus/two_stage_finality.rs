@@ -1030,7 +1030,12 @@ impl TwoStageFinality {
             // Update the block's finality status to trigger chain reorganization
             if let Some(status) = statuses.get_mut(&challenge.block_number) {
                 status.stage = FinalityStage::Pending;
-                status.last_update = std::time::Instant::now();
+                // Record when this stage change occurred
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                status.stage_timestamps.insert(FinalityStage::Pending, now);
             }
 
             advancements.push((

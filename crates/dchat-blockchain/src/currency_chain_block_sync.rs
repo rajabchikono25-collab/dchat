@@ -6,8 +6,10 @@
 //! - Cross-chain state reconciliation
 //! - Fork detection and resolution
 
+use crate::staking::StakingManager;
 use dchat_chain::Transaction;
 use dchat_core::error::Result;
+use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -124,6 +126,8 @@ pub struct BlockSyncManager {
     reconnect_attempts: Arc<RwLock<u32>>,
     /// Block confirmation event broadcaster
     block_tx: broadcast::Sender<CurrencyBlock>,
+    /// Staking manager for validator stake lookups (fork resolution)
+    staking_manager: Option<Arc<StakingManager>>,
 }
 
 impl BlockSyncManager {
@@ -139,6 +143,29 @@ impl BlockSyncManager {
             active_fork: Arc::new(RwLock::new(None)),
             reconnect_attempts: Arc::new(RwLock::new(0)),
             block_tx,
+            staking_manager: None,
+        }
+    }
+
+    /// Create block sync manager with staking integration for stake-weighted fork resolution
+    ///
+    /// PRODUCTION: Use this constructor to enable accurate stake-weighted fork choice.
+    /// Without a staking manager, fork resolution falls back to minimum stake assumption.
+    pub fn with_staking_manager(
+        config: BlockSyncConfig,
+        staking_manager: Arc<StakingManager>,
+    ) -> Self {
+        let (block_tx, _) = broadcast::channel(1000);
+        Self {
+            config,
+            status: Arc::new(RwLock::new(SyncStatus::Idle)),
+            block_cache: Arc::new(RwLock::new(HashMap::new())),
+            latest_confirmed_block: Arc::new(RwLock::new(0)),
+            pending_blocks: Arc::new(RwLock::new(VecDeque::new())),
+            active_fork: Arc::new(RwLock::new(None)),
+            reconnect_attempts: Arc::new(RwLock::new(0)),
+            block_tx,
+            staking_manager: Some(staking_manager),
         }
     }
 
@@ -529,12 +556,12 @@ impl BlockSyncManager {
             // Calculate cumulative stake weight for each chain
             // In PoS, the canonical chain is the one with the most cumulative stake
             // supporting it. Each block contributes its proposer's stake weight.
-            // For now, we use block count as a proxy for stake weight since
-            // all validators have equal stake (10M DCHAT minimum).
-            // In a full implementation, this would query the staking registry
-            // for each proposer's stake at the fork point.
-            let chain_a_weight: u64 = fork.chain_a.len() as u64;
-            let chain_b_weight: u64 = fork.chain_b.len() as u64;
+            //
+            // We compute stake weight by summing each proposer's contribution.
+            // Currently all validators stake the minimum (10M DCHAT), but this
+            // correctly handles future stake differentiation by tracking per-proposer.
+            let chain_a_weight = self.calculate_chain_stake_weight(&fork.chain_a).await;
+            let chain_b_weight = self.calculate_chain_stake_weight(&fork.chain_b).await;
 
             // Tie-breaker: prefer chain with lower first block hash (deterministic)
             let chain_a_wins = if chain_a_weight == chain_b_weight {
@@ -550,13 +577,13 @@ impl BlockSyncManager {
 
             if chain_a_wins {
                 info!(
-                    "✅ Chain A selected as canonical (weight: {} vs {})",
+                    "✅ Chain A selected as canonical (stake weight: {} vs {})",
                     chain_a_weight, chain_b_weight
                 );
                 // Chain A is already in our cache, no reorg needed
             } else {
                 info!(
-                    "✅ Chain B selected as canonical (weight: {} vs {})",
+                    "✅ Chain B selected as canonical (stake weight: {} vs {})",
                     chain_b_weight, chain_a_weight
                 );
                 // Reorganize cache: remove chain_a blocks and apply chain_b blocks
@@ -569,15 +596,122 @@ impl BlockSyncManager {
 
             // Emit fork resolution event for monitoring
             info!(
-                "🔗 Fork resolved: common_ancestor={}, chain_a_len={}, chain_b_len={}",
+                "🔗 Fork resolved: common_ancestor={}, chain_a_len={}, chain_b_len={}, \
+                 chain_a_stake={}, chain_b_stake={}",
                 fork.common_ancestor,
                 fork.chain_a.len(),
-                fork.chain_b.len()
+                fork.chain_b.len(),
+                chain_a_weight,
+                chain_b_weight
             );
         }
 
         *self.status.write().await = SyncStatus::Live;
         Ok(())
+    }
+
+    /// Calculate cumulative stake weight for a chain of block headers
+    ///
+    /// Each block's proposer contributes their staked amount to the chain's weight.
+    /// This is the key metric for PoS fork choice - the chain with more stake wins.
+    async fn calculate_chain_stake_weight(&self, headers: &[CurrencyBlockHeader]) -> u64 {
+        let mut total_weight: u64 = 0;
+
+        for header in headers {
+            // Look up proposer's stake weight
+            // Currently uses minimum stake since all validators stake equally,
+            // but the proposer address is tracked for future stake differentiation
+            let proposer_stake = self.get_proposer_stake(&header.proposer).await;
+            total_weight = total_weight.saturating_add(proposer_stake);
+
+            debug!(
+                "Block {} by proposer {} contributes {} stake weight",
+                header.block_number, header.proposer, proposer_stake
+            );
+        }
+
+        total_weight
+    }
+
+    /// Get stake weight for a proposer address
+    ///
+    /// Returns the proposer's staked amount for fork weight calculations.
+    /// Falls back to minimum stake if proposer lookup fails.
+    async fn get_proposer_stake(&self, proposer: &str) -> u64 {
+        use crate::staking::MIN_VALIDATOR_STAKE;
+
+        // Query actual stake from staking manager if available
+        if let Some(staking_manager) = &self.staking_manager {
+            // Parse proposer address to UserId
+            // Proposer format is typically hex-encoded public key or address
+            if let Ok(validator_id) = self.parse_proposer_to_user_id(proposer) {
+                match staking_manager.query_validator_status(&validator_id) {
+                    Ok(stake) => {
+                        debug!(
+                            "Proposer {} has stake weight: {}",
+                            proposer, stake.staked_amount
+                        );
+                        return stake.staked_amount;
+                    }
+                    Err(e) => {
+                        // Validator not found in registry - may be a new or removed validator
+                        debug!(
+                            "Proposer {} not found in staking registry: {}, using minimum stake",
+                            proposer, e
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    "Failed to parse proposer address '{}' to UserId, using minimum stake",
+                    proposer
+                );
+            }
+        }
+
+        // Fallback: assume minimum stake when registry unavailable or lookup fails
+        // This is safe because all validators must stake at least MIN_VALIDATOR_STAKE
+        MIN_VALIDATOR_STAKE
+    }
+
+    /// Parse proposer address string to UserId
+    ///
+    /// Proposer addresses from the currency chain are typically hex-encoded.
+    /// This converts them to the UserId format used by the staking registry.
+    fn parse_proposer_to_user_id(&self, proposer: &str) -> Result<UserId> {
+        use dchat_core::error::Error;
+
+        // Strip 0x prefix if present (Ethereum-style address)
+        let hex_str = proposer.trim_start_matches("0x");
+
+        // Try to parse as UUID first (dchat native format)
+        if let Ok(uuid) = uuid::Uuid::parse_str(hex_str) {
+            return Ok(UserId(uuid));
+        }
+
+        // Try to parse as hex-encoded bytes and convert to UserId
+        // For Ethereum-style addresses (20 bytes), we pad to 32 bytes
+        if let Ok(bytes) = hex::decode(hex_str) {
+            if bytes.len() == 20 {
+                // Ethereum address: pad with zeros to create deterministic UserId
+                let mut padded = [0u8; 16];
+                // Use first 16 bytes of the padded address for UUID
+                padded[..16.min(bytes.len())].copy_from_slice(&bytes[..16.min(bytes.len())]);
+                let uuid = uuid::Uuid::from_bytes(padded);
+                return Ok(UserId(uuid));
+            } else if bytes.len() >= 16 {
+                // Use first 16 bytes as UUID
+                let mut arr = [0u8; 16];
+                arr.copy_from_slice(&bytes[..16]);
+                let uuid = uuid::Uuid::from_bytes(arr);
+                return Ok(UserId(uuid));
+            }
+        }
+
+        Err(Error::validation(format!(
+            "Cannot parse proposer address '{}' to UserId",
+            proposer
+        )))
     }
 
     /// Reorganize chain to apply winning fork
@@ -933,6 +1067,7 @@ impl BlockSyncManager {
             active_fork: Arc::clone(&self.active_fork),
             reconnect_attempts: Arc::clone(&self.reconnect_attempts),
             block_tx: self.block_tx.clone(),
+            staking_manager: self.staking_manager.clone(),
         }
     }
 }

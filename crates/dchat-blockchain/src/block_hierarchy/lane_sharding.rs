@@ -276,7 +276,7 @@ fn execute_single_lane(lane: LaneId, txs: Vec<Transaction>) -> LaneExecutionResu
     let mut state_hasher = blake3::Hasher::new();
 
     // Initialize state hash with lane identifier
-    state_hasher.update(&lane.to_le_bytes());
+    state_hasher.update(&lane.0.to_le_bytes());
 
     for (idx, tx) in txs.iter().enumerate() {
         // Compute gas required for this transaction type
@@ -303,13 +303,15 @@ fn execute_single_lane(lane: LaneId, txs: Vec<Transaction>) -> LaneExecutionResu
         state_hasher.update(tx_hash.as_bytes());
         state_hasher.update(&idx.to_le_bytes());
 
-        let state_delta = Hash::from_bytes(*state_hasher.finalize().as_bytes());
+        let state_delta_bytes: [u8; 32] = *state_hasher.finalize().as_bytes();
+        let state_delta = Hash::from(state_delta_bytes);
         receipts.push(TxReceipt::success(tx.tx_id, idx as u32, gas, state_delta));
     }
 
     // Compute final post-state hash for this lane
     state_hasher.update(b"lane_finalize");
-    let post_state_hash = Hash::from_bytes(*state_hasher.finalize().as_bytes());
+    let post_state_bytes: [u8; 32] = *state_hasher.finalize().as_bytes();
+    let post_state_hash = Hash::from(post_state_bytes);
 
     LaneExecutionResult {
         lane,

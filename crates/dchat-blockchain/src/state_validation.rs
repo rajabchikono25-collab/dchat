@@ -516,9 +516,11 @@ mod tests {
 
         // Create a test block with miniblocks
         let miniblock = Miniblock::from_header(crate::block_hierarchy::MiniblockHeader {
+            block_height: 1,
+            subblock_index: 0,
             index: 0,
             timestamp: SystemTime::now(),
-            lane: crate::block_hierarchy::LaneId(0),
+            lane: crate::block_hierarchy::LaneId::new(0),
             tx_root: Hash::from([0u8; 32]),
             receipts_root: Hash::from([0u8; 32]),
             tx_count: 0,
@@ -527,9 +529,12 @@ mod tests {
             pre_state_hash: Hash::from([0u8; 32]),
             post_state_hash: Hash::from([1u8; 32]),
             gas_used: 1000,
+            gas_limit: 30_000_000,
+            producer: Hash::ZERO,
         });
 
         let subblock = Subblock {
+            block_height: 1,
             index: 0,
             timestamp: SystemTime::now(),
             miniblocks: vec![miniblock],
@@ -539,7 +544,8 @@ mod tests {
                 total_gas_used: 1000,
                 state_delta: vec![],
             },
-            merkle_root: Hash::from([0u8; 32]),
+            miniblock_headers_root: Hash::from([0u8; 32]),
+            miniblock_receipts_root: Hash::from([0u8; 32]),
             certificate: None,
         };
 
@@ -564,9 +570,11 @@ mod tests {
                 arr
             }),
             subblocks: vec![subblock],
+            aggregated_signature: None,
             validator_signatures: vec![],
             relay_votes: vec![],
             finality_proof: crate::block_hierarchy::FinalityProof::default(),
+            da_commitment: None,
         };
 
         let result = validator.validate_block(&block);

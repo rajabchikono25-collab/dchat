@@ -152,9 +152,9 @@ pub struct SolanaRpcClient {
 impl SolanaRpcClient {
     /// Create a new RPC client
     ///
-    /// In release builds, enforces HTTPS for non-localhost endpoints.
+    /// HTTPS is enforced in release builds for non-localhost endpoints.
     pub fn new(config: SolanaRpcConfig) -> Result<Self> {
-        // Enforce HTTPS in production (release builds with non-localhost URLs)
+        // HTTPS enforcement: release builds require HTTPS for non-localhost URLs
         #[cfg(not(debug_assertions))]
         {
             let is_local = config.rpc_url.starts_with("http://localhost")

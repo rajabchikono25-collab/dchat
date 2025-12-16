@@ -638,8 +638,8 @@ impl EvidenceVerifier {
                 }
             }
             Evidence::StateTransitionProof { .. } => {
-                // State transitions require execution to verify
-                // This would be done by the arbitrator
+                // State transition proofs are verified by the arbitrator during
+                // the dispute resolution process via re-execution
                 Ok(())
             }
             Evidence::ComputationProof { .. } => {

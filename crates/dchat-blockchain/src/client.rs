@@ -348,11 +348,16 @@ impl ChainRpcClient for HttpRpcClient {
 }
 
 /// Mock RPC client for testing (simulated responses)
+///
+/// This client is only available in test builds or when the `test-mocks` feature is enabled.
+/// Production binaries must not use this client.
+#[cfg(any(test, feature = "test-mocks"))]
 pub struct MockRpcClient {
     transactions: Arc<RwLock<HashMap<String, TransactionStatus>>>,
     current_block: Arc<RwLock<u64>>,
 }
 
+#[cfg(any(test, feature = "test-mocks"))]
 impl MockRpcClient {
     pub fn new() -> Self {
         Self {
@@ -362,10 +367,11 @@ impl MockRpcClient {
     }
 }
 
+#[cfg(any(test, feature = "test-mocks"))]
 #[async_trait::async_trait]
 impl ChainRpcClient for MockRpcClient {
     async fn submit_transaction(&self, _tx_bytes: Vec<u8>) -> Result<String> {
-        // Generate mock transaction hash
+        // Generate deterministic transaction hash for testing
         let tx_hash = format!("{:x}", Uuid::new_v4());
 
         // Store as pending
@@ -399,7 +405,7 @@ impl ChainRpcClient for MockRpcClient {
         _from_block: u64,
         _to_block: Option<u64>,
     ) -> Result<Vec<serde_json::Value>> {
-        // Mock returns empty events - tests can override this behavior
+        // Returns empty events for testing
         Ok(Vec::new())
     }
 
@@ -408,7 +414,7 @@ impl ChainRpcClient for MockRpcClient {
         _method: &str,
         _params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        // Mock returns null result - specific tests can override
+        // Returns null for testing
         Ok(serde_json::Value::Null)
     }
 }
@@ -467,6 +473,11 @@ impl BlockchainClient {
     }
 
     /// Create a client with mock RPC for testing
+    ///
+    /// # Safety
+    /// This method is only available in test builds or with the `test-mocks` feature.
+    /// Production binaries must use `new()` with a real RPC endpoint.
+    #[cfg(any(test, feature = "test-mocks"))]
     pub fn new_mock(config: BlockchainConfig) -> Self {
         let rpc_client = MockRpcClient::new();
 

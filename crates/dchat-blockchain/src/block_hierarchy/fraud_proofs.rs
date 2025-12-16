@@ -3,6 +3,7 @@
 //! Implements localized fraud proofs at miniblock/tx granularity using Merkle
 //! inclusion paths so disputes never require replaying entire blocks.
 
+use super::core_types::ExecutionTransaction;
 use super::{BlockError, Hash, MiniblockBody, MiniblockHeader, TxReceipt};
 use crate::canonical;
 use crate::hash_merkle::{merkle_proof, HashMerkleProof};
@@ -91,7 +92,8 @@ impl MiniblockFraudProof {
         }
 
         // Check if transaction's lane differs from miniblock's lane
-        let tx_lane = super::lane_sharding::lane_for_transaction(&ev.transaction)?;
+        // ExecutionTransaction has a lane() method that derives lane from sender address
+        let tx_lane = ev.transaction.lane();
         if tx_lane == self.claimed_header.lane {
             return Ok(false); // No violation
         }
@@ -127,11 +129,12 @@ impl MiniblockFraudProof {
         &self,
         ev: &ExecutionMismatchEvidence,
     ) -> Result<bool, BlockError> {
-        // Verify transaction is in the miniblock
+        // Verify transaction is in the miniblock via Merkle inclusion
         if !ev
             .tx_inclusion_proof
             .verify(ev.tx_leaf_hash, self.claimed_header.tx_root)
         {
+            tracing::debug!("Fraud proof failed: tx inclusion proof invalid");
             return Ok(false);
         }
 
@@ -140,41 +143,164 @@ impl MiniblockFraudProof {
             .receipt_inclusion_proof
             .verify(ev.claimed_receipt.hash(), self.claimed_header.receipts_root)
         {
+            tracing::debug!("Fraud proof failed: receipt inclusion proof invalid");
             return Ok(false);
         }
 
-        // Re-execute the transaction and compare receipts
-        // The fraud proof is valid if:
-        // 1. The claimed receipt is in the block
-        // 2. The correct receipt (from re-execution) differs from claimed
-        // 3. The Merkle proofs are valid
+        // Re-execute the transaction using the provided witness data
+        // The witness contains the pre-state needed for deterministic re-execution
+        let recomputed_receipt = self.reexecute_transaction(
+            &ev.transaction,
+            &ev.execution_witness,
+            ev.claimed_receipt.tx_index,
+        )?;
+
+        // Verify transaction IDs match
+        if recomputed_receipt.tx_id != ev.claimed_receipt.tx_id {
+            tracing::debug!("Fraud proof rejected: tx_id mismatch in receipts");
+            return Ok(false);
+        }
+
+        // Compare recomputed receipt with claimed receipt
+        // Fraud is proven if the hashes differ
+        if recomputed_receipt.hash() != ev.claimed_receipt.hash() {
+            tracing::warn!(
+                "FRAUD DETECTED: execution mismatch for tx {:?} at height {}",
+                ev.claimed_receipt.tx_id,
+                self.block_height
+            );
+            tracing::warn!(
+                "  Claimed receipt hash: {}",
+                hex::encode(ev.claimed_receipt.hash().as_bytes())
+            );
+            tracing::warn!(
+                "  Recomputed receipt hash: {}",
+                hex::encode(recomputed_receipt.hash().as_bytes())
+            );
+            return Ok(true);
+        }
+
+        // Also check if a correct_receipt was provided for comparison
         if let Some(ref correct_receipt) = ev.correct_receipt {
-            // Verify the correct receipt was computed via valid re-execution
-            // by checking it has proper transaction binding
             if correct_receipt.tx_id != ev.claimed_receipt.tx_id {
-                // Receipts must be for the same transaction
                 return Ok(false);
             }
             if correct_receipt.hash() != ev.claimed_receipt.hash() {
-                // Different outcomes for same transaction = fraud proven
                 tracing::warn!(
-                    "Fraud detected: receipt mismatch for tx {:?}",
+                    "FRAUD DETECTED: correct_receipt mismatch for tx {:?}",
                     ev.claimed_receipt.tx_id
                 );
                 return Ok(true);
             }
         }
 
-        // No fraud detected - claimed receipt matches expected outcome
         Ok(false)
     }
 
+    /// Re-execute a transaction deterministically using witness data
+    fn reexecute_transaction(
+        &self,
+        tx: &ExecutionTransaction,
+        witness: &[u8],
+        tx_index: u32,
+    ) -> Result<TxReceipt, BlockError> {
+        use super::execution::{AccountState, ExecutionContext, WorldState};
+
+        // Decode witness: contains pre-state accounts needed for execution
+        // Format: [sender_balance: u64][sender_nonce: u64][recipient_balance: u64]
+        if witness.len() < 24 {
+            return Err(BlockError::InvalidTransaction(
+                "execution witness too short".to_string(),
+            ));
+        }
+
+        let sender_balance = u64::from_le_bytes(witness[0..8].try_into().unwrap());
+        let sender_nonce = u64::from_le_bytes(witness[8..16].try_into().unwrap());
+        let recipient_balance = u64::from_le_bytes(witness[16..24].try_into().unwrap());
+
+        // Build pre-state from witness
+        let mut state = WorldState::new();
+        let sender_account = AccountState {
+            balance: sender_balance,
+            nonce: sender_nonce,
+            code_hash: None,
+            storage_root: None,
+        };
+        state.set_account(tx.sender, sender_account);
+
+        if let Some(recipient) = tx.recipient {
+            let recipient_account = AccountState {
+                balance: recipient_balance,
+                nonce: 0,
+                code_hash: None,
+                storage_root: None,
+            };
+            state.set_account(recipient, recipient_account);
+        }
+
+        // Create execution context
+        let mut ctx = ExecutionContext::new(self.block_height, 0, tx.gas_limit);
+
+        // Execute the transaction
+        let gas_cost = tx.gas_cost();
+
+        // Check gas limit
+        if !ctx.use_gas(gas_cost) {
+            return Ok(TxReceipt::failure(tx.tx_id, tx_index, "out of gas"));
+        }
+
+        // Get sender account
+        let sender_state = state.get_account(&tx.sender);
+
+        // Verify nonce
+        if sender_state.nonce != tx.nonce {
+            return Ok(TxReceipt::failure(tx.tx_id, tx_index, "nonce mismatch"));
+        }
+
+        // Calculate total cost
+        let fee = gas_cost * tx.gas_price;
+        let total_cost = tx.value + fee;
+
+        // Check balance
+        if sender_state.balance < total_cost {
+            return Ok(TxReceipt::failure(
+                tx.tx_id,
+                tx_index,
+                "insufficient balance",
+            ));
+        }
+
+        // Deduct from sender
+        let sender_account = state.get_account_mut(&tx.sender);
+        sender_account.balance -= total_cost;
+        sender_account.nonce += 1;
+
+        // Credit recipient
+        if let Some(recipient) = tx.recipient {
+            let recipient_account = state.get_account_mut(&recipient);
+            recipient_account.balance += tx.value;
+        }
+
+        // Compute post-state root
+        let post_state_root = state.compute_state_root();
+
+        Ok(TxReceipt::success(
+            tx.tx_id,
+            tx_index,
+            gas_cost,
+            post_state_root,
+        ))
+    }
+
     fn verify_state_transition(&self, ev: &StateTransitionEvidence) -> Result<bool, BlockError> {
+        use super::execution::{AccountState, WorldState};
+
         // Verify pre-state proof
         if !ev
             .pre_state_proof
             .verify(ev.pre_state_value_hash, self.claimed_header.pre_state_hash)
         {
+            tracing::debug!("Fraud proof failed: pre-state proof invalid");
             return Ok(false);
         }
 
@@ -183,24 +309,114 @@ impl MiniblockFraudProof {
             ev.post_state_value_hash,
             self.claimed_header.post_state_hash,
         ) {
+            tracing::debug!("Fraud proof failed: post-state proof invalid");
             return Ok(false);
         }
 
-        // Verify state transition validity by checking:
-        // 1. Pre-state proof binds to claimed pre-state hash
-        // 2. Post-state proof binds to claimed post-state hash
-        // 3. Transition witness proves the claimed transition is invalid
+        // Recompute the post-state root using witness data
+        // The witness contains the complete pre-state and all state changes
+        // that should have occurred during block execution
         //
-        // The evidence's is_invalid_transition flag is set by the fraud detector
-        // after re-executing the transaction with the provided witness data.
-        // We validate the proofs above, then trust the witness execution result.
-        if ev.is_invalid_transition {
+        // Witness format:
+        //   [num_accounts: u32]
+        //   For each account:
+        //     [address: 32 bytes][balance: u64][nonce: u64]
+        //   [num_changes: u32]
+        //   For each change:
+        //     [address: 32 bytes][new_balance: u64][new_nonce: u64]
+
+        let witness = &ev.transition_witness;
+        if witness.len() < 4 {
+            return Err(BlockError::InvalidTransaction(
+                "transition witness too short".to_string(),
+            ));
+        }
+
+        let num_accounts = u32::from_le_bytes(witness[0..4].try_into().unwrap()) as usize;
+        let mut offset = 4;
+
+        // Build pre-state
+        let mut state = WorldState::new();
+        for _ in 0..num_accounts {
+            if offset + 48 > witness.len() {
+                return Err(BlockError::InvalidTransaction(
+                    "witness truncated in accounts".to_string(),
+                ));
+            }
+            let mut addr_bytes = [0u8; 32];
+            addr_bytes.copy_from_slice(&witness[offset..offset + 32]);
+            offset += 32;
+            let balance = u64::from_le_bytes(witness[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let nonce = u64::from_le_bytes(witness[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+
+            let account = AccountState {
+                balance,
+                nonce,
+                code_hash: None,
+                storage_root: None,
+            };
+            state.set_account(addr_bytes.into(), account);
+        }
+
+        // Verify pre-state hash matches witness-computed pre-state
+        let computed_pre_state = state.compute_state_root();
+        if computed_pre_state != ev.pre_state_value_hash {
+            tracing::debug!("Fraud proof failed: witness pre-state doesn't match claimed");
+            return Ok(false);
+        }
+
+        // Apply state changes from witness
+        if offset + 4 > witness.len() {
+            return Err(BlockError::InvalidTransaction(
+                "witness truncated before changes".to_string(),
+            ));
+        }
+        let num_changes =
+            u32::from_le_bytes(witness[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+
+        for _ in 0..num_changes {
+            if offset + 48 > witness.len() {
+                return Err(BlockError::InvalidTransaction(
+                    "witness truncated in changes".to_string(),
+                ));
+            }
+            let mut addr_bytes = [0u8; 32];
+            addr_bytes.copy_from_slice(&witness[offset..offset + 32]);
+            offset += 32;
+            let new_balance = u64::from_le_bytes(witness[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let new_nonce = u64::from_le_bytes(witness[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+
+            let account = state.get_account_mut(&addr_bytes.into());
+            account.balance = new_balance;
+            account.nonce = new_nonce;
+        }
+
+        // Compute expected post-state root
+        let computed_post_state = state.compute_state_root();
+
+        // Fraud is proven if the claimed post-state differs from correctly computed post-state
+        if computed_post_state != ev.post_state_value_hash {
             tracing::warn!(
-                "State transition fraud detected at height {}",
+                "FRAUD DETECTED: state transition invalid at height {}",
                 self.block_height
             );
+            tracing::warn!(
+                "  Claimed post-state: {}",
+                hex::encode(ev.post_state_value_hash.as_bytes())
+            );
+            tracing::warn!(
+                "  Correct post-state: {}",
+                hex::encode(computed_post_state.as_bytes())
+            );
+            return Ok(true);
         }
-        Ok(ev.is_invalid_transition)
+
+        Ok(false)
     }
 
     /// Compute fraud proof hash (for on-chain storage)
@@ -237,7 +453,7 @@ pub enum FraudEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaneViolationEvidence {
     /// The offending transaction
-    pub transaction: Transaction,
+    pub transaction: ExecutionTransaction,
     /// Merkle proof of transaction inclusion
     pub tx_inclusion_proof: HashMerkleProof,
     /// Leaf hash of the transaction
@@ -257,7 +473,7 @@ pub struct CommitmentMismatchEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionMismatchEvidence {
     /// The transaction that was incorrectly executed
-    pub transaction: Transaction,
+    pub transaction: ExecutionTransaction,
     /// Transaction leaf hash
     pub tx_leaf_hash: Hash,
     /// Merkle proof of transaction inclusion
@@ -285,10 +501,10 @@ pub struct StateTransitionEvidence {
     pub post_state_proof: HashMerkleProof,
     /// State key being disputed
     pub state_key: Vec<u8>,
-    /// Whether the transition is invalid
-    pub is_invalid_transition: bool,
     /// Witness for state transition verification
-    pub state_witness: Vec<u8>,
+    /// Format: [num_accounts: u32][[address: 32][balance: u64][nonce: u64]]...
+    ///         [num_changes: u32][[address: 32][new_balance: u64][new_nonce: u64]]...
+    pub transition_witness: Vec<u8>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,7 +527,7 @@ pub struct TxFraudProof {
     /// Fraud type
     pub fraud_type: FraudType,
     /// The transaction
-    pub transaction: Transaction,
+    pub transaction: ExecutionTransaction,
     /// Merkle proof of transaction inclusion in miniblock
     pub tx_inclusion_proof: HashMerkleProof,
     /// Expected tx_root from miniblock header (for verification)
@@ -428,12 +644,12 @@ impl TxFraudProof {
     }
 
     fn compute_tx_leaf_hash(&self) -> Hash {
+        // For ExecutionTransaction, use its hash and tx_id
         canonical::domain_hash_parts(
             canonical::DOMAIN_SEP_TX_LEAF_V1,
             &[
                 self.transaction.tx_id.as_bytes(),
-                self.transaction.tx_hash.as_bytes(),
-                &[tx_type_id(self.transaction.tx_type)],
+                self.transaction.hash.as_bytes(),
             ],
         )
     }
@@ -510,12 +726,19 @@ impl FraudProofBuilder {
             ));
         }
 
-        let tx = &body.transactions[tx_index];
-        let tx_lane = super::lane_sharding::lane_for_transaction(tx)?;
+        let chain_tx = &body.transactions[tx_index];
+        let tx_lane = super::lane_sharding::lane_for_transaction(chain_tx)?;
 
         if tx_lane == header.lane {
             return Err(BlockError::FraudProof("no lane violation".to_string()));
         }
+
+        // Convert to ExecutionTransaction for the fraud proof
+        let exec_tx = ExecutionTransaction::from_chain_transaction(chain_tx).ok_or_else(|| {
+            BlockError::FraudProof(
+                "failed to parse transaction as ExecutionTransaction".to_string(),
+            )
+        })?;
 
         // Build inclusion proof
         let tx_leaves = compute_tx_leaves(body);
@@ -531,7 +754,7 @@ impl FraudProofBuilder {
             fraud_type: FraudType::LaneShardingViolation,
             claimed_header: header.clone(),
             evidence: FraudEvidence::LaneViolation(LaneViolationEvidence {
-                transaction: tx.clone(),
+                transaction: exec_tx,
                 tx_inclusion_proof,
                 tx_leaf_hash,
                 tx_index: tx_index as u32,
@@ -663,7 +886,7 @@ fn tx_type_id(tx_type: dchat_chain::TransactionType) -> u8 {
     }
 }
 
-fn verify_tx_signature(tx: &Transaction, sig_bytes: &[u8], pubkey_bytes: &[u8]) -> bool {
+fn verify_tx_signature(tx: &ExecutionTransaction, sig_bytes: &[u8], pubkey_bytes: &[u8]) -> bool {
     // Validate signature and public key lengths
     if sig_bytes.len() != 64 {
         tracing::debug!(
@@ -700,20 +923,12 @@ fn verify_tx_signature(tx: &Transaction, sig_bytes: &[u8], pubkey_bytes: &[u8]) 
     };
     let signature = Ed25519Sig::from_bytes(&sig_array);
 
-    // Construct the message that was signed (canonical transaction representation)
-    // The signed message is the domain-separated hash of the transaction
-    let signing_message = canonical::domain_hash_parts(
-        canonical::DOMAIN_SEP_TX_V1,
-        &[
-            tx.tx_id.as_bytes(),
-            tx.tx_hash.as_bytes(),
-            &[tx_type_id(tx.tx_type)],
-            &tx.payload,
-        ],
-    );
+    // For ExecutionTransaction, the signing message is the transaction hash
+    // which is computed from sender, recipient, value, nonce, gas, etc.
+    let signing_message = tx.hash.as_bytes();
 
     // Verify the signature
-    match verifying_key.verify(signing_message.as_bytes(), &signature) {
+    match verifying_key.verify(signing_message, &signature) {
         Ok(()) => {
             tracing::trace!(
                 tx_id = %tx.tx_id,
@@ -739,6 +954,7 @@ fn verify_tx_signature(tx: &Transaction, sig_bytes: &[u8], pubkey_bytes: &[u8]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_hierarchy::LaneId;
 
     fn create_test_header(lane: LaneId) -> MiniblockHeader {
         MiniblockHeader {
@@ -762,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_fraud_detector_clean() {
-        let header = create_test_header(LaneId(0));
+        let header = create_test_header(LaneId::new(0));
         let body = MiniblockBody {
             transactions: vec![],
             receipts: vec![],
@@ -779,7 +995,7 @@ mod tests {
             subblock_index: 0,
             miniblock_index: 0,
             fraud_type: FraudType::TxCountMismatch,
-            claimed_header: create_test_header(LaneId(0)),
+            claimed_header: create_test_header(LaneId::new(0)),
             evidence: FraudEvidence::CommitmentMismatch(CommitmentMismatchEvidence {
                 body: MiniblockBody {
                     transactions: vec![],
@@ -802,7 +1018,7 @@ mod tests {
             subblock_index: 0,
             miniblock_index: 0,
             fraud_type: FraudType::TxCountMismatch,
-            claimed_header: create_test_header(LaneId(0)),
+            claimed_header: create_test_header(LaneId::new(0)),
             evidence: FraudEvidence::CommitmentMismatch(CommitmentMismatchEvidence {
                 body: MiniblockBody {
                     transactions: vec![],
