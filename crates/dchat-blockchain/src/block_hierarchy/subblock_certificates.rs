@@ -326,9 +326,25 @@ impl AggregateSignature {
     /// BLS aggregate signatures are mandatory for production consensus security.
     #[cfg(not(feature = "bls-aggregation"))]
     pub fn aggregate(&mut self, signature: &[u8]) -> Result<(), BlockError> {
+        // Validate signature is not empty
+        if signature.is_empty() {
+            return Err(BlockError::SignatureVerification(
+                "Empty signature provided".to_string(),
+            ));
+        }
+
         // In release builds without BLS, aggregation is not supported
+        // Validate signature format strictly before rejecting
         #[cfg(not(debug_assertions))]
         {
+            // Check for valid signature length (Ed25519=64, BLS=96)
+            if signature.len() != 64 && signature.len() != 96 {
+                return Err(BlockError::SignatureVerification(format!(
+                    "Invalid signature length: {} (expected 64 for Ed25519 or 96 for BLS)",
+                    signature.len()
+                )));
+            }
+
             return Err(BlockError::SignatureVerification(
                 "BLS aggregation required for production. Enable the 'bls-aggregation' feature."
                     .to_string(),
@@ -336,12 +352,13 @@ impl AggregateSignature {
         }
 
         // Debug builds allow testing without full BLS (stores signatures concatenated)
+        // Accept any non-empty signature for testing flexibility
         #[cfg(debug_assertions)]
         {
             if self.bytes.is_empty() {
                 self.bytes = signature.to_vec();
             } else {
-                // Concatenate for testing - each signature is 64 bytes (Ed25519)
+                // Concatenate for testing
                 self.bytes.extend_from_slice(signature);
             }
             self.count += 1;

@@ -1003,9 +1003,23 @@ mod tests {
         let mut relays = create_test_relays(20);
         let original_total_raw: u64 = relays.iter().map(|r| r.raw_weight).sum();
 
+        // Verify we have a baseline total weight before modification
+        assert!(
+            original_total_raw > 0,
+            "Original total weight should be positive"
+        );
+
         // Make one relay have 50% of weight (should be capped)
         relays[0].raw_weight = 100000;
         let modified_total_raw: u64 = relays.iter().map(|r| r.raw_weight).sum();
+
+        // Modified total should be much larger than original due to whale weight
+        assert!(
+            modified_total_raw > original_total_raw,
+            "Modified total {} should exceed original {}",
+            modified_total_raw,
+            original_total_raw
+        );
 
         let mut seed_deriver = VrfSeedDeriver::new(6);
         for i in 0..10 {

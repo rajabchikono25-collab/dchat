@@ -1372,6 +1372,13 @@ mod tests {
             )
             .unwrap();
 
+        // Verify challenge ID is valid (non-empty UUID)
+        assert!(!challenge_id.is_empty(), "Challenge ID should be non-empty");
+        assert!(
+            challenge_id.len() >= 32,
+            "Challenge ID should be at least 32 chars (UUID)"
+        );
+
         // Block should be marked as challenged
         let status = tracker.get_status(1).unwrap();
         assert!(status.challenged);

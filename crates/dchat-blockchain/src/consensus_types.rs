@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_relay_score_weight_cap() {
-        let mut score = RelayScore {
+        let score = RelayScore {
             relay_id: VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
             stake_amount: 1_000_000_000_000, // 1 trillion
             stake_locked_until: SystemTime::now(),

@@ -1,11 +1,45 @@
 use dchat_core::error::{Error, Result};
-use rand::RngCore;
+
+/// Path utilities for software enclave storage (debug builds only)
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
 
+/// Path to software enclave storage directory (debug builds only)
+/// In production, keys are stored in hardware security modules and never touch the filesystem.
+#[cfg(debug_assertions)]
 fn enclave_storage_path() -> PathBuf {
     let mut dir = std::env::temp_dir();
     dir.push("dchat_enclave");
     dir
+}
+
+/// Validate enclave storage path is secure (debug builds only)
+/// In production, this check is not needed as hardware enclaves handle security.
+#[cfg(debug_assertions)]
+fn validate_enclave_storage_security(path: &PathBuf) -> Result<()> {
+    // Ensure parent directory exists and is accessible
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            return Err(Error::internal(format!(
+                "Enclave storage parent directory does not exist: {:?}",
+                parent
+            )));
+        }
+    }
+
+    // Check that path doesn't traverse outside temp directory
+    let temp_dir = std::env::temp_dir();
+    let canonical_temp = temp_dir.canonicalize().unwrap_or(temp_dir);
+    if let Ok(canonical_path) = path.canonicalize() {
+        if !canonical_path.starts_with(&canonical_temp) {
+            return Err(Error::internal(format!(
+                "Enclave storage path escapes temp directory: {:?}",
+                path
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// Platform-specific enclave type
@@ -120,10 +154,12 @@ pub async fn init_enclave() -> Result<()> {
         EnclaveType::Software => {
             // Software fallback for development
             let dir = enclave_storage_path();
+            // Validate storage security before creating
+            validate_enclave_storage_security(&dir)?;
             tokio::fs::create_dir_all(&dir)
                 .await
                 .map_err(|e| Error::internal(format!("Failed to create enclave dir: {}", e)))?;
-            tracing::warn!("Using software enclave (DEBUG BUILD ONLY)");
+            tracing::warn!("Using software enclave at {:?} (DEBUG BUILD ONLY)", dir);
         }
     }
 
@@ -158,13 +194,24 @@ pub fn generate_device_key() -> Result<Vec<u8>> {
         }
         #[cfg(debug_assertions)]
         EnclaveType::Software => {
+            use rand::RngCore;
+
             // Software fallback for development only
             let mut path = enclave_storage_path();
+            // Validate storage security
+            validate_enclave_storage_security(&path)?;
             path.push("device_key.bin");
 
             if path.exists() {
                 let data = std::fs::read(&path)
                     .map_err(|e| Error::internal(format!("read key: {}", e)))?;
+                // Validate key length
+                if data.len() != 32 {
+                    return Err(Error::internal(format!(
+                        "Corrupted device key: expected 32 bytes, got {}",
+                        data.len()
+                    )));
+                }
                 return Ok(data);
             }
 
@@ -173,6 +220,10 @@ pub fn generate_device_key() -> Result<Vec<u8>> {
             rand::thread_rng().fill_bytes(&mut key);
             std::fs::write(&path, &key)
                 .map_err(|e| Error::internal(format!("write key: {}", e)))?;
+            tracing::warn!(
+                "Generated software device key at {:?} (DEBUG BUILD ONLY)",
+                path
+            );
             Ok(key)
         }
     }
@@ -188,30 +239,34 @@ fn generate_hardware_backed_key(key_alias: &str) -> Result<Vec<u8>> {
     // The key material never leaves the hardware - we get a key handle/reference
     // For Ed25519 operations, we use the hardware for signing directly
 
-    // Generate a key derivation seed that's hardware-backed
-    let mut seed = vec![0u8; 32];
-
-    #[cfg(debug_assertions)]
-    {
-        // In debug builds without actual hardware, derive from alias
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(key_alias.as_bytes());
-        hasher.update(b"dchat-device-key-v1");
-        // Add some randomness
-        let mut random_part = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut random_part);
-        hasher.update(&random_part);
-        seed.copy_from_slice(&hasher.finalize());
-        tracing::warn!(
-            "Using derived key for {} (DEBUG BUILD - not hardware-backed)",
-            key_alias
-        );
+    // Validate key alias is non-empty and follows naming convention
+    if key_alias.is_empty() {
+        return Err(Error::internal("Key alias cannot be empty"));
+    }
+    if key_alias.len() > 256 {
+        return Err(Error::internal(format!(
+            "Key alias too long: {} chars (max 256)",
+            key_alias.len()
+        )));
     }
 
+    // In release builds, this MUST be implemented with actual hardware APIs
     #[cfg(not(debug_assertions))]
     {
-        // In release builds, this MUST be implemented with actual hardware APIs
+        // Validate key alias format before attempting hardware access
+        const VALID_ALIASES: &[&str] = &[
+            "ios_secure_enclave",
+            "android_strongbox",
+            "android_tee",
+            "tpm2",
+        ];
+        if !VALID_ALIASES.contains(&key_alias) {
+            return Err(Error::internal(format!(
+                "Unknown key alias '{}'. Valid aliases: {:?}",
+                key_alias, VALID_ALIASES
+            )));
+        }
+
         // The implementation depends on the platform and would typically use:
         // - FFI calls to native platform code
         // - The platform's keychain/keystore APIs
@@ -222,8 +277,55 @@ fn generate_hardware_backed_key(key_alias: &str) -> Result<Vec<u8>> {
         )));
     }
 
+    // In debug builds without actual hardware, derive from alias with randomness
+    // BUT cache to file for idempotency (same key returned each time like hardware would)
     #[cfg(debug_assertions)]
-    Ok(seed)
+    {
+        use rand::RngCore;
+        use sha2::{Digest, Sha256};
+
+        // Check for cached key first (to ensure idempotency like real hardware)
+        let mut key_path = enclave_storage_path();
+        // Create directory if it doesn't exist
+        if !key_path.exists() {
+            std::fs::create_dir_all(&key_path)
+                .map_err(|e| Error::internal(format!("Failed to create enclave dir: {}", e)))?;
+        }
+        key_path.push(format!("{}.key", key_alias));
+
+        if key_path.exists() {
+            let cached_key = std::fs::read(&key_path)
+                .map_err(|e| Error::internal(format!("read cached key: {}", e)))?;
+            if cached_key.len() == 32 {
+                tracing::debug!("Using cached key for {} (DEBUG BUILD)", key_alias);
+                return Ok(cached_key);
+            }
+            // Invalid cached key, regenerate
+            tracing::warn!("Corrupted cached key for {}, regenerating", key_alias);
+        }
+
+        // Generate new key with randomness
+        let mut seed = vec![0u8; 32];
+        let mut hasher = Sha256::new();
+        hasher.update(key_alias.as_bytes());
+        hasher.update(b"dchat-device-key-v1");
+        // Add some randomness for unique key generation
+        let mut random_part = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut random_part);
+        hasher.update(&random_part);
+        seed.copy_from_slice(&hasher.finalize());
+
+        // Cache the key for future calls (idempotency)
+        std::fs::write(&key_path, &seed)
+            .map_err(|e| Error::internal(format!("write cached key: {}", e)))?;
+
+        tracing::warn!(
+            "Generated and cached key for {} at {:?} (DEBUG BUILD - not hardware-backed)",
+            key_alias,
+            key_path
+        );
+        Ok(seed)
+    }
 }
 
 /// Produce an attestation payload proving the key is enclave-backed.
@@ -306,6 +408,11 @@ pub fn attest_device() -> Result<String> {
 /// In production, this delegates to dchat_identity::attestation::AttestationVerifier
 /// which performs full cryptographic verification of platform attestations.
 pub fn verify_attestation(attestation: &str) -> Result<bool> {
+    // Validate attestation is not empty
+    if attestation.is_empty() {
+        return Err(Error::unauthenticated("Attestation cannot be empty"));
+    }
+
     // Production-valid attestation prefixes (hardware-backed only)
     const PRODUCTION_PREFIXES: &[&str] = &[
         "ios-app-attest",
@@ -356,62 +463,73 @@ pub fn verify_attestation(attestation: &str) -> Result<bool> {
     // Full cryptographic verification in production builds
     // Uses dchat_identity::attestation::AttestationVerifier for platform-specific verification
     #[cfg(not(debug_assertions))]
-    {
-        // Parse attestation format: "platform-type-base64data"
-        // Example: "ios-app-attest-ABCDEF..." or "android-strongbox-attestation-XYZ..."
-        let parts: Vec<&str> = attestation.splitn(4, '-').collect();
-
-        if attestation.starts_with("ios-app-attest") {
-            // iOS App Attest requires:
-            // 1. attestation_object (CBOR-encoded)
-            // 2. challenge (nonce)
-            // 3. bundle_id and team_id from config
-            tracing::info!("iOS attestation detected - full verification requires native bridge");
-            return Err(Error::internal(
-                "iOS App Attest verification requires native integration. \
-                 The attestation data should be passed through the native iOS bridge \
-                 with attestation_object, challenge, bundle_id, and team_id.",
-            ));
-        } else if attestation.starts_with("android-strongbox")
-            || attestation.starts_with("android-tee")
-        {
-            // Android attestation requires:
-            // 1. Play Integrity token OR
-            // 2. Key Attestation certificate chain
-            tracing::info!(
-                "Android attestation detected - full verification requires Play Integrity API"
-            );
-            return Err(Error::internal(
-                "Android attestation verification requires Play Integrity API integration. \
-                 The attestation should contain either a Play Integrity token or \
-                 Key Attestation certificate chain.",
-            ));
-        } else if attestation.starts_with("tpm2-attestation") {
-            // TPM 2.0 attestation requires:
-            // 1. TPM quote with PCR values
-            // 2. AIK certificate
-            // 3. Event log (optional)
-            tracing::info!("TPM attestation detected - full verification requires tss-esapi");
-            return Err(Error::internal(
-                "TPM 2.0 attestation verification requires tss-esapi integration. \
-                 The attestation should contain a TPM quote, PCR values, and AIK certificate.",
-            ));
-        }
-
-        // Unknown attestation type passed format check but has no verifier
-        return Err(Error::internal(format!(
-            "No verifier available for attestation type: {}",
-            parts.first().unwrap_or(&"unknown")
-        )));
-    }
+    return verify_attestation_production(attestation);
 
     // Debug builds accept format-valid attestations without full crypto verification
     #[cfg(debug_assertions)]
     {
         tracing::warn!("Skipping full attestation verification in DEBUG build - format check only");
+        Ok(true)
+    }
+}
+
+/// Production attestation verification (release builds only)
+/// Performs full cryptographic verification of platform-specific attestations.
+#[cfg(not(debug_assertions))]
+fn verify_attestation_production(attestation: &str) -> Result<bool> {
+    // Parse attestation format: "platform-type-base64data"
+    // Example: "ios-app-attest-ABCDEF..." or "android-strongbox-attestation-XYZ..."
+    let parts: Vec<&str> = attestation.splitn(4, '-').collect();
+
+    // Validate we have enough parts to identify the attestation type
+    if parts.len() < 2 {
+        return Err(Error::unauthenticated(format!(
+            "Malformed attestation: expected 'platform-type-data' format, got {} parts",
+            parts.len()
+        )));
     }
 
-    Ok(true)
+    if attestation.starts_with("ios-app-attest") {
+        // iOS App Attest requires:
+        // 1. attestation_object (CBOR-encoded)
+        // 2. challenge (nonce)
+        // 3. bundle_id and team_id from config
+        tracing::info!("iOS attestation detected - full verification requires native bridge");
+        Err(Error::internal(
+            "iOS App Attest verification requires native integration. \
+             The attestation data should be passed through the native iOS bridge \
+             with attestation_object, challenge, bundle_id, and team_id.",
+        ))
+    } else if attestation.starts_with("android-strongbox") || attestation.starts_with("android-tee")
+    {
+        // Android attestation requires:
+        // 1. Play Integrity token OR
+        // 2. Key Attestation certificate chain
+        tracing::info!(
+            "Android attestation detected - full verification requires Play Integrity API"
+        );
+        Err(Error::internal(
+            "Android attestation verification requires Play Integrity API integration. \
+             The attestation should contain either a Play Integrity token or \
+             Key Attestation certificate chain.",
+        ))
+    } else if attestation.starts_with("tpm2-attestation") {
+        // TPM 2.0 attestation requires:
+        // 1. TPM quote with PCR values
+        // 2. AIK certificate
+        // 3. Event log (optional)
+        tracing::info!("TPM attestation detected - full verification requires tss-esapi");
+        Err(Error::internal(
+            "TPM 2.0 attestation verification requires tss-esapi integration. \
+             The attestation should contain a TPM quote, PCR values, and AIK certificate.",
+        ))
+    } else {
+        // Unknown attestation type passed format check but has no verifier
+        Err(Error::internal(format!(
+            "No verifier available for attestation type: {}",
+            parts.first().unwrap_or(&"unknown")
+        )))
+    }
 }
 
 #[cfg(test)]

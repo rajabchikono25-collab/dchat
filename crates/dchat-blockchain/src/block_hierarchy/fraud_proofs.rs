@@ -7,7 +7,6 @@ use super::core_types::ExecutionTransaction;
 use super::{BlockError, Hash, MiniblockBody, MiniblockHeader, TxReceipt};
 use crate::canonical;
 use crate::hash_merkle::{merkle_proof, HashMerkleProof};
-use dchat_chain::Transaction;
 use ed25519_dalek::{Signature as Ed25519Sig, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;

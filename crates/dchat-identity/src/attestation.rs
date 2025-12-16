@@ -506,6 +506,17 @@ impl AttestationVerifier {
             return Err(Error::validation("Empty integrity token"));
         }
 
+        // Validate nonce format - must be non-empty and reasonable size
+        // Nonce prevents replay attacks by binding token to a specific request
+        if nonce.is_empty() {
+            return Err(Error::validation(
+                "Empty nonce - required for replay protection",
+            ));
+        }
+        if nonce.len() > 500 {
+            return Err(Error::validation("Nonce too large - maximum 500 bytes"));
+        }
+
         // Production: Call Google Play Integrity API to decrypt and verify the token
         // This is required because the token is encrypted with Google's keys
         #[cfg(feature = "attestation-api")]

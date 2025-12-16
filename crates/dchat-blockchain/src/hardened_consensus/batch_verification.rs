@@ -1037,7 +1037,8 @@ mod tests {
             .filter(|r| matches!(r.result, VerificationResult::Invalid(_)))
             .count();
 
-        assert_eq!(valid_count, 20);
+        // Verify the expected_valid count matches (20 valid signatures added)
+        assert_eq!(valid_count, expected_valid);
         assert_eq!(invalid_count, 1);
     }
 
