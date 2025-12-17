@@ -1,0 +1,2 @@
+C:\Users\USER\dchat\dchat\crates\dchat-crypto\src\handshake.rs:342:        // Wait for timeout (in real test, we'd mock time)
+C:\Users\USER\dchat\dchat\crates\dchat-crypto\src\keys.rs:67:    /// error handling in production systems. Callers MUST handle this error

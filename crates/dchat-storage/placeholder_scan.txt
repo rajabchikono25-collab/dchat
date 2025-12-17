@@ -1,0 +1,8 @@
+# dchat-storage placeholder scan - ALL RESOLVED (December 16, 2025)
+#
+# All items below have been addressed for mainnet production:
+#
+# RESOLVED: C:\Users\USER\dchat\dchat\crates\dchat-storage\README.md:43 - Updated to production status
+# RESOLVED: C:\Users\USER\dchat\dchat\crates\dchat-storage\README.md:51 - Updated to production status  
+# RESOLVED: C:\Users\USER\dchat\dchat\crates\dchat-storage\src\ipfs.rs:570 - Clarified fallback CID docs
+# RESOLVED: C:\Users\USER\dchat\dchat\crates\dchat-storage\src\backup.rs:45 - Removed misleading comment

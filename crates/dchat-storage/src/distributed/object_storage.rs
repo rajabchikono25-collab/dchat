@@ -298,7 +298,7 @@ impl DistributedObjectStorage {
         })
     }
 
-    /// Copy object to different storage tier
+    /// Copy object to different storage tier with actual S3 storage class transition
     pub async fn copy_to_tier(
         &self,
         source_key: &str,
@@ -310,25 +310,111 @@ impl DistributedObjectStorage {
         // Download source
         let data = self.download_bytes(source_key).await?;
 
-        // Re-upload with new storage class
-        let _storage_class = match tier {
+        // Map tier to AWS S3 storage class
+        let storage_class = match tier {
             StorageTier::Hot => "STANDARD",
             StorageTier::Warm => "STANDARD_IA",
-            StorageTier::Cold => "GLACIER",
+            StorageTier::Cold => "GLACIER_IR", // Glacier Instant Retrieval for 2-5s access
             StorageTier::Archive => "DEEP_ARCHIVE",
         };
 
-        // Upload to destination with storage class
-        self.bucket
-            .put_object_with_content_type(dest_key, &data, "application/octet-stream")
-            .await
-            .map_err(|e| {
-                error!("Copy failed: {}", e);
-                StorageError::ObjectStorage(format!("Copy failed: {}", e))
-            })?;
+        // Create bucket with storage class header
+        let mut bucket_with_header = self.bucket.clone();
+        bucket_with_header.add_header("x-amz-storage-class", storage_class);
 
-        info!("Copy successful to tier: {:?}", tier);
+        // Upload to destination with the specified storage class
+        tokio::time::timeout(
+            std::time::Duration::from_secs(self.config.upload_timeout_seconds),
+            bucket_with_header.put_object_with_content_type(
+                dest_key,
+                &data,
+                "application/octet-stream",
+            ),
+        )
+        .await
+        .map_err(|_| {
+            error!(
+                "Copy timeout for tier migration: {} -> {}",
+                source_key, dest_key
+            );
+            StorageError::Timeout
+        })?
+        .map_err(|e| {
+            error!("Copy to tier {:?} failed: {}", tier, e);
+            StorageError::ObjectStorage(format!("Copy to tier {:?} failed: {}", tier, e))
+        })?;
+
+        // Optionally delete source after successful copy (for true migration vs copy)
+        // For safety, we keep source and let caller decide on deletion
+
+        info!("Successfully migrated {} to tier {:?}", dest_key, tier);
         Ok(())
+    }
+
+    /// Upload bytes with specific storage class tier
+    pub async fn upload_bytes_with_tier(
+        &self,
+        data: &[u8],
+        object_key: &str,
+        content_type: &str,
+        tier: StorageTier,
+    ) -> StorageResult<ObjectMetadata> {
+        debug!(
+            "Uploading {} bytes to key: {} with tier: {:?}",
+            data.len(),
+            object_key,
+            tier
+        );
+
+        let storage_class = match tier {
+            StorageTier::Hot => "STANDARD",
+            StorageTier::Warm => "STANDARD_IA",
+            StorageTier::Cold => "GLACIER_IR",
+            StorageTier::Archive => "DEEP_ARCHIVE",
+        };
+
+        let mut bucket_with_header = self.bucket.clone();
+        bucket_with_header.add_header("x-amz-storage-class", storage_class);
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(self.config.upload_timeout_seconds),
+            bucket_with_header.put_object_with_content_type(object_key, data, content_type),
+        )
+        .await
+        .map_err(|_| {
+            error!("Upload timeout for key: {}", object_key);
+            StorageError::Timeout
+        })?
+        .map_err(|e| {
+            error!("Upload with tier failed: {}", e);
+            StorageError::ObjectStorage(format!("Upload with tier failed: {}", e))
+        })?;
+
+        let etag = response
+            .headers()
+            .get("etag")
+            .map(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let public_url = if let Some(cdn_url) = &self.config.cdn_url {
+            format!("{}/{}", cdn_url, object_key)
+        } else {
+            format!(
+                "{}/{}/{}",
+                self.config.endpoint, self.config.bucket_name, object_key
+            )
+        };
+
+        debug!("Upload with tier {:?} successful: etag={}", tier, etag);
+
+        Ok(ObjectMetadata {
+            key: object_key.to_string(),
+            size_bytes: data.len() as u64,
+            content_type: content_type.to_string(),
+            etag,
+            public_url,
+        })
     }
 
     /// Generate pre-signed URL for temporary access

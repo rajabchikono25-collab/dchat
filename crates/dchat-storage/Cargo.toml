@@ -26,7 +26,9 @@ rand = "0.8"
 
 # Image processing
 image = "0.24"
-rust-s3 = { version = "0.35", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.35", default-features = false, features = [
+  "tokio-rustls-tls",
+] }
 tikv-client = "0.3"
 
 # Serialization
@@ -56,6 +58,14 @@ thiserror = { workspace = true }
 
 # Resilience
 parking_lot = "0.12"
+
+# CID encoding
+base32 = "0.5"
+
+[features]
+default = []
+# Enable database integration tests (requires running PostgreSQL)
+test-db = []
 
 [dev-dependencies]
 tokio-test = "0.4"

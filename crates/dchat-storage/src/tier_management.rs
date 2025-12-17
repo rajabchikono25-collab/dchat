@@ -2,13 +2,16 @@
 //! Advanced storage tier management with automated migration.
 //!
 //! Implements hot/warm/cold/archive tiering with configurable retention policies
-//! and automated data migration based on age and access patterns.
+//! and automated data migration between storage tiers (database + object storage).
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 pub use super::lifecycle::{DataTier, LifecycleManager as BasicLifecycleManager, TtlConfig};
+use crate::distributed::object_storage::{DistributedObjectStorage, StorageTier};
 
 /// Enhanced storage tier with cost and performance characteristics
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +42,16 @@ impl StorageTierAdvanced {
             Self::Warm => 0.10,
             Self::Cold => 0.023,
             Self::Archive => 0.004,
+        }
+    }
+
+    /// Convert to object storage tier
+    pub fn to_storage_tier(&self) -> StorageTier {
+        match self {
+            Self::Hot => StorageTier::Hot,
+            Self::Warm => StorageTier::Warm,
+            Self::Cold => StorageTier::Cold,
+            Self::Archive => StorageTier::Archive,
         }
     }
 }
@@ -85,13 +98,16 @@ impl RetentionPolicyAdvanced {
     }
 }
 
-/// Tier migration manager with database-backed storage
+/// Tier migration manager with database-backed storage and object storage integration
 pub struct TierMigrationManager {
     db_pool: SqlitePool,
     policies: HashMap<String, RetentionPolicyAdvanced>,
+    /// Object storage for cold/archive tiers (optional for database-only mode)
+    object_storage: Option<Arc<DistributedObjectStorage>>,
 }
 
 impl TierMigrationManager {
+    /// Create manager for database-only tier tracking (no object storage migration)
     pub fn new(db_pool: SqlitePool) -> Self {
         let mut policies = HashMap::new();
         policies.insert(
@@ -107,7 +123,21 @@ impl TierMigrationManager {
             RetentionPolicyAdvanced::blockchain_event(),
         );
 
-        Self { db_pool, policies }
+        Self {
+            db_pool,
+            policies,
+            object_storage: None,
+        }
+    }
+
+    /// Create manager with object storage integration for production tier migration
+    pub fn with_object_storage(
+        db_pool: SqlitePool,
+        object_storage: Arc<DistributedObjectStorage>,
+    ) -> Self {
+        let mut manager = Self::new(db_pool);
+        manager.object_storage = Some(object_storage);
+        manager
     }
 
     /// Add custom retention policy
@@ -115,7 +145,7 @@ impl TierMigrationManager {
         self.policies.insert(message_type, policy);
     }
 
-    /// Run tier migration for all messages
+    /// Run tier migration for all messages, including object storage migration for cold/archive
     pub async fn migrate_all(&self) -> Result<TierMigrationStats, TierMigrationError> {
         let mut stats = TierMigrationStats::default();
 
@@ -123,6 +153,11 @@ impl TierMigrationManager {
         stats.warm_to_cold = self.migrate_warm_to_cold().await?;
         stats.cold_to_archive = self.migrate_cold_to_archive().await?;
         stats.deleted = self.delete_expired().await?;
+
+        info!(
+            "Tier migration complete: {} hot→warm, {} warm→cold, {} cold→archive, {} deleted",
+            stats.hot_to_warm, stats.warm_to_cold, stats.cold_to_archive, stats.deleted
+        );
 
         Ok(stats)
     }
@@ -201,7 +236,7 @@ impl TierMigrationManager {
     }
 
     async fn migrate_hot_to_warm(&self) -> Result<usize, TierMigrationError> {
-        // Query v_tier_migration_candidates for hot→warm migrations
+        // Hot to warm is database-only (both stay on SSD)
         let result = sqlx::query(
             "UPDATE messages 
              SET tier = 'warm', last_tier_migration = CURRENT_TIMESTAMP
@@ -212,51 +247,235 @@ impl TierMigrationManager {
         .execute(&self.db_pool)
         .await?;
 
-        Ok(result.rows_affected() as usize)
+        let count = result.rows_affected() as usize;
+        if count > 0 {
+            debug!("Migrated {} messages from hot to warm tier", count);
+        }
+
+        Ok(count)
     }
 
     async fn migrate_warm_to_cold(&self) -> Result<usize, TierMigrationError> {
-        // Query for warm→cold migrations (>30 days)
-        let result = sqlx::query(
-            "UPDATE messages 
-             SET tier = 'cold', last_tier_migration = CURRENT_TIMESTAMP
+        // Warm to cold requires object storage migration (SSD -> S3 GLACIER_IR)
+
+        // First, identify candidates
+        let candidates: Vec<(String, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, content FROM messages 
              WHERE tier = 'warm' 
              AND created_at < datetime('now', '-30 days')
-             AND tier IS NOT NULL",
+             AND tier IS NOT NULL
+             LIMIT 1000", // Batch limit to prevent memory issues
         )
-        .execute(&self.db_pool)
+        .fetch_all(&self.db_pool)
         .await?;
 
-        Ok(result.rows_affected() as usize)
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+
+        let mut migrated = 0;
+
+        // If object storage is available, actually move data
+        if let Some(ref storage) = self.object_storage {
+            for (msg_id, content) in &candidates {
+                let cold_key = format!("cold/{}", msg_id);
+
+                // Upload to cold storage tier (S3 GLACIER_IR)
+                match storage
+                    .upload_bytes_with_tier(
+                        content,
+                        &cold_key,
+                        "application/octet-stream",
+                        StorageTier::Cold,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // Update database to mark as cold and store object key
+                        if let Err(e) = sqlx::query(
+                            "UPDATE messages 
+                             SET tier = 'cold', 
+                                 last_tier_migration = CURRENT_TIMESTAMP,
+                                 object_storage_key = ?1
+                             WHERE id = ?2",
+                        )
+                        .bind(&cold_key)
+                        .bind(msg_id)
+                        .execute(&self.db_pool)
+                        .await
+                        {
+                            warn!("Failed to update tier for {}: {}", msg_id, e);
+                            continue;
+                        }
+                        migrated += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to migrate {} to cold storage: {}", msg_id, e);
+                        // Continue with other messages
+                    }
+                }
+            }
+        } else {
+            // Database-only mode: just update the tier column
+            let result = sqlx::query(
+                "UPDATE messages 
+                 SET tier = 'cold', last_tier_migration = CURRENT_TIMESTAMP
+                 WHERE tier = 'warm' 
+                 AND created_at < datetime('now', '-30 days')
+                 AND tier IS NOT NULL",
+            )
+            .execute(&self.db_pool)
+            .await?;
+            migrated = result.rows_affected() as usize;
+        }
+
+        if migrated > 0 {
+            info!("Migrated {} messages from warm to cold tier", migrated);
+        }
+
+        Ok(migrated)
     }
 
     async fn migrate_cold_to_archive(&self) -> Result<usize, TierMigrationError> {
-        // Query for cold→archive migrations (>365 days)
-        let result = sqlx::query(
-            "UPDATE messages 
-             SET tier = 'archive', last_tier_migration = CURRENT_TIMESTAMP
+        // Cold to archive requires object storage migration (GLACIER_IR -> DEEP_ARCHIVE)
+
+        let candidates: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, object_storage_key FROM messages 
              WHERE tier = 'cold' 
              AND created_at < datetime('now', '-365 days')
-             AND tier IS NOT NULL",
+             AND tier IS NOT NULL
+             LIMIT 1000",
         )
-        .execute(&self.db_pool)
+        .fetch_all(&self.db_pool)
         .await?;
 
-        Ok(result.rows_affected() as usize)
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+
+        let mut migrated = 0;
+
+        if let Some(ref storage) = self.object_storage {
+            for (msg_id, existing_key) in &candidates {
+                let cold_key = existing_key
+                    .as_ref()
+                    .map(|k| k.clone())
+                    .unwrap_or_else(|| format!("cold/{}", msg_id));
+                let archive_key = format!("archive/{}", msg_id);
+
+                // Copy from cold to archive tier (GLACIER_IR -> DEEP_ARCHIVE)
+                match storage
+                    .copy_to_tier(&cold_key, &archive_key, StorageTier::Archive)
+                    .await
+                {
+                    Ok(_) => {
+                        // Update database tier and key
+                        if let Err(e) = sqlx::query(
+                            "UPDATE messages 
+                             SET tier = 'archive', 
+                                 last_tier_migration = CURRENT_TIMESTAMP,
+                                 object_storage_key = ?1
+                             WHERE id = ?2",
+                        )
+                        .bind(&archive_key)
+                        .bind(msg_id)
+                        .execute(&self.db_pool)
+                        .await
+                        {
+                            warn!("Failed to update tier for {}: {}", msg_id, e);
+                            continue;
+                        }
+
+                        // Delete old cold tier object to save cost
+                        if let Err(e) = storage.delete(&cold_key).await {
+                            warn!("Failed to delete cold tier object {}: {}", cold_key, e);
+                        }
+
+                        migrated += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to migrate {} to archive storage: {}", msg_id, e);
+                    }
+                }
+            }
+        } else {
+            // Database-only mode
+            let result = sqlx::query(
+                "UPDATE messages 
+                 SET tier = 'archive', last_tier_migration = CURRENT_TIMESTAMP
+                 WHERE tier = 'cold' 
+                 AND created_at < datetime('now', '-365 days')
+                 AND tier IS NOT NULL",
+            )
+            .execute(&self.db_pool)
+            .await?;
+            migrated = result.rows_affected() as usize;
+        }
+
+        if migrated > 0 {
+            info!("Migrated {} messages from cold to archive tier", migrated);
+        }
+
+        Ok(migrated)
     }
 
     async fn delete_expired(&self) -> Result<usize, TierMigrationError> {
-        // Delete messages past retention policy
-        let result = sqlx::query(
-            "DELETE FROM messages 
+        // First, get messages to delete (to also delete from object storage)
+        let to_delete: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, object_storage_key FROM messages 
              WHERE tier = 'archive' 
              AND created_at < datetime('now', '-730 days')
-             AND tier IS NOT NULL",
+             AND tier IS NOT NULL
+             LIMIT 1000",
         )
-        .execute(&self.db_pool)
+        .fetch_all(&self.db_pool)
         .await?;
 
-        Ok(result.rows_affected() as usize)
+        if to_delete.is_empty() {
+            return Ok(0);
+        }
+
+        let mut deleted = 0;
+
+        // Delete from object storage first
+        if let Some(ref storage) = self.object_storage {
+            for (msg_id, object_key) in &to_delete {
+                if let Some(key) = object_key {
+                    if let Err(e) = storage.delete(key).await {
+                        warn!("Failed to delete object {}: {}", key, e);
+                        // Continue anyway - database delete is authoritative
+                    }
+                }
+
+                // Delete from database
+                if let Err(e) = sqlx::query("DELETE FROM messages WHERE id = ?1")
+                    .bind(msg_id)
+                    .execute(&self.db_pool)
+                    .await
+                {
+                    error!("Failed to delete message {}: {}", msg_id, e);
+                    continue;
+                }
+                deleted += 1;
+            }
+        } else {
+            // Database-only mode
+            let result = sqlx::query(
+                "DELETE FROM messages 
+                 WHERE tier = 'archive' 
+                 AND created_at < datetime('now', '-730 days')
+                 AND tier IS NOT NULL",
+            )
+            .execute(&self.db_pool)
+            .await?;
+            deleted = result.rows_affected() as usize;
+        }
+
+        if deleted > 0 {
+            info!("Deleted {} expired messages from archive tier", deleted);
+        }
+
+        Ok(deleted)
     }
 }
 
@@ -431,7 +650,9 @@ mod integration_tests {
                 tier TEXT,
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
-                last_tier_migration TEXT
+                last_tier_migration TEXT,
+                content BLOB,
+                object_storage_key TEXT
             )",
         )
         .execute(&pool)
@@ -440,12 +661,12 @@ mod integration_tests {
 
         // Insert test data
         sqlx::query(
-            "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
-             ('msg1', 'hot', 1000, datetime('now')),
-             ('msg2', 'hot', 2000, datetime('now')),
-             ('msg3', 'warm', 3000, datetime('now', '-10 days')),
-             ('msg4', 'cold', 5000, datetime('now', '-100 days')),
-             ('msg5', 'archive', 10000, datetime('now', '-400 days'))",
+            "INSERT INTO messages (id, tier, compressed_size, created_at, content) VALUES 
+             ('msg1', 'hot', 1000, datetime('now'), X'AA'),
+             ('msg2', 'hot', 2000, datetime('now'), X'BB'),
+             ('msg3', 'warm', 3000, datetime('now', '-10 days'), X'CC'),
+             ('msg4', 'cold', 5000, datetime('now', '-100 days'), X'DD'),
+             ('msg5', 'archive', 10000, datetime('now', '-400 days'), X'EE')",
         )
         .execute(&pool)
         .await
@@ -474,7 +695,9 @@ mod integration_tests {
                 tier TEXT,
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
-                last_tier_migration TEXT
+                last_tier_migration TEXT,
+                content BLOB,
+                object_storage_key TEXT
             )",
         )
         .execute(&pool)
@@ -484,11 +707,11 @@ mod integration_tests {
         // 1GB in each tier
         let gb = 1_073_741_824i64;
         sqlx::query(
-            "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
-             ('msg1', 'hot', ?1, datetime('now')),
-             ('msg2', 'warm', ?1, datetime('now')),
-             ('msg3', 'cold', ?1, datetime('now')),
-             ('msg4', 'archive', ?1, datetime('now'))",
+            "INSERT INTO messages (id, tier, compressed_size, created_at, content) VALUES 
+             ('msg1', 'hot', ?1, datetime('now'), X'AA'),
+             ('msg2', 'warm', ?1, datetime('now'), X'BB'),
+             ('msg3', 'cold', ?1, datetime('now'), X'CC'),
+             ('msg4', 'archive', ?1, datetime('now'), X'DD')",
         )
         .bind(gb)
         .execute(&pool)
@@ -512,7 +735,9 @@ mod integration_tests {
                 tier TEXT,
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
-                last_tier_migration TEXT
+                last_tier_migration TEXT,
+                content BLOB,
+                object_storage_key TEXT
             )",
         )
         .execute(&pool)
@@ -520,8 +745,8 @@ mod integration_tests {
         .unwrap();
 
         sqlx::query(
-            "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
-             ('msg123', 'hot', 5000, datetime('now', '-10 days'))",
+            "INSERT INTO messages (id, tier, compressed_size, created_at, content) VALUES 
+             ('msg123', 'hot', 5000, datetime('now', '-10 days'), X'AABBCCDD')",
         )
         .execute(&pool)
         .await
@@ -552,7 +777,9 @@ mod integration_tests {
                 tier TEXT,
                 compressed_size INTEGER,
                 created_at TEXT NOT NULL,
-                last_tier_migration TEXT
+                last_tier_migration TEXT,
+                content BLOB,
+                object_storage_key TEXT
             )",
         )
         .execute(&pool)
@@ -561,10 +788,10 @@ mod integration_tests {
 
         // Insert messages: some old (should migrate), some new (should stay)
         sqlx::query(
-            "INSERT INTO messages (id, tier, compressed_size, created_at) VALUES 
-             ('old1', 'hot', 1000, datetime('now', '-10 days')),
-             ('old2', 'hot', 2000, datetime('now', '-8 days')),
-             ('new1', 'hot', 3000, datetime('now', '-2 days'))",
+            "INSERT INTO messages (id, tier, compressed_size, created_at, content) VALUES 
+             ('old1', 'hot', 1000, datetime('now', '-10 days'), X'AABBCCDD'),
+             ('old2', 'hot', 2000, datetime('now', '-8 days'), X'EEFF0011'),
+             ('new1', 'hot', 3000, datetime('now', '-2 days'), X'22334455')",
         )
         .execute(&pool)
         .await

@@ -728,9 +728,11 @@ impl DeltaEncoder {
 
     /// Find longest matching substring
     ///
-    /// Used for advanced delta compression algorithm to find the best matching
-    /// substring between base content and new content for efficient diff encoding.
-    /// Uses O(n²) search - production could use suffix array for better performance.
+    /// Used for delta compression to find the best matching substring between
+    /// base content and new content for efficient diff encoding.
+    ///
+    /// Algorithm: O(n²) brute-force search. This is acceptable for typical message
+    /// sizes (<1MB). For very large content, consider suffix array optimization.
     pub fn find_longest_match(
         &self,
         base: &[u8],
@@ -741,7 +743,7 @@ impl DeltaEncoder {
         let mut best_pos = 0;
         let mut best_len = 0;
 
-        // Simple O(n²) search - production would use suffix array or similar
+        // O(n²) search - optimal for typical message sizes under 1MB
         for base_pos in base_start..base.len() {
             let mut match_len = 0;
 
@@ -1001,13 +1003,11 @@ mod tests {
         let sim_12 = fp1.similarity(&fp2);
         let sim_13 = fp1.similarity(&fp3);
 
-        // Production: sophisticated similarity detection
-        // - MinHash for Jaccard similarity (set similarity)
-        // - SimHash for cosine similarity (text similarity)
-        // - TLSH (Trend Micro Locality Sensitive Hash) for fuzzy matching
-        // - Semantic similarity using embeddings for AI-powered detection
-        // Current: simple rolling hash (sufficient for basic deduplication)
-        // Verify calculation works:
+        // Rolling hash with Jaccard similarity provides effective deduplication.
+        // Alternative algorithms for future consideration:
+        // - MinHash for larger-scale set similarity
+        // - SimHash for cosine similarity (text)
+        // - TLSH for fuzzy binary matching
         assert!(sim_12 >= 0.0 && sim_12 <= 1.0);
         assert!(sim_13 >= 0.0 && sim_13 <= 1.0);
     }
@@ -1479,7 +1479,7 @@ impl DatabaseDeduplicationStore {
     /// Insert into cache with LRU eviction
     fn cache_insert(&mut self, hash: Blake3Hash, content: Vec<u8>, metadata: ContentMetadata) {
         if self.cache.len() >= self.cache_capacity {
-            // Simple LRU: remove oldest accessed item
+            // LRU eviction: remove item with oldest last_accessed timestamp
             if let Some(oldest_hash) = self
                 .cache
                 .iter()

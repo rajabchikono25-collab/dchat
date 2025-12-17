@@ -23,9 +23,11 @@ use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::error::{StorageError, StorageResult};
 
@@ -132,6 +134,110 @@ pub enum MessageType {
     Attachment,
 }
 
+/// Circuit breaker state for storage backends
+#[derive(Debug)]
+pub struct StorageCircuitBreaker {
+    /// Number of consecutive failures
+    failure_count: AtomicU32,
+    /// Total failures since last reset
+    total_failures: AtomicU64,
+    /// Total successes since last reset  
+    total_successes: AtomicU64,
+    /// Last failure time
+    last_failure: parking_lot::RwLock<Option<Instant>>,
+    /// Circuit state: 0=closed, 1=open, 2=half-open
+    state: AtomicU32,
+    /// Failure threshold before opening circuit
+    failure_threshold: u32,
+    /// Reset timeout before trying again
+    reset_timeout: Duration,
+    /// Backend name for logging
+    name: String,
+}
+
+impl StorageCircuitBreaker {
+    pub fn new(name: &str, failure_threshold: u32, reset_timeout: Duration) -> Self {
+        Self {
+            failure_count: AtomicU32::new(0),
+            total_failures: AtomicU64::new(0),
+            total_successes: AtomicU64::new(0),
+            last_failure: parking_lot::RwLock::new(None),
+            state: AtomicU32::new(0), // closed
+            failure_threshold,
+            reset_timeout,
+            name: name.to_string(),
+        }
+    }
+
+    /// Check if circuit allows request
+    pub fn should_allow(&self) -> bool {
+        let state = self.state.load(Ordering::SeqCst);
+        match state {
+            0 => true, // closed - allow
+            1 => {
+                // open - check if reset timeout has passed
+                let last_failure = self.last_failure.read();
+                if let Some(last) = *last_failure {
+                    if last.elapsed() > self.reset_timeout {
+                        // Transition to half-open
+                        drop(last_failure); // Release read lock before writing
+                        self.state.store(2, Ordering::SeqCst);
+                        info!("{} circuit breaker transitioning to half-open", self.name);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                }
+            }
+            2 => true, // half-open - allow limited requests
+            _ => false,
+        }
+    }
+
+    /// Record a successful operation
+    pub fn record_success(&self) {
+        self.total_successes.fetch_add(1, Ordering::Relaxed);
+        self.failure_count.store(0, Ordering::SeqCst);
+
+        let state = self.state.load(Ordering::SeqCst);
+        if state != 0 {
+            info!("{} circuit breaker closed after success", self.name);
+            self.state.store(0, Ordering::SeqCst);
+        }
+    }
+
+    /// Record a failed operation
+    pub fn record_failure(&self) {
+        self.total_failures.fetch_add(1, Ordering::Relaxed);
+        let failures = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
+
+        *self.last_failure.write() = Some(Instant::now());
+
+        if failures >= self.failure_threshold {
+            let state = self.state.load(Ordering::SeqCst);
+            if state != 1 {
+                warn!(
+                    "{} circuit breaker opened after {} failures",
+                    self.name, failures
+                );
+                self.state.store(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Get circuit state as string
+    pub fn state_string(&self) -> &'static str {
+        match self.state.load(Ordering::SeqCst) {
+            0 => "closed",
+            1 => "open",
+            2 => "half-open",
+            _ => "unknown",
+        }
+    }
+}
+
 /// Storage router providing tiered storage access
 pub struct StorageRouter {
     /// Configuration
@@ -152,6 +258,10 @@ pub struct StorageRouter {
     http_client: reqwest::Client,
     /// Local blob cache
     blob_cache: Arc<RwLock<HashMap<[u8; 32], Vec<u8>>>>,
+    /// Circuit breaker for S3/MinIO operations
+    s3_circuit_breaker: Arc<StorageCircuitBreaker>,
+    /// Circuit breaker for IPFS operations
+    ipfs_circuit_breaker: Arc<StorageCircuitBreaker>,
 }
 
 impl StorageRouter {
@@ -215,8 +325,23 @@ impl StorageRouter {
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(10)
             .build()
             .map_err(|e| StorageError::Internal(e.to_string()))?;
+
+        // Initialize circuit breakers for external storage backends
+        let s3_circuit_breaker = Arc::new(StorageCircuitBreaker::new(
+            "s3",
+            5,                       // 5 consecutive failures to open
+            Duration::from_secs(30), // 30s before trying again
+        ));
+        let ipfs_circuit_breaker = Arc::new(StorageCircuitBreaker::new(
+            "ipfs",
+            3,                       // 3 consecutive failures to open (IPFS is less reliable)
+            Duration::from_secs(60), // 60s before trying again
+        ));
 
         info!(
             "Storage router initialized (offline_mode={})",
@@ -233,6 +358,8 @@ impl StorageRouter {
             challenge_manager,
             http_client,
             blob_cache: Arc::new(RwLock::new(HashMap::new())),
+            s3_circuit_breaker,
+            ipfs_circuit_breaker,
         })
     }
 
@@ -616,13 +743,27 @@ impl StorageRouter {
         Ok(blob_ref)
     }
 
-    /// Upload blob to a specific provider
+    /// Upload blob to a specific provider with circuit breaker protection
     async fn upload_to_provider(
         &self,
         provider: &RegisteredProvider,
         content: &[u8],
         blob_ref: &BlobRef,
     ) -> StorageResult<BlobLocation> {
+        // Check circuit breaker before attempting S3 upload
+        if !self.s3_circuit_breaker.should_allow() {
+            error!(
+                provider_id = %hex::encode(provider.id),
+                circuit_state = %self.s3_circuit_breaker.state_string(),
+                "S3 circuit breaker is open, rejecting upload request"
+            );
+            return Err(StorageError::Provider(format!(
+                "S3 circuit breaker is open (state: {}), skipping provider {}",
+                self.s3_circuit_breaker.state_string(),
+                hex::encode(provider.id)
+            )));
+        }
+
         let s3_cap = &provider.capabilities.object_s3;
 
         // Generate S3 key
@@ -645,22 +786,59 @@ impl StorageRouter {
             None,
             None,
         )
-        .map_err(|e| StorageError::ObjectStorage(e.to_string()))?;
+        .map_err(|e| {
+            self.s3_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                bucket = %s3_cap.bucket,
+                error = %e,
+                "S3 credentials initialization failed"
+            );
+            StorageError::ObjectStorage(e.to_string())
+        })?;
 
-        let bucket = s3::Bucket::new(&s3_cap.bucket, region, credentials)
-            .map_err(|e| StorageError::ObjectStorage(e.to_string()))?;
+        let bucket = s3::Bucket::new(&s3_cap.bucket, region, credentials).map_err(|e| {
+            self.s3_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                bucket = %s3_cap.bucket,
+                region = %s3_cap.region,
+                error = %e,
+                "S3 bucket initialization failed"
+            );
+            StorageError::ObjectStorage(e.to_string())
+        })?;
 
-        let response = bucket
-            .put_object(&s3_key, content)
-            .await
-            .map_err(|e| StorageError::ObjectStorage(e.to_string()))?;
+        let response = bucket.put_object(&s3_key, content).await.map_err(|e| {
+            self.s3_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                bucket = %s3_cap.bucket,
+                s3_key = %s3_key,
+                content_size = %content.len(),
+                error = %e,
+                "S3 put_object failed"
+            );
+            StorageError::ObjectStorage(e.to_string())
+        })?;
 
         if response.status_code() != 200 {
+            self.s3_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                bucket = %s3_cap.bucket,
+                s3_key = %s3_key,
+                status_code = %response.status_code(),
+                "S3 upload returned non-200 status"
+            );
             return Err(StorageError::ObjectStorage(format!(
                 "S3 upload failed with status {}",
                 response.status_code()
             )));
         }
+
+        // Success - record it
+        self.s3_circuit_breaker.record_success();
 
         // Create location
         let location = BlobLocation {
@@ -681,7 +859,7 @@ impl StorageRouter {
         Ok(location)
     }
 
-    /// Upload blob to IPFS via HTTP API using http_client
+    /// Upload blob to IPFS via HTTP API with circuit breaker protection
     /// Returns the CID (Content Identifier) of the pinned content
     async fn upload_to_ipfs(
         &self,
@@ -689,6 +867,20 @@ impl StorageRouter {
         content: &[u8],
         blob_ref: &BlobRef,
     ) -> StorageResult<BlobLocation> {
+        // Check circuit breaker before attempting IPFS upload
+        if !self.ipfs_circuit_breaker.should_allow() {
+            error!(
+                provider_id = %hex::encode(provider.id),
+                circuit_state = %self.ipfs_circuit_breaker.state_string(),
+                "IPFS circuit breaker is open, rejecting upload request"
+            );
+            return Err(StorageError::Provider(format!(
+                "IPFS circuit breaker is open (state: {}), skipping provider {}",
+                self.ipfs_circuit_breaker.state_string(),
+                hex::encode(provider.id)
+            )));
+        }
+
         let ipfs_cap =
             provider.capabilities.ipfs_pinning.as_ref().ok_or_else(|| {
                 StorageError::Provider("Provider does not support IPFS".to_string())
@@ -761,14 +953,29 @@ impl StorageRouter {
         }
 
         // Execute request
-        let response = request
-            .send()
-            .await
-            .map_err(|e| StorageError::ObjectStorage(format!("IPFS upload failed: {}", e)))?;
+        let response = request.send().await.map_err(|e| {
+            self.ipfs_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                api_endpoint = %ipfs_cap.api_endpoint,
+                content_size = %content.len(),
+                error = %e,
+                "IPFS upload request failed"
+            );
+            StorageError::ObjectStorage(format!("IPFS upload failed: {}", e))
+        })?;
 
         if !response.status().is_success() {
+            self.ipfs_circuit_breaker.record_failure();
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                api_endpoint = %ipfs_cap.api_endpoint,
+                status = %status,
+                response_body = %body,
+                "IPFS upload returned error status"
+            );
             return Err(StorageError::ObjectStorage(format!(
                 "IPFS upload failed with status {}: {}",
                 status, body
@@ -777,12 +984,21 @@ impl StorageRouter {
 
         // Parse response to get CID
         let body = response.text().await.map_err(|e| {
+            self.ipfs_circuit_breaker.record_failure();
+            error!(
+                provider_id = %hex::encode(provider.id),
+                error = %e,
+                "Failed to read IPFS response body"
+            );
             StorageError::ObjectStorage(format!("Failed to read IPFS response: {}", e))
         })?;
 
         // Standard IPFS returns: {"Name":"...","Hash":"Qm...","Size":"..."}
         // Parse CID from response
         let cid = self.parse_ipfs_cid_response(&body, ipfs_cap.pinning_api)?;
+
+        // Success - record it
+        self.ipfs_circuit_breaker.record_success();
 
         info!(
             "Blob {} pinned to IPFS as CID {} via provider {}",

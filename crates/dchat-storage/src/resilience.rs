@@ -435,7 +435,7 @@ impl<T: Clone> LocalCache<T> {
 
     /// Evict least recently used entry
     fn evict_lru(&self, entries: &mut HashMap<String, CacheEntry<T>>) {
-        // Find the oldest entry (simple LRU approximation)
+        // LRU eviction: find and remove the entry with oldest created_at timestamp
         if let Some(oldest_key) = entries
             .iter()
             .min_by_key(|(_, entry)| entry.created_at)

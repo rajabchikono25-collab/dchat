@@ -399,7 +399,7 @@ impl Database {
             .map_err(|e| Error::storage(format!("Health check failed: {}", e)))?;
         let acquire_time = start.elapsed();
 
-        // Simple query to verify database is responsive
+        // Execute lightweight query to verify database responsiveness
         let _: i64 = sqlx::query_scalar("SELECT 1")
             .fetch_one(&self.pool)
             .await

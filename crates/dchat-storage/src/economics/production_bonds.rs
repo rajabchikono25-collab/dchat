@@ -271,7 +271,7 @@ struct RateLimitState {
     last_cleanup: DateTime<Utc>,
 }
 
-/// Production bond manager
+/// Production bond manager with resilient RPC client
 pub struct ProductionBondManager {
     /// Configuration
     config: ProductionBondConfig,
@@ -291,9 +291,17 @@ pub struct ProductionBondManager {
     total_storage_bonded: AtomicU64,
     /// Chain RPC endpoint
     rpc_endpoint: String,
+    /// Shared HTTP client with connection pooling
+    http_client: reqwest::Client,
     /// Nonce tracker for replay protection
     user_nonces: Arc<RwLock<HashMap<[u8; 32], u64>>>,
 }
+
+/// RPC retry configuration
+const MAX_RPC_RETRIES: u32 = 3;
+const RPC_INITIAL_BACKOFF_MS: u64 = 100;
+const RPC_MAX_BACKOFF_MS: u64 = 5000;
+const RPC_TIMEOUT_SECS: u64 = 30;
 
 /// Bond creation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -414,8 +422,18 @@ impl std::fmt::Display for BondError {
 impl std::error::Error for BondError {}
 
 impl ProductionBondManager {
-    /// Create a new production bond manager
+    /// Create a new production bond manager with connection-pooled HTTP client
     pub fn new(config: ProductionBondConfig, rpc_endpoint: String) -> Self {
+        // Create shared HTTP client with connection pooling and timeouts
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(RPC_TIMEOUT_SECS))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(10)
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             config,
             bonds: Arc::new(RwLock::new(HashMap::new())),
@@ -426,8 +444,96 @@ impl ProductionBondManager {
             total_bonded: AtomicU64::new(0),
             total_storage_bonded: AtomicU64::new(0),
             rpc_endpoint,
+            http_client,
             user_nonces: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Execute RPC call with exponential backoff retry
+    async fn rpc_with_retry(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, BondError> {
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params
+        });
+
+        let mut last_error = None;
+        let mut backoff_ms = RPC_INITIAL_BACKOFF_MS;
+
+        for attempt in 0..MAX_RPC_RETRIES {
+            match self.execute_rpc_call(&payload).await {
+                Ok(response) => {
+                    // Check for RPC-level errors
+                    if let Some(error) = response.get("error") {
+                        let error_msg = error
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown RPC error");
+                        // Don't retry on application-level errors
+                        if error
+                            .get("code")
+                            .and_then(|c| c.as_i64())
+                            .map_or(false, |c| c < -32000)
+                        {
+                            return Err(BondError::ChainError(error_msg.to_string()));
+                        }
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    warn!(
+                        "RPC call {} failed (attempt {}/{}): {}",
+                        method,
+                        attempt + 1,
+                        MAX_RPC_RETRIES,
+                        e
+                    );
+                    last_error = Some(e);
+
+                    if attempt + 1 < MAX_RPC_RETRIES {
+                        // Exponential backoff with jitter
+                        let jitter = rand::random::<u64>() % (backoff_ms / 2);
+                        let sleep_ms = backoff_ms + jitter;
+                        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(RPC_MAX_BACKOFF_MS);
+                    }
+                }
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| BondError::ChainError("RPC call failed after retries".to_string())))
+    }
+
+    /// Execute single RPC call
+    async fn execute_rpc_call(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, BondError> {
+        let response = self
+            .http_client
+            .post(&self.rpc_endpoint)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|e| BondError::ChainError(format!("HTTP error: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(BondError::ChainError(format!(
+                "HTTP status: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| BondError::ChainError(format!("JSON parse error: {}", e)))
     }
 
     /// Create a new storage bond with signature verification
@@ -1158,39 +1264,21 @@ impl ProductionBondManager {
             return Ok(format!("offline-bond-{}", hex::encode(&bond.id[..8])));
         }
 
-        // Production: Submit to currency chain
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.create_storage_bond",
-            "params": {
-                "bond_id": hex::encode(bond.id),
-                "user_key": hex::encode(bond.user_key),
-                "amount": bond.amount,
-                "storage_bytes": bond.storage_bytes,
-                "duration_days": bond.duration_days,
-                "expires_at": bond.expires_at.to_rfc3339(),
-            }
+        // Production: Submit to currency chain with retry
+        let params = serde_json::json!({
+            "bond_id": hex::encode(bond.id),
+            "user_key": hex::encode(bond.user_key),
+            "amount": bond.amount,
+            "storage_bytes": bond.storage_bytes,
+            "duration_days": bond.duration_days,
+            "expires_at": bond.expires_at.to_rfc3339(),
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.create_storage_bond", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
@@ -1202,34 +1290,16 @@ impl ProductionBondManager {
             return Ok(format!("offline-unbond-{}", hex::encode(&bond.id[..8])));
         }
 
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.initiate_unbonding",
-            "params": {
-                "bond_id": hex::encode(bond.id),
-                "user_key": hex::encode(bond.user_key),
-            }
+        let params = serde_json::json!({
+            "bond_id": hex::encode(bond.id),
+            "user_key": hex::encode(bond.user_key),
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.initiate_unbonding", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
@@ -1245,35 +1315,17 @@ impl ProductionBondManager {
             return Ok(format!("offline-withdraw-{}", hex::encode(&bond.id[..8])));
         }
 
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.complete_withdrawal",
-            "params": {
-                "bond_id": hex::encode(bond.id),
-                "user_key": hex::encode(bond.user_key),
-                "amount": amount,
-            }
+        let params = serde_json::json!({
+            "bond_id": hex::encode(bond.id),
+            "user_key": hex::encode(bond.user_key),
+            "amount": amount,
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.complete_withdrawal", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
@@ -1290,36 +1342,18 @@ impl ProductionBondManager {
             return Ok(format!("offline-terminate-{}", hex::encode(&bond.id[..8])));
         }
 
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.early_termination",
-            "params": {
-                "bond_id": hex::encode(bond.id),
-                "user_key": hex::encode(bond.user_key),
-                "amount": amount,
-                "penalty": penalty,
-            }
+        let params = serde_json::json!({
+            "bond_id": hex::encode(bond.id),
+            "user_key": hex::encode(bond.user_key),
+            "amount": amount,
+            "penalty": penalty,
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.early_termination", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
@@ -1336,36 +1370,18 @@ impl ProductionBondManager {
             return Ok(format!("offline-slash-{}", hex::encode(&bond.id[..8])));
         }
 
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.slash_storage_bond",
-            "params": {
-                "bond_id": hex::encode(bond.id),
-                "user_key": hex::encode(bond.user_key),
-                "slash_amount": slash_amount,
-                "reason": reason,
-            }
+        let params = serde_json::json!({
+            "bond_id": hex::encode(bond.id),
+            "user_key": hex::encode(bond.user_key),
+            "slash_amount": slash_amount,
+            "reason": reason,
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.slash_storage_bond", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))
@@ -1385,35 +1401,17 @@ impl ProductionBondManager {
             ));
         }
 
-        use reqwest::Client;
-        use serde_json::json;
-
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "currency.register_storage_provider",
-            "params": {
-                "provider_key": hex::encode(provider_key),
-                "stake_amount": stake_amount,
-                "storage_capacity": storage_capacity,
-            }
+        let params = serde_json::json!({
+            "provider_key": hex::encode(provider_key),
+            "stake_amount": stake_amount,
+            "storage_capacity": storage_capacity,
         });
 
-        let client = Client::new();
-        let response = client
-            .post(&self.rpc_endpoint)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
+        let response = self
+            .rpc_with_retry("currency.register_storage_provider", params)
+            .await?;
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| BondError::ChainError(e.to_string()))?;
-
-        body["result"]["tx_id"]
+        response["result"]["tx_id"]
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| BondError::ChainError("Missing tx_id in response".to_string()))

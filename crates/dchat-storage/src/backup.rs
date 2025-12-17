@@ -41,13 +41,11 @@ pub struct EncryptedBackup {
 
 impl EncryptedBackup {
     /// Create a new encrypted backup
+    ///
+    /// Uses ChaCha20-Poly1305 AEAD encryption with:
+    /// - Random 12-byte nonce generation
+    /// - BLAKE3 checksum for integrity verification
     pub fn new(user_id: String, plaintext: Vec<u8>, encryption_key: &[u8]) -> Result<Self> {
-        // In a real implementation, this would:
-        // 1. Use ChaCha20-Poly1305 or similar AEAD
-        // 2. Generate random nonce
-        // 3. Encrypt the data
-        // 4. Calculate checksum
-
         let mut nonce = [0u8; 12];
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut nonce);
