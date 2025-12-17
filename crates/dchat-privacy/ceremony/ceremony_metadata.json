@@ -1,0 +1,9 @@
+{
+  "generation_timestamp": 1765956738,
+  "seed_config_hash": "d5ceb523220db56924e08f7670bb3d93d25646db1ae9ff9f36995c413c428489",
+  "contact_pk_hash": "30d40bdd3ad419227daaa469cb4fa075dbe0693deb9b064b32e21089c47d608d",
+  "contact_vk_hash": "424f242021bd2edb096a5ce52e701d48975105a51cdc84e160e604a0a9ba0688",
+  "reputation_pk_hash": "8819a8eb064b785fd4abf746fcfc665eccf9159f1823b3bae7b79cd629cf4bda",
+  "reputation_vk_hash": "7a4f2227a4c6e934a1da55ee91d14f2a6c34599dc76d29fdfe3753f54e44fde8",
+  "protocol_version": 1
+}

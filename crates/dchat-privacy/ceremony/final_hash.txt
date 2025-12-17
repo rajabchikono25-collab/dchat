@@ -1,13 +1,13 @@
 # BLAKE3 hash of ceremony artifacts
-# Generated: 2025-12-11 18:41:21 UTC
+# Generated: 2025-12-17 07:32:18 UTC
 # Protocol Version: 1
 # Seed Config Hash: d5ceb523220db56924e08f7670bb3d93d25646db1ae9ff9f36995c413c428489
 #
 # Individual artifact hashes:
-#   contact_pk:     af69056941b4c8b1516e2e98e503c44097f6ae7b0ac74787154ef8363a1f672b
-#   contact_vk:     5ec85fd36a9a1243def738f2831811e4a4a0a46e6650479f09ab4dbe624ab6b3
-#   reputation_pk:  f63ae1d1d0cb2090c4bfaf3768d38c41db84ea3e6faaac06d0179fc3ea662aa8
-#   reputation_vk:  ee3fed965915fb0bc6a452766bbf36da7d72ff40b75aaa4d3527b00a42fc6c4a
+#   contact_pk:     30d40bdd3ad419227daaa469cb4fa075dbe0693deb9b064b32e21089c47d608d
+#   contact_vk:     424f242021bd2edb096a5ce52e701d48975105a51cdc84e160e604a0a9ba0688
+#   reputation_pk:  8819a8eb064b785fd4abf746fcfc665eccf9159f1823b3bae7b79cd629cf4bda
+#   reputation_vk:  7a4f2227a4c6e934a1da55ee91d14f2a6c34599dc76d29fdfe3753f54e44fde8
 #
 # Combined hash (verify with: blake3sum pot_final.bin contact_circuit_final.bin contact_vk_final.bin reputation_circuit_final.bin reputation_vk_final.bin)
-6b406bebbcbe21afd719b83512f46b17d729b83cdf109cb7aada10ce4b50b455
+bb457b4a86d3fc79c5bd61ccb5b98fe1b379d9b8466cff8906b64a2fab07bacc

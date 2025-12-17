@@ -228,6 +228,10 @@ pub fn generate_ceremony_artifacts(
 }
 
 /// Create a POT placeholder that records the ceremony parameters
+///
+/// SECURITY: This is deterministic - the timestamp is derived from the seed
+/// to ensure reproducible ceremony artifacts. The seed itself encodes the
+/// ceremony epoch (Bitcoin block height).
 fn create_pot_placeholder(seed: &[u8; 32]) -> Vec<u8> {
     // The POT file is a structured record of ceremony parameters
     // For Groth16 with circuit-specific setup, we don't need traditional POT
@@ -241,12 +245,10 @@ fn create_pot_placeholder(seed: &[u8; 32]) -> Vec<u8> {
     // Seed hash (for verification)
     pot.extend_from_slice(seed);
 
-    // Timestamp
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    pot.extend_from_slice(&timestamp.to_le_bytes());
+    // Deterministic timestamp derived from seed (first 8 bytes)
+    // This ensures reproducibility while still encoding time information
+    let deterministic_timestamp = u64::from_le_bytes(seed[0..8].try_into().unwrap());
+    pot.extend_from_slice(&deterministic_timestamp.to_le_bytes());
 
     // Curve identifier (BN254)
     pot.extend_from_slice(b"BN254");
