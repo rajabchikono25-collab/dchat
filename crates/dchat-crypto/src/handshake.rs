@@ -34,7 +34,7 @@ pub enum HandshakeState {
 }
 
 /// Manages handshakes with multiple peers
-/// 
+///
 /// Provides key rotation, timeout handling, and state management
 /// for cryptographic handshakes with network peers.
 pub struct HandshakeManager {
@@ -339,7 +339,7 @@ mod tests {
             Some(HandshakeState::InProgress { .. })
         ));
 
-        // Wait for timeout (in real test, we'd mock time)
+        // Wait for timeout to elapse (using real time in integration test)
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         // Cleanup should remove the timed-out handshake
