@@ -1,0 +1,67 @@
+[package]
+name = "dchat-programs"
+version = "0.1.0"
+edition = "2021"
+description = "Production-grade Solana-accounts-style contract platform for dchat currency chain"
+license = "MIT OR Apache-2.0"
+authors = ["dchat contributors"]
+
+[dependencies]
+# Core dchat crates
+dchat-core = { path = "../dchat-core" }
+dchat-crypto = { path = "../dchat-crypto" }
+dchat-chain = { path = "../dchat-chain" }
+dchat-observability = { path = "../dchat-observability" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Cryptography
+blake3 = "1.5"
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+curve25519-dalek = "4.1"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+
+# Data structures
+dashmap = "5.5"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+rayon = "1.10"
+
+# Utilities
+thiserror = "1.0"
+tracing = "0.1"
+hex = "0.4"
+bs58 = "0.5"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# Metrics
+prometheus = "0.13"
+once_cell = "1.19"
+
+# WebAssembly runtime for deterministic execution
+wasmi = "0.31"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full", "test-util"] }
+tempfile = "3.8"
+proptest = "1.5"
+criterion = "0.5"
+
+[features]
+default = []
+# Enable test-only features - NEVER enable in production
+test-mocks = []
+
+[[bench]]
+name = "program_execution"
+harness = false
