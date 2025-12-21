@@ -55,13 +55,13 @@ pub use account::{Account, AccountData, AccountMeta, AccountState, Lamports, Pub
 pub use capability::{CapabilityId, CapabilityRegistry, CapabilityScope, CapabilityToken};
 pub use cpi::{CpiContext, CpiGuard, CpiResult, CrossProgramInvocation};
 pub use error::{ProgramError, ProgramResult};
-pub use events::{EventEmitter, ExecutionReceipt, ProgramEvent};
+pub use events::{EventFilter, ExecutionReceipt, ProgramEvent};
 pub use instruction::{CompiledInstruction, Instruction, InstructionAccount, InstructionData};
-pub use loader::{DeployedProgram, LoaderInstruction, ProgramRegistry};
+pub use loader::LoaderInstruction;
 pub use metering::{ComputeBudget, ComputeMeter, CryptoOpCosts, MemoryCosts, StorageCosts};
 pub use pda::{PdaDerivation, ProgramDerivedAddress};
-pub use privacy::{ConfidentialTransfer, EncryptedPayload, PrivacyMode};
-pub use runtime::{ExecutionContext, ExecutionReceipt as RuntimeReceipt, ProgramRuntime};
+pub use privacy::{EncryptedBalance, PrivacyAccount, PrivacyProgram};
+pub use runtime::{ExecutionContext, ProgramRuntime};
 pub use scheduler::{AccountLock, ExecutionBatch, ParallelScheduler, SchedulerConfig};
 pub use syscalls::{SyscallContext, SyscallHandler, SyscallRegistry};
 pub use system_program::{SystemInstruction, SystemProgram};

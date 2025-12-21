@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 
 use crate::account::Pubkey;
 use crate::error::{ProgramError, ProgramResult};
@@ -168,6 +169,7 @@ pub struct CapabilityToken {
     /// Creation timestamp
     pub created_at: u64,
     /// Signature from issuer
+    #[serde(with = "BigArray")]
     pub signature: [u8; 64],
 }
 

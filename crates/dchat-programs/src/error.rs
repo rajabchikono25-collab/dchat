@@ -173,6 +173,10 @@ pub enum ProgramError {
     #[error("Token account is frozen")]
     TokenAccountFrozen,
 
+    /// Account frozen (generic)
+    #[error("Account is frozen")]
+    AccountFrozen,
+
     /// Invalid mint
     #[error("Invalid mint")]
     InvalidMint,
@@ -188,6 +192,42 @@ pub enum ProgramError {
     /// Max supply exceeded
     #[error("Max supply exceeded")]
     MaxSupplyExceeded,
+
+    /// Seed too long
+    #[error("Seed too long")]
+    SeedTooLong,
+
+    /// Not enough account keys
+    #[error("Not enough account keys")]
+    NotEnoughAccountKeys,
+
+    /// Invalid decimals
+    #[error("Invalid decimals")]
+    InvalidDecimals,
+
+    /// Uninitialized mint
+    #[error("Uninitialized mint")]
+    UninitializedMint,
+
+    /// Insufficient delegated funds
+    #[error("Insufficient delegated funds")]
+    InsufficientDelegatedFunds,
+
+    /// Mint mismatch
+    #[error("Mint mismatch")]
+    MintMismatch,
+
+    /// Non-zero balance
+    #[error("Non-zero balance")]
+    NonZeroBalance,
+
+    /// Invalid mint authority
+    #[error("Invalid mint authority")]
+    InvalidMintAuthority,
+
+    /// Invalid freeze authority
+    #[error("Invalid freeze authority")]
+    InvalidFreezeAuthority,
 
     /// Timelock not expired
     #[error("Timelock not expired")]
@@ -240,6 +280,118 @@ pub enum ProgramError {
     /// Internal error (should not happen)
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    /// Memory access violation
+    #[error("Memory access violation")]
+    MemoryAccessViolation,
+
+    /// Invalid argument
+    #[error("Invalid argument")]
+    InvalidArgument,
+
+    /// Return data too large
+    #[error("Return data too large")]
+    ReturnDataTooLarge,
+
+    /// Computational budget exceeded (alias)
+    #[error("Computational budget exceeded")]
+    ComputationalBudgetExceeded,
+
+    /// Heap exhausted
+    #[error("Heap exhausted")]
+    HeapExhausted,
+
+    /// Syscall not found
+    #[error("Syscall not found")]
+    SyscallNotFound,
+
+    /// Invalid account data size
+    #[error("Invalid account data size")]
+    InvalidAccountDataSize,
+
+    /// Account data not empty
+    #[error("Account data not empty")]
+    AccountDataNotEmpty,
+
+    /// Account not initialized
+    #[error("Account not initialized")]
+    AccountNotInitialized,
+
+    /// Account not executable
+    #[error("Account is not executable")]
+    AccountNotExecutable,
+
+    /// Unsupported program
+    #[error("Unsupported program")]
+    UnsupportedProgram,
+
+    /// Log buffer full
+    #[error("Log buffer full")]
+    LogBufferFull,
+
+    /// Memory overlap
+    #[error("Memory overlap")]
+    MemoryOverlap,
+
+    /// Capability revoked
+    #[error("Capability has been revoked")]
+    CapabilityRevoked,
+
+    /// Capability exhausted
+    #[error("Capability uses exhausted")]
+    CapabilityExhausted,
+
+    /// Capability out of scope
+    #[error("Capability out of scope")]
+    CapabilityOutOfScope,
+
+    /// Capability transfer limit exceeded
+    #[error("Capability transfer limit exceeded")]
+    CapabilityTransferLimitExceeded,
+
+    /// Duplicate capability
+    #[error("Duplicate capability")]
+    DuplicateCapability,
+
+    /// Capability unauthorized
+    #[error("Capability unauthorized")]
+    CapabilityUnauthorized,
+
+    /// Invalid upgrade authority
+    #[error("Invalid upgrade authority")]
+    InvalidUpgradeAuthority,
+
+    /// Program not upgradeable
+    #[error("Program is not upgradeable")]
+    ProgramNotUpgradeable,
+
+    /// Upgrade already pending
+    #[error("Upgrade already pending")]
+    UpgradeAlreadyPending,
+
+    /// No upgrade pending
+    #[error("No upgrade pending")]
+    NoUpgradePending,
+
+    /// Upgrade timelock active
+    #[error("Upgrade timelock is still active")]
+    UpgradeTimelockActive,
+
+    /// Buffer mismatch
+    #[error("Buffer mismatch")]
+    BufferMismatch,
+
+    /// Program hash mismatch
+    #[error("Program hash mismatch")]
+    ProgramHashMismatch,
+
+    /// Range proof invalid
+    #[error("Range proof invalid")]
+    RangeProofInvalid,
+
+    /// Invalid balance proof
+    #[error("Invalid balance proof")]
+    InvalidBalanceProof,
 }
 
 impl ProgramError {
@@ -287,10 +439,20 @@ impl ProgramError {
             ProgramError::MintAuthorityMismatch => 38,
             ProgramError::FreezeAuthorityMismatch => 39,
             ProgramError::TokenAccountFrozen => 40,
+            ProgramError::AccountFrozen => 57,
             ProgramError::InvalidMint => 41,
             ProgramError::InvalidTokenAccount => 42,
             ProgramError::MintDecimalsMismatch => 43,
             ProgramError::MaxSupplyExceeded => 44,
+            ProgramError::SeedTooLong => 58,
+            ProgramError::NotEnoughAccountKeys => 59,
+            ProgramError::InvalidDecimals => 60,
+            ProgramError::UninitializedMint => 61,
+            ProgramError::InsufficientDelegatedFunds => 62,
+            ProgramError::MintMismatch => 63,
+            ProgramError::NonZeroBalance => 64,
+            ProgramError::InvalidMintAuthority => 65,
+            ProgramError::InvalidFreezeAuthority => 66,
             ProgramError::TimelockNotExpired => 45,
             ProgramError::ProgramFrozen => 46,
             ProgramError::UpgradeAuthorityMismatch => 47,
@@ -304,6 +466,34 @@ impl ProgramError {
             ProgramError::InvalidFee => 55,
             ProgramError::FeeNotReserved => 56,
             ProgramError::InternalError(_) => u32::MAX,
+            ProgramError::MemoryAccessViolation => 67,
+            ProgramError::InvalidArgument => 68,
+            ProgramError::ReturnDataTooLarge => 69,
+            ProgramError::ComputationalBudgetExceeded => 70,
+            ProgramError::HeapExhausted => 71,
+            ProgramError::SyscallNotFound => 72,
+            ProgramError::InvalidAccountDataSize => 73,
+            ProgramError::AccountDataNotEmpty => 74,
+            ProgramError::AccountNotInitialized => 75,
+            ProgramError::AccountNotExecutable => 76,
+            ProgramError::UnsupportedProgram => 77,
+            ProgramError::LogBufferFull => 78,
+            ProgramError::MemoryOverlap => 79,
+            ProgramError::CapabilityRevoked => 80,
+            ProgramError::CapabilityExhausted => 81,
+            ProgramError::CapabilityOutOfScope => 82,
+            ProgramError::CapabilityTransferLimitExceeded => 83,
+            ProgramError::DuplicateCapability => 84,
+            ProgramError::CapabilityUnauthorized => 85,
+            ProgramError::InvalidUpgradeAuthority => 86,
+            ProgramError::ProgramNotUpgradeable => 87,
+            ProgramError::UpgradeAlreadyPending => 88,
+            ProgramError::NoUpgradePending => 89,
+            ProgramError::UpgradeTimelockActive => 90,
+            ProgramError::BufferMismatch => 91,
+            ProgramError::ProgramHashMismatch => 92,
+            ProgramError::RangeProofInvalid => 93,
+            ProgramError::InvalidBalanceProof => 94,
         }
     }
 
@@ -366,6 +556,44 @@ impl ProgramError {
             54 => ProgramError::RateLimited("unknown".to_string()),
             55 => ProgramError::InvalidFee,
             56 => ProgramError::FeeNotReserved,
+            57 => ProgramError::AccountFrozen,
+            58 => ProgramError::SeedTooLong,
+            59 => ProgramError::NotEnoughAccountKeys,
+            60 => ProgramError::InvalidDecimals,
+            61 => ProgramError::UninitializedMint,
+            62 => ProgramError::InsufficientDelegatedFunds,
+            63 => ProgramError::MintMismatch,
+            64 => ProgramError::NonZeroBalance,
+            65 => ProgramError::InvalidMintAuthority,
+            66 => ProgramError::InvalidFreezeAuthority,
+            67 => ProgramError::MemoryAccessViolation,
+            68 => ProgramError::InvalidArgument,
+            69 => ProgramError::ReturnDataTooLarge,
+            70 => ProgramError::ComputationalBudgetExceeded,
+            71 => ProgramError::HeapExhausted,
+            72 => ProgramError::SyscallNotFound,
+            73 => ProgramError::InvalidAccountDataSize,
+            74 => ProgramError::AccountDataNotEmpty,
+            75 => ProgramError::AccountNotInitialized,
+            76 => ProgramError::AccountNotExecutable,
+            77 => ProgramError::UnsupportedProgram,
+            78 => ProgramError::LogBufferFull,
+            79 => ProgramError::MemoryOverlap,
+            80 => ProgramError::CapabilityRevoked,
+            81 => ProgramError::CapabilityExhausted,
+            82 => ProgramError::CapabilityOutOfScope,
+            83 => ProgramError::CapabilityTransferLimitExceeded,
+            84 => ProgramError::DuplicateCapability,
+            85 => ProgramError::CapabilityUnauthorized,
+            86 => ProgramError::InvalidUpgradeAuthority,
+            87 => ProgramError::ProgramNotUpgradeable,
+            88 => ProgramError::UpgradeAlreadyPending,
+            89 => ProgramError::NoUpgradePending,
+            90 => ProgramError::UpgradeTimelockActive,
+            91 => ProgramError::BufferMismatch,
+            92 => ProgramError::ProgramHashMismatch,
+            93 => ProgramError::RangeProofInvalid,
+            94 => ProgramError::InvalidBalanceProof,
             _ => ProgramError::Custom(code),
         }
     }

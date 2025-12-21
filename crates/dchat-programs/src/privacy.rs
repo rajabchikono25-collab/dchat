@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 
 use crate::account::Pubkey;
 use crate::error::{ProgramError, ProgramResult};
@@ -13,6 +14,7 @@ pub struct EncryptedBalance {
     /// Pedersen commitment: C = vG + rH
     pub commitment: [u8; 32],
     /// Encrypted value (for owner to decrypt)
+    #[serde(with = "BigArray")]
     pub encrypted_value: [u8; 48],
     /// Nonce for encryption
     pub nonce: [u8; 24],
@@ -206,6 +208,7 @@ pub struct DisclosureCredential {
     /// Expiry timestamp
     pub expires_at: u64,
     /// Issuer signature
+    #[serde(with = "BigArray")]
     pub signature: [u8; 64],
 }
 

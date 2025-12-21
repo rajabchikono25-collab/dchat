@@ -164,6 +164,30 @@ impl AccountData {
     pub fn resize(&mut self, new_size: usize, value: u8) {
         self.data.resize(new_size, value);
     }
+
+    /// Set data from bytes (takes ownership)
+    pub fn set_from_bytes(&mut self, bytes: Vec<u8>) {
+        self.data = bytes;
+        self.original_len = self.data.len();
+    }
+
+    /// Set data from slice (copies data)
+    pub fn set_from_slice(&mut self, bytes: &[u8]) {
+        self.data = bytes.to_vec();
+        self.original_len = self.data.len();
+    }
+
+    /// Clear data (reset to empty)
+    pub fn clear(&mut self) {
+        self.data.zeroize();
+        self.data.clear();
+        self.original_len = 0;
+    }
+
+    /// Get inner data as Vec<u8> for serialization
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.data.clone()
+    }
 }
 
 impl Drop for AccountData {

@@ -460,7 +460,7 @@ impl TokenProgramProcessor {
 
         // Check not already initialized
         if mint_account.data.len() >= Mint::SIZE {
-            if let Ok(existing) = Mint::from_bytes(&mint_account.data) {
+            if let Ok(existing) = Mint::from_bytes(mint_account.data.as_slice()) {
                 if existing.is_initialized {
                     return Err(ProgramError::AccountAlreadyInitialized);
                 }
@@ -468,7 +468,7 @@ impl TokenProgramProcessor {
         }
 
         let mint = Mint::new(decimals, mint_authority, freeze_authority);
-        mint_account.data = mint.to_bytes();
+        mint_account.data.set_from_bytes(mint.to_bytes());
 
         Ok(())
     }
@@ -482,19 +482,19 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let token_account = &mut accounts[0];
-        let mint_account = &accounts[1];
+        // Read data first before taking mutable references
+        let mint_key = accounts[1].key;
         let owner = accounts[2].key;
+        let mint = Mint::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify mint is initialized
-        let mint = Mint::from_bytes(&mint_account.data)?;
         if !mint.is_initialized {
             return Err(ProgramError::UninitializedMint);
         }
 
-        let account = TokenAccount::new(mint_account.key, owner);
-        token_account.data = account.to_bytes();
-        token_account.owner = TOKEN_PROGRAM_ID;
+        let account = TokenAccount::new(mint_key, owner);
+        accounts[0].data.set_from_bytes(account.to_bytes());
+        accounts[0].owner = TOKEN_PROGRAM_ID;
 
         Ok(())
     }
@@ -509,18 +509,18 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let token_account = &mut accounts[0];
-        let mint_account = &accounts[1];
+        // Read data first before taking mutable references
+        let mint_key = accounts[1].key;
+        let mint = Mint::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify mint is initialized
-        let mint = Mint::from_bytes(&mint_account.data)?;
         if !mint.is_initialized {
             return Err(ProgramError::UninitializedMint);
         }
 
-        let account = TokenAccount::new(mint_account.key, owner);
-        token_account.data = account.to_bytes();
-        token_account.owner = TOKEN_PROGRAM_ID;
+        let account = TokenAccount::new(mint_key, owner);
+        accounts[0].data.set_from_bytes(account.to_bytes());
+        accounts[0].owner = TOKEN_PROGRAM_ID;
 
         Ok(())
     }
@@ -535,12 +535,10 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let source_account = &mut accounts[0];
-        let dest_account = &mut accounts[1];
-        let authority = &accounts[2];
-
-        let mut source = TokenAccount::from_bytes(&source_account.data)?;
-        let mut dest = TokenAccount::from_bytes(&dest_account.data)?;
+        // Read authority key first before taking mutable references
+        let authority_key = accounts[2].key;
+        let mut source = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
+        let mut dest = TokenAccount::from_bytes(accounts[1].data.as_slice())?;
 
         // Check frozen
         if source.is_frozen() || dest.is_frozen() {
@@ -548,10 +546,10 @@ impl TokenProgramProcessor {
         }
 
         // Verify authority
-        if source.owner != authority.key {
+        if source.owner != authority_key {
             // Check delegate
             match source.delegate {
-                Some(delegate) if delegate == authority.key => {
+                Some(delegate) if delegate == authority_key => {
                     if source.delegated_amount < amount {
                         return Err(ProgramError::InsufficientDelegatedFunds);
                     }
@@ -581,8 +579,12 @@ impl TokenProgramProcessor {
             .checked_add(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
-        source_account.data = source.to_bytes();
-        dest_account.data = dest.to_bytes();
+        // Now take mutable references using split_at_mut
+        let (first, rest) = accounts.split_at_mut(1);
+        let source_account = &mut first[0];
+        let dest_account = &mut rest[0];
+        source_account.data.set_from_bytes(source.to_bytes());
+        dest_account.data.set_from_bytes(dest.to_bytes());
 
         Ok(())
     }
@@ -599,14 +601,60 @@ impl TokenProgramProcessor {
         }
 
         // Verify decimals match mint
-        let mint = Mint::from_bytes(&accounts[1].data)?;
+        let mint = Mint::from_bytes(accounts[1].data.as_slice())?;
         if mint.decimals != decimals {
             return Err(ProgramError::InvalidDecimals);
         }
 
-        // Reorder accounts for transfer
-        let mut reordered = vec![accounts[0], accounts[2], accounts[3]];
-        Self::process_transfer(&mut reordered, amount, meter)
+        // Process transfer inline to avoid borrow issues
+        // accounts[0] = source, accounts[2] = dest, accounts[3] = authority
+        let authority_key = accounts[3].key;
+
+        // Get source and dest using split_at_mut
+        let (source_slice, rest) = accounts.split_at_mut(1);
+        let source_account = &mut source_slice[0];
+        // rest[0] is mint (index 1), rest[1] is dest (index 2)
+        let dest_account = &mut rest[1];
+
+        let mut source = TokenAccount::from_bytes(source_account.data.as_slice())?;
+        let mut dest = TokenAccount::from_bytes(dest_account.data.as_slice())?;
+
+        // Verify authority
+        if source.owner != authority_key && source.delegate != Some(authority_key) {
+            return Err(ProgramError::InvalidAuthority);
+        }
+
+        // Verify mints match
+        if source.mint != dest.mint {
+            return Err(ProgramError::MintMismatch);
+        }
+
+        // Verify source not frozen
+        if source.is_frozen {
+            return Err(ProgramError::TokenAccountFrozen);
+        }
+
+        // Check sufficient funds
+        if source.amount < amount {
+            return Err(ProgramError::InsufficientFunds);
+        }
+
+        meter.consume(100)?;
+
+        // Perform transfer
+        source.amount = source
+            .amount
+            .checked_sub(amount)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        dest.amount = dest
+            .amount
+            .checked_add(amount)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+
+        source_account.data.set_from_bytes(source.to_bytes());
+        dest_account.data.set_from_bytes(dest.to_bytes());
+
+        Ok(())
     }
 
     /// Approve delegate
@@ -619,21 +667,20 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let source_account = &mut accounts[0];
+        // Read keys and data first before taking mutable references
         let delegate = accounts[1].key;
-        let owner = &accounts[2];
-
-        let mut source = TokenAccount::from_bytes(&source_account.data)?;
+        let owner_key = accounts[2].key;
+        let mut source = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
 
         // Verify owner
-        if source.owner != owner.key {
+        if source.owner != owner_key {
             return Err(ProgramError::InvalidAccountOwner);
         }
 
         source.delegate = Some(delegate);
         source.delegated_amount = amount;
 
-        source_account.data = source.to_bytes();
+        accounts[0].data.set_from_bytes(source.to_bytes());
 
         Ok(())
     }
@@ -644,20 +691,19 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let source_account = &mut accounts[0];
-        let owner = &accounts[1];
-
-        let mut source = TokenAccount::from_bytes(&source_account.data)?;
+        // Read owner key and data first before taking mutable references
+        let owner_key = accounts[1].key;
+        let mut source = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
 
         // Verify owner
-        if source.owner != owner.key {
+        if source.owner != owner_key {
             return Err(ProgramError::InvalidAccountOwner);
         }
 
         source.delegate = None;
         source.delegated_amount = 0;
 
-        source_account.data = source.to_bytes();
+        accounts[0].data.set_from_bytes(source.to_bytes());
 
         Ok(())
     }
@@ -672,21 +718,20 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let mint_account = &mut accounts[0];
-        let dest_account = &mut accounts[1];
-        let authority = &accounts[2];
-
-        let mut mint = Mint::from_bytes(&mint_account.data)?;
-        let mut dest = TokenAccount::from_bytes(&dest_account.data)?;
+        // Read all data first before taking mutable references
+        let authority_key = accounts[2].key;
+        let mint_key = accounts[0].key;
+        let mut mint = Mint::from_bytes(accounts[0].data.as_slice())?;
+        let mut dest = TokenAccount::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify mint authority
         match mint.mint_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidMintAuthority),
         }
 
         // Verify same mint
-        if dest.mint != mint_account.key {
+        if dest.mint != mint_key {
             return Err(ProgramError::MintMismatch);
         }
 
@@ -705,8 +750,12 @@ impl TokenProgramProcessor {
             .checked_add(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
-        mint_account.data = mint.to_bytes();
-        dest_account.data = dest.to_bytes();
+        // Now take mutable references using split_at_mut
+        let (first, rest) = accounts.split_at_mut(1);
+        let mint_account = &mut first[0];
+        let dest_account = &mut rest[0];
+        mint_account.data.set_from_bytes(mint.to_bytes());
+        dest_account.data.set_from_bytes(dest.to_bytes());
 
         Ok(())
     }
@@ -721,20 +770,19 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let source_account = &mut accounts[0];
-        let mint_account = &mut accounts[1];
-        let owner = &accounts[2];
-
-        let mut source = TokenAccount::from_bytes(&source_account.data)?;
-        let mut mint = Mint::from_bytes(&mint_account.data)?;
+        // Read all data first before taking mutable references
+        let owner_key = accounts[2].key;
+        let mint_key = accounts[1].key;
+        let mut source = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
+        let mut mint = Mint::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify owner
-        if source.owner != owner.key {
+        if source.owner != owner_key {
             return Err(ProgramError::InvalidAccountOwner);
         }
 
         // Verify same mint
-        if source.mint != mint_account.key {
+        if source.mint != mint_key {
             return Err(ProgramError::MintMismatch);
         }
 
@@ -753,8 +801,12 @@ impl TokenProgramProcessor {
             .checked_sub(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
-        source_account.data = source.to_bytes();
-        mint_account.data = mint.to_bytes();
+        // Now take mutable references using split_at_mut
+        let (first, rest) = accounts.split_at_mut(1);
+        let source_account = &mut first[0];
+        let mint_account = &mut rest[0];
+        source_account.data.set_from_bytes(source.to_bytes());
+        mint_account.data.set_from_bytes(mint.to_bytes());
 
         Ok(())
     }
@@ -768,14 +820,16 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let source_account = &mut accounts[0];
-        let dest_account = &mut accounts[1];
-        let owner = &accounts[2];
+        // Use split_at_mut to avoid double mutable borrow
+        let owner_key = accounts[2].key;
+        let (first, rest) = accounts.split_at_mut(1);
+        let source_account = &mut first[0];
+        let dest_account = &mut rest[0];
 
-        let source = TokenAccount::from_bytes(&source_account.data)?;
+        let source = TokenAccount::from_bytes(source_account.data.as_slice())?;
 
         // Verify owner
-        if source.owner != owner.key {
+        if source.owner != owner_key {
             return Err(ProgramError::InvalidAccountOwner);
         }
 
@@ -808,21 +862,19 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let token_account = &mut accounts[0];
-        let mint_account = &accounts[1];
-        let authority = &accounts[2];
-
-        let mut account = TokenAccount::from_bytes(&token_account.data)?;
-        let mint = Mint::from_bytes(&mint_account.data)?;
+        // Read all data first before taking mutable references
+        let authority_key = accounts[2].key;
+        let mut account = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
+        let mint = Mint::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify freeze authority
         match mint.freeze_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidFreezeAuthority),
         }
 
         account.state = AccountState::Frozen;
-        token_account.data = account.to_bytes();
+        accounts[0].data.set_from_bytes(account.to_bytes());
 
         Ok(())
     }
@@ -836,21 +888,19 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let token_account = &mut accounts[0];
-        let mint_account = &accounts[1];
-        let authority = &accounts[2];
-
-        let mut account = TokenAccount::from_bytes(&token_account.data)?;
-        let mint = Mint::from_bytes(&mint_account.data)?;
+        // Read all data first before taking mutable references
+        let authority_key = accounts[2].key;
+        let mut account = TokenAccount::from_bytes(accounts[0].data.as_slice())?;
+        let mint = Mint::from_bytes(accounts[1].data.as_slice())?;
 
         // Verify freeze authority
         match mint.freeze_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidFreezeAuthority),
         }
 
         account.state = AccountState::Initialized;
-        token_account.data = account.to_bytes();
+        accounts[0].data.set_from_bytes(account.to_bytes());
 
         Ok(())
     }

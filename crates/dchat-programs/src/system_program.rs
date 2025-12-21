@@ -311,8 +311,10 @@ impl SystemProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let from = &mut accounts[0];
-        let to = &mut accounts[1];
+        // Use split_at_mut to avoid double mutable borrow
+        let (first, rest) = accounts.split_at_mut(1);
+        let from = &mut first[0];
+        let to = &mut rest[0];
 
         // Consume cost based on space
         meter.consume(space * 10)?;
@@ -349,7 +351,7 @@ impl SystemProgramProcessor {
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
         // Allocate space
-        to.data = vec![0u8; space as usize];
+        to.data.set_from_bytes(vec![0u8; space as usize]);
 
         // Set owner
         to.owner = *owner;
@@ -367,8 +369,10 @@ impl SystemProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let from = &mut accounts[0];
-        let to = &mut accounts[1];
+        // Use split_at_mut to avoid double mutable borrow
+        let (first, rest) = accounts.split_at_mut(1);
+        let from = &mut first[0];
+        let to = &mut rest[0];
 
         // Check from has enough lamports
         if from.lamports < lamports {
@@ -445,7 +449,7 @@ impl SystemProgramProcessor {
             return Err(ProgramError::InvalidAccountDataSize);
         }
 
-        account.data = vec![0u8; space as usize];
+        account.data.set_from_bytes(vec![0u8; space as usize]);
 
         Ok(())
     }
@@ -468,7 +472,7 @@ impl SystemProgramProcessor {
             return Err(ProgramError::InvalidAccountData);
         }
 
-        let mut state = NonceState::from_bytes(&nonce_account.data)?;
+        let mut state = NonceState::from_bytes(nonce_account.data.as_slice())?;
 
         if !state.initialized {
             return Err(ProgramError::AccountNotInitialized);
@@ -480,7 +484,7 @@ impl SystemProgramProcessor {
         hasher.update(&state.fee_calculator_lamports_per_signature.to_le_bytes());
         state.nonce = hasher.finalize().into();
 
-        nonce_account.data = state.to_bytes();
+        nonce_account.data.set_from_bytes(state.to_bytes());
 
         Ok(())
     }
@@ -495,8 +499,10 @@ impl SystemProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let nonce_account = &mut accounts[0];
-        let to = &mut accounts[1];
+        // Use split_at_mut to avoid double mutable borrow
+        let (first, rest) = accounts.split_at_mut(1);
+        let nonce_account = &mut first[0];
+        let to = &mut rest[0];
 
         // Verify nonce account
         if nonce_account.data.len() < NonceState::SIZE {
@@ -543,7 +549,7 @@ impl SystemProgramProcessor {
 
         // Check not already initialized
         if !nonce_account.data.is_empty() {
-            let existing = NonceState::from_bytes(&nonce_account.data)?;
+            let existing = NonceState::from_bytes(nonce_account.data.as_slice())?;
             if existing.initialized {
                 return Err(ProgramError::AccountAlreadyInitialized);
             }
@@ -562,7 +568,7 @@ impl SystemProgramProcessor {
             fee_calculator_lamports_per_signature: 5000,
         };
 
-        nonce_account.data = state.to_bytes();
+        nonce_account.data.set_from_bytes(state.to_bytes());
 
         Ok(())
     }
@@ -583,14 +589,14 @@ impl SystemProgramProcessor {
             return Err(ProgramError::InvalidAccountData);
         }
 
-        let mut state = NonceState::from_bytes(&nonce_account.data)?;
+        let mut state = NonceState::from_bytes(nonce_account.data.as_slice())?;
 
         if !state.initialized {
             return Err(ProgramError::AccountNotInitialized);
         }
 
         state.authority = *new_authority;
-        nonce_account.data = state.to_bytes();
+        nonce_account.data.set_from_bytes(state.to_bytes());
 
         Ok(())
     }

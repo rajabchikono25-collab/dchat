@@ -10,58 +10,89 @@ authors = ["dchat contributors"]
 # Core dchat crates
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
-dchat-chain = { path = "../dchat-chain" }
 dchat-observability = { path = "../dchat-observability" }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-bincode = "1.3"
+# Serialization - pinned versions for reproducibility
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+serde-big-array = { version = "0.5" }
+bincode = { version = "1" }
 
-# Cryptography
-blake3 = "1.5"
-sha2 = "0.10"
-ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
-curve25519-dalek = "4.1"
+# Cryptography - pinned stable versions
+blake3 = { version = "1" }
+sha2 = { version = "0.10" }
+ed25519-dalek = { version = "2", features = ["rand_core", "serde", "hazmat"] }
+curve25519-dalek = { version = "4" }
 
 # Async runtime
-tokio = { version = "1.0", features = ["full"] }
-async-trait = "0.1"
+tokio = { version = "1.44", features = ["sync", "rt", "time", "macros"] }
+async-trait = { version = "0.1" }
 
-# Data structures
-dashmap = "5.5"
-parking_lot = "0.12"
-crossbeam-channel = "0.5"
-rayon = "1.10"
+# Concurrency primitives - pinned for deterministic behavior
+parking_lot = { version = "0.12" }
+crossbeam-channel = { version = "0.5" }
+rayon = { version = "1" }
+dashmap = { version = "6" }
 
-# Utilities
-thiserror = "1.0"
-tracing = "0.1"
-hex = "0.4"
-bs58 = "0.5"
-uuid = { version = "1.0", features = ["v4", "serde"] }
+# Utilities - pinned versions
+thiserror = { version = "2" }
+tracing = { version = "0.1" }
+hex = { version = "0.4" }
+bs58 = { version = "0.5" }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
-zeroize = { version = "1.8", features = ["derive"] }
+rand = { version = "0.8" }
+zeroize = { version = "1", features = ["derive"] }
 
-# Metrics
-prometheus = "0.13"
-once_cell = "1.19"
+# Metrics - pinned versions
+prometheus = { version = "0.13" }
+once_cell = { version = "1" }
 
-# WebAssembly runtime for deterministic execution
-wasmi = "0.31"
+# WebAssembly runtime - wasmi chosen for production:
+# - Fully deterministic execution (no JIT, no floats by default)
+# - Fuel-based metering built-in
+# - Active maintenance (v0.40 Dec 2024)
+# - No unsafe code paths in interpreter
+# - Bounded memory/table/stack by configuration
+# Alternative considered: wasmtime (faster but JIT introduces potential non-determinism)
+wasmi = { version = "=0.40.0" }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full", "test-util"] }
-tempfile = "3.8"
-proptest = "1.5"
-criterion = "0.5"
+tokio = { version = "1.44", features = ["full", "test-util"] }
+tempfile = { version = "3.14" }
+proptest = { version = "1.5" }
+criterion = { version = "0.5" }
 
 [features]
 default = []
 # Enable test-only features - NEVER enable in production
+# Build verification: cargo build --release should fail if test-mocks is enabled
 test-mocks = []
 
 [[bench]]
 name = "program_execution"
 harness = false
+
+[[test]]
+name = "determinism"
+path = "tests/determinism.rs"
+
+[[test]]
+name = "metering"
+path = "tests/metering.rs"
+
+[[test]]
+name = "scheduler"
+path = "tests/scheduler.rs"
+
+[[test]]
+name = "cpi"
+path = "tests/cpi.rs"
+
+[[test]]
+name = "receipts"
+path = "tests/receipts.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

@@ -25,64 +25,91 @@ test-utils = []
 # Core dchat crates
 dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
-dchat-chain = { path = "../dchat-chain" }
 dchat-identity = { path = "../dchat-identity" }
 dchat-messaging = { path = "../dchat-messaging" }
 dchat-programs = { path = "../dchat-programs" }
 
-# Async runtime
-tokio = { version = "1.0", features = ["sync", "rt"] }
-futures = "0.3"
+# Async runtime - pinned versions
+tokio = { version = "1.44", features = ["sync", "rt", "time", "macros"] }
+futures = { version = "0.3" }
+async-trait = { version = "0.1" }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-bincode = "1.3"
+# Serialization - pinned versions
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+bincode = { version = "1" }
 
-# Cryptography
-blake3 = "1.5"
-sha2 = "0.10"
-ed25519-dalek = { version = "2.0", features = ["serde"] }
-rand = "0.8"
+# Cryptography - pinned stable versions
+blake3 = { version = "1" }
+sha2 = { version = "0.10" }
+ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
+rand = { version = "0.8" }
 
 # URL and web
-url = { version = "2.5", features = ["serde"] }
+url = { version = "2", features = ["serde"] }
 
 # UUID
-uuid = { version = "1.4", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 
-# Concurrency
-parking_lot = "0.12"
-dashmap = "5.5"
-crossbeam-channel = "0.5"
+# Concurrency - pinned versions
+parking_lot = { version = "0.12" }
+dashmap = { version = "6" }
+crossbeam-channel = { version = "0.5" }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
 # Logging
-tracing = "0.1"
+tracing = { version = "0.1" }
 
 # Error handling
-thiserror = "1.0"
+thiserror = { version = "2" }
 
 # Semver for versioning
-semver = { version = "1.0", features = ["serde"] }
+semver = { version = "1", features = ["serde"] }
 
 # Base64 for data encoding
-base64 = "0.21"
+base64 = { version = "0.22" }
 
 # Hex encoding
-hex = "0.4"
+hex = { version = "0.4" }
+
+# Metrics
+prometheus = { version = "0.13" }
+once_cell = { version = "1" }
+
+# Rate limiting
+governor = { version = "0.8" }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full", "test-util"] }
-tempfile = "3.8"
-criterion = "0.5"
-proptest = "1.3"
+tokio = { version = "1.44", features = ["full", "test-util"] }
+tempfile = { version = "3.14" }
+criterion = { version = "0.5" }
+proptest = { version = "1.5" }
 
 [[bench]]
 name = "miniapp_benchmarks"
 harness = false
+
+[[test]]
+name = "permissions"
+path = "tests/permissions.rs"
+
+[[test]]
+name = "intents"
+path = "tests/intents.rs"
+
+[[test]]
+name = "receipts"
+path = "tests/receipts.rs"
+
+[[test]]
+name = "rate_limits"
+path = "tests/rate_limits.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [lib]
 name = "dchat_miniapps"

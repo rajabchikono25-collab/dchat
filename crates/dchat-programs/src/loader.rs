@@ -405,7 +405,7 @@ impl LoaderProgramProcessor {
         if buffer.data.len() < state_bytes.len() {
             buffer.data.resize(state_bytes.len(), 0);
         }
-        buffer.data[..state_bytes.len()].copy_from_slice(&state_bytes);
+        buffer.data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
 
         Ok(())
     }
@@ -451,7 +451,7 @@ impl LoaderProgramProcessor {
             buffer.data.resize(end, 0);
         }
 
-        buffer.data[start..end].copy_from_slice(&bytes);
+        buffer.data.as_mut_slice()[start..end].copy_from_slice(&bytes);
 
         Ok(())
     }
@@ -492,7 +492,7 @@ impl LoaderProgramProcessor {
         }
 
         // Get bytecode
-        let bytecode = &buffer.data[data_offset..];
+        let bytecode = &buffer.data.as_slice()[data_offset..];
 
         // Validate bytecode
         let validator = BytecodeValidator::new(ValidationConfig::default());
@@ -514,7 +514,7 @@ impl LoaderProgramProcessor {
         let program_state = ProgramAccountState::Program {
             programdata_address: programdata.key,
         };
-        program.data = program_state.to_bytes();
+        program.data.set_from_bytes(program_state.to_bytes());
         program.owner = UPGRADEABLE_LOADER_ID;
         program.executable = true;
 
@@ -529,9 +529,10 @@ impl LoaderProgramProcessor {
 
         let state_bytes = programdata_state.to_bytes();
         let total_size = state_bytes.len() + bytecode.len();
-        programdata.data = vec![0u8; total_size];
-        programdata.data[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata.data[state_bytes.len()..].copy_from_slice(bytecode);
+        let mut programdata_bytes = vec![0u8; total_size];
+        programdata_bytes[..state_bytes.len()].copy_from_slice(&state_bytes);
+        programdata_bytes[state_bytes.len()..].copy_from_slice(bytecode);
+        programdata.data.set_from_bytes(programdata_bytes);
         programdata.owner = UPGRADEABLE_LOADER_ID;
 
         // Close buffer
@@ -584,7 +585,7 @@ impl LoaderProgramProcessor {
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let new_bytecode = &buffer.data[data_offset..];
+        let new_bytecode = &buffer.data.as_slice()[data_offset..];
 
         // Charge for upgrade
         meter.consume(new_bytecode.len() as u64)?;
@@ -608,8 +609,8 @@ impl LoaderProgramProcessor {
         };
 
         let state_bytes = new_state.to_bytes();
-        programdata.data[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata.data[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
+        programdata.data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
+        programdata.data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
             .copy_from_slice(new_bytecode);
 
         // Close buffer
@@ -654,7 +655,7 @@ impl LoaderProgramProcessor {
                     data_offset,
                 };
                 let bytes = new_state.to_bytes();
-                account.data[..bytes.len()].copy_from_slice(&bytes);
+                account.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
             }
             ProgramAccountState::ProgramData {
                 slot,
@@ -678,7 +679,7 @@ impl LoaderProgramProcessor {
                     pending_upgrade,
                 };
                 let bytes = new_state.to_bytes();
-                account.data[..bytes.len()].copy_from_slice(&bytes);
+                account.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
             }
             _ => return Err(ProgramError::InvalidAccountData),
         }
@@ -763,7 +764,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data[..bytes.len()].copy_from_slice(&bytes);
+        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }
@@ -816,7 +817,7 @@ impl LoaderProgramProcessor {
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let bytecode = &buffer.data[data_offset..];
+        let bytecode = &buffer.data.as_slice()[data_offset..];
         let new_program_hash: [u8; 32] = blake3::hash(bytecode).into();
 
         // Set pending upgrade
@@ -840,7 +841,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data[..bytes.len()].copy_from_slice(&bytes);
+        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }
@@ -904,7 +905,7 @@ impl LoaderProgramProcessor {
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let new_bytecode = &buffer.data[data_offset..];
+        let new_bytecode = &buffer.data.as_slice()[data_offset..];
 
         // Verify hash
         let hash: [u8; 32] = blake3::hash(new_bytecode).into();
@@ -928,8 +929,8 @@ impl LoaderProgramProcessor {
         };
 
         let state_bytes = new_state.to_bytes();
-        programdata.data[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata.data[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
+        programdata.data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
+        programdata.data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
             .copy_from_slice(new_bytecode);
 
         // Close buffer
@@ -984,7 +985,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data[..bytes.len()].copy_from_slice(&bytes);
+        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }
