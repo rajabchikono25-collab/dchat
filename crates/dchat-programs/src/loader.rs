@@ -9,7 +9,7 @@ use crate::account::{Account, AccountMeta, Pubkey};
 use crate::error::{ProgramError, ProgramResult};
 use crate::instruction::Instruction;
 use crate::metering::ComputeMeter;
-use crate::validation::{BytecodeValidator, ValidationConfig};
+use crate::validation::BytecodeValidator;
 
 /// Loader program ID
 pub const LOADER_PROGRAM_ID: Pubkey = crate::native_programs::LOADER_PROGRAM_ID;
@@ -33,10 +33,18 @@ pub enum LoaderInstruction {
     InitializeBuffer,
 
     /// Write to a buffer account
-    Write { offset: u32, bytes: Vec<u8> },
+    Write {
+        /// Offset in bytes where to write
+        offset: u32,
+        /// Bytes to write to buffer
+        bytes: Vec<u8>,
+    },
 
     /// Deploy a program from buffer
-    DeployWithMaxDataLen { max_data_len: usize },
+    DeployWithMaxDataLen {
+        /// Maximum data length for program
+        max_data_len: usize,
+    },
 
     /// Upgrade a program
     Upgrade,
@@ -48,7 +56,10 @@ pub enum LoaderInstruction {
     Close,
 
     /// Extend program data
-    ExtendProgram { additional_bytes: u32 },
+    ExtendProgram {
+        /// Number of additional bytes to add
+        additional_bytes: u32,
+    },
 
     /// Set upgrade authority checked
     SetAuthorityChecked,
@@ -85,16 +96,25 @@ pub enum ProgramAccountState {
     Uninitialized,
     /// Buffer for uploading
     Buffer {
+        /// Authority allowed to write to this buffer
         authority: Option<Pubkey>,
+        /// Offset where bytecode data starts
         data_offset: usize,
     },
     /// Active program
-    Program { programdata_address: Pubkey },
+    Program {
+        /// Address of the program data account
+        programdata_address: Pubkey,
+    },
     /// Program data account
     ProgramData {
+        /// Slot at which program was deployed/upgraded
         slot: u64,
+        /// Authority allowed to upgrade this program
         upgrade_authority: Option<Pubkey>,
+        /// Whether program is frozen (non-upgradeable)
         frozen: bool,
+        /// Pending upgrade awaiting timelock
         pending_upgrade: Option<PendingUpgrade>,
     },
 }
@@ -386,18 +406,21 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
+        // Read authority key first (Copy type)
+        let authority_key = accounts[1].key;
+
+        // Now work with buffer
         let buffer = &mut accounts[0];
-        let authority = accounts[1].key;
 
         // Check not already initialized
-        let state = ProgramAccountState::from_bytes(&buffer.data)?;
+        let state = ProgramAccountState::from_bytes(buffer.data.as_slice())?;
         if !matches!(state, ProgramAccountState::Uninitialized) {
             return Err(ProgramError::AccountAlreadyInitialized);
         }
 
         // Initialize buffer state
         let new_state = ProgramAccountState::Buffer {
-            authority: Some(authority),
+            authority: Some(authority_key),
             data_offset: ProgramAccountState::HEADER_SIZE,
         };
 
@@ -424,11 +447,14 @@ impl LoaderProgramProcessor {
         // Charge for data
         meter.consume(bytes.len() as u64)?;
 
+        // Read authority key first (Copy type)
+        let authority_key = accounts[1].key;
+
+        // Now work with buffer exclusively
         let buffer = &mut accounts[0];
-        let authority = &accounts[1];
 
         // Verify buffer state
-        let state = ProgramAccountState::from_bytes(&buffer.data)?;
+        let state = ProgramAccountState::from_bytes(buffer.data.as_slice())?;
         let (buffer_authority, data_offset) = match state {
             ProgramAccountState::Buffer {
                 authority,
@@ -439,7 +465,7 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match buffer_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
@@ -469,14 +495,12 @@ impl LoaderProgramProcessor {
         // Charge for deployment
         meter.consume(max_data_len as u64)?;
 
-        let payer = &mut accounts[0];
-        let programdata = &mut accounts[1];
-        let program = &mut accounts[2];
-        let buffer = &mut accounts[3];
-        let authority = &accounts[7];
+        // First phase: read all immutable data we need (keys and buffer data)
+        let authority_key = accounts[7].key;
+        let programdata_key = accounts[1].key;
 
-        // Verify buffer
-        let buffer_state = ProgramAccountState::from_bytes(&buffer.data)?;
+        // Read buffer state and validate
+        let buffer_state = ProgramAccountState::from_bytes(accounts[3].data.as_slice())?;
         let (buffer_authority, data_offset) = match buffer_state {
             ProgramAccountState::Buffer {
                 authority,
@@ -487,16 +511,18 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match buffer_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
-        // Get bytecode
-        let bytecode = &buffer.data.as_slice()[data_offset..];
+        // Get bytecode and validate before any mutations
+        let bytecode = accounts[3].data.as_slice()[data_offset..].to_vec();
 
         // Validate bytecode
-        let validator = BytecodeValidator::new(ValidationConfig::default());
-        validator.validate(bytecode)?;
+        let validator = BytecodeValidator::new();
+        validator
+            .validate(&bytecode)
+            .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
 
         // Check size
         if bytecode.len() > MAX_PROGRAM_SIZE {
@@ -508,21 +534,18 @@ impl LoaderProgramProcessor {
         }
 
         // Compute program hash
-        let program_hash: [u8; 32] = blake3::hash(bytecode).into();
+        let _program_hash: [u8; 32] = blake3::hash(&bytecode).into();
 
-        // Initialize program account
+        // Second phase: prepare all new data states
         let program_state = ProgramAccountState::Program {
-            programdata_address: programdata.key,
+            programdata_address: programdata_key,
         };
-        program.data.set_from_bytes(program_state.to_bytes());
-        program.owner = UPGRADEABLE_LOADER_ID;
-        program.executable = true;
+        let program_state_bytes = program_state.to_bytes();
 
-        // Initialize programdata account
         let slot = 0u64; // Would come from sysvar
         let programdata_state = ProgramAccountState::ProgramData {
             slot,
-            upgrade_authority: Some(authority.key),
+            upgrade_authority: Some(authority_key),
             frozen: false,
             pending_upgrade: None,
         };
@@ -531,14 +554,23 @@ impl LoaderProgramProcessor {
         let total_size = state_bytes.len() + bytecode.len();
         let mut programdata_bytes = vec![0u8; total_size];
         programdata_bytes[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata_bytes[state_bytes.len()..].copy_from_slice(bytecode);
-        programdata.data.set_from_bytes(programdata_bytes);
-        programdata.owner = UPGRADEABLE_LOADER_ID;
+        programdata_bytes[state_bytes.len()..].copy_from_slice(&bytecode);
 
-        // Close buffer
-        payer.lamports += buffer.lamports;
-        buffer.lamports = 0;
-        buffer.data.clear();
+        // Third phase: apply all mutations one account at a time using indices
+        // Mutate program account (index 2)
+        accounts[2].data.set_from_bytes(program_state_bytes);
+        accounts[2].owner = UPGRADEABLE_LOADER_ID;
+        accounts[2].executable = true;
+
+        // Mutate programdata account (index 1)
+        accounts[1].data.set_from_bytes(programdata_bytes);
+        accounts[1].owner = UPGRADEABLE_LOADER_ID;
+
+        // Transfer lamports from buffer to payer and close buffer
+        let buffer_lamports = accounts[3].lamports;
+        accounts[0].lamports += buffer_lamports;
+        accounts[3].lamports = 0;
+        accounts[3].data.clear();
 
         Ok(())
     }
@@ -549,14 +581,11 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let programdata = &mut accounts[0];
-        let _program = &accounts[1];
-        let buffer = &mut accounts[2];
-        let spill = &mut accounts[3];
-        let authority = &accounts[6];
+        // First phase: read all data needed for validation
+        let authority_key = accounts[6].key;
 
         // Verify programdata state
-        let pd_state = ProgramAccountState::from_bytes(&programdata.data)?;
+        let pd_state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
         let (upgrade_authority, frozen) = match pd_state {
             ProgramAccountState::ProgramData {
                 upgrade_authority,
@@ -573,50 +602,55 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match upgrade_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             None => return Err(ProgramError::ProgramNotUpgradeable),
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
         // Get new bytecode from buffer
-        let buffer_state = ProgramAccountState::from_bytes(&buffer.data)?;
+        let buffer_state = ProgramAccountState::from_bytes(accounts[2].data.as_slice())?;
         let data_offset = match buffer_state {
             ProgramAccountState::Buffer { data_offset, .. } => data_offset,
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let new_bytecode = &buffer.data.as_slice()[data_offset..];
+        let new_bytecode = accounts[2].data.as_slice()[data_offset..].to_vec();
 
         // Charge for upgrade
         meter.consume(new_bytecode.len() as u64)?;
 
         // Validate new bytecode
-        let validator = BytecodeValidator::new(ValidationConfig::default());
-        validator.validate(new_bytecode)?;
+        let validator = BytecodeValidator::new();
+        validator
+            .validate(&new_bytecode)
+            .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
 
         // Check size fits
         let state_len = ProgramAccountState::HEADER_SIZE;
-        if state_len + new_bytecode.len() > programdata.data.len() {
+        if state_len + new_bytecode.len() > accounts[0].data.len() {
             return Err(ProgramError::AccountDataTooLarge);
         }
 
-        // Update programdata
+        // Second phase: prepare new state
         let new_state = ProgramAccountState::ProgramData {
             slot: 0, // Would come from sysvar
-            upgrade_authority: Some(authority.key),
+            upgrade_authority: Some(authority_key),
             frozen: false,
             pending_upgrade: None,
         };
 
         let state_bytes = new_state.to_bytes();
-        programdata.data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata.data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
-            .copy_from_slice(new_bytecode);
 
-        // Close buffer
-        spill.lamports += buffer.lamports;
-        buffer.lamports = 0;
-        buffer.data.clear();
+        // Third phase: apply mutations using indices
+        accounts[0].data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
+        accounts[0].data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
+            .copy_from_slice(&new_bytecode);
+
+        // Close buffer: transfer lamports to spill
+        let buffer_lamports = accounts[2].lamports;
+        accounts[3].lamports += buffer_lamports;
+        accounts[2].lamports = 0;
+        accounts[2].data.clear();
 
         Ok(())
     }
@@ -630,32 +664,33 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let account = &mut accounts[0];
-        let current_authority = &accounts[1];
-        let new_authority = if accounts.len() > 2 {
+        // First phase: read all immutable data
+        let current_authority_key = accounts[1].key;
+        let new_authority_key = if accounts.len() > 2 {
             Some(accounts[2].key)
         } else {
             None
         };
 
-        let state = ProgramAccountState::from_bytes(&account.data)?;
+        // Read current state and validate authority
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
-        match state {
+        // Second phase: validate and prepare new state
+        let new_state_bytes = match state {
             ProgramAccountState::Buffer {
                 authority,
                 data_offset,
             } => {
                 match authority {
-                    Some(auth) if auth == current_authority.key => {}
+                    Some(auth) if auth == current_authority_key => {}
                     _ => return Err(ProgramError::InvalidUpgradeAuthority),
                 }
 
                 let new_state = ProgramAccountState::Buffer {
-                    authority: new_authority,
+                    authority: new_authority_key,
                     data_offset,
                 };
-                let bytes = new_state.to_bytes();
-                account.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+                new_state.to_bytes()
             }
             ProgramAccountState::ProgramData {
                 slot,
@@ -664,7 +699,7 @@ impl LoaderProgramProcessor {
                 upgrade_authority,
             } => {
                 match upgrade_authority {
-                    Some(auth) if auth == current_authority.key => {}
+                    Some(auth) if auth == current_authority_key => {}
                     _ => return Err(ProgramError::InvalidUpgradeAuthority),
                 }
 
@@ -674,15 +709,17 @@ impl LoaderProgramProcessor {
 
                 let new_state = ProgramAccountState::ProgramData {
                     slot,
-                    upgrade_authority: new_authority,
+                    upgrade_authority: new_authority_key,
                     frozen,
                     pending_upgrade,
                 };
-                let bytes = new_state.to_bytes();
-                account.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+                new_state.to_bytes()
             }
             _ => return Err(ProgramError::InvalidAccountData),
-        }
+        };
+
+        // Third phase: apply mutation
+        accounts[0].data.as_mut_slice()[..new_state_bytes.len()].copy_from_slice(&new_state_bytes);
 
         Ok(())
     }
@@ -693,11 +730,9 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let account = &mut accounts[0];
-        let recipient = &mut accounts[1];
-        let authority = &accounts[2];
-
-        let state = ProgramAccountState::from_bytes(&account.data)?;
+        // First phase: read keys and validate
+        let authority_key = accounts[2].key;
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
         // Verify authority based on account type
         match state {
@@ -705,7 +740,7 @@ impl LoaderProgramProcessor {
                 authority: Some(auth),
                 ..
             } => {
-                if auth != authority.key {
+                if auth != authority_key {
                     return Err(ProgramError::InvalidUpgradeAuthority);
                 }
             }
@@ -713,17 +748,18 @@ impl LoaderProgramProcessor {
                 upgrade_authority: Some(auth),
                 ..
             } => {
-                if auth != authority.key {
+                if auth != authority_key {
                     return Err(ProgramError::InvalidUpgradeAuthority);
                 }
             }
             _ => return Err(ProgramError::InvalidAccountData),
         }
 
-        // Transfer lamports
-        recipient.lamports += account.lamports;
-        account.lamports = 0;
-        account.data.clear();
+        // Second phase: transfer lamports and close
+        let account_lamports = accounts[0].lamports;
+        accounts[1].lamports += account_lamports;
+        accounts[0].lamports = 0;
+        accounts[0].data.clear();
 
         Ok(())
     }
@@ -734,10 +770,11 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let programdata = &mut accounts[0];
-        let authority = &accounts[1];
+        // First phase: read authority key
+        let authority_key = accounts[1].key;
 
-        let state = ProgramAccountState::from_bytes(&programdata.data)?;
+        // Read and validate state
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
         let (slot, upgrade_authority, pending_upgrade) = match state {
             ProgramAccountState::ProgramData {
@@ -751,11 +788,11 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match upgrade_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
-        // Freeze
+        // Second phase: prepare and apply frozen state
         let new_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority: None, // Remove authority
@@ -764,7 +801,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+        accounts[0].data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }
@@ -778,12 +815,12 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let programdata = &mut accounts[0];
-        let buffer = &accounts[1];
-        let _clock = &accounts[2];
-        let authority = &accounts[3];
+        // First phase: read all immutable data
+        let authority_key = accounts[3].key;
+        let buffer_key = accounts[1].key;
 
-        let state = ProgramAccountState::from_bytes(&programdata.data)?;
+        // Read programdata state
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
         let (slot, upgrade_authority, frozen) = match state {
             ProgramAccountState::ProgramData {
@@ -806,18 +843,18 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match upgrade_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
         // Get buffer bytecode hash
-        let buffer_state = ProgramAccountState::from_bytes(&buffer.data)?;
+        let buffer_state = ProgramAccountState::from_bytes(accounts[1].data.as_slice())?;
         let data_offset = match buffer_state {
             ProgramAccountState::Buffer { data_offset, .. } => data_offset,
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let bytecode = &buffer.data.as_slice()[data_offset..];
+        let bytecode = &accounts[1].data.as_slice()[data_offset..];
         let new_program_hash: [u8; 32] = blake3::hash(bytecode).into();
 
         // Set pending upgrade
@@ -827,12 +864,13 @@ impl LoaderProgramProcessor {
             .as_secs();
 
         let pending = PendingUpgrade {
-            buffer: buffer.key,
+            buffer: buffer_key,
             unlock_timestamp: now + UPGRADE_TIMELOCK_SECONDS,
-            initiator: authority.key,
+            initiator: authority_key,
             new_program_hash,
         };
 
+        // Second phase: apply mutation
         let new_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority,
@@ -841,7 +879,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+        accounts[0].data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }
@@ -855,14 +893,11 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let programdata = &mut accounts[0];
-        let _program = &accounts[1];
-        let buffer = &mut accounts[2];
-        let spill = &mut accounts[3];
-        let _clock = &accounts[4];
-        let authority = &accounts[5];
+        // First phase: read all immutable data and validate
+        let authority_key = accounts[5].key;
+        let buffer_key = accounts[2].key;
 
-        let state = ProgramAccountState::from_bytes(&programdata.data)?;
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
         let (slot, upgrade_authority, pending) = match state {
             ProgramAccountState::ProgramData {
@@ -879,7 +914,7 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match upgrade_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
@@ -894,21 +929,21 @@ impl LoaderProgramProcessor {
         }
 
         // Verify buffer matches
-        if buffer.key != pending.buffer {
+        if buffer_key != pending.buffer {
             return Err(ProgramError::BufferMismatch);
         }
 
         // Get new bytecode
-        let buffer_state = ProgramAccountState::from_bytes(&buffer.data)?;
+        let buffer_state = ProgramAccountState::from_bytes(accounts[2].data.as_slice())?;
         let data_offset = match buffer_state {
             ProgramAccountState::Buffer { data_offset, .. } => data_offset,
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
-        let new_bytecode = &buffer.data.as_slice()[data_offset..];
+        let new_bytecode = accounts[2].data.as_slice()[data_offset..].to_vec();
 
         // Verify hash
-        let hash: [u8; 32] = blake3::hash(new_bytecode).into();
+        let hash: [u8; 32] = blake3::hash(&new_bytecode).into();
         if hash != pending.new_program_hash {
             return Err(ProgramError::ProgramHashMismatch);
         }
@@ -917,10 +952,12 @@ impl LoaderProgramProcessor {
         meter.consume(new_bytecode.len() as u64)?;
 
         // Validate
-        let validator = BytecodeValidator::new(ValidationConfig::default());
-        validator.validate(new_bytecode)?;
+        let validator = BytecodeValidator::new();
+        validator
+            .validate(&new_bytecode)
+            .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
 
-        // Update programdata
+        // Second phase: prepare new state
         let new_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority,
@@ -929,14 +966,17 @@ impl LoaderProgramProcessor {
         };
 
         let state_bytes = new_state.to_bytes();
-        programdata.data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
-        programdata.data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
-            .copy_from_slice(new_bytecode);
 
-        // Close buffer
-        spill.lamports += buffer.lamports;
-        buffer.lamports = 0;
-        buffer.data.clear();
+        // Third phase: apply mutations using indices
+        accounts[0].data.as_mut_slice()[..state_bytes.len()].copy_from_slice(&state_bytes);
+        accounts[0].data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
+            .copy_from_slice(&new_bytecode);
+
+        // Close buffer: transfer lamports to spill
+        let buffer_lamports = accounts[2].lamports;
+        accounts[3].lamports += buffer_lamports;
+        accounts[2].lamports = 0;
+        accounts[2].data.clear();
 
         Ok(())
     }
@@ -950,10 +990,10 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::NotEnoughAccountKeys);
         }
 
-        let programdata = &mut accounts[0];
-        let authority = &accounts[1];
+        // First phase: read authority key and validate
+        let authority_key = accounts[1].key;
 
-        let state = ProgramAccountState::from_bytes(&programdata.data)?;
+        let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
         let (slot, upgrade_authority, frozen) = match state {
             ProgramAccountState::ProgramData {
@@ -972,11 +1012,11 @@ impl LoaderProgramProcessor {
 
         // Verify authority
         match upgrade_authority {
-            Some(auth) if auth == authority.key => {}
+            Some(auth) if auth == authority_key => {}
             _ => return Err(ProgramError::InvalidUpgradeAuthority),
         }
 
-        // Cancel
+        // Second phase: cancel by removing pending upgrade
         let new_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority,
@@ -985,7 +1025,7 @@ impl LoaderProgramProcessor {
         };
 
         let bytes = new_state.to_bytes();
-        programdata.data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+        accounts[0].data.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
 
         Ok(())
     }

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use uuid::Uuid;
 
 use crate::error::{MiniAppError, MiniAppResult};
@@ -139,8 +140,8 @@ impl Receipt {
     /// Compute receipt hash for signing
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&self.id.0.as_bytes());
-        hasher.update(&self.intent_id.0.as_bytes());
+        hasher.update(self.id.0.as_bytes());
+        hasher.update(self.intent_id.0.as_bytes());
         hasher.update(&self.transaction_hash);
         hasher.update(&self.block_hash);
         hasher.update(&self.execution_slot.to_le_bytes());
@@ -166,13 +167,15 @@ impl Receipt {
 }
 
 /// Attestation from a signer
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attestation {
     /// Signer's public key
     pub signer: [u8; 32],
     /// Receipt hash that was signed
     pub receipt_hash: [u8; 32],
-    /// Signature
+    /// Signature (Ed25519 64-byte signature)
+    #[serde_as(as = "Bytes")]
     pub signature: [u8; 64],
     /// Timestamp
     pub timestamp: DateTime<Utc>,

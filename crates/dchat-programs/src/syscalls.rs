@@ -16,43 +16,69 @@ pub struct SyscallId(pub u32);
 
 impl SyscallId {
     // Logging syscalls
+    /// Log a message to program output
     pub const SOL_LOG: Self = Self(0);
+    /// Log 64-bit integers to program output
     pub const SOL_LOG_64: Self = Self(1);
+    /// Log a public key to program output
     pub const SOL_LOG_PUBKEY: Self = Self(2);
+    /// Log arbitrary data to program output
     pub const SOL_LOG_DATA: Self = Self(3);
+    /// Log remaining compute units
     pub const SOL_LOG_COMPUTE_UNITS: Self = Self(4);
 
     // Crypto syscalls
+    /// SHA-256 hash computation
     pub const SOL_SHA256: Self = Self(10);
+    /// BLAKE3 hash computation
     pub const SOL_BLAKE3: Self = Self(11);
+    /// Keccak-256 hash computation
     pub const SOL_KECCAK256: Self = Self(12);
+    /// Secp256k1 signature recovery
     pub const SOL_SECP256K1_RECOVER: Self = Self(13);
+    /// Ed25519 signature verification
     pub const SOL_ED25519_VERIFY: Self = Self(14);
+    /// Poseidon hash for ZK circuits
     pub const SOL_POSEIDON: Self = Self(15);
 
     // Memory syscalls
+    /// Copy non-overlapping memory
     pub const SOL_MEMCPY: Self = Self(20);
+    /// Fill memory with value
     pub const SOL_MEMSET: Self = Self(21);
+    /// Move possibly overlapping memory
     pub const SOL_MEMMOVE: Self = Self(22);
+    /// Compare memory regions
     pub const SOL_MEMCMP: Self = Self(23);
 
     // Account syscalls
+    /// Create program-derived address
     pub const SOL_CREATE_PROGRAM_ADDRESS: Self = Self(30);
+    /// Find program-derived address with bump seed
     pub const SOL_TRY_FIND_PROGRAM_ADDRESS: Self = Self(31);
+    /// Get clock sysvar
     pub const SOL_GET_CLOCK_SYSVAR: Self = Self(32);
+    /// Get rent sysvar
     pub const SOL_GET_RENT_SYSVAR: Self = Self(33);
+    /// Get epoch schedule sysvar
     pub const SOL_GET_EPOCH_SCHEDULE_SYSVAR: Self = Self(34);
 
     // CPI syscalls
+    /// Cross-program invocation with signed seeds
     pub const SOL_INVOKE_SIGNED: Self = Self(40);
+    /// Set return data for caller
     pub const SOL_SET_RETURN_DATA: Self = Self(41);
+    /// Get return data from callee
     pub const SOL_GET_RETURN_DATA: Self = Self(42);
 
     // Program syscalls
+    /// Get previously processed sibling instruction
     pub const SOL_GET_PROCESSED_SIBLING_INSTRUCTION: Self = Self(50);
+    /// Get current CPI stack height
     pub const SOL_GET_STACK_HEIGHT: Self = Self(51);
 
     // Allocator
+    /// Heap allocation and deallocation
     pub const SOL_ALLOC_FREE: Self = Self(60);
 }
 
@@ -87,23 +113,41 @@ impl SyscallCost {
 pub mod costs {
     use super::SyscallCost;
 
+    /// Cost for logging operations
     pub const LOG: SyscallCost = SyscallCost::new(100, 1, 0);
+    /// Cost for SHA-256 hash
     pub const SHA256: SyscallCost = SyscallCost::new(85, 1, 0);
+    /// Cost for BLAKE3 hash
     pub const BLAKE3: SyscallCost = SyscallCost::new(100, 1, 0);
+    /// Cost for Keccak-256 hash
     pub const KECCAK256: SyscallCost = SyscallCost::new(85, 1, 0);
+    /// Cost for secp256k1 key recovery
     pub const SECP256K1_RECOVER: SyscallCost = SyscallCost::new(25000, 0, 0);
+    /// Cost for Ed25519 signature verification
     pub const ED25519_VERIFY: SyscallCost = SyscallCost::new(3000, 0, 0);
+    /// Cost for Poseidon hash (ZK-friendly)
     pub const POSEIDON: SyscallCost = SyscallCost::new(2000, 0, 100);
+    /// Cost for memory copy
     pub const MEMCPY: SyscallCost = SyscallCost::new(3, 0, 0);
+    /// Cost for memory set
     pub const MEMSET: SyscallCost = SyscallCost::new(3, 0, 0);
+    /// Cost for memory move
     pub const MEMMOVE: SyscallCost = SyscallCost::new(3, 0, 0);
+    /// Cost for memory compare
     pub const MEMCMP: SyscallCost = SyscallCost::new(3, 0, 0);
+    /// Cost for PDA creation
     pub const CREATE_PROGRAM_ADDRESS: SyscallCost = SyscallCost::new(1500, 0, 0);
+    /// Cost for PDA discovery
     pub const TRY_FIND_PROGRAM_ADDRESS: SyscallCost = SyscallCost::new(1500, 0, 1500);
+    /// Cost for sysvar access
     pub const GET_SYSVAR: SyscallCost = SyscallCost::new(100, 0, 0);
+    /// Cost for cross-program invocation
     pub const INVOKE_SIGNED: SyscallCost = SyscallCost::new(1000, 0, 0);
+    /// Cost for setting return data
     pub const SET_RETURN_DATA: SyscallCost = SyscallCost::new(20, 1, 0);
+    /// Cost for getting return data
     pub const GET_RETURN_DATA: SyscallCost = SyscallCost::new(20, 1, 0);
+    /// Cost for heap allocation
     pub const ALLOC: SyscallCost = SyscallCost::new(1, 0, 0);
 }
 
@@ -303,18 +347,11 @@ impl SyscallHandler for MemcpyHandler {
             return SyscallResult::Err(ProgramError::ComputationalBudgetExceeded);
         }
 
-        // Safe non-overlapping copy
-        let (left, right) = memory.split_at_mut(std::cmp::max(dst, src));
-        if dst < src {
-            left[dst..dst + len].copy_from_slice(&right[..len]);
-        } else {
-            let offset = dst - src;
-            let src_slice = &right[..len];
-            let dst_start = offset;
-            for i in 0..len {
-                right[dst_start + i] = src_slice[i];
-            }
-        }
+        // Safe non-overlapping copy - copy through intermediate buffer
+        // to avoid borrow checker issues. The overlap check above ensures this is valid.
+        let mut temp = vec![0u8; len];
+        temp.copy_from_slice(&memory[src..src + len]);
+        memory[dst..dst + len].copy_from_slice(&temp);
 
         SyscallResult::Ok(0)
     }
@@ -490,7 +527,8 @@ impl SyscallHandler for AllocHandler {
     }
 }
 
-/// Syscall registry
+/// Syscall registry - holds all registered syscall handlers
+#[derive(Clone)]
 pub struct SyscallRegistry {
     /// Registered handlers
     handlers: HashMap<SyscallId, Arc<dyn SyscallHandler>>,

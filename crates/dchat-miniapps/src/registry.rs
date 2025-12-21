@@ -7,6 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use uuid::Uuid;
 
 use crate::error::{MiniAppError, MiniAppResult};
@@ -181,6 +182,7 @@ pub enum RegistrationStatus {
 }
 
 /// App registration entry
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppRegistration {
     /// App ID
@@ -201,7 +203,8 @@ pub struct AppRegistration {
     pub registered_at: DateTime<Utc>,
     /// Last update timestamp
     pub updated_at: DateTime<Utc>,
-    /// Developer signature over registration
+    /// Developer signature over registration (Ed25519 64-byte signature)
+    #[serde_as(as = "Bytes")]
     pub signature: [u8; 64],
     /// Download count
     pub downloads: u64,

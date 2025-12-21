@@ -159,43 +159,94 @@ pub enum ValidationError {
     /// Invalid magic bytes
     InvalidMagic,
     /// Invalid version
-    InvalidVersion { found: u32, expected: u32 },
+    InvalidVersion {
+        /// Version found in bytecode
+        found: u32,
+        /// Version expected
+        expected: u32,
+    },
     /// Program too large
-    TooLarge { size: usize, max: usize },
+    TooLarge {
+        /// Actual size in bytes
+        size: usize,
+        /// Maximum allowed size
+        max: usize,
+    },
     /// Too many functions
-    TooManyFunctions { count: usize, max: usize },
+    TooManyFunctions {
+        /// Number of functions found
+        count: usize,
+        /// Maximum allowed
+        max: usize,
+    },
     /// Too many globals
-    TooManyGlobals { count: usize, max: usize },
+    TooManyGlobals {
+        /// Number of globals found
+        count: usize,
+        /// Maximum allowed
+        max: usize,
+    },
     /// Too many tables
-    TooManyTables { count: usize, max: usize },
+    TooManyTables {
+        /// Number of tables found
+        count: usize,
+        /// Maximum allowed
+        max: usize,
+    },
     /// Too many memories
-    TooManyMemories { count: usize, max: usize },
+    TooManyMemories {
+        /// Number of memories found
+        count: usize,
+        /// Maximum allowed
+        max: usize,
+    },
     /// Forbidden import
-    ForbiddenImport { name: String },
+    ForbiddenImport {
+        /// Name of forbidden import
+        name: String,
+    },
     /// Unknown import
-    UnknownImport { name: String },
+    UnknownImport {
+        /// Name of unknown import
+        name: String,
+    },
     /// Forbidden opcode
-    ForbiddenOpcode { opcode: String },
+    ForbiddenOpcode {
+        /// Opcode that is forbidden
+        opcode: String,
+    },
     /// Too many function parameters
     TooManyParams {
+        /// Function index
         func: usize,
+        /// Number of parameters
         count: usize,
+        /// Maximum allowed
         max: usize,
     },
     /// Too many function locals
     TooManyLocals {
+        /// Function index
         func: usize,
+        /// Number of locals
         count: usize,
+        /// Maximum allowed
         max: usize,
     },
     /// Invalid section
-    InvalidSection { section: String },
+    InvalidSection {
+        /// Name of invalid section
+        section: String,
+    },
     /// Missing entrypoint
     MissingEntrypoint,
     /// Invalid entrypoint signature
     InvalidEntrypointSignature,
     /// Parse error
-    ParseError { message: String },
+    ParseError {
+        /// Error message from parser
+        message: String,
+    },
 }
 
 impl std::fmt::Display for ValidationError {

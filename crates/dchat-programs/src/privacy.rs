@@ -227,15 +227,30 @@ pub struct AttributeProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttributeProofType {
     /// Proves attribute >= threshold
-    GreaterOrEqual { threshold: i64 },
+    GreaterOrEqual {
+        /// Threshold value for comparison
+        threshold: i64,
+    },
     /// Proves attribute < threshold
-    LessThan { threshold: i64 },
+    LessThan {
+        /// Threshold value for comparison
+        threshold: i64,
+    },
     /// Proves attribute is in set
-    SetMembership { set_commitment: [u8; 32] },
+    SetMembership {
+        /// Commitment to the membership set
+        set_commitment: [u8; 32],
+    },
     /// Proves attribute is not in set
-    SetNonMembership { set_commitment: [u8; 32] },
+    SetNonMembership {
+        /// Commitment to the exclusion set
+        set_commitment: [u8; 32],
+    },
     /// Proves attribute matches hash
-    HashPreimage { hash: [u8; 32] },
+    HashPreimage {
+        /// Expected hash of attribute
+        hash: [u8; 32],
+    },
 }
 
 /// Privacy transfer instruction
@@ -377,31 +392,49 @@ impl PrivacyProgram {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PrivacyInstruction {
     /// Create a new privacy account
-    CreateAccount { viewing_key_commitment: [u8; 32] },
+    CreateAccount {
+        /// Commitment to viewing key for encrypted balance recovery
+        viewing_key_commitment: [u8; 32],
+    },
     /// Deposit from public to private
     Deposit {
+        /// Amount of tokens to deposit
         amount: u64,
+        /// New encrypted balance after deposit
         new_encrypted_balance: EncryptedBalance,
+        /// Proof that balance is non-negative
         range_proof: RangeProof,
     },
     /// Withdraw from private to public
     Withdraw {
+        /// Amount of tokens to withdraw
         amount: u64,
+        /// New encrypted balance after withdrawal
         new_encrypted_balance: EncryptedBalance,
+        /// Proof that remaining balance is non-negative
         range_proof: RangeProof,
+        /// Proof that withdrawal is authorized
         withdrawal_proof: BalanceProof,
     },
     /// Transfer between privacy accounts
-    Transfer { transfer: PrivacyTransfer },
+    Transfer {
+        /// Full transfer details with proofs
+        transfer: PrivacyTransfer,
+    },
     /// Issue selective disclosure credential
     IssueCredential {
+        /// Subject of the credential
         subject: Pubkey,
+        /// Attribute key-value pairs to include
         attributes: HashMap<String, Vec<u8>>,
+        /// Credential validity duration
         expires_in_seconds: u64,
     },
     /// Verify credential
     VerifyCredential {
+        /// Credential to verify
         credential: DisclosureCredential,
+        /// Attributes that must be disclosed
         required_attributes: Vec<String>,
     },
 }

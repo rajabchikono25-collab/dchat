@@ -3,6 +3,8 @@
 use std::fmt;
 use thiserror::Error;
 
+use crate::validation::ValidationError;
+
 /// Result type for program operations
 pub type ProgramResult<T> = Result<T, ProgramError>;
 
@@ -392,6 +394,12 @@ pub enum ProgramError {
     /// Invalid balance proof
     #[error("Invalid balance proof")]
     InvalidBalanceProof,
+}
+
+impl From<ValidationError> for ProgramError {
+    fn from(err: ValidationError) -> Self {
+        ProgramError::InvalidBytecode(err.to_string())
+    }
 }
 
 impl ProgramError {

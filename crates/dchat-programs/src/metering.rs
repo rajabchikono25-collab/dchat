@@ -54,9 +54,11 @@ impl Default for ComputeUnitCosts {
 pub struct CryptoOpCosts {
     /// SHA256 hash per 64 bytes
     pub sha256_base: u64,
+    /// SHA256 cost per additional byte
     pub sha256_per_byte: u64,
     /// BLAKE3 hash per 64 bytes
     pub blake3_base: u64,
+    /// BLAKE3 cost per additional byte
     pub blake3_per_byte: u64,
     /// Ed25519 signature verification
     pub ed25519_verify: u64,
@@ -66,9 +68,11 @@ pub struct CryptoOpCosts {
     pub curve25519_mul: u64,
     /// Poseidon hash (for ZK proofs)
     pub poseidon_base: u64,
+    /// Poseidon cost per additional input field
     pub poseidon_per_input: u64,
     /// Keccak256 hash
     pub keccak256_base: u64,
+    /// Keccak256 cost per additional byte
     pub keccak256_per_byte: u64,
 }
 

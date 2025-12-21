@@ -213,6 +213,27 @@ pub enum MiniAppError {
     #[error("Bot rate limit exceeded")]
     BotRateLimitExceeded,
 
+    /// Bot already registered
+    #[error("Bot already registered: {0}")]
+    BotAlreadyRegistered(String),
+
+    /// Invalid bot configuration
+    #[error("Invalid bot configuration: {0}")]
+    InvalidBotConfig(String),
+
+    /// Bot command not found
+    #[error("Bot command not found: {0}")]
+    BotCommandNotFound(String),
+
+    // ─── Wallet Signing Errors ──────────────────────────────────────────────
+    /// Wallet already connected
+    #[error("Wallet already connected")]
+    WalletAlreadyConnected,
+
+    /// Wallet signing failed
+    #[error("Wallet signing failed: {0}")]
+    WalletSigningFailed(String),
+
     // ─── Bridge Errors ──────────────────────────────────────────────────────
     /// Bridge not connected
     #[error("Bridge not connected")]
@@ -328,6 +349,13 @@ impl MiniAppError {
             Self::BotAuthenticationFailed(_) => 1702,
             Self::InvalidBotCommand(_) => 1703,
             Self::BotRateLimitExceeded => 1704,
+            Self::BotAlreadyRegistered(_) => 1705,
+            Self::InvalidBotConfig(_) => 1706,
+            Self::BotCommandNotFound(_) => 1707,
+
+            // Wallet signing errors: 1650-1699
+            Self::WalletAlreadyConnected => 1650,
+            Self::WalletSigningFailed(_) => 1651,
 
             // Bridge errors: 1800-1899
             Self::BridgeNotConnected => 1800,

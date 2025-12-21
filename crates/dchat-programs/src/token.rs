@@ -141,8 +141,11 @@ pub enum AccountState {
 pub enum TokenInstruction {
     /// Initialize a new mint
     InitializeMint {
+        /// Number of decimal places for token
         decimals: u8,
+        /// Authority allowed to mint new tokens
         mint_authority: Pubkey,
+        /// Optional authority allowed to freeze accounts
         freeze_authority: Option<Pubkey>,
     },
 
@@ -150,31 +153,51 @@ pub enum TokenInstruction {
     InitializeAccount,
 
     /// Initialize a token account with explicit owner
-    InitializeAccount2 { owner: Pubkey },
+    InitializeAccount2 {
+        /// Owner of the token account
+        owner: Pubkey,
+    },
 
     /// Initialize multisig account
-    InitializeMultisig { m: u8 },
+    InitializeMultisig {
+        /// Number of required signatures (M of N)
+        m: u8,
+    },
 
     /// Transfer tokens
-    Transfer { amount: u64 },
+    Transfer {
+        /// Amount of tokens to transfer
+        amount: u64,
+    },
 
     /// Approve delegate
-    Approve { amount: u64 },
+    Approve {
+        /// Amount delegate is approved to spend
+        amount: u64,
+    },
 
     /// Revoke delegate
     Revoke,
 
     /// Set authority
     SetAuthority {
+        /// Type of authority to set
         authority_type: AuthorityType,
+        /// New authority (None to remove)
         new_authority: Option<Pubkey>,
     },
 
     /// Mint new tokens
-    MintTo { amount: u64 },
+    MintTo {
+        /// Amount of tokens to mint
+        amount: u64,
+    },
 
     /// Burn tokens
-    Burn { amount: u64 },
+    Burn {
+        /// Amount of tokens to burn
+        amount: u64,
+    },
 
     /// Close account
     CloseAccount,
@@ -186,16 +209,36 @@ pub enum TokenInstruction {
     ThawAccount,
 
     /// Transfer with checked decimals
-    TransferChecked { amount: u64, decimals: u8 },
+    TransferChecked {
+        /// Amount of tokens to transfer
+        amount: u64,
+        /// Expected decimals of token mint
+        decimals: u8,
+    },
 
     /// Approve with checked decimals
-    ApproveChecked { amount: u64, decimals: u8 },
+    ApproveChecked {
+        /// Amount delegate is approved to spend
+        amount: u64,
+        /// Expected decimals of token mint
+        decimals: u8,
+    },
 
     /// Mint with checked decimals
-    MintToChecked { amount: u64, decimals: u8 },
+    MintToChecked {
+        /// Amount of tokens to mint
+        amount: u64,
+        /// Expected decimals of token mint
+        decimals: u8,
+    },
 
     /// Burn with checked decimals
-    BurnChecked { amount: u64, decimals: u8 },
+    BurnChecked {
+        /// Amount of tokens to burn
+        amount: u64,
+        /// Expected decimals of token mint
+        decimals: u8,
+    },
 
     /// Sync native account
     SyncNative,
@@ -630,7 +673,7 @@ impl TokenProgramProcessor {
         }
 
         // Verify source not frozen
-        if source.is_frozen {
+        if source.is_frozen() {
             return Err(ProgramError::TokenAccountFrozen);
         }
 

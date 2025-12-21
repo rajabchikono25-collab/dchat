@@ -497,21 +497,32 @@ impl CapabilityProgram {
 pub enum CapabilityInstruction {
     /// Issue a new capability
     Issue {
+        /// Public key of capability recipient
         grantee: Pubkey,
+        /// Scope defining what capability allows
         scope: CapabilityScope,
+        /// Unix timestamp when capability expires
         expires_at: u64,
+        /// Maximum number of times capability can be used
         max_uses: Option<u32>,
     },
     /// Revoke an existing capability
-    Revoke { capability_id: CapabilityId },
+    Revoke {
+        /// ID of capability to revoke
+        capability_id: CapabilityId,
+    },
     /// Record capability usage
     Use {
+        /// ID of capability being used
         capability_id: CapabilityId,
+        /// Action being performed under capability
         action: CapabilityAction,
     },
     /// Extend capability expiry
     Extend {
+        /// ID of capability to extend
         capability_id: CapabilityId,
+        /// New expiration timestamp
         new_expires_at: u64,
     },
 }

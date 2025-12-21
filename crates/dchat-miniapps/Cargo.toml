@@ -37,6 +37,7 @@ async-trait = { version = "0.1" }
 # Serialization - pinned versions
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+serde_with = { version = "3", features = ["hex"] }
 bincode = { version = "1" }
 
 # Cryptography - pinned stable versions

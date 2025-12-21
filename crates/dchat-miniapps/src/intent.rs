@@ -8,6 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use uuid::Uuid;
 
 use crate::error::{MiniAppError, MiniAppResult};
@@ -261,6 +262,7 @@ impl IntentPayload {
 }
 
 /// Full intent with ID and signature
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Intent {
     /// Intent ID
@@ -269,7 +271,8 @@ pub struct Intent {
     pub app_id: AppId,
     /// Intent payload
     pub payload: IntentPayload,
-    /// User signature
+    /// User signature (Ed25519 64-byte signature)
+    #[serde_as(as = "Option<Bytes>")]
     pub signature: Option<[u8; 64]>,
     /// Status
     pub status: IntentStatus,

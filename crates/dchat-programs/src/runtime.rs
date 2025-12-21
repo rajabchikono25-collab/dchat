@@ -102,10 +102,12 @@ pub struct InMemoryAccountBank {
 }
 
 impl InMemoryAccountBank {
+    /// Create a new empty account bank
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Create an account bank with pre-populated accounts
     pub fn with_accounts(accounts: HashMap<Pubkey, Account>) -> Self {
         Self { accounts }
     }
@@ -206,14 +208,9 @@ impl<'a> ExecutionContext<'a> {
         let loaded = bank.load_many(&pubkeys);
 
         for (i, meta) in metas.iter().enumerate() {
-            let account = loaded[i].clone().unwrap_or_else(|| Account {
-                key: meta.pubkey,
-                lamports: 0,
-                data: Vec::new(),
-                owner: crate::native_programs::SYSTEM_PROGRAM_ID,
-                executable: false,
-                rent_epoch: 0,
-            });
+            let account = loaded[i]
+                .clone()
+                .unwrap_or_else(|| Account::new(meta.pubkey));
 
             // Snapshot for rollback
             self.snapshots.insert(meta.pubkey, account.clone());
@@ -252,8 +249,8 @@ impl<'a> ExecutionContext<'a> {
                     current.owner,
                     snapshot.lamports,
                     current.lamports,
-                    &snapshot.data,
-                    &current.data,
+                    snapshot.data.as_slice(),
+                    current.data.as_slice(),
                 );
 
                 if delta.is_modified() {
@@ -322,11 +319,15 @@ pub struct ProgramRuntime {
 impl ProgramRuntime {
     /// Create new runtime
     pub fn new(config: RuntimeConfig) -> Self {
+        let scheduler_config = crate::scheduler::SchedulerConfig {
+            max_parallelism: config.execution_threads,
+            ..Default::default()
+        };
         Self {
             cache: ProgramCache::new(1024),
             syscalls: SyscallRegistry::new(),
-            validator: BytecodeValidator::new(config.validation_config.clone()),
-            scheduler: ParallelScheduler::new(config.execution_threads),
+            validator: BytecodeValidator::with_config(config.validation_config.clone()),
+            scheduler: ParallelScheduler::new(scheduler_config),
             config,
         }
     }
@@ -462,44 +463,85 @@ impl ProgramRuntime {
         slot: u64,
         timestamp: u64,
     ) -> Vec<ExecutionReceipt> {
+        // Get fee payer from first instruction's first signer account
+        let get_fee_payer = |tx: &ScheduledTransaction| -> Pubkey {
+            tx.batch
+                .account_keys
+                .first()
+                .copied()
+                .unwrap_or(Pubkey::zero())
+        };
+
         if !self.config.parallel_execution || transactions.len() < 2 {
             // Execute sequentially
             return transactions
                 .into_iter()
                 .map(|tx| {
-                    self.execute_transaction(
-                        bank,
-                        &tx.instructions,
-                        tx.hash,
-                        slot,
-                        timestamp,
-                        tx.fee_payer,
-                    )
+                    let instructions = self.decompile_batch(&tx.batch);
+                    let hash = tx.batch.hash();
+                    let fee_payer = get_fee_payer(&tx);
+                    self.execute_transaction(bank, &instructions, hash, slot, timestamp, fee_payer)
                 })
                 .collect();
         }
 
+        // Submit all transactions for scheduling
+        for tx in &transactions {
+            self.scheduler.submit(tx.batch.clone(), tx.priority);
+        }
+
         // Schedule for parallel execution
-        let batches = self.scheduler.schedule_batch(&transactions);
         let mut receipts = Vec::with_capacity(transactions.len());
 
-        for batch in batches {
+        while let Some(batch) = self.scheduler.schedule_batch() {
             // Execute non-conflicting transactions in parallel
             // For now, still sequential within batch for safety
             for tx in batch.transactions {
-                let receipt = self.execute_transaction(
-                    bank,
-                    &tx.instructions,
-                    tx.hash,
-                    slot,
-                    timestamp,
-                    tx.fee_payer,
-                );
+                let instructions = self.decompile_batch(&tx.batch);
+                let hash = tx.batch.hash();
+                let fee_payer = get_fee_payer(&tx);
+                let receipt =
+                    self.execute_transaction(bank, &instructions, hash, slot, timestamp, fee_payer);
                 receipts.push(receipt);
             }
         }
 
         receipts
+    }
+
+    /// Decompile instruction batch back to instructions
+    fn decompile_batch(&self, batch: &crate::instruction::InstructionBatch) -> Vec<Instruction> {
+        batch
+            .instructions
+            .iter()
+            .map(|compiled| {
+                let program_id = batch
+                    .account_keys
+                    .get(compiled.program_id_index as usize)
+                    .copied()
+                    .unwrap_or(Pubkey::zero());
+                let accounts: Vec<AccountMeta> = compiled
+                    .accounts
+                    .iter()
+                    .filter_map(|&idx| {
+                        batch.account_keys.get(idx as usize).map(|&pubkey| {
+                            let is_signer = batch.signer_indices.contains(&idx);
+                            let is_writable = batch.writable_indices.contains(&idx);
+                            AccountMeta {
+                                pubkey,
+                                is_signer,
+                                is_writable,
+                            }
+                        })
+                    })
+                    .collect();
+                Instruction {
+                    program_id,
+                    accounts,
+                    data: compiled.data.clone(),
+                }
+            })
+            .collect()
     }
 
     /// Internal instruction execution (without account loading)
@@ -527,8 +569,8 @@ impl ProgramRuntime {
                 }
 
                 CachedProgram {
-                    bytecode: account.data.clone(),
-                    hash: blake3::hash(&account.data).into(),
+                    bytecode: account.data.to_vec(),
+                    hash: blake3::hash(account.data.as_slice()).into(),
                     executable: true,
                     upgrade_authority: None,
                     cached_at: ctx.slot,
@@ -536,7 +578,7 @@ impl ProgramRuntime {
             }
         };
 
-        // Validate bytecode
+        // Validate bytecode (From impl handles error conversion)
         self.validator.validate(&program.bytecode)?;
 
         // Execute in VM
@@ -551,25 +593,52 @@ impl ProgramRuntime {
         bytecode: &[u8],
         instruction: &Instruction,
     ) -> ProgramResult<()> {
-        // Create VM instance
-        let vm = DeterministicVm::new(self.config.vm_config.clone());
-        let mut instance = vm.instantiate(bytecode)?;
+        // Validate bytecode first
+        let bytecode_info = self.validator.validate(bytecode)?;
 
-        // Prepare account infos
-        let account_infos: Vec<AccountInfo<'_>> = instruction
-            .accounts
-            .iter()
-            .filter_map(|meta| {
-                ctx.accounts
-                    .get(&meta.pubkey)
-                    .map(|acc| AccountInfo::from_account(acc, meta.is_signer, meta.is_writable))
-            })
-            .collect();
+        // Create VM and load module
+        let vm = DeterministicVm::new(self.config.vm_config.clone());
+        let instance = vm.load_module(bytecode, bytecode_info)?;
+
+        // Serialize account infos for the VM
+        let account_infos_data = self.serialize_account_infos(ctx, &instruction.accounts)?;
 
         // Execute
-        instance.execute(&instruction.data, &account_infos, ctx.meter.as_ref())?;
+        let syscalls = Arc::new(self.syscalls.clone());
+        let _output = instance.execute(
+            *program_id,
+            &instruction.data,
+            &account_infos_data,
+            ctx.meter.clone(),
+            syscalls,
+        )?;
 
         Ok(())
+    }
+
+    /// Serialize account infos for VM consumption
+    fn serialize_account_infos(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        metas: &[AccountMeta],
+    ) -> ProgramResult<Vec<u8>> {
+        let mut data = Vec::new();
+        // Simple format: count, then for each: key(32), lamports(8), data_len(4), data, owner(32), executable(1)
+        data.extend_from_slice(&(metas.len() as u32).to_le_bytes());
+        for meta in metas {
+            if let Some(account) = ctx.accounts.get(&meta.pubkey) {
+                data.extend_from_slice(account.key.as_bytes());
+                data.extend_from_slice(&account.lamports.to_le_bytes());
+                let account_data = account.data.as_slice();
+                data.extend_from_slice(&(account_data.len() as u32).to_le_bytes());
+                data.extend_from_slice(account_data);
+                data.extend_from_slice(account.owner.as_bytes());
+                data.push(account.executable as u8);
+                data.push(meta.is_signer as u8);
+                data.push(meta.is_writable as u8);
+            }
+        }
+        Ok(data)
     }
 
     /// Load a program from bank or cache
@@ -591,8 +660,8 @@ impl ProgramRuntime {
         }
 
         let program = CachedProgram {
-            bytecode: account.data.clone(),
-            hash: blake3::hash(&account.data).into(),
+            bytecode: account.data.to_vec(),
+            hash: blake3::hash(account.data.as_slice()).into(),
             executable: true,
             upgrade_authority: None, // Would need to read from programdata
             cached_at: 0,
@@ -623,42 +692,56 @@ impl ProgramRuntime {
         // Consume base cost
         ctx.meter.consume(100)?;
 
-        if instruction.program_id == crate::native_programs::SYSTEM_PROGRAM_ID {
+        // Collect pubkeys from instruction
+        let pubkeys: Vec<Pubkey> = instruction
+            .accounts
+            .iter()
+            .map(|meta| meta.pubkey)
+            .collect();
+
+        // Extract accounts from context - we remove them temporarily to get owned mutable access
+        let mut extracted: Vec<(Pubkey, Account)> = Vec::with_capacity(pubkeys.len());
+        for pk in &pubkeys {
+            if let Some(account) = ctx.accounts.remove(pk) {
+                extracted.push((*pk, account));
+            }
+        }
+
+        // Create mutable references to the extracted accounts
+        let mut account_refs: Vec<&mut Account> = extracted.iter_mut().map(|(_, a)| a).collect();
+        let accounts_slice: &mut [&mut Account] = &mut account_refs;
+
+        // Execute the appropriate native program
+        let result = if instruction.program_id == crate::native_programs::SYSTEM_PROGRAM_ID {
             let ix = crate::system_program::SystemInstruction::from_bytes(&instruction.data)?;
-
-            let mut accounts: Vec<&mut Account> = instruction
-                .accounts
-                .iter()
-                .filter_map(|meta| ctx.accounts.get_mut(&meta.pubkey))
-                .collect();
-
             crate::system_program::SystemProgramProcessor::process(
                 &ix,
-                &mut accounts.iter_mut().collect::<Vec<_>>(),
+                accounts_slice,
                 ctx.meter.as_ref(),
             )
         } else if instruction.program_id == crate::native_programs::TOKEN_PROGRAM_ID {
-            let mut accounts: Vec<&mut Account> = instruction
-                .accounts
-                .iter()
-                .filter_map(|meta| ctx.accounts.get_mut(&meta.pubkey))
-                .collect();
-
             crate::token::TokenProgramProcessor::process(
                 &instruction.data,
-                &mut accounts.iter_mut().collect::<Vec<_>>(),
+                accounts_slice,
                 ctx.meter.as_ref(),
             )
         } else {
             Err(ProgramError::UnsupportedProgram)
+        };
+
+        // Put accounts back into context (even on failure, for rollback tracking)
+        for (pk, account) in extracted {
+            ctx.accounts.insert(pk, account);
         }
+
+        result
     }
 
     /// Calculate transaction fee
     fn calculate_fee(&self, budget: &ComputeBudget) -> u64 {
         // Base fee + compute unit fee
         let base_fee = 5000u64;
-        let compute_fee = budget.compute_units / 1000;
+        let compute_fee = budget.max_units / 1000;
         base_fee + compute_fee
     }
 

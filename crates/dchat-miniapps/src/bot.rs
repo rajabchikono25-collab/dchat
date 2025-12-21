@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use uuid::Uuid;
 
 use crate::error::{MiniAppError, MiniAppResult};
@@ -125,6 +126,7 @@ impl BotIdentity {
 }
 
 /// Bot authentication token
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotAuthToken {
     /// Token ID
@@ -139,7 +141,8 @@ pub struct BotAuthToken {
     pub issued_at: DateTime<Utc>,
     /// Expiry timestamp
     pub expires_at: DateTime<Utc>,
-    /// Signature
+    /// Signature (Ed25519 64-byte signature)
+    #[serde_as(as = "Bytes")]
     pub signature: [u8; 64],
 }
 
