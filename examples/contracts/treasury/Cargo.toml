@@ -1,0 +1,24 @@
+[package]
+name = "treasury-contract"
+version = "0.1.0"
+edition = "2021"
+description = "Full-featured treasury contract demonstrating all dchat program components"
+
+# Exclude from workspace - standalone contract
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Link-time optimization
+codegen-units = 1 # Single codegen unit
+panic = "abort"   # No unwinding
+strip = true      # Strip symbols
+
+[dependencies]
+# Minimal dependencies for contract
+
+[features]
+default = []

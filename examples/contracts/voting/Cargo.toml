@@ -1,0 +1,25 @@
+[package]
+name = "voting-contract"
+version = "0.1.0"
+edition = "2021"
+description = "Voting contract demonstrating DAO governance and proposal management"
+
+# Exclude from workspace - standalone contract
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Link-time optimization
+codegen-units = 1 # Single codegen unit
+panic = "abort"   # No unwinding
+strip = true      # Strip symbols
+
+[dependencies]
+# No external dependencies - pure WASM to demonstrate how WASM handles
+# complex logic without external crates
+
+[features]
+default = []

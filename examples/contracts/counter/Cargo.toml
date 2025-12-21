@@ -1,0 +1,24 @@
+[package]
+name = "counter-contract"
+version = "0.1.0"
+edition = "2021"
+description = "Simple counter contract example for dchat"
+
+# Exclude from workspace - standalone contract
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Link-time optimization
+codegen-units = 1 # Single codegen unit for smaller binaries
+panic = "abort"   # No unwinding, saves space
+strip = true      # Strip symbols
+
+[dependencies]
+# Minimal dependencies for a contract
+
+[features]
+default = []

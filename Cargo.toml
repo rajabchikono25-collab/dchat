@@ -25,6 +25,11 @@ members = [
   "crates/dchat-programs",
   "crates/dchat-miniapps",
 ]
+exclude = [
+  "examples/contracts/counter",
+  "examples/contracts/treasury",
+  "examples/contracts/voting",
+]
 resolver = "2"
 
 [workspace.package]
@@ -72,6 +77,9 @@ dchat-sdk-rust = { path = "crates/dchat-sdk-rust" }
 dchat-programs = { path = "crates/dchat-programs" }
 dchat-miniapps = { path = "crates/dchat-miniapps" }
 dchat-deployment = { path = "crates/dchat-deployment", optional = true }
+
+# WASM runtime for smart contract validation
+wasmi = "0.40"
 
 tokio = { version = "1.40", features = ["full"] }
 tracing = "0.1"
