@@ -32,6 +32,21 @@
 #![warn(clippy::all)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// DCHAT PROGRAM LANGUAGE V1 - CORE MODULES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Canonical binary ABI shared by host and guest (source of truth)
+pub mod abi;
+/// Guest-side SDK for contract authoring (wasm32-unknown-unknown)
+pub mod guest;
+/// Host-side copy-out commit with invariant enforcement
+pub mod host_commit;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXISTING MODULES
+// ═══════════════════════════════════════════════════════════════════════════════
+
 pub mod account;
 pub mod capability;
 pub mod cpi;
