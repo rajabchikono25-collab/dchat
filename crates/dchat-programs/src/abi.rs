@@ -58,8 +58,8 @@ pub const MAX_ACCOUNT_DATA_SIZE: u32 = 10 * 1024 * 1024;
 /// Maximum accounts per blob
 pub const MAX_ACCOUNTS: u16 = 256;
 
-/// Fixed TOC entry size in bytes
-pub const TOC_ENTRY_SIZE: usize = 89;
+/// Fixed TOC entry size in bytes (32+32+8+4+4+1+1+1+8 = 91)
+pub const TOC_ENTRY_SIZE: usize = 91;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // INSTRUCTION ENVELOPE
