@@ -7,7 +7,9 @@ use std::time::Instant;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-use crate::account::{Account, AccountAccessTracker, AccountInfo, AccountMeta, Pubkey};
+use crate::account::{
+    Account, AccountAccessTracker, AccountData, AccountInfo, AccountMeta, AccountState, Pubkey,
+};
 use crate::cpi::{CpiContext, CpiResult, CrossProgramInvocation};
 use crate::error::{ProgramError, ProgramResult};
 use crate::events::{
@@ -19,6 +21,183 @@ use crate::scheduler::{ExecutionBatch, ParallelScheduler, ScheduledTransaction};
 use crate::syscalls::{SyscallContext, SyscallRegistry, SyscallResult};
 use crate::validation::{BytecodeValidator, ValidationConfig};
 use crate::vm::{DeterministicVm, VmConfig, VmInstance};
+
+/// Execution statistics for monitoring and profiling
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExecutionStats {
+    /// Total instructions executed
+    pub instructions_executed: u64,
+    /// Total compute units consumed
+    pub compute_consumed: u64,
+    /// Total CPI invocations
+    pub cpi_count: u64,
+    /// Events emitted
+    pub events_emitted: u64,
+    /// Logs written
+    pub logs_written: u64,
+    /// Accounts modified
+    pub accounts_modified: u64,
+    /// Total execution time in microseconds
+    pub execution_time_us: u64,
+}
+
+impl ExecutionStats {
+    /// Record a CPI result
+    pub fn record_cpi(&mut self, result: &CpiResult) {
+        self.cpi_count += 1;
+        self.compute_consumed += result.compute_consumed;
+    }
+
+    /// Record events and logs
+    pub fn record_events(&mut self, events: &[ProgramEvent], logs: &[LogEntry]) {
+        self.events_emitted += events.len() as u64;
+        self.logs_written += logs.len() as u64;
+    }
+
+    /// Record account modifications
+    pub fn record_deltas(&mut self, deltas: &[AccountDelta]) {
+        self.accounts_modified += deltas.len() as u64;
+    }
+
+    /// Record execution timing
+    pub fn record_timing(&mut self, start: Instant) {
+        self.execution_time_us = start.elapsed().as_micros() as u64;
+    }
+}
+
+/// Context wrapper for CPI operations
+pub struct CpiExecutor<'a, 'b> {
+    /// The CPI context
+    pub ctx: CpiContext<'a, 'b>,
+}
+
+impl<'a, 'b> CpiExecutor<'a, 'b> {
+    /// Execute a CPI and track the result
+    pub fn invoke(
+        &mut self,
+        instruction: &Instruction,
+        stats: &mut ExecutionStats,
+    ) -> ProgramResult<SyscallResult> {
+        let result = CrossProgramInvocation::invoke(&mut self.ctx, instruction)?;
+        stats.record_cpi(&result);
+        Ok(SyscallResult::OkBytes(result.return_data))
+    }
+}
+
+/// Execution batch processor using parallel scheduler
+pub struct BatchProcessor {
+    /// Parallel scheduler
+    pub scheduler: ParallelScheduler,
+    /// Pending transactions
+    pub pending: Vec<ScheduledTransaction>,
+}
+
+impl BatchProcessor {
+    /// Create a new batch processor
+    pub fn new(scheduler: ParallelScheduler) -> Self {
+        Self {
+            scheduler,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Add a transaction to the batch
+    pub fn add(&mut self, tx: ScheduledTransaction) {
+        self.pending.push(tx);
+    }
+
+    /// Build an execution batch from pending transactions
+    pub fn build_batch(&mut self, batch_id: u64) -> ExecutionBatch {
+        let transactions = std::mem::take(&mut self.pending);
+        let total_priority = transactions.iter().map(|t| t.priority as u64).sum();
+        ExecutionBatch {
+            id: batch_id,
+            transactions,
+            total_priority,
+        }
+    }
+}
+
+/// VM instance pool for reusing compiled modules
+pub struct VmInstancePool {
+    /// Pool of VM instances
+    instances: RwLock<Vec<VmInstance>>,
+    /// Maximum pool size
+    max_size: usize,
+}
+
+impl VmInstancePool {
+    /// Create a new pool
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            instances: RwLock::new(Vec::with_capacity(max_size)),
+            max_size,
+        }
+    }
+
+    /// Get an instance from the pool or create new
+    pub fn get_or_create(
+        &self,
+        bytecode: &[u8],
+        bytecode_info: crate::validation::ValidatedBytecode,
+        config: VmConfig,
+    ) -> ProgramResult<VmInstance> {
+        // Try to get from pool
+        if let Some(instance) = self.instances.write().pop() {
+            return Ok(instance);
+        }
+        // Create new instance
+        VmInstance::new(bytecode, bytecode_info, config)
+    }
+
+    /// Return an instance to the pool
+    pub fn return_instance(&self, instance: VmInstance) {
+        let mut pool = self.instances.write();
+        if pool.len() < self.max_size {
+            pool.push(instance);
+        }
+    }
+}
+
+/// Validation helper using bytecode validator
+pub fn validate_program_bytecode(
+    bytecode: &[u8],
+    _config: &ValidationConfig,
+) -> ProgramResult<crate::validation::ValidatedBytecode> {
+    let validator = BytecodeValidator::new();
+    validator
+        .validate(bytecode)
+        .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))
+}
+
+/// Get account info from account for CPI - creates a simplified read-only view
+/// Note: For full mutable access, use the proper AccountInfo construction with RefCells
+pub fn account_to_read_only_key(account: &Account) -> Pubkey {
+    account.owner
+}
+
+/// Build account metas from instruction for loading
+pub fn collect_account_metas(instructions: &[Instruction]) -> Vec<AccountMeta> {
+    instructions
+        .iter()
+        .flat_map(|ix| ix.accounts.iter().cloned())
+        .collect()
+}
+
+/// Create a compute budget from defaults
+pub fn default_compute_budget() -> ComputeBudget {
+    ComputeBudget::default()
+}
+
+/// Create return data from bytes
+pub fn create_return_data(program_id: Pubkey, data: Vec<u8>) -> ReturnData {
+    ReturnData { program_id, data }
+}
+
+/// Create a deterministic VM with default config
+pub fn create_default_vm() -> DeterministicVm {
+    DeterministicVm::new(VmConfig::default())
+}
 
 /// Program cache entry
 #[derive(Debug, Clone)]
@@ -354,8 +533,7 @@ impl ProgramRuntime {
         }
 
         // Execute program
-        let result =
-            self.invoke_program(ctx, &instruction.program_id, &program.bytecode, instruction)?;
+        self.invoke_program(ctx, &instruction.program_id, &program.bytecode, instruction)?;
 
         // Record program invocation
         ctx.instructions_executed.push(instruction.program_id);
@@ -788,10 +966,11 @@ mod tests {
         let account = Account {
             key: pubkey,
             lamports: 1000,
-            data: vec![1, 2, 3],
+            data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([2u8; 32]),
             executable: false,
             rent_epoch: 0,
+            state: AccountState::Initialized,
         };
 
         bank.store(pubkey, account.clone());
@@ -864,10 +1043,11 @@ mod tests {
         let account = Account {
             key: pubkey,
             lamports: 1000,
-            data: vec![1, 2, 3],
+            data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([3u8; 32]),
             executable: false,
             rent_epoch: 0,
+            state: AccountState::Initialized,
         };
 
         ctx.snapshots.insert(pubkey, account.clone());
@@ -903,10 +1083,11 @@ mod tests {
         let original = Account {
             key: pubkey,
             lamports: 1000,
-            data: vec![1, 2, 3],
+            data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([3u8; 32]),
             executable: false,
             rent_epoch: 0,
+            state: AccountState::Initialized,
         };
 
         ctx.snapshots.insert(pubkey, original.clone());

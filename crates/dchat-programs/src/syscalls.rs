@@ -10,6 +10,46 @@ use crate::error::{ProgramError, ProgramResult};
 use crate::events::EventCollector;
 use crate::metering::ComputeMeter;
 
+/// Syscall execution result with serializable data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyscallOutput {
+    /// Whether syscall succeeded
+    pub success: bool,
+    /// Output data (if any)
+    pub data: Vec<u8>,
+    /// Compute units consumed
+    pub compute_consumed: u64,
+}
+
+impl SyscallOutput {
+    /// Create successful output
+    pub fn success(data: Vec<u8>, compute: u64) -> Self {
+        Self {
+            success: true,
+            data,
+            compute_consumed: compute,
+        }
+    }
+
+    /// Create failed output
+    pub fn failure(compute: u64) -> Self {
+        Self {
+            success: false,
+            data: Vec::new(),
+            compute_consumed: compute,
+        }
+    }
+}
+
+/// Validate syscall arguments and return detailed result
+pub fn validate_syscall_args(syscall: SyscallId, args: &[u64]) -> ProgramResult<()> {
+    let expected_args = syscall.expected_arg_count();
+    if args.len() != expected_args {
+        return Err(ProgramError::InvalidArgument);
+    }
+    Ok(())
+}
+
 /// Syscall identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SyscallId(pub u32);
@@ -80,6 +120,22 @@ impl SyscallId {
     // Allocator
     /// Heap allocation and deallocation
     pub const SOL_ALLOC_FREE: Self = Self(60);
+
+    /// Get expected argument count for a syscall
+    pub fn expected_arg_count(&self) -> usize {
+        match self.0 {
+            0..=4 => 2,   // Logging syscalls: ptr, len
+            10..=15 => 3, // Crypto syscalls: input ptr, input len, output ptr
+            20..=23 => 3, // Memory syscalls: dest, src/val, len
+            30..=31 => 4, // PDA syscalls: seeds ptr, seeds len, program_id, bump
+            32..=34 => 1, // Sysvar syscalls: output ptr
+            40 => 5, // Invoke signed: instruction ptr, accounts ptr, accounts len, seeds ptr, seeds len
+            41..=42 => 2, // Return data: ptr, len
+            50..=51 => 1, // Stack inspection: output ptr
+            60 => 2, // Alloc/free: size, ptr
+            _ => 0,
+        }
+    }
 }
 
 /// Syscall cost in compute units

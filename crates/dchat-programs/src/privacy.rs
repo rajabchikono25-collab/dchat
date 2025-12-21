@@ -1,12 +1,34 @@
 //! Privacy-preserving accounts with encrypted balances and selective disclosure
+//!
+//! This module implements confidential transaction primitives using Pedersen commitments
+//! and sigma protocols for zero-knowledge proofs of balance conservation.
 
 use std::collections::HashMap;
 
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::Identity;
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
+use sha2::{Digest, Sha512};
 
 use crate::account::Pubkey;
 use crate::error::{ProgramError, ProgramResult};
+
+/// Generator point G for Pedersen commitments (value component)
+/// Using the Ristretto basepoint
+const PEDERSEN_G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
+
+/// Generator point H for Pedersen commitments (blinding component)
+/// Derived deterministically from G using hash-to-curve
+fn pedersen_h() -> RistrettoPoint {
+    // Hash "dchat-pedersen-h-generator" to create an independent generator
+    let mut hasher = Sha512::new();
+    hasher.update(b"dchat-pedersen-h-generator-v1");
+    let hash_bytes: [u8; 64] = hasher.finalize().into();
+    RistrettoPoint::from_uniform_bytes(&hash_bytes)
+}
 
 /// Encrypted balance using Pedersen commitments
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,11 +108,21 @@ impl RangeProof {
 }
 
 /// Zero-knowledge proof for balance equality/transfer
+///
+/// Uses sigma protocols on Ristretto points for proving balance conservation.
+/// For a transfer: Σ C_input = Σ C_output (sum of input commitments equals sum of outputs)
+///
+/// Proof structure (96 bytes total):
+/// - bytes 0..32: Schnorr commitment R = k*H (compressed Ristretto point)
+/// - bytes 32..64: Challenge e = H(C_diff || R || context) (Scalar)
+/// - bytes 64..96: Response s = k + e*r_diff (Scalar)
+///
+/// Verification: s*H == R + e*C_diff
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceProof {
     /// Proof type
     pub proof_type: BalanceProofType,
-    /// Proof data
+    /// Proof data - sigma protocol proof (96 bytes for Sum type)
     pub proof_data: Vec<u8>,
 }
 
@@ -99,13 +131,20 @@ pub struct BalanceProof {
 pub enum BalanceProofType {
     /// Proves two commitments represent the same value
     Equality,
-    /// Proves C1 + C2 = C3 (for transfers)
+    /// Proves Σ C_in = Σ C_out (for transfers)
     Sum,
     /// Proves C1 - C2 = C3 (for transfers with change)
     Difference,
     /// Proves value equals a public amount (for deposits)
     PublicValue,
 }
+
+/// Size of a compressed Ristretto point
+const POINT_SIZE: usize = 32;
+/// Size of a Scalar
+const SCALAR_SIZE: usize = 32;
+/// Total proof size for Sum proofs (R + e + s)
+const SUM_PROOF_SIZE: usize = POINT_SIZE + SCALAR_SIZE + SCALAR_SIZE;
 
 impl BalanceProof {
     /// Create new balance proof
@@ -116,7 +155,77 @@ impl BalanceProof {
         }
     }
 
-    /// Verify sum proof: C_in - C_out = 0
+    /// Create a Sum proof that Σ C_input = Σ C_output
+    ///
+    /// The prover knows r_diff = Σ r_input - Σ r_output (the difference of blinding factors)
+    /// such that C_diff = Σ C_input - Σ C_output = r_diff * H (commits to zero value)
+    ///
+    /// # Arguments
+    /// * `input_commitments` - Compressed Ristretto points for input commitments
+    /// * `output_commitments` - Compressed Ristretto points for output commitments
+    /// * `blinding_diff` - The difference of blinding factors (r_in - r_out)
+    pub fn create_sum_proof(
+        input_commitments: &[[u8; 32]],
+        output_commitments: &[[u8; 32]],
+        blinding_diff: &Scalar,
+    ) -> ProgramResult<Self> {
+        if input_commitments.is_empty() || output_commitments.is_empty() {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
+
+        // Compute C_diff = Σ C_input - Σ C_output
+        let c_diff = Self::compute_commitment_diff(input_commitments, output_commitments)?;
+        let h = pedersen_h();
+
+        // Generate random nonce k for the proof
+        let mut k_bytes = [0u8; 64];
+        // Deterministic but unpredictable: hash the blinding and commitments
+        let mut hasher = Sha512::new();
+        hasher.update(b"dchat-balance-proof-nonce");
+        hasher.update(blinding_diff.as_bytes());
+        for c in input_commitments {
+            hasher.update(c);
+        }
+        for c in output_commitments {
+            hasher.update(c);
+        }
+        k_bytes.copy_from_slice(&hasher.finalize());
+        let k = Scalar::from_bytes_mod_order_wide(&k_bytes);
+
+        // R = k * H
+        let r_point = k * h;
+        let r_compressed = r_point.compress();
+
+        // Challenge e = H(C_diff || R || "dchat-sum-proof")
+        let mut challenge_hasher = Sha512::new();
+        challenge_hasher.update(c_diff.compress().as_bytes());
+        challenge_hasher.update(r_compressed.as_bytes());
+        challenge_hasher.update(b"dchat-sum-proof-v1");
+        let mut challenge_bytes = [0u8; 64];
+        challenge_bytes.copy_from_slice(&challenge_hasher.finalize());
+        let e = Scalar::from_bytes_mod_order_wide(&challenge_bytes);
+
+        // Response s = k + e * r_diff
+        let s = k + e * blinding_diff;
+
+        // Serialize proof: R (32) || e (32) || s (32)
+        let mut proof_data = Vec::with_capacity(SUM_PROOF_SIZE);
+        proof_data.extend_from_slice(r_compressed.as_bytes());
+        proof_data.extend_from_slice(e.as_bytes());
+        proof_data.extend_from_slice(s.as_bytes());
+
+        Ok(Self {
+            proof_type: BalanceProofType::Sum,
+            proof_data,
+        })
+    }
+
+    /// Verify sum proof: Σ C_input = Σ C_output using sigma protocol
+    ///
+    /// Verifies that the prover knows r_diff such that:
+    /// C_diff = Σ C_input - Σ C_output = r_diff * H
+    ///
+    /// This proves the values sum to zero (balance is conserved) without revealing values.
     pub fn verify_transfer(
         &self,
         input_commitments: &[[u8; 32]],
@@ -126,10 +235,111 @@ impl BalanceProof {
             return Err(ProgramError::InvalidBalanceProof);
         }
 
-        // In production: verify using sigma protocol
-        // Σ inputs = Σ outputs
+        // Validate commitment counts
+        if input_commitments.is_empty() || output_commitments.is_empty() {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
+
+        // Validate proof size
+        if self.proof_data.len() != SUM_PROOF_SIZE {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
+
+        // Parse proof components
+        let r_bytes: [u8; 32] = self.proof_data[0..32]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidBalanceProof)?;
+        let e_bytes: [u8; 32] = self.proof_data[32..64]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidBalanceProof)?;
+        let s_bytes: [u8; 32] = self.proof_data[64..96]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidBalanceProof)?;
+
+        // Decompress R point
+        let r_compressed = CompressedRistretto::from_slice(&r_bytes)
+            .map_err(|_| ProgramError::InvalidBalanceProof)?;
+        let r_point = r_compressed
+            .decompress()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        // Parse scalars - use canonical decoding to prevent malleability
+        let e = Scalar::from_canonical_bytes(e_bytes)
+            .into_option()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+        let s = Scalar::from_canonical_bytes(s_bytes)
+            .into_option()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        // Compute C_diff = Σ C_input - Σ C_output
+        let c_diff = Self::compute_commitment_diff(input_commitments, output_commitments)?;
+
+        // Recompute challenge to verify Fiat-Shamir
+        let mut challenge_hasher = Sha512::new();
+        challenge_hasher.update(c_diff.compress().as_bytes());
+        challenge_hasher.update(r_compressed.as_bytes());
+        challenge_hasher.update(b"dchat-sum-proof-v1");
+        let mut expected_challenge_bytes = [0u8; 64];
+        expected_challenge_bytes.copy_from_slice(&challenge_hasher.finalize());
+        let expected_e = Scalar::from_bytes_mod_order_wide(&expected_challenge_bytes);
+
+        // Verify challenge matches (Fiat-Shamir binding)
+        if e != expected_e {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
+
+        // Verify Schnorr equation: s*H == R + e*C_diff
+        let h = pedersen_h();
+        let lhs = s * h;
+        let rhs = r_point + e * c_diff;
+
+        if lhs != rhs {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
 
         Ok(())
+    }
+
+    /// Compute C_diff = Σ C_input - Σ C_output as a Ristretto point
+    fn compute_commitment_diff(
+        input_commitments: &[[u8; 32]],
+        output_commitments: &[[u8; 32]],
+    ) -> ProgramResult<RistrettoPoint> {
+        // Sum input commitments
+        let mut input_sum = RistrettoPoint::identity();
+        for commitment_bytes in input_commitments {
+            let compressed = CompressedRistretto::from_slice(commitment_bytes)
+                .map_err(|_| ProgramError::InvalidBalanceProof)?;
+            let point = compressed
+                .decompress()
+                .ok_or(ProgramError::InvalidBalanceProof)?;
+            input_sum += point;
+        }
+
+        // Sum output commitments
+        let mut output_sum = RistrettoPoint::identity();
+        for commitment_bytes in output_commitments {
+            let compressed = CompressedRistretto::from_slice(commitment_bytes)
+                .map_err(|_| ProgramError::InvalidBalanceProof)?;
+            let point = compressed
+                .decompress()
+                .ok_or(ProgramError::InvalidBalanceProof)?;
+            output_sum += point;
+        }
+
+        // C_diff = input_sum - output_sum
+        Ok(input_sum - output_sum)
+    }
+
+    /// Verify equality proof: two commitments represent the same value
+    pub fn verify_equality(&self, c1: &[u8; 32], c2: &[u8; 32]) -> ProgramResult<()> {
+        if self.proof_type != BalanceProofType::Equality {
+            return Err(ProgramError::InvalidBalanceProof);
+        }
+
+        // For equality, we verify that C1 - C2 commits to zero
+        // This reuses the sum proof verification logic
+        self.verify_transfer(&[*c1], &[*c2])
     }
 }
 
@@ -486,39 +696,112 @@ impl StealthAddresses {
     }
 }
 
-/// Commitment scheme for encrypted values
+/// Commitment scheme for encrypted values using Pedersen commitments on Ristretto
+///
+/// A Pedersen commitment C = v*G + r*H where:
+/// - v is the value being committed to
+/// - r is a random blinding factor
+/// - G and H are independent generator points
+///
+/// Properties:
+/// - Hiding: Without knowing r, the value v is information-theoretically hidden
+/// - Binding: Cannot open commitment to different value (computationally binding)
+/// - Homomorphic: C(v1, r1) + C(v2, r2) = C(v1+v2, r1+r2)
 pub struct CommitmentScheme;
 
 impl CommitmentScheme {
-    /// Create Pedersen commitment: C = vG + rH
+    /// Create Pedersen commitment: C = v*G + r*H
+    ///
+    /// Returns the compressed Ristretto point as 32 bytes
     pub fn commit(value: u64, blinding: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&value.to_le_bytes());
-        hasher.update(blinding);
-        hasher.finalize().into()
+        let v = Scalar::from(value);
+
+        // Convert blinding bytes to scalar (clamp to valid scalar range)
+        let r = Scalar::from_bytes_mod_order(*blinding);
+
+        let g = PEDERSEN_G;
+        let h = pedersen_h();
+
+        // C = v*G + r*H
+        let commitment = v * g + r * h;
+        commitment.compress().to_bytes()
     }
 
-    /// Verify commitment
+    /// Create commitment with explicit Scalar blinding factor
+    pub fn commit_with_scalar(value: u64, blinding: &Scalar) -> [u8; 32] {
+        let v = Scalar::from(value);
+        let g = PEDERSEN_G;
+        let h = pedersen_h();
+
+        let commitment = v * g + *blinding * h;
+        commitment.compress().to_bytes()
+    }
+
+    /// Generate a random blinding factor
+    pub fn random_blinding() -> Scalar {
+        let mut bytes = [0u8; 64];
+        // Use blake3 with random seed for deterministic test, real random in production
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&rand::random::<[u8; 32]>());
+        hasher.update(b"dchat-blinding-factor");
+        let hash = hasher.finalize();
+        bytes[0..32].copy_from_slice(hash.as_bytes());
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    }
+
+    /// Verify commitment opens to given value with given blinding
     pub fn verify_commitment(commitment: &[u8; 32], value: u64, blinding: &[u8; 32]) -> bool {
         let expected = Self::commit(value, blinding);
         commitment == &expected
     }
 
-    /// Add commitments homomorphically
-    pub fn add_commitments(c1: &[u8; 32], c2: &[u8; 32]) -> [u8; 32] {
-        // In real implementation: point addition on curve
-        // For now: simple XOR (placeholder for actual curve ops)
-        let mut result = [0u8; 32];
-        for i in 0..32 {
-            result[i] = c1[i] ^ c2[i];
-        }
-        result
+    /// Verify commitment with Scalar blinding
+    pub fn verify_commitment_scalar(commitment: &[u8; 32], value: u64, blinding: &Scalar) -> bool {
+        let expected = Self::commit_with_scalar(value, blinding);
+        commitment == &expected
     }
 
-    /// Subtract commitments homomorphically
-    pub fn subtract_commitments(c1: &[u8; 32], c2: &[u8; 32]) -> [u8; 32] {
-        // In real implementation: point subtraction on curve
-        Self::add_commitments(c1, c2) // XOR is self-inverse
+    /// Add commitments homomorphically: C(v1+v2, r1+r2) = C1 + C2
+    ///
+    /// This is the key property enabling confidential transactions:
+    /// we can verify sums without knowing individual values.
+    pub fn add_commitments(c1: &[u8; 32], c2: &[u8; 32]) -> ProgramResult<[u8; 32]> {
+        let p1 = CompressedRistretto::from_slice(c1)
+            .map_err(|_| ProgramError::InvalidBalanceProof)?
+            .decompress()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        let p2 = CompressedRistretto::from_slice(c2)
+            .map_err(|_| ProgramError::InvalidBalanceProof)?
+            .decompress()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        Ok((p1 + p2).compress().to_bytes())
+    }
+
+    /// Subtract commitments homomorphically: C(v1-v2, r1-r2) = C1 - C2
+    pub fn subtract_commitments(c1: &[u8; 32], c2: &[u8; 32]) -> ProgramResult<[u8; 32]> {
+        let p1 = CompressedRistretto::from_slice(c1)
+            .map_err(|_| ProgramError::InvalidBalanceProof)?
+            .decompress()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        let p2 = CompressedRistretto::from_slice(c2)
+            .map_err(|_| ProgramError::InvalidBalanceProof)?
+            .decompress()
+            .ok_or(ProgramError::InvalidBalanceProof)?;
+
+        Ok((p1 - p2).compress().to_bytes())
+    }
+
+    /// Add blinding factors (for computing r_diff = Σ r_in - Σ r_out)
+    pub fn add_blindings(blindings: &[Scalar]) -> Scalar {
+        blindings.iter().fold(Scalar::ZERO, |acc, b| acc + b)
+    }
+
+    /// Subtract blinding factors
+    pub fn subtract_blindings(r1: &Scalar, r2: &Scalar) -> Scalar {
+        r1 - r2
     }
 }
 
@@ -588,6 +871,191 @@ mod tests {
             999,
             &blinding
         ));
+    }
+
+    #[test]
+    fn test_commitment_homomorphic_addition() {
+        // C(v1, r1) + C(v2, r2) should equal C(v1+v2, r1+r2)
+        let v1 = 100u64;
+        let v2 = 200u64;
+        let r1 = Scalar::from(12345u64);
+        let r2 = Scalar::from(67890u64);
+
+        let c1 = CommitmentScheme::commit_with_scalar(v1, &r1);
+        let c2 = CommitmentScheme::commit_with_scalar(v2, &r2);
+
+        let c_sum = CommitmentScheme::add_commitments(&c1, &c2).unwrap();
+        let c_direct = CommitmentScheme::commit_with_scalar(v1 + v2, &(r1 + r2));
+
+        assert_eq!(c_sum, c_direct);
+    }
+
+    #[test]
+    fn test_commitment_homomorphic_subtraction() {
+        let v1 = 500u64;
+        let v2 = 200u64;
+        let r1 = Scalar::from(11111u64);
+        let r2 = Scalar::from(22222u64);
+
+        let c1 = CommitmentScheme::commit_with_scalar(v1, &r1);
+        let c2 = CommitmentScheme::commit_with_scalar(v2, &r2);
+
+        let c_diff = CommitmentScheme::subtract_commitments(&c1, &c2).unwrap();
+        let c_direct = CommitmentScheme::commit_with_scalar(v1 - v2, &(r1 - r2));
+
+        assert_eq!(c_diff, c_direct);
+    }
+
+    #[test]
+    fn test_balance_proof_simple_transfer() {
+        // Simulate a transfer: 100 tokens from input to output
+        // Input: balance 100, Output: balance 100 (same value, different blinding)
+        let input_value = 100u64;
+        let output_value = 100u64;
+        let r_in = Scalar::from(123456789u64);
+        let r_out = Scalar::from(987654321u64);
+
+        let c_in = CommitmentScheme::commit_with_scalar(input_value, &r_in);
+        let c_out = CommitmentScheme::commit_with_scalar(output_value, &r_out);
+
+        // r_diff = r_in - r_out (prover knows this)
+        let r_diff = r_in - r_out;
+
+        // Create proof
+        let proof = BalanceProof::create_sum_proof(&[c_in], &[c_out], &r_diff).unwrap();
+
+        // Verify proof
+        assert!(proof.verify_transfer(&[c_in], &[c_out]).is_ok());
+    }
+
+    #[test]
+    fn test_balance_proof_multi_input_output() {
+        // Transfer with multiple inputs and outputs
+        // Inputs: 30 + 50 + 20 = 100
+        // Outputs: 45 + 55 = 100
+        let in_vals = [30u64, 50u64, 20u64];
+        let out_vals = [45u64, 55u64];
+
+        let r_ins: Vec<Scalar> = (0..3).map(|i| Scalar::from((i + 1) * 11111u64)).collect();
+        let r_outs: Vec<Scalar> = (0..2).map(|i| Scalar::from((i + 1) * 22222u64)).collect();
+
+        let c_ins: Vec<[u8; 32]> = in_vals
+            .iter()
+            .zip(&r_ins)
+            .map(|(v, r)| CommitmentScheme::commit_with_scalar(*v, r))
+            .collect();
+
+        let c_outs: Vec<[u8; 32]> = out_vals
+            .iter()
+            .zip(&r_outs)
+            .map(|(v, r)| CommitmentScheme::commit_with_scalar(*v, r))
+            .collect();
+
+        // r_diff = Σ r_in - Σ r_out
+        let r_in_sum = CommitmentScheme::add_blindings(&r_ins);
+        let r_out_sum = CommitmentScheme::add_blindings(&r_outs);
+        let r_diff = CommitmentScheme::subtract_blindings(&r_in_sum, &r_out_sum);
+
+        let proof = BalanceProof::create_sum_proof(&c_ins, &c_outs, &r_diff).unwrap();
+        assert!(proof.verify_transfer(&c_ins, &c_outs).is_ok());
+    }
+
+    #[test]
+    fn test_balance_proof_invalid_when_values_differ() {
+        // Input: 100, Output: 99 (mismatch - should fail)
+        let input_value = 100u64;
+        let output_value = 99u64; // Different!
+        let r_in = Scalar::from(111u64);
+        let r_out = Scalar::from(222u64);
+
+        let c_in = CommitmentScheme::commit_with_scalar(input_value, &r_in);
+        let c_out = CommitmentScheme::commit_with_scalar(output_value, &r_out);
+
+        // Even with "correct" r_diff for matching values, the proof will fail
+        // because C_diff won't be on the H curve
+        let r_diff = r_in - r_out;
+
+        let proof = BalanceProof::create_sum_proof(&[c_in], &[c_out], &r_diff).unwrap();
+
+        // This should FAIL because values don't match
+        assert!(proof.verify_transfer(&[c_in], &[c_out]).is_err());
+    }
+
+    #[test]
+    fn test_balance_proof_wrong_blinding_fails() {
+        // Correct values but wrong blinding factor in proof
+        let input_value = 100u64;
+        let output_value = 100u64;
+        let r_in = Scalar::from(111u64);
+        let r_out = Scalar::from(222u64);
+
+        let c_in = CommitmentScheme::commit_with_scalar(input_value, &r_in);
+        let c_out = CommitmentScheme::commit_with_scalar(output_value, &r_out);
+
+        // Wrong r_diff
+        let wrong_r_diff = Scalar::from(999999u64);
+
+        let proof = BalanceProof::create_sum_proof(&[c_in], &[c_out], &wrong_r_diff).unwrap();
+
+        // Should fail verification
+        assert!(proof.verify_transfer(&[c_in], &[c_out]).is_err());
+    }
+
+    #[test]
+    fn test_balance_proof_determinism() {
+        // Same inputs should produce same proof
+        let input_value = 50u64;
+        let output_value = 50u64;
+        let r_in = Scalar::from(12345u64);
+        let r_out = Scalar::from(54321u64);
+
+        let c_in = CommitmentScheme::commit_with_scalar(input_value, &r_in);
+        let c_out = CommitmentScheme::commit_with_scalar(output_value, &r_out);
+        let r_diff = r_in - r_out;
+
+        let proof1 = BalanceProof::create_sum_proof(&[c_in], &[c_out], &r_diff).unwrap();
+        let proof2 = BalanceProof::create_sum_proof(&[c_in], &[c_out], &r_diff).unwrap();
+
+        // Proofs should be identical (deterministic)
+        assert_eq!(proof1.proof_data, proof2.proof_data);
+    }
+
+    #[test]
+    fn test_balance_proof_rejects_tampered_proof() {
+        let input_value = 100u64;
+        let output_value = 100u64;
+        let r_in = Scalar::from(111u64);
+        let r_out = Scalar::from(222u64);
+
+        let c_in = CommitmentScheme::commit_with_scalar(input_value, &r_in);
+        let c_out = CommitmentScheme::commit_with_scalar(output_value, &r_out);
+        let r_diff = r_in - r_out;
+
+        let mut proof = BalanceProof::create_sum_proof(&[c_in], &[c_out], &r_diff).unwrap();
+
+        // Tamper with the proof
+        proof.proof_data[50] ^= 0xFF;
+
+        // Should fail
+        assert!(proof.verify_transfer(&[c_in], &[c_out]).is_err());
+    }
+
+    #[test]
+    fn test_balance_proof_empty_inputs_rejected() {
+        let c_out = CommitmentScheme::commit_with_scalar(100, &Scalar::from(1u64));
+        let r_diff = Scalar::ZERO;
+
+        let result = BalanceProof::create_sum_proof(&[], &[c_out], &r_diff);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_balance_proof_empty_outputs_rejected() {
+        let c_in = CommitmentScheme::commit_with_scalar(100, &Scalar::from(1u64));
+        let r_diff = Scalar::ZERO;
+
+        let result = BalanceProof::create_sum_proof(&[c_in], &[], &r_diff);
+        assert!(result.is_err());
     }
 
     #[test]

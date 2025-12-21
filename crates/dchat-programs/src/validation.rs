@@ -7,6 +7,52 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ProgramError, ProgramResult};
 use crate::{MAX_PROGRAM_SIZE, PROTOCOL_VERSION};
 
+/// Validate a bytecode blob and return detailed results
+pub fn validate_bytecode_strict(bytecode: &[u8]) -> Result<ValidationReport, ValidationError> {
+    let validator = BytecodeValidator::new();
+    let validated = validator.validate(bytecode)?;
+    Ok(ValidationReport {
+        passed: true,
+        function_count: validated.function_count,
+        global_count: validated.global_count,
+        bytecode_size: validated.size,
+        warnings: Vec::new(),
+        errors: Vec::new(),
+    })
+}
+
+/// Quick validation check that returns error on first failure
+pub fn validate_bytecode_quick(bytecode: &[u8]) -> ProgramResult<()> {
+    if bytecode.is_empty() {
+        return Err(ProgramError::InvalidBytecode("Empty bytecode".into()));
+    }
+    if bytecode.len() > MAX_PROGRAM_SIZE {
+        return Err(ProgramError::InvalidBytecode(format!(
+            "Bytecode too large: {} > {}",
+            bytecode.len(),
+            MAX_PROGRAM_SIZE
+        )));
+    }
+    Ok(())
+}
+
+/// Validation report with detailed findings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationReport {
+    /// Whether validation passed
+    pub passed: bool,
+    /// Number of functions found
+    pub function_count: usize,
+    /// Number of globals found
+    pub global_count: usize,
+    /// Total bytecode size
+    pub bytecode_size: usize,
+    /// Warnings (non-fatal issues)
+    pub warnings: Vec<String>,
+    /// Errors (fatal issues)
+    pub errors: Vec<String>,
+}
+
 /// Maximum number of functions in a program
 pub const MAX_FUNCTIONS: usize = 10_000;
 

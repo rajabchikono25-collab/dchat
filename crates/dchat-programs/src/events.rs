@@ -7,6 +7,50 @@ use serde::{Deserialize, Serialize};
 use crate::account::Pubkey;
 use crate::error::ProgramError;
 
+/// Event index for fast lookups by discriminator and program
+#[derive(Debug, Default)]
+pub struct EventIndex {
+    /// Events indexed by discriminator
+    by_discriminator: HashMap<[u8; 8], Vec<EventId>>,
+    /// Events indexed by program ID
+    by_program: HashMap<Pubkey, Vec<EventId>>,
+}
+
+impl EventIndex {
+    /// Create a new empty event index
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Index an event for fast lookup
+    pub fn index_event(&mut self, event: &ProgramEvent) {
+        self.by_discriminator
+            .entry(event.discriminator)
+            .or_default()
+            .push(event.id);
+        self.by_program
+            .entry(event.program_id)
+            .or_default()
+            .push(event.id);
+    }
+
+    /// Find events by discriminator
+    pub fn find_by_discriminator(&self, discriminator: &[u8; 8]) -> &[EventId] {
+        self.by_discriminator
+            .get(discriminator)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Find events by program ID
+    pub fn find_by_program(&self, program_id: &Pubkey) -> &[EventId] {
+        self.by_program
+            .get(program_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
 /// Unique event identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EventId(pub [u8; 32]);

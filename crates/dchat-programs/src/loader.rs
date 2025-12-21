@@ -6,6 +6,65 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::account::{Account, AccountMeta, Pubkey};
+
+/// Deployment rate limiter to prevent spam deployments
+#[derive(Debug)]
+pub struct DeploymentRateLimiter {
+    /// Recent deployments by authority with timestamps
+    deployments: HashMap<Pubkey, Vec<u64>>,
+    /// Maximum deployments per window
+    max_per_window: usize,
+    /// Window duration
+    window: Duration,
+}
+
+impl DeploymentRateLimiter {
+    /// Create a new rate limiter
+    pub fn new(max_per_window: usize, window_seconds: u64) -> Self {
+        Self {
+            deployments: HashMap::new(),
+            max_per_window,
+            window: Duration::from_secs(window_seconds),
+        }
+    }
+
+    /// Check if deployment is allowed for authority
+    pub fn check_allowed(&mut self, authority: &Pubkey) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let window_start = now.saturating_sub(self.window.as_secs());
+
+        // Clean old entries and count recent
+        let recent = self.deployments.entry(*authority).or_default();
+        recent.retain(|&ts| ts >= window_start);
+
+        if recent.len() >= self.max_per_window {
+            return false;
+        }
+
+        recent.push(now);
+        true
+    }
+
+    /// Get remaining quota for authority
+    pub fn remaining_quota(&self, authority: &Pubkey) -> usize {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let window_start = now.saturating_sub(self.window.as_secs());
+
+        let count = self
+            .deployments
+            .get(authority)
+            .map(|v| v.iter().filter(|&&ts| ts >= window_start).count())
+            .unwrap_or(0);
+
+        self.max_per_window.saturating_sub(count)
+    }
+}
 use crate::error::{ProgramError, ProgramResult};
 use crate::instruction::Instruction;
 use crate::metering::ComputeMeter;

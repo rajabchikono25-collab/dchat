@@ -39,6 +39,43 @@ use crate::syscalls::SyscallRegistry;
 use crate::validation::ValidatedBytecode;
 use crate::{MAX_MEMORY_PAGES, MAX_STACK_DEPTH, MAX_TABLE_ELEMENTS, PROTOCOL_VERSION};
 
+/// Host function wrapper for syscall registration
+pub struct HostFunc {
+    /// The underlying wasmi Func
+    pub func: Option<Func>,
+    /// Function name for debugging
+    pub name: String,
+    /// Compute cost of this function
+    pub compute_cost: u64,
+}
+
+impl HostFunc {
+    /// Create a new host function wrapper
+    pub fn new(name: impl Into<String>, compute_cost: u64) -> Self {
+        Self {
+            func: None,
+            name: name.into(),
+            compute_cost,
+        }
+    }
+
+    /// Bind to an actual wasmi Func
+    pub fn bind(mut self, func: Func) -> Self {
+        self.func = Some(func);
+        self
+    }
+
+    /// Check if bound
+    pub fn is_bound(&self) -> bool {
+        self.func.is_some()
+    }
+}
+
+/// Create a compute budget from VM config
+pub fn compute_budget_from_config(config: &VmConfig) -> ComputeBudget {
+    ComputeBudget::new(config.initial_fuel)
+}
+
 /// VM configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmConfig {
@@ -85,6 +122,11 @@ impl VmMemory {
             memory_idx,
             max_pages,
         }
+    }
+
+    /// Get the memory instance index
+    pub fn memory_index(&self) -> u32 {
+        self.memory_idx
     }
 
     /// Get maximum pages

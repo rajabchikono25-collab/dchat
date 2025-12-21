@@ -5,6 +5,51 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::account::{Account, AccountMeta, Pubkey};
+
+/// Token account registry for tracking all token accounts by owner
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TokenAccountRegistry {
+    /// Token accounts by owner
+    by_owner: HashMap<Pubkey, Vec<Pubkey>>,
+    /// Token accounts by mint
+    by_mint: HashMap<Pubkey, Vec<Pubkey>>,
+}
+
+impl TokenAccountRegistry {
+    /// Create a new registry
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a token account
+    pub fn register(&mut self, account: Pubkey, owner: Pubkey, mint: Pubkey) {
+        self.by_owner.entry(owner).or_default().push(account);
+        self.by_mint.entry(mint).or_default().push(account);
+    }
+
+    /// Get all token accounts owned by a pubkey
+    pub fn get_by_owner(&self, owner: &Pubkey) -> &[Pubkey] {
+        self.by_owner
+            .get(owner)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get all token accounts for a mint
+    pub fn get_by_mint(&self, mint: &Pubkey) -> &[Pubkey] {
+        self.by_mint.get(mint).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Remove a token account from registry
+    pub fn unregister(&mut self, account: &Pubkey, owner: &Pubkey, mint: &Pubkey) {
+        if let Some(accounts) = self.by_owner.get_mut(owner) {
+            accounts.retain(|a| a != account);
+        }
+        if let Some(accounts) = self.by_mint.get_mut(mint) {
+            accounts.retain(|a| a != account);
+        }
+    }
+}
 use crate::error::{ProgramError, ProgramResult};
 use crate::instruction::Instruction;
 use crate::metering::ComputeMeter;
