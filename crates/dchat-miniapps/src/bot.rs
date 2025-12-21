@@ -728,12 +728,7 @@ mod tests {
 
     #[test]
     fn test_command_parse() {
-        let ctx = BotCommandContext::parse(
-            "/start hello world",
-            "user1".to_string(),
-            "channel1".to_string(),
-            "msg1".to_string(),
-        );
+        let ctx = BotCommandContext::parse("/start hello world", "user1", "channel1", "msg1");
 
         assert!(ctx.is_some());
         let ctx = ctx.unwrap();
@@ -744,12 +739,7 @@ mod tests {
 
     #[test]
     fn test_command_parse_no_args() {
-        let ctx = BotCommandContext::parse(
-            "/help",
-            "user1".to_string(),
-            "channel1".to_string(),
-            "msg1".to_string(),
-        );
+        let ctx = BotCommandContext::parse("/help", "user1", "channel1", "msg1");
 
         assert!(ctx.is_some());
         let ctx = ctx.unwrap();
@@ -759,12 +749,7 @@ mod tests {
 
     #[test]
     fn test_not_a_command() {
-        let ctx = BotCommandContext::parse(
-            "hello world",
-            "user1".to_string(),
-            "channel1".to_string(),
-            "msg1".to_string(),
-        );
+        let ctx = BotCommandContext::parse("hello world", "user1", "channel1", "msg1");
         assert!(ctx.is_none());
     }
 

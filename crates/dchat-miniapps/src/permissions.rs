@@ -299,9 +299,19 @@ impl PermissionSet {
         self.permissions.insert(permission);
     }
 
+    /// Add permission (alias for insert)
+    pub fn add(&mut self, permission: Permission) {
+        self.insert(permission);
+    }
+
     /// Remove permission
     pub fn remove(&mut self, permission: &Permission) -> bool {
         self.permissions.remove(permission)
+    }
+
+    /// Clear all permissions
+    pub fn clear(&mut self) {
+        self.permissions.clear();
     }
 
     /// Check if permission is in set
@@ -309,9 +319,19 @@ impl PermissionSet {
         self.permissions.contains(permission)
     }
 
+    /// Check if permission is in set (alias for contains)
+    pub fn has(&self, permission: &Permission) -> bool {
+        self.contains(permission)
+    }
+
     /// Get number of permissions
     pub fn len(&self) -> usize {
         self.permissions.len()
+    }
+
+    /// Get number of permissions (alias for len)
+    pub fn count(&self) -> usize {
+        self.len()
     }
 
     /// Check if empty
