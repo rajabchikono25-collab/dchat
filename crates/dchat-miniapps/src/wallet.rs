@@ -213,11 +213,15 @@ pub enum SignRequestType {
     Message,
     /// Sign intent (transaction)
     Intent,
-    /// Sign typed data
+    /// Sign typed data (EIP-712 style)
     TypedData {
+        /// Domain separator for typed data
         domain: TypedDataDomain,
+        /// Type definitions
         types: HashMap<String, Vec<TypedDataField>>,
+        /// Primary type name
         primary_type: String,
+        /// Actual message data
         message: serde_json::Value,
     },
 }
@@ -225,16 +229,22 @@ pub enum SignRequestType {
 /// Typed data domain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedDataDomain {
+    /// Application name
     pub name: String,
+    /// Version string
     pub version: String,
+    /// Chain identifier
     pub chain_id: String,
+    /// Contract address (optional)
     pub verifying_contract: Option<String>,
 }
 
 /// Typed data field
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedDataField {
+    /// Field name
     pub name: String,
+    /// Field type
     pub field_type: String,
 }
 
@@ -317,13 +327,15 @@ impl SignRequest {
 }
 
 /// Sign response
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignResponse {
     /// Request ID
     pub request_id: String,
     /// Success
     pub success: bool,
-    /// Signature (if successful)
+    /// Signature (Ed25519 64-byte signature, if successful)
+    #[serde_as(as = "Option<Bytes>")]
     pub signature: Option<[u8; 64]>,
     /// Error message (if failed)
     pub error: Option<String>,
@@ -574,7 +586,12 @@ impl WalletIntegration {
                 // Check intent type and amount
                 if let Some(intent) = &request.intent {
                     match &intent.intent_type {
-                        IntentType::Transfer { to: _, amount } => {
+                        IntentType::Transfer {
+                            recipient: _,
+                            mint: _,
+                            amount,
+                            memo: _,
+                        } => {
                             // Auto-approve small transfers
                             *amount <= *self.auto_approve_threshold.read()
                                 && connection.has_permission(&Permission::SendTokens)

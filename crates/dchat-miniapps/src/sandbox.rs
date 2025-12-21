@@ -198,21 +198,37 @@ pub enum SandboxMessage {
     // ─── Lifecycle ──────────────────────────────────────────────────────────
     /// Initialize sandbox
     Init {
+        /// Application ID
         app_id: String,
+        /// Configuration parameters
         config: serde_json::Value,
     },
     /// Sandbox ready
     Ready,
     /// Terminate sandbox
-    Terminate { reason: String },
+    Terminate {
+        /// Reason for termination
+        reason: String,
+    },
     /// Sandbox terminated
-    Terminated { code: i32 },
+    Terminated {
+        /// Exit code
+        code: i32,
+    },
 
     // ─── User Interface ─────────────────────────────────────────────────────
     /// Update viewport size
-    ViewportChange { width: u32, height: u32 },
+    ViewportChange {
+        /// Viewport width in pixels
+        width: u32,
+        /// Viewport height in pixels
+        height: u32,
+    },
     /// Theme changed
-    ThemeChange { theme: String },
+    ThemeChange {
+        /// New theme name (light, dark, etc.)
+        theme: String,
+    },
     /// Back button pressed
     BackButton,
     /// Settings button pressed  
@@ -222,39 +238,63 @@ pub enum SandboxMessage {
 
     // ─── Data ───────────────────────────────────────────────────────────────
     /// Send data to sandbox
-    SendData { payload: serde_json::Value },
+    SendData {
+        /// Data payload
+        payload: serde_json::Value,
+    },
     /// Receive data from sandbox
-    ReceiveData { payload: serde_json::Value },
+    ReceiveData {
+        /// Received data payload
+        payload: serde_json::Value,
+    },
 
     // ─── Requests ───────────────────────────────────────────────────────────
     /// Permission request
-    PermissionRequest { permissions: Vec<String> },
+    PermissionRequest {
+        /// Requested permission names
+        permissions: Vec<String>,
+    },
     /// Permission response
     PermissionResponse {
+        /// Granted permissions
         granted: Vec<String>,
+        /// Denied permissions
         denied: Vec<String>,
     },
     /// Invoke method
     InvokeMethod {
+        /// Method name
         method: String,
+        /// Method parameters
         params: serde_json::Value,
+        /// Request ID for correlation
         id: String,
     },
     /// Method result
     MethodResult {
+        /// Request ID this result correlates to
         id: String,
+        /// Result value
         result: serde_json::Value,
+        /// Error message if failed
         error: Option<String>,
     },
 
     // ─── Events ─────────────────────────────────────────────────────────────
     /// Custom event
     Event {
+        /// Event name
         name: String,
+        /// Event data
         data: serde_json::Value,
     },
     /// Error occurred
-    Error { code: u32, message: String },
+    Error {
+        /// Error code
+        code: u32,
+        /// Error message
+        message: String,
+    },
 }
 
 impl SandboxMessage {
@@ -481,10 +521,15 @@ impl SandboxInstance {
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 self.resources.record_cpu_time(elapsed_ms);
 
+                let (result_value, error_msg) = match result {
+                    Ok(val) => (val, None),
+                    Err(e) => (serde_json::Value::Null, Some(e.to_string())),
+                };
+
                 Ok(Some(SandboxMessage::MethodResult {
                     id,
-                    result: result.unwrap_or(serde_json::Value::Null),
-                    error: result.err().map(|e| e.to_string()),
+                    result: result_value,
+                    error: error_msg,
                 }))
             }
 

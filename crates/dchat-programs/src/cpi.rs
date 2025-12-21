@@ -6,6 +6,26 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::account::{AccountAccessTracker, AccountInfo, AccountMeta, Pubkey};
+
+/// Shared CPI result for parallel access
+pub type SharedCpiResult = Arc<CpiResult>;
+
+/// Create a shared CPI result from an execution
+pub fn share_cpi_result(result: CpiResult) -> SharedCpiResult {
+    Arc::new(result)
+}
+
+/// Build account metas from account infos for CPI instruction construction
+pub fn build_cpi_metas(accounts: &[AccountInfo<'_>]) -> Vec<AccountMeta> {
+    accounts
+        .iter()
+        .map(|account| AccountMeta {
+            pubkey: *account.key,
+            is_signer: account.is_signer,
+            is_writable: account.is_writable,
+        })
+        .collect()
+}
 use crate::error::{ProgramError, ProgramResult};
 use crate::instruction::Instruction;
 use crate::metering::{MeterSnapshot, SharedComputeMeter};

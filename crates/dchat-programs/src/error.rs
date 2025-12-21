@@ -8,6 +8,76 @@ use crate::validation::ValidationError;
 /// Result type for program operations
 pub type ProgramResult<T> = Result<T, ProgramError>;
 
+/// Error context wrapper that provides additional debug information
+pub struct ErrorContext<'a> {
+    /// The underlying error
+    pub error: &'a ProgramError,
+    /// Transaction context hash
+    pub tx_hash: Option<[u8; 32]>,
+    /// Instruction index within transaction
+    pub instruction_index: Option<usize>,
+    /// Program ID that failed
+    pub program_id: Option<[u8; 32]>,
+}
+
+impl<'a> ErrorContext<'a> {
+    /// Create a new error context
+    pub fn new(error: &'a ProgramError) -> Self {
+        Self {
+            error,
+            tx_hash: None,
+            instruction_index: None,
+            program_id: None,
+        }
+    }
+
+    /// Add transaction hash context
+    pub fn with_tx(mut self, tx_hash: [u8; 32]) -> Self {
+        self.tx_hash = Some(tx_hash);
+        self
+    }
+
+    /// Add instruction index context
+    pub fn with_instruction(mut self, index: usize) -> Self {
+        self.instruction_index = Some(index);
+        self
+    }
+
+    /// Add program ID context
+    pub fn with_program(mut self, program_id: [u8; 32]) -> Self {
+        self.program_id = Some(program_id);
+        self
+    }
+}
+
+impl fmt::Display for ErrorContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Error: {}", self.error)?;
+        if let Some(idx) = self.instruction_index {
+            write!(f, " [instruction: {}]", idx)?;
+        }
+        if let Some(tx) = &self.tx_hash {
+            write!(f, " [tx: {}]", hex::encode(&tx[..8]))?;
+        }
+        if let Some(program) = &self.program_id {
+            write!(f, " [program: {}]", hex::encode(&program[..8]))?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for ErrorContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ErrorContext")
+            .field("error", &self.error)
+            .field("error_code", &self.error.to_code())
+            .field("tx_hash", &self.tx_hash.map(|h| hex::encode(&h[..8])))
+            .field("instruction_index", &self.instruction_index)
+            .field("program_id", &self.program_id.map(|p| hex::encode(&p[..8])))
+            .finish()
+    }
+}
+
 /// Program execution error
 #[derive(Debug, Clone, Error)]
 pub enum ProgramError {

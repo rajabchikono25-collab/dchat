@@ -255,12 +255,7 @@ pub struct BotCommandContext {
 
 impl BotCommandContext {
     /// Parse command from message
-    pub fn parse(
-        message: &str,
-        user_id: String,
-        channel_id: String,
-        message_id: String,
-    ) -> Option<Self> {
+    pub fn parse(message: &str, user_id: &str, channel_id: &str, message_id: &str) -> Option<Self> {
         let message = message.trim();
         if !message.starts_with('/') {
             return None;
@@ -275,9 +270,9 @@ impl BotCommandContext {
             command,
             args,
             raw_args,
-            user_id,
-            channel_id,
-            message_id,
+            user_id: user_id.to_string(),
+            channel_id: channel_id.to_string(),
+            message_id: message_id.to_string(),
             timestamp: Utc::now(),
             reply_to: None,
         })
@@ -364,10 +359,15 @@ pub struct BotAttachment {
 /// Attachment type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttachmentType {
+    /// Image attachment (JPEG, PNG, GIF, WebP)
     Image,
+    /// Video attachment (MP4, WebM)
     Video,
+    /// Audio attachment (MP3, OGG)
     Audio,
+    /// Document attachment (PDF, DOC, etc.)
     Document,
+    /// Sticker attachment
     Sticker,
 }
 
@@ -409,8 +409,11 @@ impl BotKeyboard {
 /// Keyboard type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum KeyboardType {
+    /// Inline keyboard (buttons attached to message)
     Inline,
+    /// Reply keyboard (custom keyboard below input)
     Reply,
+    /// Remove keyboard (hide custom keyboard)
     Remove,
 }
 
@@ -554,7 +557,7 @@ impl BotBridge {
             usernames.remove(&bot.identity.username);
             Ok(())
         } else {
-            Err(MiniAppError::BotNotFound(*bot_id))
+            Err(MiniAppError::BotNotFound(bot_id.to_string()))
         }
     }
 
@@ -580,7 +583,9 @@ impl BotBridge {
         ctx: BotCommandContext,
     ) -> MiniAppResult<BotCommandResult> {
         let bots = self.bots.read();
-        let bot = bots.get(bot_id).ok_or(MiniAppError::BotNotFound(*bot_id))?;
+        let bot = bots
+            .get(bot_id)
+            .ok_or(MiniAppError::BotNotFound(bot_id.to_string()))?;
 
         // Check if command is supported
         let command_found = bot
@@ -606,7 +611,9 @@ impl BotBridge {
         query: BotCallbackQuery,
     ) -> MiniAppResult<BotCommandResult> {
         let bots = self.bots.read();
-        let bot = bots.get(bot_id).ok_or(MiniAppError::BotNotFound(*bot_id))?;
+        let bot = bots
+            .get(bot_id)
+            .ok_or(MiniAppError::BotNotFound(bot_id.to_string()))?;
 
         bot.handler.handle_callback(&query)
     }
@@ -630,7 +637,7 @@ impl BotBridge {
                 if let Some(bot_id) = self.usernames.read().get(username) {
                     let remainder = parts.get(1).unwrap_or(&"");
                     if let Some(ctx) =
-                        BotCommandContext::parse(remainder, user_id, channel_id, message_id)
+                        BotCommandContext::parse(remainder, &user_id, &channel_id, &message_id)
                     {
                         return Some((*bot_id, ctx));
                     }
@@ -646,12 +653,9 @@ impl BotBridge {
 
             for (bot_id, bot) in self.bots.read().iter() {
                 if bot.identity.commands.iter().any(|c| c.command == command) {
-                    if let Some(ctx) = BotCommandContext::parse(
-                        message,
-                        user_id.clone(),
-                        channel_id.clone(),
-                        message_id.clone(),
-                    ) {
+                    if let Some(ctx) =
+                        BotCommandContext::parse(message, &user_id, &channel_id, &message_id)
+                    {
                         return Some((*bot_id, ctx));
                     }
                 }

@@ -45,7 +45,12 @@ pub enum MiniAppError {
 
     /// Manifest too large
     #[error("Manifest exceeds size limit: {size} > {max}")]
-    ManifestTooLarge { size: usize, max: usize },
+    ManifestTooLarge {
+        /// Actual size in bytes
+        size: usize,
+        /// Maximum allowed size in bytes
+        max: usize,
+    },
 
     /// Invalid manifest version
     #[error("Invalid manifest version: {0}")]
@@ -74,7 +79,12 @@ pub enum MiniAppError {
 
     /// Too many permissions requested
     #[error("Too many permissions requested: {count} > {max}")]
-    TooManyPermissions { count: usize, max: usize },
+    TooManyPermissions {
+        /// Number of permissions requested
+        count: usize,
+        /// Maximum allowed permissions
+        max: usize,
+    },
 
     /// Invalid permission scope
     #[error("Invalid permission scope: {0}")]
@@ -108,8 +118,11 @@ pub enum MiniAppError {
     /// Sandbox resource limit exceeded
     #[error("Sandbox resource limit exceeded: {resource}: {used} > {limit}")]
     SandboxResourceLimitExceeded {
+        /// Resource type (memory, cpu, etc.)
         resource: String,
+        /// Amount used
         used: u64,
+        /// Maximum limit
         limit: u64,
     },
 
@@ -132,7 +145,12 @@ pub enum MiniAppError {
 
     /// Intent rate limit exceeded
     #[error("Intent rate limit exceeded: {count}/{max} per minute")]
-    IntentRateLimitExceeded { count: u32, max: u32 },
+    IntentRateLimitExceeded {
+        /// Number of intents submitted
+        count: u32,
+        /// Maximum allowed per minute
+        max: u32,
+    },
 
     /// Intent signature invalid
     #[error("Intent signature invalid")]
@@ -140,7 +158,12 @@ pub enum MiniAppError {
 
     /// Intent payload too large
     #[error("Intent payload too large: {size} > {max}")]
-    IntentPayloadTooLarge { size: usize, max: usize },
+    IntentPayloadTooLarge {
+        /// Actual payload size
+        size: usize,
+        /// Maximum allowed size
+        max: usize,
+    },
 
     // ─── Receipt Errors ─────────────────────────────────────────────────────
     /// Receipt not found
@@ -153,7 +176,12 @@ pub enum MiniAppError {
 
     /// Insufficient attestations
     #[error("Insufficient attestations: {count}/{required}")]
-    InsufficientAttestations { count: usize, required: usize },
+    InsufficientAttestations {
+        /// Number of attestations received
+        count: usize,
+        /// Required attestations
+        required: usize,
+    },
 
     /// Invalid attestation
     #[error("Invalid attestation: {0}")]
@@ -190,7 +218,12 @@ pub enum MiniAppError {
 
     /// Insufficient balance
     #[error("Insufficient balance: required {required}, available {available}")]
-    InsufficientBalance { required: u64, available: u64 },
+    InsufficientBalance {
+        /// Amount required for operation
+        required: u64,
+        /// Currently available balance
+        available: u64,
+    },
 
     // ─── Bot Errors ─────────────────────────────────────────────────────────
     /// Bot not found
@@ -262,7 +295,12 @@ pub enum MiniAppError {
 
     /// Hash mismatch
     #[error("Hash mismatch: expected {expected}, got {actual}")]
-    HashMismatch { expected: String, actual: String },
+    HashMismatch {
+        /// Expected hash value
+        expected: String,
+        /// Actual computed hash
+        actual: String,
+    },
 
     // ─── General Errors ─────────────────────────────────────────────────────
     /// Serialization error

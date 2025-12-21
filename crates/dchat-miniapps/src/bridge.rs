@@ -38,36 +38,57 @@ pub enum BridgeMessageType {
     // ─── Request/Response ───────────────────────────────────────────────────
     /// Request from sandbox to host
     Request {
+        /// Method name to invoke
         method: String,
+        /// Parameters for the method
         params: serde_json::Value,
+        /// Request ID for correlation
         id: String,
     },
     /// Response from host to sandbox
     Response {
+        /// Request ID this response correlates to
         id: String,
+        /// Result value if successful
         result: Option<serde_json::Value>,
+        /// Error if request failed
         error: Option<BridgeError>,
     },
 
     // ─── Events ─────────────────────────────────────────────────────────────
     /// Event from host to sandbox
     Event {
+        /// Event name
         name: String,
+        /// Event data payload
         data: serde_json::Value,
     },
     /// Notification (no response expected)
     Notification {
+        /// Method name
         method: String,
+        /// Parameters
         params: serde_json::Value,
     },
 
     // ─── Control ────────────────────────────────────────────────────────────
     /// Ping (keep-alive)
-    Ping { timestamp: u64 },
+    Ping {
+        /// Timestamp when ping was sent
+        timestamp: u64,
+    },
     /// Pong (keep-alive response)
-    Pong { timestamp: u64 },
+    Pong {
+        /// Timestamp from original ping
+        timestamp: u64,
+    },
     /// Close connection
-    Close { code: u16, reason: String },
+    Close {
+        /// Close code
+        code: u16,
+        /// Reason for closing
+        reason: String,
+    },
 }
 
 /// Bridge error
@@ -425,16 +446,25 @@ impl MessageBridge {
     /// Cleanup timed out requests
     pub fn cleanup_pending(&self, max_age: chrono::Duration) {
         let cutoff = Utc::now() - max_age;
-        self.pending.write().retain(|_, pending| {
-            if pending.sent_at < cutoff {
+
+        // Collect timed out request IDs first
+        let timed_out: Vec<String> = {
+            let pending = self.pending.read();
+            pending
+                .iter()
+                .filter(|(_, req)| req.sent_at < cutoff)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+
+        // Remove and send timeout errors
+        for id in timed_out {
+            if let Some(pending) = self.pending.write().remove(&id) {
                 let _ = pending
                     .response_tx
                     .send(Err(BridgeError::internal_error("request timeout")));
-                false
-            } else {
-                true
             }
-        });
+        }
     }
 }
 

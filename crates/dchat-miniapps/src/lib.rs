@@ -62,7 +62,11 @@ pub mod sandbox;
 pub mod wallet;
 
 // Re-export primary types
-pub use bot::{BotAuthentication, BotBridge, BotCommand, BotContext, BotHandler, BotIdentity};
+pub use bot::{
+    AttachmentType, BotAttachment, BotAuthToken, BotBridge, BotButton, BotCallbackQuery,
+    BotCommandContext, BotCommandHandler, BotCommandResult, BotId, BotIdentity, BotKeyboard,
+    KeyboardType,
+};
 pub use bridge::{BridgeMessage, BridgeMessageType, MessageBridge, MessageHandler};
 pub use error::{MiniAppError, MiniAppResult};
 pub use intent::{Intent, IntentBuilder, IntentId, IntentPayload, IntentStatus, PendingIntent};
