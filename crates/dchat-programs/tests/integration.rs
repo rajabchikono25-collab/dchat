@@ -12,7 +12,9 @@ use dchat_programs::loader::LoaderProgram;
 use dchat_programs::metering::{ComputeBudget, ComputeMeter};
 use dchat_programs::native_programs;
 use dchat_programs::pda::PdaDerivation;
-use dchat_programs::runtime::{ExecutionContext, InMemoryAccountBank, ProgramCache, RuntimeConfig};
+use dchat_programs::runtime::{
+    AccountBank, ExecutionContext, InMemoryAccountBank, ProgramCache, RuntimeConfig,
+};
 use dchat_programs::scheduler::{
     ExecutionBatch, ParallelScheduler, ScheduledTransaction, SchedulerConfig,
 };
@@ -42,8 +44,7 @@ fn test_system_program_create_account() {
     let lamports = 1_000_000;
     let space = 100;
 
-    let instruction =
-        SystemProgram::create_account_instruction(payer, new_account, lamports, space, owner);
+    let instruction = SystemProgram::create_account(payer, new_account, lamports, space, owner);
 
     assert_eq!(instruction.program_id, native_programs::SYSTEM_PROGRAM_ID);
     assert_eq!(instruction.accounts.len(), 2);
@@ -59,7 +60,7 @@ fn test_system_program_transfer() {
     let to = pubkey_n(2);
     let lamports = 500_000;
 
-    let instruction = SystemProgram::transfer_instruction(from, to, lamports);
+    let instruction = SystemProgram::transfer(from, to, lamports);
 
     assert_eq!(instruction.program_id, native_programs::SYSTEM_PROGRAM_ID);
     assert_eq!(instruction.accounts.len(), 2);
@@ -74,10 +75,10 @@ fn test_token_program_initialize_mint() {
     let mint = pubkey_n(1);
     let mint_authority = pubkey_n(2);
     let freeze_authority = Some(pubkey_n(3));
-    let decimals = 9;
+    let decimals = 9u8;
 
     let instruction =
-        TokenProgram::initialize_mint_instruction(mint, decimals, mint_authority, freeze_authority);
+        TokenProgram::initialize_mint(mint, mint_authority, freeze_authority, decimals);
 
     assert_eq!(instruction.program_id, native_programs::TOKEN_PROGRAM_ID);
 }
@@ -89,7 +90,7 @@ fn test_token_program_mint_to() {
     let mint_authority = pubkey_n(3);
     let amount = 1_000_000_000;
 
-    let instruction = TokenProgram::mint_to_instruction(mint, destination, mint_authority, amount);
+    let instruction = TokenProgram::mint_to(mint, destination, mint_authority, amount);
 
     assert_eq!(instruction.program_id, native_programs::TOKEN_PROGRAM_ID);
 }
@@ -101,7 +102,7 @@ fn test_token_program_transfer() {
     let owner = pubkey_n(3);
     let amount = 500_000_000;
 
-    let instruction = TokenProgram::transfer_instruction(source, destination, owner, amount);
+    let instruction = TokenProgram::transfer(source, destination, owner, amount);
 
     assert_eq!(instruction.program_id, native_programs::TOKEN_PROGRAM_ID);
     assert!(instruction.accounts[2].is_signer); // owner signs
@@ -153,7 +154,7 @@ fn test_validation_config_defaults() {
 #[test]
 fn test_bytecode_validator_creation() {
     let config = ValidationConfig::default();
-    let validator = BytecodeValidator::new(config);
+    let validator = BytecodeValidator::with_config(config);
 
     // Validator should have allowed imports
     assert!(validator.allowed_imports().contains("sol_log_"));
@@ -412,7 +413,7 @@ fn test_full_transaction_lifecycle() {
     );
 
     // 2. Create transfer instruction
-    let instruction = SystemProgram::transfer_instruction(payer, recipient, 1_000_000);
+    let instruction = SystemProgram::transfer(payer, recipient, 1_000_000);
 
     // 3. Verify instruction structure
     assert_eq!(instruction.accounts.len(), 2);
@@ -420,13 +421,15 @@ fn test_full_transaction_lifecycle() {
     assert!(instruction.accounts[1].is_writable);
 
     // 4. In production, this would execute via runtime
-    // For test, we verify the transaction can be structured correctly
+    // For test, we verify the transaction can be structured correctly using compile
 
-    let mut batch = InstructionBatch::default();
-    batch.account_keys = vec![payer, recipient, native_programs::SYSTEM_PROGRAM_ID];
-    batch.writable_indices = vec![0, 1];
-    batch.signer_indices = vec![0];
-    batch.instructions = vec![instruction];
+    let batch = InstructionBatch::compile(
+        vec![instruction],
+        payer,
+        [0u8; 32], // recent blockhash
+    )
+    .unwrap();
 
     assert!(!batch.instructions.is_empty());
+    assert!(batch.writable_indices.contains(&0)); // payer is writable
 }

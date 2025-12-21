@@ -400,6 +400,16 @@ impl BytecodeValidator {
         Self { config }
     }
 
+    /// Get reference to allowed imports
+    pub fn allowed_imports(&self) -> &std::collections::HashSet<String> {
+        &self.config.allowed_imports
+    }
+
+    /// Get reference to configuration
+    pub fn config(&self) -> &ValidationConfig {
+        &self.config
+    }
+
     /// Validate bytecode and return information
     pub fn validate(&self, bytecode: &[u8]) -> ValidationResult<ValidatedBytecode> {
         // Check size

@@ -186,7 +186,7 @@ impl InstructionBuilder {
 }
 
 /// Batch of instructions forming a transaction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InstructionBatch {
     /// All unique account keys referenced
     pub account_keys: Vec<Pubkey>,

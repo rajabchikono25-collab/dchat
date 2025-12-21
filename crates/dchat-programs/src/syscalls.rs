@@ -648,6 +648,27 @@ impl SyscallRegistry {
     pub fn get_cost(&self, id: SyscallId) -> Option<SyscallCost> {
         self.handlers.get(&id).map(|h| h.cost())
     }
+
+    /// Check if a syscall is registered by name (for testing)
+    pub fn has_syscall(&self, name: &str) -> bool {
+        match name {
+            "sol_log_" | "sol_log" => self.handlers.contains_key(&SyscallId::SOL_LOG),
+            "sol_sha256" => self.handlers.contains_key(&SyscallId::SOL_SHA256),
+            "sol_blake3" => self.handlers.contains_key(&SyscallId::SOL_BLAKE3),
+            "sol_memcpy" => self.handlers.contains_key(&SyscallId::SOL_MEMCPY),
+            "sol_create_program_address" => self
+                .handlers
+                .contains_key(&SyscallId::SOL_CREATE_PROGRAM_ADDRESS),
+            "sol_set_return_data" => self.handlers.contains_key(&SyscallId::SOL_SET_RETURN_DATA),
+            "sol_alloc_free" => self.handlers.contains_key(&SyscallId::SOL_ALLOC_FREE),
+            _ => false,
+        }
+    }
+
+    /// Get count of registered syscalls
+    pub fn count(&self) -> usize {
+        self.handlers.len()
+    }
 }
 
 impl Default for SyscallRegistry {

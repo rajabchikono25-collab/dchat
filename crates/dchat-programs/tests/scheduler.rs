@@ -15,7 +15,7 @@ use dchat_programs::account::Pubkey;
 use dchat_programs::error::ProgramError;
 use dchat_programs::instruction::InstructionBatch;
 use dchat_programs::scheduler::{
-    AccountLock, AccountLockManager, ExecutionBatch, LockType, ParallelSchedulerree,
+    AccountLock, AccountLockManager, ExecutionBatch, LockType, ParallelScheduler,
     ScheduledTransaction, SchedulerConfig,
 };
 
@@ -171,16 +171,24 @@ fn test_transaction_conflict_detection() {
     let account_c = pubkey_n(3);
 
     // Transaction 1: writes A, reads B
-    let mut batch1 = InstructionBatch::default();
-    batch1.account_keys = vec![account_a, account_b];
-    batch1.writable_indices = vec![0]; // A is writable
-    let tx1 = ScheduledTransaction::new(1, batch1, 1);
+    let batch1 = InstructionBatch::default();
+    let tx1 = ScheduledTransaction::new_with_accounts(
+        1,
+        batch1,
+        vec![account_b], // read accounts
+        vec![account_a], // write accounts
+        1,
+    );
 
     // Transaction 2: reads A, writes C
-    let mut batch2 = InstructionBatch::default();
-    batch2.account_keys = vec![account_a, account_c];
-    batch2.writable_indices = vec![1]; // C is writable
-    let tx2 = ScheduledTransaction::new(2, batch2, 1);
+    let batch2 = InstructionBatch::default();
+    let tx2 = ScheduledTransaction::new_with_accounts(
+        2,
+        batch2,
+        vec![account_a], // read accounts
+        vec![account_c], // write accounts
+        1,
+    );
 
     // Should conflict (tx1 writes A, tx2 reads A)
     assert!(tx1.conflicts_with(&tx2));
@@ -195,16 +203,24 @@ fn test_no_conflict_independent_accounts() {
     let account_d = pubkey_n(4);
 
     // Transaction 1: writes A, B
-    let mut batch1 = InstructionBatch::default();
-    batch1.account_keys = vec![account_a, account_b];
-    batch1.writable_indices = vec![0, 1];
-    let tx1 = ScheduledTransaction::new(1, batch1, 1);
+    let batch1 = InstructionBatch::default();
+    let tx1 = ScheduledTransaction::new_with_accounts(
+        1,
+        batch1,
+        vec![],                     // read accounts
+        vec![account_a, account_b], // write accounts
+        1,
+    );
 
     // Transaction 2: writes C, D
-    let mut batch2 = InstructionBatch::default();
-    batch2.account_keys = vec![account_c, account_d];
-    batch2.writable_indices = vec![0, 1];
-    let tx2 = ScheduledTransaction::new(2, batch2, 1);
+    let batch2 = InstructionBatch::default();
+    let tx2 = ScheduledTransaction::new_with_accounts(
+        2,
+        batch2,
+        vec![],                     // read accounts
+        vec![account_c, account_d], // write accounts
+        1,
+    );
 
     // Should NOT conflict
     assert!(!tx1.conflicts_with(&tx2));
@@ -216,16 +232,24 @@ fn test_read_read_no_conflict() {
     let account_a = pubkey_n(1);
 
     // Transaction 1: reads A
-    let mut batch1 = InstructionBatch::default();
-    batch1.account_keys = vec![account_a];
-    batch1.writable_indices = vec![]; // No writes
-    let tx1 = ScheduledTransaction::new(1, batch1, 1);
+    let batch1 = InstructionBatch::default();
+    let tx1 = ScheduledTransaction::new_with_accounts(
+        1,
+        batch1,
+        vec![account_a], // read accounts
+        vec![],          // write accounts
+        1,
+    );
 
     // Transaction 2: reads A
-    let mut batch2 = InstructionBatch::default();
-    batch2.account_keys = vec![account_a];
-    batch2.writable_indices = vec![]; // No writes
-    let tx2 = ScheduledTransaction::new(2, batch2, 1);
+    let batch2 = InstructionBatch::default();
+    let tx2 = ScheduledTransaction::new_with_accounts(
+        2,
+        batch2,
+        vec![account_a], // read accounts
+        vec![],          // write accounts
+        1,
+    );
 
     // Should NOT conflict (both reading)
     assert!(!tx1.conflicts_with(&tx2));
@@ -238,18 +262,14 @@ fn test_execution_batch_add() {
 
     let mut batch = ExecutionBatch::new(1);
 
-    // Add first transaction
-    let mut tx_batch1 = InstructionBatch::default();
-    tx_batch1.account_keys = vec![account_a];
-    tx_batch1.writable_indices = vec![0];
-    let tx1 = ScheduledTransaction::new(1, tx_batch1, 1);
+    // Add first transaction (writes A)
+    let tx_batch1 = InstructionBatch::default();
+    let tx1 = ScheduledTransaction::new_with_accounts(1, tx_batch1, vec![], vec![account_a], 1);
     assert!(batch.try_add(tx1));
 
-    // Add non-conflicting transaction
-    let mut tx_batch2 = InstructionBatch::default();
-    tx_batch2.account_keys = vec![account_b];
-    tx_batch2.writable_indices = vec![0];
-    let tx2 = ScheduledTransaction::new(2, tx_batch2, 1);
+    // Add non-conflicting transaction (writes B)
+    let tx_batch2 = InstructionBatch::default();
+    let tx2 = ScheduledTransaction::new_with_accounts(2, tx_batch2, vec![], vec![account_b], 1);
     assert!(batch.try_add(tx2));
 
     assert_eq!(batch.transactions.len(), 2);
@@ -262,17 +282,13 @@ fn test_execution_batch_rejects_conflict() {
     let mut batch = ExecutionBatch::new(1);
 
     // Add first transaction writing A
-    let mut tx_batch1 = InstructionBatch::default();
-    tx_batch1.account_keys = vec![account_a];
-    tx_batch1.writable_indices = vec![0];
-    let tx1 = ScheduledTransaction::new(1, tx_batch1, 1);
+    let tx_batch1 = InstructionBatch::default();
+    let tx1 = ScheduledTransaction::new_with_accounts(1, tx_batch1, vec![], vec![account_a], 1);
     assert!(batch.try_add(tx1));
 
-    // Try to add conflicting transaction
-    let mut tx_batch2 = InstructionBatch::default();
-    tx_batch2.account_keys = vec![account_a];
-    tx_batch2.writable_indices = vec![0];
-    let tx2 = ScheduledTransaction::new(2, tx_batch2, 1);
+    // Try to add conflicting transaction (also writing A)
+    let tx_batch2 = InstructionBatch::default();
+    let tx2 = ScheduledTransaction::new_with_accounts(2, tx_batch2, vec![], vec![account_a], 1);
 
     // Should be rejected
     assert!(!batch.try_add(tx2));
@@ -287,13 +303,17 @@ fn test_deterministic_conflict_resolution() {
     for _ in 0..10 {
         let mut batch = ExecutionBatch::new(1);
 
-        // Create transactions in same order
+        // Create transactions in same order, all writing to the same account
         let txs: Vec<_> = (0..5)
             .map(|i| {
-                let mut tx_batch = InstructionBatch::default();
-                tx_batch.account_keys = vec![account];
-                tx_batch.writable_indices = vec![0];
-                ScheduledTransaction::new(i as u64, tx_batch, i as u32)
+                let tx_batch = InstructionBatch::default();
+                ScheduledTransaction::new_with_accounts(
+                    i as u64,
+                    tx_batch,
+                    vec![],
+                    vec![account],
+                    i as u32,
+                )
             })
             .collect();
 
