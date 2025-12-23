@@ -2,7 +2,6 @@
 
 use chrono::Utc;
 use dchat_core::error::{Error, Result};
-use dchat_core::motes::MOTES_PER_DCHAT;
 use dchat_core::types::UserId;
 use dchat_privacy::blind_tokens::CurrencyChainClient as PrivacyCurrencyChainClient;
 use serde::{Deserialize, Serialize};

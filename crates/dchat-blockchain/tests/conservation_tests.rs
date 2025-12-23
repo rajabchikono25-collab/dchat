@@ -7,11 +7,10 @@
 //! 4. Reward distributions don't create/destroy tokens unexpectedly
 
 use dchat_blockchain::fee_distribution::{
-    BlockFeeAccounting, FeeDistributionConfig, FeeDistributionManager, FeeType, ProtocolSinks,
-    DEFAULT_BURN_RATE_BPS, RELAY_FEE_SHARE_BPS, TREASURY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS,
+    FeeDistributionConfig, FeeDistributionManager, FeeType, ProtocolSinks, DEFAULT_BURN_RATE_BPS,
+    INSURANCE_FUND_ALLOCATION_BPS, RELAY_FEE_SHARE_BPS, TREASURY_FEE_SHARE_BPS,
+    VALIDATOR_FEE_SHARE_BPS,
 };
-use dchat_blockchain::tokenomics::{BurnReason, MintReason, TokenSupplyConfig, TokenomicsManager};
-use dchat_blockchain::{CurrencyChainClient, CurrencyChainConfig};
 use dchat_core::types::UserId;
 use uuid::Uuid;
 
@@ -22,7 +21,12 @@ use uuid::Uuid;
 /// Test that fee distribution shares sum to 100%
 #[test]
 fn test_fee_share_conservation() {
-    let total = VALIDATOR_FEE_SHARE_BPS + RELAY_FEE_SHARE_BPS + TREASURY_FEE_SHARE_BPS;
+    // All four shares must sum to exactly 100% (10000 bps)
+    // Validator: 68% + Relay: 20% + Treasury: 10% + Insurance: 2% = 100%
+    let total = VALIDATOR_FEE_SHARE_BPS
+        + RELAY_FEE_SHARE_BPS
+        + TREASURY_FEE_SHARE_BPS
+        + INSURANCE_FUND_ALLOCATION_BPS;
     assert_eq!(
         total, 10000,
         "Fee shares must sum to 100% (10000 bps), got {}",
@@ -37,37 +41,37 @@ fn test_fee_distribution_calculation_conservation() {
 
     // Test with various amounts
     for amount in [100, 1000, 10000, 100000, 1000000, 100000000u64] {
-        // With burn
-        let (burn, validator, relay, treasury, direct) =
+        // With burn - now returns 6-tuple (burn, validator, relay, treasury, insurance, direct)
+        let (burn, validator, relay, treasury, insurance, direct) =
             manager.calculate_distribution(amount, true, None);
 
-        let total = burn + validator + relay + treasury + direct;
+        let total = burn + validator + relay + treasury + insurance + direct;
         assert_eq!(
             total, amount,
-            "Conservation violated for amount {} with burn: {} + {} + {} + {} + {} = {}",
-            amount, burn, validator, relay, treasury, direct, total
+            "Conservation violated for amount {} with burn: {} + {} + {} + {} + {} + {} = {}",
+            amount, burn, validator, relay, treasury, insurance, direct, total
         );
 
         // Without burn
-        let (burn_nb, validator_nb, relay_nb, treasury_nb, direct_nb) =
+        let (burn_nb, validator_nb, relay_nb, treasury_nb, insurance_nb, direct_nb) =
             manager.calculate_distribution(amount, false, None);
 
-        let total_nb = burn_nb + validator_nb + relay_nb + treasury_nb + direct_nb;
+        let total_nb = burn_nb + validator_nb + relay_nb + treasury_nb + insurance_nb + direct_nb;
         assert_eq!(
             total_nb, amount,
-            "Conservation violated for amount {} without burn: {} + {} + {} + {} + {} = {}",
-            amount, burn_nb, validator_nb, relay_nb, treasury_nb, direct_nb, total_nb
+            "Conservation violated for amount {} without burn: {} + {} + {} + {} + {} + {} = {}",
+            amount, burn_nb, validator_nb, relay_nb, treasury_nb, insurance_nb, direct_nb, total_nb
         );
 
         // With direct recipient (90%)
-        let (burn_dr, validator_dr, relay_dr, treasury_dr, direct_dr) =
+        let (burn_dr, validator_dr, relay_dr, treasury_dr, insurance_dr, direct_dr) =
             manager.calculate_distribution(amount, false, Some(9000));
 
-        let total_dr = burn_dr + validator_dr + relay_dr + treasury_dr + direct_dr;
+        let total_dr = burn_dr + validator_dr + relay_dr + treasury_dr + insurance_dr + direct_dr;
         assert_eq!(
             total_dr, amount,
-            "Conservation violated for amount {} with 90% direct: {} + {} + {} + {} + {} = {}",
-            amount, burn_dr, validator_dr, relay_dr, treasury_dr, direct_dr, total_dr
+            "Conservation violated for amount {} with 90% direct: {} + {} + {} + {} + {} + {} = {}",
+            amount, burn_dr, validator_dr, relay_dr, treasury_dr, insurance_dr, direct_dr, total_dr
         );
     }
 }
@@ -100,39 +104,43 @@ fn test_message_fee_no_burn() {
     assert_eq!(record.validator_share, 0);
     assert_eq!(record.relay_share, 0);
     assert_eq!(record.treasury_share, 0);
+    assert_eq!(record.insurance_share, 0);
 
     // Verify conservation
     let total = record.burn_amount
         + record.validator_share
         + record.relay_share
         + record.treasury_share
+        + record.insurance_share
         + record.direct_recipient_amount;
     assert_eq!(total, fee_amount);
 }
 
-/// Test that transfer fees have 1% burn and 70/20/10 split
+/// Test that transfer fees have 1% burn and 70/20/10 split (with 2% insurance)
 #[test]
 fn test_transfer_fee_burn_and_split() {
     let manager = FeeDistributionManager::new(FeeDistributionConfig::default());
     manager.start_block(1, 1_000_000);
 
     let payer = UserId(Uuid::new_v4());
-    let amount = 10000u64;
+    let amount = 10000u64; // 10000 motes
 
     let record = manager
         .collect_fee(FeeType::TransferFee, amount, payer, None, Uuid::new_v4())
         .unwrap();
 
-    // Expected: 1% burn = 100
+    // Expected: 1% burn = 100 motes
     let expected_burn = (amount * DEFAULT_BURN_RATE_BPS as u64) / 10000;
     assert_eq!(record.burn_amount, expected_burn, "Should burn 1%");
 
-    let after_burn = amount - expected_burn;
+    let after_burn = amount - expected_burn; // 9900 motes
 
-    // Expected splits from after_burn
-    let expected_validator = (after_burn * VALIDATOR_FEE_SHARE_BPS as u64) / 10000;
-    let expected_relay = (after_burn * RELAY_FEE_SHARE_BPS as u64) / 10000;
-    let expected_treasury = after_burn - expected_validator - expected_relay;
+    // All shares calculated from after_burn (68% + 20% + 10% + 2% = 100%)
+    let expected_validator = (after_burn * VALIDATOR_FEE_SHARE_BPS as u64) / 10000; // 68% = 6732
+    let expected_relay = (after_burn * RELAY_FEE_SHARE_BPS as u64) / 10000; // 20% = 1980
+    let expected_insurance = (after_burn * INSURANCE_FUND_ALLOCATION_BPS as u64) / 10000; // 2% = 198
+                                                                                          // Treasury gets remainder: 10% = 990 (absorbs rounding dust)
+    let expected_treasury = after_burn - expected_validator - expected_relay - expected_insurance;
 
     assert_eq!(
         record.validator_share, expected_validator,
@@ -143,13 +151,18 @@ fn test_transfer_fee_burn_and_split() {
         record.treasury_share, expected_treasury,
         "Treasury share mismatch"
     );
+    assert_eq!(
+        record.insurance_share, expected_insurance,
+        "Insurance share mismatch"
+    );
     assert_eq!(record.direct_recipient_amount, 0);
 
-    // Verify conservation
+    // Verify conservation: all shares must sum to original amount
     let total = record.burn_amount
         + record.validator_share
         + record.relay_share
         + record.treasury_share
+        + record.insurance_share
         + record.direct_recipient_amount;
     assert_eq!(total, amount, "Conservation violated");
 }
@@ -276,6 +289,7 @@ fn test_block_fee_accounting_conservation() {
             + record.validator_share
             + record.relay_share
             + record.treasury_share
+            + record.insurance_share
             + record.direct_recipient_amount;
         assert_eq!(
             sum, record.gross_amount,
@@ -302,6 +316,8 @@ fn test_protocol_sink_determinism() {
     assert_eq!(sinks1.validator_pool, sinks2.validator_pool);
     assert_eq!(sinks1.relay_pool, sinks2.relay_pool);
     assert_eq!(sinks1.burn_sink, sinks2.burn_sink);
+    assert_eq!(sinks1.insurance_fund, sinks2.insurance_fund);
+    assert_eq!(sinks1.storage_bonds, sinks2.storage_bonds);
 
     // All sinks must be unique
     let mut all_sinks = std::collections::HashSet::new();
@@ -309,6 +325,8 @@ fn test_protocol_sink_determinism() {
     assert!(all_sinks.insert(sinks1.validator_pool.clone()));
     assert!(all_sinks.insert(sinks1.relay_pool.clone()));
     assert!(all_sinks.insert(sinks1.burn_sink.clone()));
+    assert!(all_sinks.insert(sinks1.insurance_fund.clone()));
+    assert!(all_sinks.insert(sinks1.storage_bonds.clone()));
 }
 
 /// Test that sinks are recognized as protocol addresses
@@ -321,6 +339,8 @@ fn test_is_protocol_sink() {
     assert!(sinks.is_protocol_sink(&sinks.validator_pool));
     assert!(sinks.is_protocol_sink(&sinks.relay_pool));
     assert!(sinks.is_protocol_sink(&sinks.burn_sink));
+    assert!(sinks.is_protocol_sink(&sinks.insurance_fund));
+    assert!(sinks.is_protocol_sink(&sinks.storage_bonds));
     assert!(!sinks.is_protocol_sink(&regular_user));
 }
 
@@ -328,9 +348,10 @@ fn test_is_protocol_sink() {
 // INTEGRATION TESTS (require test-mocks feature)
 // =============================================================================
 
-#[cfg(any(test, feature = "test-mocks"))]
+#[cfg(feature = "test-mocks")]
 mod integration_tests {
     use super::*;
+    use dchat_blockchain::{CurrencyChainClient, CurrencyChainConfig};
 
     /// Test currency chain transfer with burn
     #[test]
@@ -456,10 +477,10 @@ fn test_minimum_amount_conservation() {
 
     // Test with amounts that might cause rounding issues
     for amount in [1u64, 2, 3, 7, 11, 13, 97, 99, 100, 101] {
-        let (burn, validator, relay, treasury, direct) =
+        let (burn, validator, relay, treasury, insurance, direct) =
             manager.calculate_distribution(amount, true, None);
 
-        let total = burn + validator + relay + treasury + direct;
+        let total = burn + validator + relay + treasury + insurance + direct;
         assert_eq!(
             total, amount,
             "Conservation violated for small amount {}: total={}",
@@ -481,10 +502,10 @@ fn test_maximum_amount_conservation() {
     ];
 
     for amount in large_amounts {
-        let (burn, validator, relay, treasury, direct) =
+        let (burn, validator, relay, treasury, insurance, direct) =
             manager.calculate_distribution(amount, true, None);
 
-        let total = burn + validator + relay + treasury + direct;
+        let total = burn + validator + relay + treasury + insurance + direct;
         assert_eq!(
             total, amount,
             "Conservation violated for large amount {}: total={}",

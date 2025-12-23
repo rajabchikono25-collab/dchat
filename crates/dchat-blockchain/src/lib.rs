@@ -89,8 +89,9 @@ pub use tokenomics::{
 // Fee distribution infrastructure (mainnet fee sink implementation)
 pub use fee_distribution::{
     BlockFeeAccounting, FeeCollectionRecord, FeeDistributionConfig, FeeDistributionManager,
-    FeeType, ProtocolSinks, DEFAULT_BURN_RATE_BPS, RELAY_FEE_SHARE_BPS, TREASURY_FEE_SHARE_BPS,
-    VALIDATOR_FEE_SHARE_BPS,
+    FeeType, PoolDelta, PoolState, PoolType, ProtocolSinks, UnifiedPoolState,
+    DEFAULT_BURN_RATE_BPS, INSURANCE_FUND_ALLOCATION_BPS, RELAY_FEE_SHARE_BPS,
+    TREASURY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS,
 };
 
 // Hardened consensus infrastructure exports (mainnet-critical)
