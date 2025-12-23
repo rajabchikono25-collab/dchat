@@ -27,6 +27,7 @@ pub mod vote_persistence;
 
 // Economic infrastructure (plan2.md implementation)
 pub mod faucet;
+pub mod fee_distribution;
 pub mod payment_channels;
 pub mod payment_processor;
 pub mod staking_backend;
@@ -83,6 +84,13 @@ pub use temporal_stake_consensus::{
 pub use tokenomics::{
     BurnEvent, BurnReason, DistributionSchedule, LiquidityPool, MintEvent, MintReason,
     RecipientType, TokenSupplyConfig, TokenomicsManager, TokenomicsStats,
+};
+
+// Fee distribution infrastructure (mainnet fee sink implementation)
+pub use fee_distribution::{
+    BlockFeeAccounting, FeeCollectionRecord, FeeDistributionConfig, FeeDistributionManager,
+    FeeType, ProtocolSinks, DEFAULT_BURN_RATE_BPS, RELAY_FEE_SHARE_BPS, TREASURY_FEE_SHARE_BPS,
+    VALIDATOR_FEE_SHARE_BPS,
 };
 
 // Hardened consensus infrastructure exports (mainnet-critical)

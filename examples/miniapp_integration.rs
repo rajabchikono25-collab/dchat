@@ -331,25 +331,26 @@ fn example_6_intent_flow() {
     let recipient = [2u8; 32];
 
     // Step 1: Create a transfer intent
+    // DCHAT uses 8 decimals: 1 DCHAT = 100,000,000 motes
     let intent_type = IntentType::Transfer {
         recipient,
-        mint: None,            // Native token
-        amount: 1_000_000_000, // 1 DCHAT (assuming 9 decimals)
+        mint: None,          // Native token
+        amount: 100_000_000, // 1 DCHAT = 100,000,000 motes (8 decimals)
         memo: Some("Payment for premium subscription".to_string()),
     };
 
     let intent_payload = IntentPayload::new(
         sender,
         intent_type,
-        10_000, // max fee
+        10_000, // max fee in motes (0.0001 DCHAT)
         1,      // chain_id
     );
 
     println!("📤 Step 1: Create Intent");
     println!("   Sender:    0x{}...", hex::encode(&sender[..8]));
     println!("   Recipient: 0x{}...", hex::encode(&recipient[..8]));
-    println!("   Amount:    1 DCHAT");
-    println!("   Max Fee:   0.00001 DCHAT");
+    println!("   Amount:    1 DCHAT (100,000,000 motes)");
+    println!("   Max Fee:   0.0001 DCHAT (10,000 motes)");
 
     // Step 2: Intent is submitted and executed
     let intent_id = IntentId::new();

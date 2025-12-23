@@ -3,9 +3,11 @@
 ## ✅ Critical Components Implemented
 
 ### 1. Onion Routing (Metadata Resistance) ✅ COMPLETE
+
 **Location**: `crates/dchat-network/src/onion_routing.rs`, `crates/dchat-network/src/network/onion/`
 
 **Implementation**:
+
 - ✅ Sphinx packet format with layered encryption
 - ✅ Multi-hop circuit construction (3-5 hops)
 - ✅ Path selection with geographic/ASN diversity
@@ -15,6 +17,7 @@
 - ✅ libp2p integration via request-response protocol
 
 **Key Features**:
+
 - Onion circuits with 3-5 relay hops
 - ASN and geographic diversity enforcement
 - Reputation-based relay selection
@@ -22,9 +25,11 @@
 - MAC verification for packet integrity
 
 ### 2. Post-Quantum Cryptography ✅ COMPLETE
+
 **Location**: `crates/dchat-crypto/src/post_quantum.rs`
 
 **Implementation**:
+
 - ✅ **Kyber768** (ML-KEM-768) - Post-quantum key encapsulation
 - ✅ **Falcon512** - Post-quantum signatures
 - ✅ **Hybrid KEM** - Combines classical (Curve25519) + Kyber768
@@ -33,6 +38,7 @@
 - ✅ Backward compatibility layer
 
 **Dependencies**:
+
 ```toml
 pqcrypto-mlkem = "workspace"      # ML-KEM (Kyber) - NIST standard
 pqcrypto-falcon = "workspace"     # Falcon signatures
@@ -42,9 +48,11 @@ pqcrypto-traits = "workspace"
 **Note**: Dilithium3 can be added via `pqcrypto-dilithium` crate if preferred over Falcon.
 
 ### 3. Storage Backends ✅ COMPLETE
+
 **Location**: `crates/dchat-storage/`
 
 **Implementation**:
+
 - ✅ **Redis** - Distributed cache with cluster support
   - `redis = { version = "0.27", features = ["cluster-async", "tokio-comp"] }`
 - ✅ **TiKV** - Distributed key-value store
@@ -55,15 +63,18 @@ pqcrypto-traits = "workspace"
   - `sqlx = { features = ["postgres", "chrono", "uuid"] }`
 
 **Files**:
+
 - `src/distributed/cache.rs` - Redis cache implementation
 - `src/distributed/tikv_backend.rs` - TiKV integration
 - `src/distributed/object_storage.rs` - MinIO/S3 integration
 - `src/distributed/database.rs` - CockroachDB integration
 
 ### 4. Validator Staking Enforcement ✅ COMPLETE
+
 **Location**: `crates/dchat-chain/src/chain/currency_chain/validator_enforcement.rs`
 
 **Implementation**:
+
 - ✅ `ValidatorStakingEnforcer` - Prevents unstaked validators from participating
 - ✅ Minimum stake verification: `MIN_VALIDATOR_STAKE` tokens required
 - ✅ Stake cache with 3-minute TTL for performance
@@ -71,6 +82,7 @@ pqcrypto-traits = "workspace"
 - ✅ Pre-consensus validation: blocks proposals, signatures, rewards if no stake
 
 **Key Functions**:
+
 ```rust
 pub async fn verify_validator_stake(&self, validator_key: &VerifyingKey) -> Result<bool>
 pub async fn enforce_validator_stake(&self, validator_key: &VerifyingKey) -> Result<()>
@@ -80,15 +92,18 @@ pub async fn can_receive_rewards(&self, validator_key: &VerifyingKey) -> Result<
 ```
 
 **Integration Points**:
+
 - Call `enforce_validator_stake()` before accepting validator into consensus pool
 - Call `can_propose_block()` before allowing block proposals
 - Call `can_sign_block()` before accepting block signatures
 - Call `can_receive_rewards()` before distributing rewards
 
 ### 5. Relay Staking Enforcement ✅ COMPLETE
+
 **Location**: `crates/dchat-network/src/relay/staking.rs`
 
 **Implementation**:
+
 - ✅ `RelayStakingValidator` - Prevents unstaked relays from participating
 - ✅ Minimum stake verification: `MIN_RELAY_STAKE` tokens required
 - ✅ Stake cache with 5-minute TTL
@@ -96,21 +111,25 @@ pub async fn can_receive_rewards(&self, validator_key: &VerifyingKey) -> Result<
 - ✅ Pre-relay validation: blocks relay acceptance, message processing, circuit assignment
 
 **Key Functions**:
+
 ```rust
 pub async fn verify_relay_stake(&self, relay_key: &VerifyingKey) -> Result<bool>
 pub async fn enforce_relay_stake(&self, relay_key: &VerifyingKey) -> Result<()>
 ```
 
 **Integration Points**:
+
 - Call `enforce_relay_stake()` before accepting relay into network
 - Call `verify_relay_stake()` before assigning relay to circuits
 - Call before processing relay-forwarded messages
 - Call before distributing relay rewards
 
 ### 6. Storage Bond Staking ✅ COMPLETE
+
 **Location**: `crates/dchat-storage/src/economics/storage_bonds.rs`
 
 **Implementation**:
+
 - ✅ `StorageBondManager` - Users must stake tokens to store data
 - ✅ Minimum bond: `MIN_STORAGE_BOND_PER_GB = 100,000` tokens per GB
 - ✅ Storage quota enforcement (bytes-level tracking)
@@ -119,6 +138,7 @@ pub async fn enforce_relay_stake(&self, relay_key: &VerifyingKey) -> Result<()>
 - ✅ Bond release mechanism
 
 **Key Functions**:
+
 ```rust
 pub async fn submit_storage_bond(&self, request: &StorageBondRequest) -> Result<StorageBondReceipt>
 pub async fn check_storage_quota(&self, user_key: &VerifyingKey, required_bytes: u64) -> Result<bool>
@@ -127,22 +147,26 @@ pub async fn release_bond(&self, user_key: &VerifyingKey) -> Result<u64>
 ```
 
 **Integration Points**:
+
 - Call `check_storage_quota()` before accepting file uploads
 - Call `record_storage_usage()` after successful storage
 - Reject storage requests if quota exceeded
 
 ### 7. Genesis Block Initialization ✅ COMPLETE
+
 **Location**: `crates/dchat-chain/src/chain/genesis.rs`
 
 **Implementation**:
+
 - ✅ `GenesisBuilder` - Creates genesis blocks for both chains
 - ✅ `ChatGenesisBlock` with initial validators, config, signatures
 - ✅ `CurrencyGenesisBlock` with initial supply, validators, config
 - ✅ Cryptographic signing and verification
 - ✅ Genesis submission to chain RPCs
-- ✅ Initial token supply: 1 billion DCHAT tokens (18 decimals)
+- ✅ Initial token supply: 1 billion DCHAT tokens (8 decimals, 1 DCHAT = 100,000,000 motes)
 
 **Chain Configurations**:
+
 ```rust
 // Chat Chain Genesis
 chain_id: "dchat-mainnet-1"
@@ -155,14 +179,16 @@ chain_id: "dchat-currency-mainnet-1"
 block_time_secs: 5
 token_name: "DChat Token"
 token_symbol: "DCHAT"
-token_decimals: 18
-initial_supply: 1,000,000,000 (with 18 decimals)
+token_decimals: 8  // 1 DCHAT = 100,000,000 motes
+initial_supply: 100,000,000,000,000,000 motes (1 billion DCHAT)
 ```
 
 ### 8. First-Validator Bootstrap ✅ COMPLETE
+
 **Location**: `crates/dchat-chain/src/chain/bootstrap.rs`
 
 **Implementation**:
+
 - ✅ `BootstrapCoordinator` - Orchestrates mainnet launch sequence
 - ✅ Waits for first validator to stake
 - ✅ Creates genesis blocks when first validator comes online
@@ -173,6 +199,7 @@ initial_supply: 1,000,000,000 (with 18 decimals)
 - ✅ Comprehensive error handling
 
 **Bootstrap Sequence**:
+
 1. Wait for first validator to stake `MIN_VALIDATOR_STAKE` tokens
 2. Register first validator
 3. Create chat chain genesis block
@@ -184,10 +211,11 @@ initial_supply: 1,000,000,000 (with 18 decimals)
 9. Mark system as fully operational
 
 **Key Function**:
+
 ```rust
 pub async fn execute_full_bootstrap(
-    &mut self, 
-    validator_key: SigningKey, 
+    &mut self,
+    validator_key: SigningKey,
     stake_amount: u64
 ) -> Result<()>
 ```
@@ -195,6 +223,7 @@ pub async fn execute_full_bootstrap(
 ## Integration Guide for Mainnet Launch
 
 ### Step 1: Configure Environment Variables
+
 ```bash
 export CHAT_CHAIN_RPC="http://chat-chain-node:8080"
 export CURRENCY_CHAIN_RPC="http://currency-chain-node:8081"
@@ -202,6 +231,7 @@ export BRIDGE_RPC="http://bridge-service:9000"
 ```
 
 ### Step 2: Initialize First Validator
+
 ```rust
 use dchat_chain::chain::{BootstrapCoordinator, GenesisCoordinator};
 use ed25519_dalek::SigningKey;
@@ -229,6 +259,7 @@ tokio::spawn(async move {
 ```
 
 ### Step 3: Enforce Staking in Validator Node
+
 ```rust
 use dchat_chain::chain::currency_chain::ValidatorStakingEnforcer;
 
@@ -249,6 +280,7 @@ if enforcer.can_sign_block(&validator_key).await? {
 ```
 
 ### Step 4: Enforce Staking in Relay Nodes
+
 ```rust
 use dchat_network::relay::RelayStakingValidator;
 
@@ -264,6 +296,7 @@ if validator.verify_relay_stake(&relay_key).await? {
 ```
 
 ### Step 5: Enforce Storage Bonds
+
 ```rust
 use dchat_storage::economics::StorageBondManager;
 
@@ -274,13 +307,14 @@ let file_size_bytes = 1024 * 1024; // 1 MB
 if bond_manager.check_storage_quota(&user_key, file_size_bytes).await? {
     // Accept upload
     // ... store file ...
-    
+
     // Record usage
     bond_manager.record_storage_usage(&user_key, file_size_bytes).await?;
 }
 ```
 
 ### Step 6: Use Onion Routing
+
 ```rust
 use dchat_network::onion_routing::{OnionRoutingManager, CircuitConfig};
 
@@ -299,6 +333,7 @@ manager.send_packet(&circuit_id, packet).await?;
 ```
 
 ### Step 7: Use Post-Quantum Crypto
+
 ```rust
 use dchat_crypto::post_quantum::{HybridKem, HybridSigner};
 
@@ -355,6 +390,7 @@ cargo build --release --workspace
 ## Post-Launch Monitoring
 
 Monitor these metrics:
+
 - Validator stake amounts and count
 - Relay stake amounts and count
 - Storage bond utilization
@@ -376,7 +412,8 @@ Monitor these metrics:
 
 **Status**: ✅ ALL CRITICAL MAINNET COMPONENTS IMPLEMENTED AND READY FOR LAUNCH
 
-**Next Steps**: 
+**Next Steps**:
+
 1. Run comprehensive integration tests
 2. Deploy to testnet for final validation
 3. Execute mainnet launch with first validator

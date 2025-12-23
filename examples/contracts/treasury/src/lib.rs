@@ -5,7 +5,7 @@
 //! 1. **Multiple Account Types**: Signer, Writable, Readonly, PDA
 //! 2. **Instruction Routing**: Multiple instruction handlers
 //! 3. **State Management**: Complex state structures
-//! 4. **Lamport Transfers**: Moving lamports between accounts
+//! 4. **Motes Transfers**: Moving motes between accounts (1 DCHAT = 100,000,000 motes)
 //! 5. **PDA Derivation**: Program-derived addresses for vaults
 //! 6. **Event Emission**: Events for all operations
 //! 7. **Return Data**: Returning information to callers
@@ -16,8 +16,8 @@
 //! ## Features
 //!
 //! - Initialize a treasury with an authority
-//! - Deposit lamports into the treasury vault (PDA)
-//! - Withdraw lamports (authority only)
+//! - Deposit motes into the treasury vault (PDA)
+//! - Withdraw motes (authority only)
 //! - Transfer between users via treasury
 //! - Query treasury balance
 //! - Update treasury authority (multisig-ready structure)
@@ -59,11 +59,11 @@ const USER_VAULT_SEED: &[u8] = b"user_vault";
 
 /// Initialize the treasury
 const IX_INITIALIZE: u8 = 0;
-/// Deposit lamports to treasury vault
+/// Deposit motes to treasury vault
 const IX_DEPOSIT: u8 = 1;
-/// Withdraw lamports from treasury (authority only)
+/// Withdraw motes from treasury (authority only)
 const IX_WITHDRAW: u8 = 2;
-/// Transfer lamports between user vaults
+/// Transfer motes between user vaults
 const IX_TRANSFER: u8 = 3;
 /// Query treasury info (returns data)
 const IX_QUERY: u8 = 4;
@@ -109,8 +109,8 @@ const ERR_ZERO_AMOUNT: u32 = 15;
 /// | 6      | 2    | _padding           | Alignment padding                |
 /// | 8      | 32   | authority          | Current authority pubkey         |
 /// | 40     | 32   | pending_authority  | Pending authority (for transfers)|
-/// | 72     | 8    | total_deposits     | Total lamports deposited         |
-/// | 80     | 8    | total_withdrawals  | Total lamports withdrawn         |
+/// | 72     | 8    | total_deposits     | Total motes deposited            |
+/// | 80     | 8    | total_withdrawals  | Total motes withdrawn            |
 /// | 88     | 8    | fee_basis_points   | Fee in basis points (0-10000)    |
 /// | 96     | 8    | collected_fees     | Total fees collected             |
 /// | 104    | 4    | user_count         | Number of user vaults            |
@@ -439,10 +439,10 @@ fn process_initialize(accounts: &mut [u8], payload: &[u8]) -> u32 {
     SUCCESS
 }
 
-/// Deposit lamports to treasury
+/// Deposit motes to treasury
 ///
 /// Payload:
-/// - amount: u64
+/// - amount: u64 (in motes, 1 DCHAT = 100,000,000 motes)
 fn process_deposit(accounts: &mut [u8], payload: &[u8]) -> u32 {
     if accounts.len() < TREASURY_STATE_SIZE {
         return ERR_INSUFFICIENT_DATA;
@@ -479,10 +479,10 @@ fn process_deposit(accounts: &mut [u8], payload: &[u8]) -> u32 {
     SUCCESS
 }
 
-/// Withdraw lamports from treasury (authority only)
+/// Withdraw motes from treasury (authority only)
 ///
 /// Payload:
-/// - amount: u64
+/// - amount: u64 (in motes, 1 DCHAT = 100,000,000 motes)
 /// - authority_signature: [u8; 32] (simplified - just check authority matches)
 fn process_withdraw(accounts: &mut [u8], payload: &[u8]) -> u32 {
     if accounts.len() < TREASURY_STATE_SIZE {

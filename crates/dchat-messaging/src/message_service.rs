@@ -391,14 +391,22 @@ impl MessageService {
     }
 
     /// Deduct message fee from sender and transfer to relay
+    ///
+    /// Uses `collect_message_fee` instead of `transfer` to ensure:
+    /// - Relay receives the full fee (no 1% burn applied to service fees)
+    /// - Proper fee accounting for block consensus verification
     async fn deduct_fee(&self, sender: &UserId, relay: &UserId, amount: u64) -> Result<Uuid> {
         let mut last_error = None;
 
         for attempt in 0..self.config.fee_deduction_retries {
-            match self.currency_chain.transfer(sender, relay, amount) {
+            // Use collect_message_fee for proper fee routing (no burn on message fees)
+            match self
+                .currency_chain
+                .collect_message_fee(sender, relay, amount)
+            {
                 Ok(tx_id) => {
                     tracing::info!(
-                        "✅ Fee deducted: {} from {} to {} (tx: {})",
+                        "✅ Message fee collected: {} from {} to relay {} (tx: {})",
                         amount,
                         sender,
                         relay,

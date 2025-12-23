@@ -16,11 +16,14 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 /// Token supply configuration
+///
+/// All amounts are in motes (smallest unit of DCHAT).
+/// 1 DCHAT = 100,000,000 motes (8 decimal places).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSupplyConfig {
-    /// Initial token supply at genesis
+    /// Initial token supply at genesis (in motes)
     pub initial_supply: u64,
-    /// Maximum supply cap (None = unlimited)
+    /// Maximum supply cap in motes (None = unlimited)
     pub max_supply: Option<u64>,
     /// Inflation rate per block (in basis points, 100 = 1%)
     pub inflation_rate_bps: u16,
@@ -32,12 +35,14 @@ pub struct TokenSupplyConfig {
 
 impl Default for TokenSupplyConfig {
     fn default() -> Self {
+        // DCHAT uses 8 decimals: 1 DCHAT = 100_000_000 motes
+        // These are whole token counts; multiply by MOTES_PER_DCHAT for motes
         Self {
-            initial_supply: 100_000_000_000,     // 100 billion tokens
-            max_supply: Some(1_000_000_000_000), // 1 trillion cap
-            inflation_rate_bps: 500,             // 5% annual
-            inflation_interval_seconds: 15,      // per block
-            burn_rate_bps: 100,                  // 1% of transactions burned
+            initial_supply: 100_000_000_000, // 100 billion DCHAT (whole tokens)
+            max_supply: Some(1_000_000_000_000), // 1 trillion DCHAT cap (whole tokens)
+            inflation_rate_bps: 500,         // 5% annual
+            inflation_interval_seconds: 15,  // per block
+            burn_rate_bps: 100,              // 1% of transactions burned
         }
     }
 }

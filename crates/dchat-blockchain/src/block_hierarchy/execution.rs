@@ -395,8 +395,21 @@ impl ExecutionEngine {
             .filter_map(|r| r.clone())
             .collect();
 
-        // Update context
-        ctx.gas_used += receipts.iter().map(|r| r.gas_used).sum::<u64>();
+        // Update context - track both gas used and fees collected
+        // Fees are computed as gas_cost * gas_price for each successful tx
+        let (total_gas, total_fees): (u64, u64) = txs
+            .iter()
+            .zip(receipts.iter())
+            .filter(|(_, r)| r.success)
+            .map(|(tx, r)| {
+                let fee_motes = r.gas_used.saturating_mul(tx.gas_price);
+                (r.gas_used, fee_motes)
+            })
+            .fold((0u64, 0u64), |(g, f), (gas, fee)| {
+                (g.saturating_add(gas), f.saturating_add(fee))
+            });
+        ctx.gas_used = ctx.gas_used.saturating_add(total_gas);
+        ctx.fees_collected = ctx.fees_collected.saturating_add(total_fees);
 
         Ok(receipts)
     }

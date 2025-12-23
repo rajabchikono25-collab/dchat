@@ -13,10 +13,9 @@ use crate::{ChainId, FinalityProof};
 use async_trait::async_trait;
 use chrono::Utc;
 use dchat_blockchain::solana::{
-    Cluster, SolanaRpcClient, SolanaRpcConfig, SplToken,
-    BridgeProgram, TransactionBuilder,
+    BridgeProgram, Cluster, SolanaRpcClient, SolanaRpcConfig, SplToken, TransactionBuilder,
 };
-use dchat_blockchain::wallet::solana_compat::{SolanaAddress, base58_decode};
+use dchat_blockchain::wallet::solana_compat::{base58_decode, SolanaAddress};
 use dchat_core::{Error, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -66,6 +65,11 @@ impl SolanaCluster {
 }
 
 /// Configuration for the Solana bridge
+///
+/// # Unit Notes
+/// - `bridge_fee_lamports`: Solana network fee in lamports (1 SOL = 1,000,000,000 lamports, 9 decimals)
+/// - DCHAT bridge amounts use motes (1 DCHAT = 100,000,000 motes, 8 decimals)
+/// - These are different currencies with different decimal places
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolanaBridgeConfig {
     /// Solana cluster to connect to
@@ -182,15 +186,16 @@ impl SolanaBridgeManager {
             .map_err(|e| Error::network(format!("Failed to create RPC client: {}", e)))?;
 
         // Initialize bridge program if configured
-        let bridge_program = if !config.bridge_program_id.is_empty() && !config.wdchat_mint.is_empty() {
-            let program_id = SolanaAddress::from_base58(&config.bridge_program_id)
-                .map_err(|e| Error::validation(format!("Invalid bridge program ID: {}", e)))?;
-            let mint = SolanaAddress::from_base58(&config.wdchat_mint)
-                .map_err(|e| Error::validation(format!("Invalid wDCHAT mint: {}", e)))?;
-            Some(BridgeProgram::new(program_id, mint)?)
-        } else {
-            None
-        };
+        let bridge_program =
+            if !config.bridge_program_id.is_empty() && !config.wdchat_mint.is_empty() {
+                let program_id = SolanaAddress::from_base58(&config.bridge_program_id)
+                    .map_err(|e| Error::validation(format!("Invalid bridge program ID: {}", e)))?;
+                let mint = SolanaAddress::from_base58(&config.wdchat_mint)
+                    .map_err(|e| Error::validation(format!("Invalid wDCHAT mint: {}", e)))?;
+                Some(BridgeProgram::new(program_id, mint)?)
+            } else {
+                None
+            };
 
         Ok(Self {
             config,
@@ -208,7 +213,11 @@ impl SolanaBridgeManager {
     }
 
     /// Register a validator for signature verification
-    pub async fn register_validator(&self, pubkey_hex: String, verifying_key: VerifyingKey) -> Result<()> {
+    pub async fn register_validator(
+        &self,
+        pubkey_hex: String,
+        verifying_key: VerifyingKey,
+    ) -> Result<()> {
         let mut validators = self.validators.write().await;
         validators.insert(pubkey_hex, verifying_key);
         Ok(())
@@ -394,11 +403,15 @@ impl SolanaBridgeManager {
         }
 
         // Get bridge program
-        let bridge = self.bridge_program.as_ref()
+        let bridge = self
+            .bridge_program
+            .as_ref()
             .ok_or_else(|| Error::validation("Bridge program not configured"))?;
 
         // Get authority signer
-        let signer = self.authority_signer.as_ref()
+        let signer = self
+            .authority_signer
+            .as_ref()
             .ok_or_else(|| Error::validation("Authority signer not configured"))?;
 
         // 1. Build the mint instruction using BridgeProgram
@@ -412,7 +425,8 @@ impl SolanaBridgeManager {
         let dchat_tx_hash = create_dchat_tx_hash(&transfer);
 
         // Collect validator signatures as [u8; 64] arrays
-        let validator_signatures: Vec<[u8; 64]> = transfer.validator_signatures
+        let validator_signatures: Vec<[u8; 64]> = transfer
+            .validator_signatures
             .iter()
             .filter_map(|vs| {
                 if vs.signature.len() == 64 {
@@ -443,7 +457,8 @@ impl SolanaBridgeManager {
         )?;
 
         // 2. Get recent blockhash
-        let blockhash_response = self.rpc_client
+        let blockhash_response = self
+            .rpc_client
             .get_latest_blockhash()
             .await
             .map_err(|e| Error::network(format!("Failed to get blockhash: {}", e)))?;
@@ -469,7 +484,8 @@ impl SolanaBridgeManager {
 
         // 4. Submit to Solana
         let tx_base64 = tx.to_base64()?;
-        let signature = self.rpc_client
+        let signature = self
+            .rpc_client
             .send_transaction(&tx_base64)
             .await
             .map_err(|e| Error::network(format!("Failed to send transaction: {}", e)))?;
@@ -519,7 +535,8 @@ impl SolanaBridgeManager {
                     return Err(Error::validation("Transfer failed"));
                 }
                 Some(t) if t.status == SolanaBridgeTransferStatus::Completed => {
-                    return t.solana_signature
+                    return t
+                        .solana_signature
                         .ok_or_else(|| Error::validation("Transfer completed but no signature"));
                 }
                 None => {
@@ -599,7 +616,8 @@ impl SolanaBridgeManager {
             .map_err(|e| Error::validation(format!("Failed to derive ATA: {}", e)))?;
 
         // Get the token balance from RPC
-        let balance = self.rpc_client
+        let balance = self
+            .rpc_client
             .get_token_account_balance(&ata)
             .await
             .map_err(|e| Error::network(format!("Failed to get wDCHAT balance: {}", e)))?;
@@ -650,17 +668,14 @@ impl ChainSyncAdapter for SolanaChainAdapter {
 
                 let transfer_id = self
                     .bridge_manager
-                    .initiate_bridge_to_solana(
-                        dchat_source,
-                        destination_address.clone(),
-                        *amount,
-                    )
+                    .initiate_bridge_to_solana(dchat_source, destination_address.clone(), *amount)
                     .await?;
 
                 // Wait for validator signatures to be collected and execute the mint
                 // Use a configurable timeout (default 60 seconds for signature collection)
                 let timeout = Duration::from_secs(60);
-                let signature = self.bridge_manager
+                let signature = self
+                    .bridge_manager
                     .wait_and_execute(transfer_id, timeout)
                     .await?;
 
@@ -699,10 +714,11 @@ impl ChainSyncAdapter for SolanaChainAdapter {
         // Solana uses blockhash as state commitment at a given slot
         // The blockhash serves as a cryptographic commitment to the state
         // at a particular point in the ledger
-        
+
         // Get account info for the slot's bank to derive state commitment
         // For Solana, we use the latest finalized blockhash as our state root
-        let slot_info = self.bridge_manager
+        let slot_info = self
+            .bridge_manager
             .rpc_client
             .get_slot()
             .await
@@ -718,7 +734,8 @@ impl ChainSyncAdapter for SolanaChainAdapter {
 
         // For the state commitment, we use the latest finalized blockhash
         // This represents the state commitment of the finalized chain
-        let blockhash = self.bridge_manager
+        let blockhash = self
+            .bridge_manager
             .rpc_client
             .get_latest_blockhash()
             .await
@@ -732,15 +749,15 @@ impl ChainSyncAdapter for SolanaChainAdapter {
 /// Create a hash of the DCHAT transaction for the bridge
 /// This is used to prove on Solana that the DCHAT chain has locked the tokens
 fn create_dchat_tx_hash(transfer: &SolanaBridgeTransfer) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
-    
+    use sha2::{Digest, Sha256};
+
     let mut hasher = Sha256::new();
     hasher.update(transfer.id.as_bytes());
     hasher.update(transfer.dchat_address.as_bytes());
     hasher.update(transfer.solana_address.as_bytes());
     hasher.update(transfer.amount.to_le_bytes());
     hasher.update(transfer.created_at.timestamp().to_le_bytes());
-    
+
     let result = hasher.finalize();
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&result);

@@ -3,6 +3,7 @@
 //! Creates the first blocks for chat chain and currency chain when the first validator comes online
 
 use dchat_core::error::{Error, Result};
+use dchat_core::motes::{DCHAT_DECIMALS, MOTES_PER_DCHAT};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -296,21 +297,24 @@ impl GenesisCoordinator {
         };
 
         // Currency chain genesis config
+        // DCHAT uses 8 decimal places: 1 DCHAT = 100,000,000 motes
         let currency_config = CurrencyGenesisConfig {
             chain_id: "dchat-currency-mainnet-1".to_string(),
             block_time_secs: 5,
             token_name: "DChat Token".to_string(),
             token_symbol: "DCHAT".to_string(),
-            token_decimals: 18,
+            token_decimals: DCHAT_DECIMALS,
         };
 
         // Create genesis blocks
         let chat_genesis =
             builder.create_chat_genesis(vec![first_validator.clone()], chat_config)?;
+        // Initial supply: 1 billion DCHAT = 1_000_000_000 * 100_000_000 motes
+        let initial_supply_motes = 1_000_000_000u64.saturating_mul(MOTES_PER_DCHAT);
         let currency_genesis = builder.create_currency_genesis(
             vec![first_validator.clone()],
             currency_config,
-            1_000_000_000_000_000_000, // 1 billion tokens with 18 decimals
+            initial_supply_motes, // 1 billion DCHAT in motes (8 decimals)
         )?;
 
         // Submit to chains
@@ -451,7 +455,7 @@ mod tests {
             block_time_secs: 5,
             token_name: "Test Token".to_string(),
             token_symbol: "TEST".to_string(),
-            token_decimals: 18,
+            token_decimals: DCHAT_DECIMALS, // 8 decimals: 1 DCHAT = 100,000,000 motes
         };
 
         let genesis = builder

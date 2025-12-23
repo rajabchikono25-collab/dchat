@@ -70,7 +70,12 @@ impl Cluster {
     }
 }
 
-/// Lamports per SOL
+/// Lamports per SOL (Solana's native currency)
+///
+/// Solana uses 9 decimal places: 1 SOL = 1,000,000,000 lamports.
+///
+/// **Note**: This is distinct from DCHAT's motes (1 DCHAT = 100,000,000 motes, 8 decimals).
+/// Use `dchat_core::motes` for DCHAT currency operations.
 pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 
 /// Token program ID
@@ -88,12 +93,16 @@ pub const RENT_SYSVAR_ID: &str = "SysvarRent111111111111111111111111111111111";
 /// Recent blockhashes sysvar
 pub const RECENT_BLOCKHASHES_ID: &str = "SysvarRecentB1telephones1111111111111111111";
 
-/// Convert lamports to SOL
+/// Convert lamports to SOL (Solana's native currency)
+///
+/// **Note**: For DCHAT conversions, use `dchat_core::motes::motes_to_dchat`.
 pub fn lamports_to_sol(lamports: u64) -> f64 {
     lamports as f64 / LAMPORTS_PER_SOL as f64
 }
 
-/// Convert SOL to lamports
+/// Convert SOL to lamports (Solana's native currency)
+///
+/// **Note**: For DCHAT conversions, use `dchat_core::motes::dchat_to_motes`.
 pub fn sol_to_lamports(sol: f64) -> u64 {
     (sol * LAMPORTS_PER_SOL as f64) as u64
 }

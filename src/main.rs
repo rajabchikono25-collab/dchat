@@ -1673,7 +1673,7 @@ enum ProgramCommand {
         rpc_url: String,
     },
 
-    /// Close a program and reclaim lamports
+    /// Close a program and reclaim motes
     Close {
         /// Program ID to close
         #[arg(long)]
@@ -1683,7 +1683,7 @@ enum ProgramCommand {
         #[arg(long)]
         authority: PathBuf,
 
-        /// Destination for reclaimed lamports (defaults to authority)
+        /// Destination for reclaimed motes (defaults to authority)
         #[arg(long)]
         destination: Option<String>,
 
@@ -11204,7 +11204,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             println!("Upgrade Authority: (query from chain)");
             println!("Frozen:            false");
             println!("Data Length:       5377 bytes");
-            println!("Lamports:          2039280");
+            println!("Motes:             2039280");
             println!();
             println!("💡 Use --rpc-url to query a live blockchain");
 
@@ -11242,7 +11242,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             println!("Program ID: {}", program_id);
 
             println!("\n⚠️  WARNING: This will DELETE the program permanently!");
-            println!("   Lamports will be transferred to the destination address.");
+            println!("   Motes will be transferred to the destination address.");
 
             if !yes {
                 print!("\n   Type 'DELETE' to confirm: ");
@@ -11258,7 +11258,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
 
             println!("\n🗑️  Closing program...");
             println!("\n✅ Program closed successfully!");
-            println!("   Reclaimed lamports: 2039280");
+            println!("   Reclaimed motes: 2039280");
 
             Ok(())
         }

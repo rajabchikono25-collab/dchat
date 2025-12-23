@@ -2,6 +2,7 @@
 
 use chrono::Utc;
 use dchat_core::error::{Error, Result};
+use dchat_core::motes::MOTES_PER_DCHAT;
 use dchat_core::types::UserId;
 use dchat_privacy::blind_tokens::CurrencyChainClient as PrivacyCurrencyChainClient;
 use serde::{Deserialize, Serialize};
@@ -378,6 +379,8 @@ pub struct CurrencyChainClient {
     payment_channel_escrows: Arc<RwLock<HashMap<String, PaymentChannelEscrow>>>,
     /// Tokenomics manager (optional - can be shared)
     tokenomics: Option<Arc<TokenomicsManager>>,
+    /// Fee distribution manager for proper fee routing (70/20/10 split)
+    fee_distribution: Option<Arc<crate::fee_distribution::FeeDistributionManager>>,
     /// Shutdown signal for block sync task
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Payment transaction hash -> (amount, recipient, confirmed)
@@ -516,6 +519,11 @@ impl CurrencyChainClient {
     pub fn new(config: CurrencyChainConfig) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
 
+        // Initialize fee distribution manager with default config
+        let fee_distribution = Arc::new(crate::fee_distribution::FeeDistributionManager::new(
+            crate::fee_distribution::FeeDistributionConfig::default(),
+        ));
+
         Ok(Self {
             config,
             rpc_client: Arc::new(rpc_client),
@@ -526,6 +534,7 @@ impl CurrencyChainClient {
             storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             payment_channel_escrows: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
+            fee_distribution: Some(fee_distribution),
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
@@ -541,6 +550,11 @@ impl CurrencyChainClient {
     pub fn new_mock(config: CurrencyChainConfig) -> Self {
         let rpc_client = MockRpcClient::new();
 
+        // Initialize fee distribution manager for tests
+        let fee_distribution = Arc::new(crate::fee_distribution::FeeDistributionManager::new(
+            crate::fee_distribution::FeeDistributionConfig::default(),
+        ));
+
         Self {
             config,
             rpc_client: Arc::new(rpc_client),
@@ -551,6 +565,7 @@ impl CurrencyChainClient {
             storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             payment_channel_escrows: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: None,
+            fee_distribution: Some(fee_distribution),
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
@@ -559,12 +574,33 @@ impl CurrencyChainClient {
         }
     }
 
+    /// Credit a user account with tokens (for testing only)
+    ///
+    /// This bypasses normal token creation and directly credits the account.
+    /// Only available in test builds or with the `test-mocks` feature.
+    #[cfg(any(test, feature = "test-mocks"))]
+    pub fn credit_for_testing(&self, user_id: &UserId, amount: u64) {
+        let mut wallets = self.wallets.write().unwrap();
+        let wallet = wallets.entry(user_id.clone()).or_insert_with(|| Wallet {
+            user_id: user_id.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+        wallet.balance += amount;
+    }
+
     /// Create new currency chain client with tokenomics integration
     pub fn with_tokenomics(
         config: CurrencyChainConfig,
         tokenomics: Arc<TokenomicsManager>,
     ) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
+
+        // Initialize fee distribution manager
+        let fee_distribution = Arc::new(crate::fee_distribution::FeeDistributionManager::new(
+            crate::fee_distribution::FeeDistributionConfig::default(),
+        ));
 
         Ok(Self {
             config,
@@ -576,6 +612,7 @@ impl CurrencyChainClient {
             storage_bonds: Arc::new(RwLock::new(HashMap::new())),
             payment_channel_escrows: Arc::new(RwLock::new(HashMap::new())),
             tokenomics: Some(tokenomics),
+            fee_distribution: Some(fee_distribution),
             shutdown_tx: None,
             payment_records: Arc::new(RwLock::new(HashMap::new())),
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
@@ -700,7 +737,18 @@ impl CurrencyChainClient {
     }
 
     /// Transfer tokens between users
+    ///
+    /// # Fee Handling (Mainnet Production)
+    ///
+    /// For standard user-to-user transfers:
+    /// - 1% of the amount is burned (deflationary)
+    /// - The remaining 99% goes to the recipient
+    /// - No protocol fee split on user-to-user transfers (fees come from message/channel fees)
+    ///
+    /// For protocol-internal transfers (rewards, refunds), use `transfer_internal`
+    /// which bypasses the burn to ensure recipients receive full amount.
     pub fn transfer(&self, from: &UserId, to: &UserId, amount: u64) -> Result<Uuid> {
+        let tx_id = Uuid::new_v4();
         let mut wallets = self.wallets.write().unwrap();
 
         let from_wallet = wallets
@@ -718,7 +766,8 @@ impl CurrencyChainClient {
         let burn_amount = if let Some(ref tokenomics) = self.tokenomics {
             (amount * tokenomics.get_statistics().burn_rate_bps as u64) / 10000
         } else {
-            0
+            // Use default burn rate if tokenomics not configured
+            (amount * crate::fee_distribution::DEFAULT_BURN_RATE_BPS as u64) / 10000
         };
 
         let net_amount = amount - burn_amount;
@@ -734,16 +783,28 @@ impl CurrencyChainClient {
 
         to_wallet.balance += net_amount;
 
-        // Burn transaction fee
+        // Burn transaction fee via tokenomics (tracks supply reduction)
         if burn_amount > 0 {
             if let Some(ref tokenomics) = self.tokenomics {
                 let _ =
                     tokenomics.burn_tokens(burn_amount, BurnReason::TransactionFee, from.clone());
             }
+
+            // Also record in fee distribution for consensus verification
+            if let Some(ref fee_dist) = self.fee_distribution {
+                // Record the burn in block accounting (no distribution for user transfers)
+                let _ = fee_dist.collect_fee(
+                    crate::fee_distribution::FeeType::TransferFee,
+                    burn_amount, // Only the burn portion is "collected" as a fee
+                    from.clone(),
+                    None,
+                    tx_id,
+                );
+            }
         }
 
         let tx = CurrencyTransaction {
-            id: Uuid::new_v4(),
+            id: tx_id,
             tx_type: "payment".to_string(),
             from: from.clone(),
             to: Some(to.clone()),
@@ -754,10 +815,163 @@ impl CurrencyChainClient {
             created_at: Utc::now().timestamp(),
         };
 
-        let tx_id = tx.id;
         self.transactions.write().unwrap().insert(tx_id, tx);
 
         Ok(tx_id)
+    }
+
+    /// Transfer tokens internally without burn (for protocol operations)
+    ///
+    /// Use this for:
+    /// - Reward payouts to validators/relays
+    /// - Refunds from payment channels
+    /// - Treasury disbursements
+    /// - Any protocol-to-user transfer where burn should not apply
+    ///
+    /// This ensures recipients receive the full intended amount.
+    pub fn transfer_internal(
+        &self,
+        from: &UserId,
+        to: &UserId,
+        amount: u64,
+        reason: &str,
+    ) -> Result<Uuid> {
+        let tx_id = Uuid::new_v4();
+        let mut wallets = self.wallets.write().unwrap();
+
+        let from_wallet = wallets
+            .get_mut(from)
+            .ok_or_else(|| Error::NotFound(format!("Source not found: {}", from)))?;
+
+        if from_wallet.balance < amount {
+            return Err(Error::InvalidInput(format!(
+                "Insufficient pool balance: have {}, need {}",
+                from_wallet.balance, amount
+            )));
+        }
+
+        from_wallet.balance -= amount;
+
+        let to_wallet = wallets.entry(to.clone()).or_insert_with(|| Wallet {
+            user_id: to.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+
+        // Full amount to recipient - NO BURN
+        to_wallet.balance += amount;
+
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: format!("internal:{}", reason),
+            from: from.clone(),
+            to: Some(to.clone()),
+            amount,
+            status: "confirmed".to_string(), // Internal transfers are instant
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::debug!(
+            "Internal transfer: {} -> {} amount={} reason={}",
+            from,
+            to,
+            amount,
+            reason
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Collect message fee with proper distribution
+    ///
+    /// Message fees are collected from sender and distributed to the relay
+    /// that delivers the message. No burn is applied to message fees because
+    /// the relay is providing a service and should receive the full fee.
+    ///
+    /// # Arguments
+    /// * `sender` - User sending the message
+    /// * `relay` - Relay that will deliver the message
+    /// * `fee_amount` - Amount to collect as message fee
+    ///
+    /// # Returns
+    /// Transaction ID for the fee collection
+    pub fn collect_message_fee(
+        &self,
+        sender: &UserId,
+        relay: &UserId,
+        fee_amount: u64,
+    ) -> Result<Uuid> {
+        let tx_id = Uuid::new_v4();
+        let mut wallets = self.wallets.write().unwrap();
+
+        let sender_wallet = wallets
+            .get_mut(sender)
+            .ok_or_else(|| Error::NotFound(format!("Sender not found: {}", sender)))?;
+
+        if sender_wallet.balance < fee_amount {
+            return Err(Error::InvalidInput(format!(
+                "Insufficient balance for message fee: have {}, need {}",
+                sender_wallet.balance, fee_amount
+            )));
+        }
+
+        // Deduct full fee from sender
+        sender_wallet.balance -= fee_amount;
+
+        // Credit full fee to relay (no burn for service fees)
+        let relay_wallet = wallets.entry(relay.clone()).or_insert_with(|| Wallet {
+            user_id: relay.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+        relay_wallet.balance += fee_amount;
+
+        // Record in fee distribution for block accounting
+        if let Some(ref fee_dist) = self.fee_distribution {
+            let _ = fee_dist.collect_fee(
+                crate::fee_distribution::FeeType::MessageFee,
+                fee_amount,
+                sender.clone(),
+                Some(relay.clone()),
+                tx_id,
+            );
+        }
+
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: "message_fee".to_string(),
+            from: sender.clone(),
+            to: Some(relay.clone()),
+            amount: fee_amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::debug!(
+            "Message fee collected: {} from {} to relay {}",
+            fee_amount,
+            sender,
+            relay
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Get fee distribution manager
+    pub fn get_fee_distribution(
+        &self,
+    ) -> Option<&Arc<crate::fee_distribution::FeeDistributionManager>> {
+        self.fee_distribution.as_ref()
     }
 
     /// Stake tokens for rewards
@@ -1765,9 +1979,9 @@ impl CurrencyChainClient {
         let staking_reward = (wallet.staked * BASE_APY_BPS * current_epoch) / (365 * 10000);
 
         // Calculate block production rewards (validators only)
-        // Reward per block = 10 tokens (in smallest units)
+        // Reward per block = 0.1 DCHAT (in motes, 8 decimals)
         // Normalize by epoch: more reward for high block production within epoch
-        const REWARD_PER_BLOCK: u64 = 10_000_000; // 10 tokens with 6 decimals
+        const REWARD_PER_BLOCK: u64 = 10_000_000; // 0.1 DCHAT = 10,000,000 motes
                                                   // Epoch efficiency bonus: if producing more than expected blocks per epoch
         let epoch_efficiency = if blocks_produced > 0 && current_epoch > 0 {
             let expected_blocks = current_epoch * BLOCKS_PER_EPOCH;
@@ -1780,8 +1994,8 @@ impl CurrencyChainClient {
         let block_reward = (blocks_produced * REWARD_PER_BLOCK * epoch_efficiency) / 100;
 
         // Calculate relay rewards (relays only)
-        // Reward per 100 messages = 1 token
-        const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000; // 1 token with 6 decimals
+        // Reward per 100 messages = 0.01 DCHAT (in motes, 8 decimals)
+        const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000; // 0.01 DCHAT = 1,000,000 motes
         let relay_reward =
             (messages_relayed / MESSAGES_PER_RELAY_REWARD) * REWARD_PER_MESSAGE_BATCH;
 
@@ -1819,8 +2033,9 @@ impl CurrencyChainClient {
             })?;
 
             const BASE_APY_BPS: u64 = 500;
-            const REWARD_PER_BLOCK: u64 = 10_000_000;
-            const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000;
+            // Rewards in motes (8 decimals): 0.1 DCHAT per block, 0.01 DCHAT per 100 messages
+            const REWARD_PER_BLOCK: u64 = 10_000_000; // 0.1 DCHAT = 10,000,000 motes
+            const REWARD_PER_MESSAGE_BATCH: u64 = 1_000_000; // 0.01 DCHAT = 1,000,000 motes
             const MESSAGES_PER_RELAY_REWARD: u64 = 100;
 
             let staking_reward = (wallet.staked * BASE_APY_BPS * current_epoch) / (365 * 10000);
