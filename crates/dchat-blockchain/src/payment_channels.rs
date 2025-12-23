@@ -1035,17 +1035,19 @@ mod tests {
         )
         .unwrap();
 
-        // Create payment
-        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
+        // Create payment (1 DCHAT)
+        let update = channel
+            .create_payment(MOTES_PER_DCHAT, &sender_signing)
+            .unwrap();
 
         // Apply update
         channel.update_state(update).unwrap();
 
         assert_eq!(
             channel.current_state.sender_balance,
-            MIN_CHANNEL_CAPACITY - 1_000_000
+            MIN_CHANNEL_CAPACITY - MOTES_PER_DCHAT
         );
-        assert_eq!(channel.current_state.receiver_balance, 1_000_000);
+        assert_eq!(channel.current_state.receiver_balance, MOTES_PER_DCHAT);
         assert_eq!(channel.current_state.nonce, 1);
     }
 
@@ -1064,14 +1066,16 @@ mod tests {
         .unwrap();
 
         // First update succeeds
-        let update1 = channel.create_payment(1_000_000, &sender_signing).unwrap();
+        let update1 = channel
+            .create_payment(MOTES_PER_DCHAT, &sender_signing)
+            .unwrap();
         channel.update_state(update1).unwrap();
 
         // Create update with same nonce (should fail)
         let state = ChannelState {
             nonce: 1, // Same as current
-            sender_balance: MIN_CHANNEL_CAPACITY - 2_000_000,
-            receiver_balance: 2_000_000,
+            sender_balance: MIN_CHANNEL_CAPACITY - 2 * MOTES_PER_DCHAT,
+            receiver_balance: 2 * MOTES_PER_DCHAT,
         };
         let update2 =
             SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
@@ -1097,8 +1101,8 @@ mod tests {
         // Create state that violates balance invariant
         let state = ChannelState {
             nonce: 1,
-            sender_balance: MIN_CHANNEL_CAPACITY - 1_000_000,
-            receiver_balance: 2_000_000, // Total != capacity
+            sender_balance: MIN_CHANNEL_CAPACITY - MOTES_PER_DCHAT,
+            receiver_balance: 2 * MOTES_PER_DCHAT, // Total != capacity
         };
         let update =
             SignedStateUpdate::new_from_sender(state, &channel.channel_id, &sender_signing);
@@ -1126,14 +1130,16 @@ mod tests {
 
         let channel_id = channel.channel_id.clone();
 
-        // Create and apply update
-        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
+        // Create and apply update (1 DCHAT payment)
+        let update = channel
+            .create_payment(MOTES_PER_DCHAT, &sender_signing)
+            .unwrap();
         manager.update_channel_state(&channel_id, update).unwrap();
 
         let updated = manager.get_channel(&channel_id).unwrap();
         assert_eq!(
             updated.current_state.sender_balance,
-            MIN_CHANNEL_CAPACITY - 1_000_000
+            MIN_CHANNEL_CAPACITY - MOTES_PER_DCHAT
         );
     }
 
@@ -1157,8 +1163,10 @@ mod tests {
             )
             .unwrap();
 
-        // Create a payment first
-        let update = channel.create_payment(1_000_000, &sender_signing).unwrap();
+        // Create a payment first (1 DCHAT)
+        let update = channel
+            .create_payment(MOTES_PER_DCHAT, &sender_signing)
+            .unwrap();
         manager
             .update_channel_state(&channel.channel_id, update.clone())
             .unwrap();
@@ -1231,17 +1239,17 @@ mod tests {
                 UserId(Uuid::new_v4()),
                 sender_key,
                 receiver_key,
-                10_000_000, // 10 DCHAT
+                10 * MOTES_PER_DCHAT, // 10 DCHAT (8 decimals)
             )
             .unwrap();
 
         let mut credits = MessageCreditsChannel::new(
             channel.channel_id.clone(),
-            Some(100_000), // 0.1 DCHAT per message
+            Some(MOTES_PER_DCHAT / 10), // 0.1 DCHAT per message
         );
         credits.set_sender_key(sender_signing);
 
-        // Should have 100 credits (10,000,000 / 100,000)
+        // Should have 100 credits (10 DCHAT / 0.1 DCHAT = 100)
         assert_eq!(credits.remaining_credits(&manager), 100);
 
         // Use a credit

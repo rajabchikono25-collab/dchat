@@ -5445,7 +5445,7 @@ async fn run_validator_node(
     let stake_request = StakeRequest {
         validator_key: verifying_key,
         amount: stake_amount * MOTES_PER_DCHAT, // Convert to motes (8 decimal places)
-        lockup_period_days: 7,            // Minimum lockup for validators
+        lockup_period_days: 7,                  // Minimum lockup for validators
     };
 
     let stake_receipt = match submit_validator_stake(&stake_request).await {
@@ -11542,7 +11542,10 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
             println!("🆔 Session Details:");
             println!("   Sandbox ID:  {}", sandbox_id);
             println!("   App ID:      {}", derived_app_id);
-            println!("   User ID:     0x{}...", hex::encode(&session_user_id[..8]));
+            println!(
+                "   User ID:     0x{}...",
+                hex::encode(&session_user_id[..8])
+            );
             println!("   Viewport:    {}x{}", width, height);
             println!("   Theme:       {}", theme);
 
@@ -11562,7 +11565,10 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
             println!("══════════════════════════════════════════════════════════════════");
             println!();
             println!("Entry point: {}", app_manifest.resources.entry_point);
-            println!("Init message: {}", init_message.to_json().unwrap_or_default());
+            println!(
+                "Init message: {}",
+                init_message.to_json().unwrap_or_default()
+            );
             println!();
             println!("💡 In a full client, this would open a WebView/iframe sandbox.");
             println!("   Use the dchat-miniapps crate to integrate into your application.");
@@ -11699,7 +11705,10 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
             Ok(())
         }
 
-        MiniAppCommand::List { category, installed } => {
+        MiniAppCommand::List {
+            category,
+            installed,
+        } => {
             println!("\n📋 MINI-APP LIST");
             println!("══════════════════════════════════════════════════════════════════");
 
@@ -11889,8 +11898,14 @@ button:hover {
             println!();
             println!("💡 Next steps:");
             println!("   1. Edit the files to build your app");
-            println!("   2. Validate: dchat miniapp validate --manifest {:?}", manifest_path);
-            println!("   3. Launch:   dchat miniapp launch --manifest {:?}", project_dir);
+            println!(
+                "   2. Validate: dchat miniapp validate --manifest {:?}",
+                manifest_path
+            );
+            println!(
+                "   3. Launch:   dchat miniapp launch --manifest {:?}",
+                project_dir
+            );
 
             Ok(())
         }

@@ -1133,13 +1133,13 @@ mod tests {
     async fn test_validator_set_selection() {
         let manager = StakingManager::new();
 
-        // Create 5 validators with different stakes
+        // Create 5 validators with different stakes (8 decimals: 1 DCHAT = 100_000_000 motes)
         let stakes = vec![
-            20_000_000_000u64,
-            15_000_000_000,
-            25_000_000_000,
-            10_000_000_000,
-            30_000_000_000,
+            20_000 * MOTES_PER_DCHAT, // 20,000 DCHAT
+            15_000 * MOTES_PER_DCHAT, // 15,000 DCHAT
+            25_000 * MOTES_PER_DCHAT, // 25,000 DCHAT
+            10_000 * MOTES_PER_DCHAT, // 10,000 DCHAT (minimum)
+            30_000 * MOTES_PER_DCHAT, // 30,000 DCHAT
         ];
 
         for (_i, stake) in stakes.iter().enumerate() {
@@ -1159,9 +1159,9 @@ mod tests {
         assert_eq!(validator_set.len(), 3);
 
         // Verify sorted by stake (descending)
-        assert_eq!(validator_set[0].staked_amount, 30_000_000_000);
-        assert_eq!(validator_set[1].staked_amount, 25_000_000_000);
-        assert_eq!(validator_set[2].staked_amount, 20_000_000_000);
+        assert_eq!(validator_set[0].staked_amount, 30_000 * MOTES_PER_DCHAT);
+        assert_eq!(validator_set[1].staked_amount, 25_000 * MOTES_PER_DCHAT);
+        assert_eq!(validator_set[2].staked_amount, 20_000 * MOTES_PER_DCHAT);
     }
 
     #[tokio::test]
