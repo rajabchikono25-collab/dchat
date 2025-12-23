@@ -6,14 +6,21 @@
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod motes;
 pub mod types;
 
 // Re-export config submodule contents
 pub use config::constants;
 
 pub use config::Config;
+
+// Re-export motes module for monetary units (canonical smallest unit)
 pub use error::{Error, Result};
 pub use events::{Event, EventBus};
+pub use motes::{
+    dchat_to_motes, format_motes, format_motes_compact, motes_to_dchat, motes_to_whole_dchat,
+    parse_dchat, DisplayMotes, Motes, DCHAT_DECIMALS, MAX_SUPPLY_MOTES, MOTES_PER_DCHAT,
+};
 pub use types::*;
 
 /// Version information for the dchat protocol

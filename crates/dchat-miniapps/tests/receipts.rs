@@ -116,13 +116,13 @@ fn test_execution_result_failure() {
 fn test_account_change() {
     let change = AccountChange {
         address: [1u8; 32],
-        prev_lamports: 1_000_000,
-        new_lamports: 900_000,
+        prev_motes: 1_000_000,
+        new_motes: 900_000,
         data_changed: false,
         owner_changed: false,
     };
 
-    assert_eq!(change.prev_lamports - change.new_lamports, 100_000);
+    assert_eq!(change.prev_motes - change.new_motes, 100_000);
     assert!(!change.data_changed);
 }
 
@@ -281,16 +281,16 @@ fn test_receipt_with_account_changes() {
 
     let sender_change = AccountChange {
         address: [1u8; 32],
-        prev_lamports: 1_000_000,
-        new_lamports: 899_900, // Sent 100,000 + 100 fee
+        prev_motes: 1_000_000,
+        new_motes: 899_900, // Sent 100,000 + 100 fee
         data_changed: false,
         owner_changed: false,
     };
 
     let recipient_change = AccountChange {
         address: [2u8; 32],
-        prev_lamports: 0,
-        new_lamports: 100_000,
+        prev_motes: 0,
+        new_motes: 100_000,
         data_changed: false,
         owner_changed: false,
     };

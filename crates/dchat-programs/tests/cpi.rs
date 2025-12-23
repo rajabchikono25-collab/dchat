@@ -30,7 +30,7 @@ fn pubkey_n(n: u8) -> Pubkey {
 struct AccountInfoHolder {
     key: Pubkey,
     owner: Pubkey,
-    lamports: u64,
+    motes: u64,
     data: Vec<u8>,
     is_signer: bool,
     is_writable: bool,
@@ -39,11 +39,11 @@ struct AccountInfoHolder {
 }
 
 impl AccountInfoHolder {
-    fn new(key: Pubkey, is_signer: bool, is_writable: bool, lamports: u64) -> Self {
+    fn new(key: Pubkey, is_signer: bool, is_writable: bool, motes: u64) -> Self {
         Self {
             key,
             owner: pubkey_n(0), // system program as default owner
-            lamports,
+            motes,
             data: Vec::new(),
             is_signer,
             is_writable,
@@ -68,8 +68,8 @@ impl AccountInfoHolder {
 struct AccountInfoTestContext {
     /// Holders that own the account data
     holders: Vec<AccountInfoHolder>,
-    /// Mutable lamports storage (we need separate storage for the mutable refs)
-    lamports_storage: Vec<RefCell<u64>>,
+    /// Mutable motes storage (we need separate storage for the mutable refs)
+    motes_storage: Vec<RefCell<u64>>,
     /// Mutable data storage
     data_storage: Vec<RefCell<Vec<u8>>>,
 }
@@ -78,14 +78,14 @@ impl AccountInfoTestContext {
     fn new() -> Self {
         Self {
             holders: Vec::new(),
-            lamports_storage: Vec::new(),
+            motes_storage: Vec::new(),
             data_storage: Vec::new(),
         }
     }
 
     fn add_account(&mut self, holder: AccountInfoHolder) -> usize {
         let idx = self.holders.len();
-        self.lamports_storage.push(RefCell::new(holder.lamports));
+        self.motes_storage.push(RefCell::new(holder.motes));
         self.data_storage.push(RefCell::new(holder.data.clone()));
         self.holders.push(holder);
         idx
@@ -103,9 +103,9 @@ impl AccountInfoTestContext {
                 // Note: This is safe because we're in a single-threaded test context
 
                 // Get mutable references to the storage
-                let lamports_ref = unsafe {
+                let motes_ref = unsafe {
                     // SAFETY: We're in a test context and ensure single-threaded access
-                    let ptr = self.lamports_storage[i].as_ptr();
+                    let ptr = self.motes_storage[i].as_ptr();
                     &mut *ptr
                 };
                 let data_ref = unsafe {
@@ -118,7 +118,7 @@ impl AccountInfoTestContext {
                     key: &holder.key,
                     is_signer: holder.is_signer,
                     is_writable: holder.is_writable,
-                    lamports: Rc::new(RefCell::new(lamports_ref)),
+                    motes: Rc::new(RefCell::new(motes_ref)),
                     data: Rc::new(RefCell::new(data_ref)),
                     owner: &holder.owner,
                     executable: holder.executable,
@@ -131,25 +131,19 @@ impl AccountInfoTestContext {
 
 /// Simple helper for single-account test cases using a scoped callback pattern.
 /// This avoids lifetime issues by keeping everything in scope.
-fn with_account_info<F, R>(
-    key: Pubkey,
-    is_signer: bool,
-    is_writable: bool,
-    lamports: u64,
-    f: F,
-) -> R
+fn with_account_info<F, R>(key: Pubkey, is_signer: bool, is_writable: bool, motes: u64, f: F) -> R
 where
     F: FnOnce(AccountInfo<'_>) -> R,
 {
     let owner = pubkey_n(0);
-    let mut lamports_val = lamports;
+    let mut motes_val = motes;
     let mut data_val: Vec<u8> = Vec::new();
 
     let account_info = AccountInfo {
         key: &key,
         is_signer,
         is_writable,
-        lamports: Rc::new(RefCell::new(&mut lamports_val)),
+        motes: Rc::new(RefCell::new(&mut motes_val)),
         data: Rc::new(RefCell::new(data_val.as_mut_slice())),
         owner: &owner,
         executable: false,
@@ -164,7 +158,7 @@ struct AccountStorage {
     key: Pubkey,
     is_signer: bool,
     is_writable: bool,
-    lamports: u64,
+    motes: u64,
     data: Vec<u8>,
 }
 
@@ -179,11 +173,11 @@ impl AccountStorageContainer {
         Self {
             accounts: accounts
                 .into_iter()
-                .map(|(key, is_signer, is_writable, lamports)| AccountStorage {
+                .map(|(key, is_signer, is_writable, motes)| AccountStorage {
                     key,
                     is_signer,
                     is_writable,
-                    lamports,
+                    motes,
                     data: Vec::new(),
                 })
                 .collect(),
@@ -206,14 +200,14 @@ impl AccountStorageContainer {
                     key: ref key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: ref mut lamports0,
+                    motes: ref mut motes0,
                     data: ref mut data0,
                 } = self.accounts[0];
                 let info0 = AccountInfo {
                     key: key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: Rc::new(RefCell::new(lamports0)),
+                    motes: Rc::new(RefCell::new(motes0)),
                     data: Rc::new(RefCell::new(data0.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -228,21 +222,21 @@ impl AccountStorageContainer {
                     key: ref key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: ref mut lamports0,
+                    motes: ref mut motes0,
                     data: ref mut data0,
                 } = first[0];
                 let AccountStorage {
                     key: ref key1,
                     is_signer: is_signer1,
                     is_writable: is_writable1,
-                    lamports: ref mut lamports1,
+                    motes: ref mut motes1,
                     data: ref mut data1,
                 } = rest[0];
                 let info0 = AccountInfo {
                     key: key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: Rc::new(RefCell::new(lamports0)),
+                    motes: Rc::new(RefCell::new(motes0)),
                     data: Rc::new(RefCell::new(data0.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -252,7 +246,7 @@ impl AccountStorageContainer {
                     key: key1,
                     is_signer: is_signer1,
                     is_writable: is_writable1,
-                    lamports: Rc::new(RefCell::new(lamports1)),
+                    motes: Rc::new(RefCell::new(motes1)),
                     data: Rc::new(RefCell::new(data1.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -267,28 +261,28 @@ impl AccountStorageContainer {
                     key: ref key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: ref mut lamports0,
+                    motes: ref mut motes0,
                     data: ref mut data0,
                 } = first[0];
                 let AccountStorage {
                     key: ref key1,
                     is_signer: is_signer1,
                     is_writable: is_writable1,
-                    lamports: ref mut lamports1,
+                    motes: ref mut motes1,
                     data: ref mut data1,
                 } = second[0];
                 let AccountStorage {
                     key: ref key2,
                     is_signer: is_signer2,
                     is_writable: is_writable2,
-                    lamports: ref mut lamports2,
+                    motes: ref mut motes2,
                     data: ref mut data2,
                 } = third[0];
                 let info0 = AccountInfo {
                     key: key0,
                     is_signer: is_signer0,
                     is_writable: is_writable0,
-                    lamports: Rc::new(RefCell::new(lamports0)),
+                    motes: Rc::new(RefCell::new(motes0)),
                     data: Rc::new(RefCell::new(data0.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -298,7 +292,7 @@ impl AccountStorageContainer {
                     key: key1,
                     is_signer: is_signer1,
                     is_writable: is_writable1,
-                    lamports: Rc::new(RefCell::new(lamports1)),
+                    motes: Rc::new(RefCell::new(motes1)),
                     data: Rc::new(RefCell::new(data1.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -308,7 +302,7 @@ impl AccountStorageContainer {
                     key: key2,
                     is_signer: is_signer2,
                     is_writable: is_writable2,
-                    lamports: Rc::new(RefCell::new(lamports2)),
+                    motes: Rc::new(RefCell::new(motes2)),
                     data: Rc::new(RefCell::new(data2.as_mut_slice())),
                     owner: &self.owner,
                     executable: false,
@@ -327,7 +321,7 @@ impl AccountStorageContainer {
 
 /// Helper to run privilege check tests with properly scoped AccountInfo
 fn test_privilege_check<F>(
-    accounts: Vec<(Pubkey, bool, bool, u64)>, // (key, is_signer, is_writable, lamports)
+    accounts: Vec<(Pubkey, bool, bool, u64)>, // (key, is_signer, is_writable, motes)
     instruction: Instruction,
     check: F,
 ) where

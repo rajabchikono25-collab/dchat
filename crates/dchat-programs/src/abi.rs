@@ -173,10 +173,10 @@ pub const ACCOUNTS_BLOB_HEADER_SIZE: usize = 8; // 4 + 2 + 2
 
 /// Table of Contents entry for a single account
 ///
-/// Fixed-size struct (89 bytes):
+/// Fixed-size struct (91 bytes):
 /// - pubkey: 32 bytes
 /// - owner: 32 bytes
-/// - lamports: 8 bytes (u64)
+/// - motes: 8 bytes (u64) - account balance in motes (1 DCHAT = 100,000,000 motes)
 /// - data_len: 4 bytes (u32)
 /// - data_off: 4 bytes (u32) - offset into data section
 /// - is_signer: 1 byte (bool as u8)
@@ -189,8 +189,8 @@ pub struct AccountTocEntry {
     pub pubkey: Pubkey,
     /// Program owner
     pub owner: Pubkey,
-    /// Lamports balance
-    pub lamports: u64,
+    /// Account balance in motes (1 DCHAT = 100,000,000 motes)
+    pub motes: u64,
     /// Data length in bytes
     pub data_len: u32,
     /// Offset into data section
@@ -206,7 +206,7 @@ pub struct AccountTocEntry {
 }
 
 impl AccountTocEntry {
-    /// Encode to fixed-size bytes (89 bytes)
+    /// Encode to fixed-size bytes (91 bytes)
     pub fn encode(&self) -> [u8; TOC_ENTRY_SIZE] {
         let mut buf = [0u8; TOC_ENTRY_SIZE];
         let mut offset = 0;
@@ -217,7 +217,7 @@ impl AccountTocEntry {
         buf[offset..offset + 32].copy_from_slice(&self.owner.0);
         offset += 32;
 
-        buf[offset..offset + 8].copy_from_slice(&self.lamports.to_le_bytes());
+        buf[offset..offset + 8].copy_from_slice(&self.motes.to_le_bytes());
         offset += 8;
 
         buf[offset..offset + 4].copy_from_slice(&self.data_len.to_le_bytes());
@@ -256,7 +256,7 @@ impl AccountTocEntry {
         owner_bytes.copy_from_slice(&data[offset..offset + 32]);
         offset += 32;
 
-        let lamports = u64::from_le_bytes([
+        let motes = u64::from_le_bytes([
             data[offset],
             data[offset + 1],
             data[offset + 2],
@@ -307,7 +307,7 @@ impl AccountTocEntry {
         Ok(Self {
             pubkey: Pubkey(pubkey_bytes),
             owner: Pubkey(owner_bytes),
-            lamports,
+            motes,
             data_len,
             data_off,
             is_signer,
@@ -326,7 +326,7 @@ impl AccountTocEntry {
 ///   - abi_version: u16
 ///   - account_count: u16
 /// - Offsets table: account_count * 4 bytes (u32 offsets into TOC)
-/// - TOC entries: account_count * 89 bytes each
+/// - TOC entries: account_count * 91 bytes each
 /// - Data section: concatenated account data
 #[derive(Debug, Clone)]
 pub struct AccountsBlob {
@@ -359,7 +359,7 @@ impl AccountsBlob {
             entries.push(AccountTocEntry {
                 pubkey: acc.pubkey,
                 owner: acc.owner,
-                lamports: acc.lamports,
+                motes: acc.motes,
                 data_len,
                 data_off,
                 is_signer: acc.is_signer,
@@ -511,7 +511,7 @@ impl AccountsBlob {
         let mut hasher = blake3::Hasher::new();
         for entry in &self.entries {
             hasher.update(&entry.pubkey.0);
-            hasher.update(&entry.lamports.to_le_bytes());
+            hasher.update(&entry.motes.to_le_bytes());
             let data = self.get_account_data(
                 self.entries
                     .iter()
@@ -533,8 +533,8 @@ pub struct SerializableAccount {
     pub pubkey: Pubkey,
     /// Program owner
     pub owner: Pubkey,
-    /// Lamports balance
-    pub lamports: u64,
+    /// Account balance in motes (1 DCHAT = 100,000,000 motes)
+    pub motes: u64,
     /// Account data
     pub data: Vec<u8>,
     /// Is this a signer
@@ -569,8 +569,8 @@ pub enum AbiError {
     AccountKeyMismatch = 1005,
     /// Readonly account modified
     ReadonlyModified = 1006,
-    /// Lamports conservation violated
-    LamportsConservation = 1007,
+    /// Motes conservation violated (total motes must remain constant)
+    MotesConservation = 1007,
     /// Owner modification not allowed
     OwnerModificationDenied = 1008,
     /// Executable flag modification denied
@@ -599,7 +599,7 @@ impl AbiError {
             Self::AccountCountMismatch => "Account count mismatch between input and output",
             Self::AccountKeyMismatch => "Account key mismatch",
             Self::ReadonlyModified => "Readonly account was modified",
-            Self::LamportsConservation => "Lamports conservation violated",
+            Self::MotesConservation => "Motes conservation violated",
             Self::OwnerModificationDenied => "Owner modification not allowed",
             Self::ExecutableModificationDenied => "Executable flag modification denied",
             Self::DataResizeDenied => "Data resize not allowed in ABI v1",
@@ -767,7 +767,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([1u8; 32]),
                 owner: Pubkey::new([2u8; 32]),
-                lamports: 1000,
+                motes: 1000,
                 data: vec![10, 20, 30],
                 is_signer: true,
                 is_writable: true,
@@ -777,7 +777,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([3u8; 32]),
                 owner: Pubkey::new([4u8; 32]),
-                lamports: 2000,
+                motes: 2000,
                 data: vec![40, 50],
                 is_signer: false,
                 is_writable: false,
@@ -795,7 +795,7 @@ mod tests {
 
         // Verify first account
         assert_eq!(decoded.entries[0].pubkey, Pubkey::new([1u8; 32]));
-        assert_eq!(decoded.entries[0].lamports, 1000);
+        assert_eq!(decoded.entries[0].motes, 1000);
         assert!(decoded.entries[0].is_signer);
         assert!(decoded.entries[0].is_writable);
         assert!(!decoded.entries[0].executable);
@@ -810,7 +810,7 @@ mod tests {
         let entry = AccountTocEntry {
             pubkey: Pubkey::new([5u8; 32]),
             owner: Pubkey::new([6u8; 32]),
-            lamports: 12345678,
+            motes: 12345678,
             data_len: 100,
             data_off: 0,
             is_signer: true,
@@ -825,7 +825,7 @@ mod tests {
         let decoded = AccountTocEntry::decode(&encoded).unwrap();
         assert_eq!(decoded.pubkey, entry.pubkey);
         assert_eq!(decoded.owner, entry.owner);
-        assert_eq!(decoded.lamports, entry.lamports);
+        assert_eq!(decoded.motes, entry.motes);
         assert_eq!(decoded.is_signer, entry.is_signer);
         assert_eq!(decoded.is_writable, entry.is_writable);
         assert_eq!(decoded.executable, entry.executable);
@@ -870,7 +870,7 @@ mod tests {
             .map(|i| SerializableAccount {
                 pubkey: Pubkey::new([i as u8; 32]),
                 owner: Pubkey::zero(),
-                lamports: 0,
+                motes: 0,
                 data: vec![],
                 is_signer: false,
                 is_writable: false,

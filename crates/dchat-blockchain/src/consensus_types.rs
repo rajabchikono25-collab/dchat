@@ -112,7 +112,7 @@ impl std::fmt::Display for GeographicRegion {
 pub struct RelayScore {
     /// Relay's Ed25519 public key (identity)
     pub relay_id: VerifyingKey,
-    /// Staked DCHAT amount (lamports)
+    /// Staked DCHAT amount (motes)
     pub stake_amount: u64,
     /// Stake unlock time (for time-weighted scoring)
     pub stake_locked_until: SystemTime,
@@ -134,7 +134,7 @@ pub struct RelayScore {
     pub last_active: SystemTime,
     /// Number of times slashed
     pub slashing_count: u32,
-    /// Total amount slashed (lamports)
+    /// Total amount slashed (motes)
     pub total_slashed_amount: u64,
     /// Consecutive delivery failures (triggers suspension)
     pub consecutive_failures: u32,
@@ -491,7 +491,7 @@ pub mod constants {
     /// Maximum latency in milliseconds
     pub const MAX_LATENCY_MS: u64 = 30_000;
 
-    /// Minimum stake for relay eligibility (lamports)
+    /// Minimum stake for relay eligibility (motes)
     pub const MIN_RELAY_STAKE: u64 = 10_000_000_000; // 10,000 DCHAT
 
     /// Maximum consecutive failures before suspension

@@ -120,8 +120,8 @@ fn test_account_delta_compute() {
     assert_eq!(delta.pubkey, pubkey);
     assert_eq!(delta.prev_owner, prev_owner);
     assert_eq!(delta.new_owner, new_owner);
-    assert_eq!(delta.prev_lamports, 1000);
-    assert_eq!(delta.new_lamports, 2000);
+    assert_eq!(delta.prev_motes, 1000);
+    assert_eq!(delta.new_motes, 2000);
     assert!(delta.reallocated); // size changed
     assert_eq!(delta.prev_size, 3);
     assert_eq!(delta.new_size, 5);

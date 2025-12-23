@@ -94,7 +94,7 @@ impl Default for CryptoOpCosts {
     }
 }
 
-/// Storage operation costs (in lamports)
+/// Storage operation costs (in motes)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageCosts {
     /// Cost per byte of storage read
@@ -200,9 +200,9 @@ impl ComputeBudget {
         }
     }
 
-    /// Calculate fee for this budget (in lamports)
-    pub fn compute_fee(&self, lamports_per_cu: u64) -> u64 {
-        self.max_units.saturating_mul(lamports_per_cu)
+    /// Calculate fee for this budget (in motes)
+    pub fn compute_fee(&self, motes_per_cu: u64) -> u64 {
+        self.max_units.saturating_mul(motes_per_cu)
     }
 }
 
@@ -403,8 +403,8 @@ pub struct FeeReservation {
     pub compute_units: u64,
     /// Reserved storage bytes
     pub storage_bytes: u64,
-    /// Total reserved lamports
-    pub lamports_reserved: u64,
+    /// Total reserved motes
+    pub motes_reserved: u64,
     /// Reservation timestamp
     pub reserved_at: u64,
     /// Expiry slot
@@ -417,19 +417,19 @@ impl FeeReservation {
         payer: crate::account::Pubkey,
         compute_units: u64,
         storage_bytes: u64,
-        lamports_per_cu: u64,
-        storage_lamports_per_byte: u64,
+        motes_per_cu: u64,
+        storage_motes_per_byte: u64,
         current_slot: u64,
         ttl_slots: u64,
     ) -> Self {
-        let compute_lamports = compute_units.saturating_mul(lamports_per_cu);
-        let storage_lamports = storage_bytes.saturating_mul(storage_lamports_per_byte);
+        let compute_motes = compute_units.saturating_mul(motes_per_cu);
+        let storage_motes = storage_bytes.saturating_mul(storage_motes_per_byte);
 
         Self {
             payer,
             compute_units,
             storage_bytes,
-            lamports_reserved: compute_lamports.saturating_add(storage_lamports),
+            motes_reserved: compute_motes.saturating_add(storage_motes),
             reserved_at: current_slot,
             expires_at_slot: current_slot.saturating_add(ttl_slots),
         }
@@ -441,9 +441,9 @@ impl FeeReservation {
     }
 
     /// Calculate refund for unused compute units
-    pub fn calculate_refund(&self, consumed_units: u64, lamports_per_cu: u64) -> u64 {
+    pub fn calculate_refund(&self, consumed_units: u64, motes_per_cu: u64) -> u64 {
         let unused = self.compute_units.saturating_sub(consumed_units);
-        unused.saturating_mul(lamports_per_cu)
+        unused.saturating_mul(motes_per_cu)
     }
 }
 
@@ -528,13 +528,13 @@ mod tests {
         let reservation = FeeReservation::new(
             payer, 1000, // compute units
             100,  // storage bytes
-            10,   // lamports per CU
-            100,  // lamports per storage byte
+            10,   // motes per CU
+            100,  // motes per storage byte
             100,  // current slot
             50,   // TTL slots
         );
 
-        assert_eq!(reservation.lamports_reserved, 10000 + 10000); // 1000*10 + 100*100
+        assert_eq!(reservation.motes_reserved, 10000 + 10000); // 1000*10 + 100*100
         assert!(!reservation.is_expired(100));
         assert!(!reservation.is_expired(150));
         assert!(reservation.is_expired(151));

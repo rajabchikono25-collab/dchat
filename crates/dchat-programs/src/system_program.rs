@@ -10,8 +10,8 @@ use crate::metering::ComputeMeter;
 /// System program ID
 pub const SYSTEM_PROGRAM_ID: Pubkey = crate::native_programs::SYSTEM_PROGRAM_ID;
 
-/// Minimum lamports for rent exemption per byte
-pub const LAMPORTS_PER_BYTE_YEAR: u64 = 3480;
+/// Minimum motes for rent exemption per byte
+pub const MOTES_PER_BYTE_YEAR: u64 = 3480;
 
 /// Epochs per year (assuming 2-day epochs)
 pub const EPOCHS_PER_YEAR: u64 = 182;
@@ -21,7 +21,7 @@ pub fn minimum_balance(data_len: usize) -> u64 {
     // Account overhead: 128 bytes
     let total_size = (data_len + 128) as u64;
     // 2 years rent exemption
-    total_size * LAMPORTS_PER_BYTE_YEAR * 2 / EPOCHS_PER_YEAR
+    total_size * MOTES_PER_BYTE_YEAR * 2 / EPOCHS_PER_YEAR
 }
 
 /// System instruction types
@@ -29,8 +29,8 @@ pub fn minimum_balance(data_len: usize) -> u64 {
 pub enum SystemInstruction {
     /// Create a new account
     CreateAccount {
-        /// Lamports to transfer to new account
-        lamports: u64,
+        /// Motes to transfer to new account
+        motes: u64,
         /// Space in bytes to allocate
         space: u64,
         /// Owner program of new account
@@ -43,10 +43,10 @@ pub enum SystemInstruction {
         owner: Pubkey,
     },
 
-    /// Transfer lamports between accounts
+    /// Transfer motes between accounts
     Transfer {
         /// Amount to transfer
-        lamports: u64,
+        motes: u64,
     },
 
     /// Create account with seed
@@ -55,8 +55,8 @@ pub enum SystemInstruction {
         base: Pubkey,
         /// Seed string
         seed: String,
-        /// Lamports to transfer
-        lamports: u64,
+        /// Motes to transfer
+        motes: u64,
         /// Space to allocate
         space: u64,
         /// Owner program
@@ -91,10 +91,10 @@ pub enum SystemInstruction {
         owner: Pubkey,
     },
 
-    /// Transfer lamports with seed
+    /// Transfer motes with seed
     TransferWithSeed {
         /// Amount to transfer
-        lamports: u64,
+        motes: u64,
         /// Seed for source address derivation
         from_seed: String,
         /// Source owner
@@ -107,7 +107,7 @@ pub enum SystemInstruction {
     /// Withdraw from nonce account
     WithdrawNonceAccount {
         /// Amount to withdraw
-        lamports: u64,
+        motes: u64,
     },
 
     /// Initialize nonce account
@@ -146,7 +146,7 @@ impl SystemProgram {
     pub fn create_account(
         from: Pubkey,
         to: Pubkey,
-        lamports: u64,
+        motes: u64,
         space: u64,
         owner: Pubkey,
     ) -> Instruction {
@@ -154,7 +154,7 @@ impl SystemProgram {
             program_id: SYSTEM_PROGRAM_ID,
             accounts: vec![AccountMeta::new(from, true), AccountMeta::new(to, true)],
             data: SystemInstruction::CreateAccount {
-                lamports,
+                motes,
                 space,
                 owner,
             }
@@ -163,11 +163,11 @@ impl SystemProgram {
     }
 
     /// Transfer instruction
-    pub fn transfer(from: Pubkey, to: Pubkey, lamports: u64) -> Instruction {
+    pub fn transfer(from: Pubkey, to: Pubkey, motes: u64) -> Instruction {
         Instruction {
             program_id: SYSTEM_PROGRAM_ID,
             accounts: vec![AccountMeta::new(from, true), AccountMeta::new(to, false)],
-            data: SystemInstruction::Transfer { lamports }.to_bytes(),
+            data: SystemInstruction::Transfer { motes }.to_bytes(),
         }
     }
 
@@ -195,7 +195,7 @@ impl SystemProgram {
         to: Pubkey,
         base: Pubkey,
         seed: String,
-        lamports: u64,
+        motes: u64,
         space: u64,
         owner: Pubkey,
     ) -> Instruction {
@@ -209,7 +209,7 @@ impl SystemProgram {
             data: SystemInstruction::CreateAccountWithSeed {
                 base,
                 seed,
-                lamports,
+                motes,
                 space,
                 owner,
             }
@@ -265,26 +265,26 @@ impl SystemProgramProcessor {
 
         match instruction {
             SystemInstruction::CreateAccount {
-                lamports,
+                motes,
                 space,
                 owner,
-            } => Self::process_create_account(accounts, *lamports, *space, owner, meter),
-            SystemInstruction::Transfer { lamports } => {
-                Self::process_transfer(accounts, *lamports, meter)
+            } => Self::process_create_account(accounts, *motes, *space, owner, meter),
+            SystemInstruction::Transfer { motes } => {
+                Self::process_transfer(accounts, *motes, meter)
             }
             SystemInstruction::Assign { owner } => Self::process_assign(accounts, owner, meter),
             SystemInstruction::Allocate { space } => {
                 Self::process_allocate(accounts, *space, meter)
             }
             SystemInstruction::CreateAccountWithSeed {
-                lamports,
+                motes,
                 space,
                 owner,
                 ..
-            } => Self::process_create_account(accounts, *lamports, *space, owner, meter),
+            } => Self::process_create_account(accounts, *motes, *space, owner, meter),
             SystemInstruction::AdvanceNonceAccount => Self::process_advance_nonce(accounts, meter),
-            SystemInstruction::WithdrawNonceAccount { lamports } => {
-                Self::process_withdraw_nonce(accounts, *lamports, meter)
+            SystemInstruction::WithdrawNonceAccount { motes } => {
+                Self::process_withdraw_nonce(accounts, *motes, meter)
             }
             SystemInstruction::InitializeNonceAccount { authority } => {
                 Self::process_initialize_nonce(accounts, authority, meter)
@@ -302,7 +302,7 @@ impl SystemProgramProcessor {
     /// Create a new account
     fn process_create_account(
         accounts: &mut [&mut Account],
-        lamports: u64,
+        motes: u64,
         space: u64,
         owner: &Pubkey,
         meter: &ComputeMeter,
@@ -319,13 +319,13 @@ impl SystemProgramProcessor {
         // Consume cost based on space
         meter.consume(space * 10)?;
 
-        // Check from has enough lamports
-        if from.lamports < lamports {
+        // Check from has enough motes
+        if from.motes < motes {
             return Err(ProgramError::InsufficientFunds);
         }
 
         // Check to account is not already initialized
-        if !to.data.is_empty() || to.lamports > 0 {
+        if !to.data.is_empty() || to.motes > 0 {
             return Err(ProgramError::AccountAlreadyInitialized);
         }
 
@@ -336,18 +336,18 @@ impl SystemProgramProcessor {
 
         // Check minimum balance for rent exemption
         let min_balance = minimum_balance(space as usize);
-        if lamports < min_balance {
+        if motes < min_balance {
             return Err(ProgramError::AccountNotRentExempt);
         }
 
-        // Transfer lamports
-        from.lamports = from
-            .lamports
-            .checked_sub(lamports)
+        // Transfer motes
+        from.motes = from
+            .motes
+            .checked_sub(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
-        to.lamports = to
-            .lamports
-            .checked_add(lamports)
+        to.motes = to
+            .motes
+            .checked_add(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
         // Allocate space
@@ -359,10 +359,10 @@ impl SystemProgramProcessor {
         Ok(())
     }
 
-    /// Transfer lamports between accounts
+    /// Transfer motes between accounts
     fn process_transfer(
         accounts: &mut [&mut Account],
-        lamports: u64,
+        motes: u64,
         _meter: &ComputeMeter,
     ) -> ProgramResult<()> {
         if accounts.len() < 2 {
@@ -374,8 +374,8 @@ impl SystemProgramProcessor {
         let from = &mut first[0];
         let to = &mut rest[0];
 
-        // Check from has enough lamports
-        if from.lamports < lamports {
+        // Check from has enough motes
+        if from.motes < motes {
             return Err(ProgramError::InsufficientFunds);
         }
 
@@ -385,13 +385,13 @@ impl SystemProgramProcessor {
         }
 
         // Transfer
-        from.lamports = from
-            .lamports
-            .checked_sub(lamports)
+        from.motes = from
+            .motes
+            .checked_sub(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
-        to.lamports = to
-            .lamports
-            .checked_add(lamports)
+        to.motes = to
+            .motes
+            .checked_add(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
         Ok(())
@@ -481,7 +481,7 @@ impl SystemProgramProcessor {
         // Generate new nonce
         let mut hasher = blake3::Hasher::new();
         hasher.update(&state.nonce);
-        hasher.update(&state.fee_calculator_lamports_per_signature.to_le_bytes());
+        hasher.update(&state.fee_calculator_motes_per_signature.to_le_bytes());
         state.nonce = hasher.finalize().into();
 
         nonce_account.data.set_from_bytes(state.to_bytes());
@@ -492,7 +492,7 @@ impl SystemProgramProcessor {
     /// Withdraw from nonce account
     fn process_withdraw_nonce(
         accounts: &mut [&mut Account],
-        lamports: u64,
+        motes: u64,
         _meter: &ComputeMeter,
     ) -> ProgramResult<()> {
         if accounts.len() < 2 {
@@ -512,8 +512,8 @@ impl SystemProgramProcessor {
         // Check rent exemption after withdrawal
         let min_balance = minimum_balance(nonce_account.data.len());
         if nonce_account
-            .lamports
-            .checked_sub(lamports)
+            .motes
+            .checked_sub(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?
             < min_balance
         {
@@ -521,13 +521,13 @@ impl SystemProgramProcessor {
         }
 
         // Transfer
-        nonce_account.lamports = nonce_account
-            .lamports
-            .checked_sub(lamports)
+        nonce_account.motes = nonce_account
+            .motes
+            .checked_sub(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
-        to.lamports = to
-            .lamports
-            .checked_add(lamports)
+        to.motes = to
+            .motes
+            .checked_add(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
         Ok(())
@@ -565,7 +565,7 @@ impl SystemProgramProcessor {
             initialized: true,
             authority: *authority,
             nonce: [0u8; 32], // Will be set on first advance
-            fee_calculator_lamports_per_signature: 5000,
+            fee_calculator_motes_per_signature: 5000,
         };
 
         nonce_account.data.set_from_bytes(state.to_bytes());
@@ -612,7 +612,7 @@ pub struct NonceState {
     /// Current nonce value
     pub nonce: [u8; 32],
     /// Fee calculator
-    pub fee_calculator_lamports_per_signature: u64,
+    pub fee_calculator_motes_per_signature: u64,
 }
 
 impl NonceState {
@@ -654,7 +654,7 @@ mod tests {
         let balance_100 = minimum_balance(100);
         let balance_1000 = minimum_balance(1000);
 
-        // Larger accounts need more lamports
+        // Larger accounts need more motes
         assert!(balance_100 > balance_0);
         assert!(balance_1000 > balance_100);
     }
@@ -709,7 +709,7 @@ mod tests {
             initialized: true,
             authority: Pubkey::new([1u8; 32]),
             nonce: [2u8; 32],
-            fee_calculator_lamports_per_signature: 5000,
+            fee_calculator_motes_per_signature: 5000,
         };
 
         let bytes = state.to_bytes();
@@ -719,15 +719,15 @@ mod tests {
         assert_eq!(state.authority, recovered.authority);
         assert_eq!(state.nonce, recovered.nonce);
         assert_eq!(
-            state.fee_calculator_lamports_per_signature,
-            recovered.fee_calculator_lamports_per_signature
+            state.fee_calculator_motes_per_signature,
+            recovered.fee_calculator_motes_per_signature
         );
     }
 
     #[test]
     fn test_system_instruction_serialization() {
         let ix = SystemInstruction::CreateAccount {
-            lamports: 1000000,
+            motes: 1000000,
             space: 100,
             owner: Pubkey::new([1u8; 32]),
         };

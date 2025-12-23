@@ -926,15 +926,15 @@ impl TokenProgramProcessor {
             return Err(ProgramError::NonZeroBalance);
         }
 
-        // Transfer lamports to destination
-        let lamports = source_account.lamports;
-        dest_account.lamports = dest_account
-            .lamports
-            .checked_add(lamports)
+        // Transfer motes to destination
+        let motes = source_account.motes;
+        dest_account.motes = dest_account
+            .motes
+            .checked_add(motes)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 
         // Clear account
-        source_account.lamports = 0;
+        source_account.motes = 0;
         source_account.data.clear();
         source_account.owner = crate::native_programs::SYSTEM_PROGRAM_ID;
 

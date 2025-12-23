@@ -426,8 +426,8 @@ impl<'a> ExecutionContext<'a> {
                     *pubkey,
                     snapshot.owner,
                     current.owner,
-                    snapshot.lamports,
-                    current.lamports,
+                    snapshot.motes,
+                    current.motes,
                     snapshot.data.as_slice(),
                     current.data.as_slice(),
                 );
@@ -578,7 +578,7 @@ impl ProgramRuntime {
         // Deduct fee upfront
         let fee = self.calculate_fee(&ctx.compute_budget);
         if let Some(payer) = ctx.get_account_mut(&fee_payer) {
-            if payer.lamports < fee {
+            if payer.motes < fee {
                 return ExecutionReceipt::failure(
                     transaction_hash,
                     slot,
@@ -588,7 +588,7 @@ impl ProgramRuntime {
                     Vec::new(),
                 );
             }
-            payer.lamports -= fee;
+            payer.motes -= fee;
         }
 
         // Execute each instruction
@@ -801,12 +801,12 @@ impl ProgramRuntime {
         metas: &[AccountMeta],
     ) -> ProgramResult<Vec<u8>> {
         let mut data = Vec::new();
-        // Simple format: count, then for each: key(32), lamports(8), data_len(4), data, owner(32), executable(1)
+        // Simple format: count, then for each: key(32), motes(8), data_len(4), data, owner(32), executable(1)
         data.extend_from_slice(&(metas.len() as u32).to_le_bytes());
         for meta in metas {
             if let Some(account) = ctx.accounts.get(&meta.pubkey) {
                 data.extend_from_slice(account.key.as_bytes());
-                data.extend_from_slice(&account.lamports.to_le_bytes());
+                data.extend_from_slice(&account.motes.to_le_bytes());
                 let account_data = account.data.as_slice();
                 data.extend_from_slice(&(account_data.len() as u32).to_le_bytes());
                 data.extend_from_slice(account_data);
@@ -965,7 +965,7 @@ mod tests {
 
         let account = Account {
             key: pubkey,
-            lamports: 1000,
+            motes: 1000,
             data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([2u8; 32]),
             executable: false,
@@ -977,7 +977,7 @@ mod tests {
 
         let loaded = bank.load(&pubkey);
         assert!(loaded.is_some());
-        assert_eq!(loaded.unwrap().lamports, 1000);
+        assert_eq!(loaded.unwrap().motes, 1000);
     }
 
     #[test]
@@ -1042,7 +1042,7 @@ mod tests {
         let pubkey = Pubkey::new([2u8; 32]);
         let account = Account {
             key: pubkey,
-            lamports: 1000,
+            motes: 1000,
             data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([3u8; 32]),
             executable: false,
@@ -1054,13 +1054,13 @@ mod tests {
 
         // Modify account
         let mut modified = account.clone();
-        modified.lamports = 500;
+        modified.motes = 500;
         ctx.accounts.insert(pubkey, modified);
 
         let deltas = ctx.compute_deltas();
         assert_eq!(deltas.len(), 1);
-        assert_eq!(deltas[0].prev_lamports, 1000);
-        assert_eq!(deltas[0].new_lamports, 500);
+        assert_eq!(deltas[0].prev_motes, 1000);
+        assert_eq!(deltas[0].new_motes, 500);
     }
 
     #[test]
@@ -1082,7 +1082,7 @@ mod tests {
         let pubkey = Pubkey::new([2u8; 32]);
         let original = Account {
             key: pubkey,
-            lamports: 1000,
+            motes: 1000,
             data: AccountData::new(vec![1, 2, 3]),
             owner: Pubkey::new([3u8; 32]),
             executable: false,
@@ -1094,7 +1094,7 @@ mod tests {
 
         // Modify
         let mut modified = original.clone();
-        modified.lamports = 0;
+        modified.motes = 0;
         ctx.accounts.insert(pubkey, modified);
 
         // Rollback
@@ -1102,6 +1102,6 @@ mod tests {
 
         // Should be back to original
         let account = ctx.get_account(&pubkey).unwrap();
-        assert_eq!(account.lamports, 1000);
+        assert_eq!(account.motes, 1000);
     }
 }

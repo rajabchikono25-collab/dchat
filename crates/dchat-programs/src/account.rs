@@ -83,8 +83,17 @@ impl fmt::Display for Pubkey {
     }
 }
 
-/// Account balance in lamports (smallest unit)
-pub type Lamports = u64;
+// Re-export Motes from dchat-core as the canonical currency unit
+pub use dchat_core::motes::{Motes, MOTES_PER_DCHAT};
+
+/// Account balance in motes (smallest unit of DCHAT).
+///
+/// 1 DCHAT = 100,000,000 motes (8 decimal places).
+///
+/// **DEPRECATED**: Use `Motes` directly for new code. This alias exists for
+/// backward compatibility during migration from Solana-style naming.
+#[deprecated(since = "0.2.0", note = "Use `Motes` instead of `Lamports`")]
+pub type Lamports = Motes;
 
 /// Rent epoch for account
 pub type RentEpoch = u64;
@@ -202,8 +211,8 @@ impl Drop for AccountData {
 pub struct Account {
     /// Account public key (address)
     pub key: Pubkey,
-    /// Lamports balance
-    pub lamports: Lamports,
+    /// Account balance in motes (smallest unit: 1 DCHAT = 100,000,000 motes)
+    pub motes: Motes,
     /// Account data
     pub data: AccountData,
     /// Program that owns this account
@@ -221,7 +230,7 @@ impl Account {
     pub fn new(key: Pubkey) -> Self {
         Self {
             key,
-            lamports: 0,
+            motes: 0,
             data: AccountData::new(vec![]),
             owner: Pubkey::zero(),
             executable: false,
@@ -231,10 +240,10 @@ impl Account {
     }
 
     /// Create a new account with data
-    pub fn new_with_data(key: Pubkey, lamports: Lamports, data: Vec<u8>, owner: Pubkey) -> Self {
+    pub fn new_with_data(key: Pubkey, motes: Motes, data: Vec<u8>, owner: Pubkey) -> Self {
         Self {
             key,
-            lamports,
+            motes,
             data: AccountData::new(data),
             owner,
             executable: false,
@@ -247,7 +256,7 @@ impl Account {
     pub fn new_program(key: Pubkey, bytecode: Vec<u8>, owner: Pubkey) -> Self {
         Self {
             key,
-            lamports: 0,
+            motes: 0,
             data: AccountData::new(bytecode),
             owner,
             executable: true,
@@ -256,11 +265,11 @@ impl Account {
         }
     }
 
-    /// Check if account is rent exempt at current lamports level
+    /// Check if account is rent exempt at current motes level
     pub fn is_rent_exempt(&self, rent_per_byte_year: u64, rent_exemption_threshold: f64) -> bool {
         let min_balance =
             ((self.data.len() as u64 + 128) * rent_per_byte_year) as f64 * rent_exemption_threshold;
-        self.lamports >= min_balance as u64
+        self.motes >= min_balance as u64
     }
 
     /// Calculate minimum balance for rent exemption
@@ -352,8 +361,8 @@ pub struct AccountInfo<'a> {
     pub is_signer: bool,
     /// Is writable
     pub is_writable: bool,
-    /// Lamports (interior mutable)
-    pub lamports: Rc<RefCell<&'a mut u64>>,
+    /// Motes balance (interior mutable)
+    pub motes: Rc<RefCell<&'a mut u64>>,
     /// Data (interior mutable)
     pub data: Rc<RefCell<&'a mut [u8]>>,
     /// Owner
@@ -365,19 +374,19 @@ pub struct AccountInfo<'a> {
 }
 
 impl<'a> AccountInfo<'a> {
-    /// Try to borrow lamports immutably
-    pub fn try_borrow_lamports(&self) -> ProgramResult<Ref<'_, &'a mut u64>> {
-        self.lamports
+    /// Try to borrow motes immutably
+    pub fn try_borrow_motes(&self) -> ProgramResult<Ref<'_, &'a mut u64>> {
+        self.motes
             .try_borrow()
             .map_err(|_| ProgramError::BorrowsOverlap)
     }
 
-    /// Try to borrow lamports mutably
-    pub fn try_borrow_mut_lamports(&self) -> ProgramResult<RefMut<'_, &'a mut u64>> {
+    /// Try to borrow motes mutably
+    pub fn try_borrow_mut_motes(&self) -> ProgramResult<RefMut<'_, &'a mut u64>> {
         if !self.is_writable {
             return Err(ProgramError::AccountNotWritable);
         }
-        self.lamports
+        self.motes
             .try_borrow_mut()
             .map_err(|_| ProgramError::BorrowsOverlap)
     }
@@ -409,19 +418,19 @@ impl<'a> AccountInfo<'a> {
         self.owner == program_id
     }
 
-    /// Safely transfer lamports from this account to another
-    pub fn transfer_lamports(&self, to: &AccountInfo<'_>, amount: u64) -> ProgramResult<()> {
-        let mut from_lamports = self.try_borrow_mut_lamports()?;
-        let mut to_lamports = to.try_borrow_mut_lamports()?;
+    /// Safely transfer motes from this account to another
+    pub fn transfer_motes(&self, to: &AccountInfo<'_>, amount: u64) -> ProgramResult<()> {
+        let mut from_motes = self.try_borrow_mut_motes()?;
+        let mut to_motes = to.try_borrow_mut_motes()?;
 
-        if **from_lamports < amount {
+        if **from_motes < amount {
             return Err(ProgramError::InsufficientFunds);
         }
 
-        **from_lamports = from_lamports
+        **from_motes = from_motes
             .checked_sub(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
-        **to_lamports = to_lamports
+        **to_motes = to_motes
             .checked_add(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
 

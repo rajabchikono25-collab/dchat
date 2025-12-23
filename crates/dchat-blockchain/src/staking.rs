@@ -34,12 +34,13 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 use crate::currency_chain::CurrencyChainClient;
+use dchat_core::motes::MOTES_PER_DCHAT;
 
 /// Minimum stake required to become validator (10,000 DCHAT)
-pub const MIN_VALIDATOR_STAKE: u64 = 10_000_000_000; // 10,000 tokens with 6 decimal precision
+pub const MIN_VALIDATOR_STAKE: u64 = 10_000 * MOTES_PER_DCHAT; // 10,000 tokens with 8 decimal precision
 
 /// Maximum stake allowed per validator (1M DCHAT - anti-whale)
-pub const MAX_VALIDATOR_STAKE: u64 = 1_000_000_000_000; // 1M tokens
+pub const MAX_VALIDATOR_STAKE: u64 = 1_000_000 * MOTES_PER_DCHAT; // 1M tokens
 
 /// Cooldown period for unstaking (7 days)
 pub const UNSTAKE_COOLDOWN_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -612,7 +613,7 @@ impl StakingManager {
         tracing::info!(
             "✅ Validator stake submitted: {} ({} DCHAT) - tx: {}",
             validator_id,
-            amount as f64 / 1_000_000.0,
+            amount as f64 / MOTES_PER_DCHAT as f64,
             tx_id
         );
 
@@ -656,7 +657,7 @@ impl StakingManager {
         tracing::info!(
             "Validator {} initiated unstake: {} DCHAT (cooldown: {} days)",
             validator_id,
-            amount as f64 / 1_000_000.0,
+            amount as f64 / MOTES_PER_DCHAT as f64,
             UNSTAKE_COOLDOWN_SECONDS / 86400
         );
 
@@ -726,8 +727,8 @@ impl StakingManager {
         tracing::info!(
             "Validator {} increased stake by {} DCHAT (new total: {})",
             validator_id,
-            additional_amount as f64 / 1_000_000.0,
-            new_total as f64 / 1_000_000.0
+            additional_amount as f64 / MOTES_PER_DCHAT as f64,
+            new_total as f64 / MOTES_PER_DCHAT as f64
         );
 
         Ok(tx_id)
@@ -789,7 +790,7 @@ impl StakingManager {
         tracing::info!(
             "✅ Validator {} completed unstake: {} DCHAT returned",
             validator_id,
-            amount as f64 / 1_000_000.0
+            amount as f64 / MOTES_PER_DCHAT as f64
         );
 
         Ok(amount)
@@ -848,7 +849,7 @@ impl StakingManager {
         tracing::warn!(
             "⚠️ Validator {} slashed: {} DCHAT ({:?})",
             validator_id,
-            slashed_amount as f64 / 1_000_000.0,
+            slashed_amount as f64 / MOTES_PER_DCHAT as f64,
             severity
         );
 
@@ -867,7 +868,7 @@ impl StakingManager {
         tracing::debug!(
             "Validator {} earned reward: {} DCHAT",
             validator_id,
-            amount as f64 / 1_000_000.0
+            amount as f64 / MOTES_PER_DCHAT as f64
         );
 
         Ok(())
@@ -887,7 +888,7 @@ impl StakingManager {
         tracing::info!(
             "Validator {} claimed rewards: {} DCHAT",
             validator_id,
-            amount as f64 / 1_000_000.0
+            amount as f64 / MOTES_PER_DCHAT as f64
         );
 
         Ok(amount)
@@ -1214,7 +1215,7 @@ mod tests {
         manager.activate_validator(&validator_id).await.unwrap();
 
         // Distribute rewards
-        let reward = 1_000_000; // 1 DCHAT
+        let reward = 100_000_000; // 1 DCHAT (8 decimals)
         manager
             .distribute_reward(&validator_id, reward)
             .await

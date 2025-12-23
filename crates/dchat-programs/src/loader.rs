@@ -625,10 +625,10 @@ impl LoaderProgramProcessor {
         accounts[1].data.set_from_bytes(programdata_bytes);
         accounts[1].owner = UPGRADEABLE_LOADER_ID;
 
-        // Transfer lamports from buffer to payer and close buffer
-        let buffer_lamports = accounts[3].lamports;
-        accounts[0].lamports += buffer_lamports;
-        accounts[3].lamports = 0;
+        // Transfer motes from buffer to payer and close buffer
+        let buffer_motes = accounts[3].motes;
+        accounts[0].motes += buffer_motes;
+        accounts[3].motes = 0;
         accounts[3].data.clear();
 
         Ok(())
@@ -705,10 +705,10 @@ impl LoaderProgramProcessor {
         accounts[0].data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
             .copy_from_slice(&new_bytecode);
 
-        // Close buffer: transfer lamports to spill
-        let buffer_lamports = accounts[2].lamports;
-        accounts[3].lamports += buffer_lamports;
-        accounts[2].lamports = 0;
+        // Close buffer: transfer motes to spill
+        let buffer_motes = accounts[2].motes;
+        accounts[3].motes += buffer_motes;
+        accounts[2].motes = 0;
         accounts[2].data.clear();
 
         Ok(())
@@ -814,10 +814,10 @@ impl LoaderProgramProcessor {
             _ => return Err(ProgramError::InvalidAccountData),
         }
 
-        // Second phase: transfer lamports and close
-        let account_lamports = accounts[0].lamports;
-        accounts[1].lamports += account_lamports;
-        accounts[0].lamports = 0;
+        // Second phase: transfer motes and close
+        let account_motes = accounts[0].motes;
+        accounts[1].motes += account_motes;
+        accounts[0].motes = 0;
         accounts[0].data.clear();
 
         Ok(())
@@ -1031,10 +1031,10 @@ impl LoaderProgramProcessor {
         accounts[0].data.as_mut_slice()[state_bytes.len()..state_bytes.len() + new_bytecode.len()]
             .copy_from_slice(&new_bytecode);
 
-        // Close buffer: transfer lamports to spill
-        let buffer_lamports = accounts[2].lamports;
-        accounts[3].lamports += buffer_lamports;
-        accounts[2].lamports = 0;
+        // Close buffer: transfer motes to spill
+        let buffer_motes = accounts[2].motes;
+        accounts[3].motes += buffer_motes;
+        accounts[2].motes = 0;
         accounts[2].data.clear();
 
         Ok(())

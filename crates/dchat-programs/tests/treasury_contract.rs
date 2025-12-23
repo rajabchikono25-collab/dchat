@@ -265,7 +265,7 @@ fn test_treasury_full_lifecycle() {
 
     eprintln!("   ✅ Alice's vault created");
     eprintln!("      Owner: 0x{}", hex::encode(&alice_pubkey[..8]));
-    eprintln!("      Balance: 0 lamports");
+    eprintln!("      Balance: 0 motes");
     eprintln!("      Treasury user count: {}", user_count);
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -302,7 +302,7 @@ fn test_treasury_full_lifecycle() {
     let tx_count = read_u32_le(&state[108..112]);
     assert_eq!(tx_count, 1, "Tx count should be 1");
 
-    eprintln!("   ✅ Deposited {} lamports", deposit_amount);
+    eprintln!("   ✅ Deposited {} motes", deposit_amount);
     eprintln!("      Total deposits: {}", total_deposits);
     eprintln!("      Transaction count: {}", tx_count);
 
@@ -354,7 +354,7 @@ fn test_treasury_full_lifecycle() {
     let total_withdrawals = read_u64_le(&state[80..88]);
     let available = total_deposits - total_withdrawals;
 
-    eprintln!("   ✅ Withdrew {} lamports", withdraw_amount);
+    eprintln!("   ✅ Withdrew {} motes", withdraw_amount);
     eprintln!("      Total withdrawals: {}", total_withdrawals);
     eprintln!("      Available balance: {}", available);
 
@@ -487,11 +487,11 @@ fn test_treasury_full_lifecycle() {
         .expect("read");
     eprintln!("Final Treasury State:");
     eprintln!(
-        "   Total Deposits:    {} lamports",
+        "   Total Deposits:    {} motes",
         read_u64_le(&state[72..80])
     );
     eprintln!(
-        "   Total Withdrawals: {} lamports",
+        "   Total Withdrawals: {} motes",
         read_u64_le(&state[80..88])
     );
     eprintln!("   Fee (basis points):{}", read_u64_le(&state[88..96]));

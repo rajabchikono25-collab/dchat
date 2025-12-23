@@ -1,0 +1,27 @@
+{
+  "manifest_version": {
+    "major": 1,
+    "minor": 0
+  },
+  "metadata": {
+    "age_rating": "everyone",
+    "category": "games",
+    "description": "A games mini-app built for dchat",
+    "icon": "icon.png",
+    "languages": ["en"],
+    "name": "TestGame",
+    "short_description": "A games mini-app",
+    "tags": ["games"]
+  },
+  "permissions": [],
+  "resources": {
+    "allowed_domains": [],
+    "entry_point": "index.html",
+    "preload": ["app.js", "style.css"]
+  },
+  "runtime": {
+    "max_cpu_time_ms": 5000,
+    "max_memory_mb": 128
+  },
+  "version": "1.0.0"
+}

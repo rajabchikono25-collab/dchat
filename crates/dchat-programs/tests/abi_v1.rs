@@ -5,7 +5,7 @@
 //! - Router correctness
 //! - PDA derivation matching host
 //! - Readonly/writable enforcement
-//! - Lamports conservation
+//! - Motes conservation
 //! - Determinism (repeat-run identical trace hashes)
 //! - State commit correctness
 
@@ -127,7 +127,7 @@ fn test_accounts_blob_roundtrip_single() {
     let accounts = vec![SerializableAccount {
         pubkey: Pubkey::new([1u8; 32]),
         owner: Pubkey::new([2u8; 32]),
-        lamports: 1_000_000,
+        motes: 1_000_000,
         data: vec![10, 20, 30, 40],
         is_signer: true,
         is_writable: true,
@@ -142,7 +142,7 @@ fn test_accounts_blob_roundtrip_single() {
     assert_eq!(decoded.entries.len(), 1);
     assert_eq!(decoded.entries[0].pubkey, Pubkey::new([1u8; 32]));
     assert_eq!(decoded.entries[0].owner, Pubkey::new([2u8; 32]));
-    assert_eq!(decoded.entries[0].lamports, 1_000_000);
+    assert_eq!(decoded.entries[0].motes, 1_000_000);
     assert!(decoded.entries[0].is_signer);
     assert!(decoded.entries[0].is_writable);
     assert!(!decoded.entries[0].executable);
@@ -156,7 +156,7 @@ fn test_accounts_blob_roundtrip_multiple() {
         SerializableAccount {
             pubkey: Pubkey::new([1u8; 32]),
             owner: Pubkey::new([10u8; 32]),
-            lamports: 1000,
+            motes: 1000,
             data: vec![1, 2, 3],
             is_signer: true,
             is_writable: true,
@@ -166,7 +166,7 @@ fn test_accounts_blob_roundtrip_multiple() {
         SerializableAccount {
             pubkey: Pubkey::new([2u8; 32]),
             owner: Pubkey::new([20u8; 32]),
-            lamports: 2000,
+            motes: 2000,
             data: vec![4, 5, 6, 7, 8],
             is_signer: false,
             is_writable: true,
@@ -176,7 +176,7 @@ fn test_accounts_blob_roundtrip_multiple() {
         SerializableAccount {
             pubkey: Pubkey::new([3u8; 32]),
             owner: Pubkey::new([30u8; 32]),
-            lamports: 3000,
+            motes: 3000,
             data: vec![],
             is_signer: false,
             is_writable: false,
@@ -201,7 +201,7 @@ fn test_accounts_blob_rejects_too_many_accounts() {
         .map(|i| SerializableAccount {
             pubkey: Pubkey::new([i as u8; 32]),
             owner: Pubkey::zero(),
-            lamports: 0,
+            motes: 0,
             data: vec![],
             is_signer: false,
             is_writable: false,
@@ -230,7 +230,7 @@ fn test_toc_entry_roundtrip() {
     let entry = AccountTocEntry {
         pubkey: Pubkey::new([0xABu8; 32]),
         owner: Pubkey::new([0xCDu8; 32]),
-        lamports: 0xDEADBEEFCAFEBABE,
+        motes: 0xDEADBEEFCAFEBABE,
         data_len: 12345,
         data_off: 67890,
         is_signer: true,
@@ -245,7 +245,7 @@ fn test_toc_entry_roundtrip() {
     let decoded = AccountTocEntry::decode(&encoded).expect("should decode");
     assert_eq!(decoded.pubkey, entry.pubkey);
     assert_eq!(decoded.owner, entry.owner);
-    assert_eq!(decoded.lamports, entry.lamports);
+    assert_eq!(decoded.motes, entry.motes);
     assert_eq!(decoded.data_len, entry.data_len);
     assert_eq!(decoded.data_off, entry.data_off);
     assert_eq!(decoded.is_signer, entry.is_signer);
@@ -259,7 +259,7 @@ fn test_toc_entry_size_is_correct() {
     let entry = AccountTocEntry {
         pubkey: Pubkey::zero(),
         owner: Pubkey::zero(),
-        lamports: 0,
+        motes: 0,
         data_len: 0,
         data_off: 0,
         is_signer: false,
@@ -514,7 +514,7 @@ fn test_accounts_cursor_parse_and_get() {
         SerializableAccount {
             pubkey: Pubkey::new([1u8; 32]),
             owner: Pubkey::new([10u8; 32]),
-            lamports: 1000,
+            motes: 1000,
             data: vec![0xAB, 0xCD],
             is_signer: true,
             is_writable: true,
@@ -524,7 +524,7 @@ fn test_accounts_cursor_parse_and_get() {
         SerializableAccount {
             pubkey: Pubkey::new([2u8; 32]),
             owner: Pubkey::new([20u8; 32]),
-            lamports: 2000,
+            motes: 2000,
             data: vec![0x12, 0x34, 0x56],
             is_signer: false,
             is_writable: false,
@@ -541,23 +541,23 @@ fn test_accounts_cursor_parse_and_get() {
 
     let view0 = cursor.get(0).unwrap();
     assert_eq!(view0.key(), &Pubkey::new([1u8; 32]));
-    assert_eq!(view0.lamports(), 1000);
+    assert_eq!(view0.motes(), 1000);
     assert!(view0.is_signer());
     assert!(view0.is_writable());
 
     let view1 = cursor.get(1).unwrap();
     assert_eq!(view1.key(), &Pubkey::new([2u8; 32]));
-    assert_eq!(view1.lamports(), 2000);
+    assert_eq!(view1.motes(), 2000);
     assert!(!view1.is_signer());
     assert!(!view1.is_writable());
 }
 
 #[test]
-fn test_accounts_cursor_update_lamports() {
+fn test_accounts_cursor_update_motes() {
     let accounts = vec![SerializableAccount {
         pubkey: Pubkey::new([1u8; 32]),
         owner: Pubkey::new([10u8; 32]),
-        lamports: 1000,
+        motes: 1000,
         data: vec![1, 2, 3],
         is_signer: true,
         is_writable: true,
@@ -569,8 +569,8 @@ fn test_accounts_cursor_update_lamports() {
     let mut encoded = blob.encode();
     let mut cursor = AccountsCursor::parse(&mut encoded).unwrap();
 
-    // Update lamports should succeed for writable account
-    cursor.update_lamports(0, 2000).expect("should update");
+    // Update motes should succeed for writable account
+    cursor.update_motes(0, 2000).expect("should update");
 }
 
 #[test]
@@ -578,7 +578,7 @@ fn test_accounts_cursor_rejects_update_on_readonly() {
     let accounts = vec![SerializableAccount {
         pubkey: Pubkey::new([1u8; 32]),
         owner: Pubkey::new([10u8; 32]),
-        lamports: 1000,
+        motes: 1000,
         data: vec![1, 2, 3],
         is_signer: false,
         is_writable: false, // READONLY
@@ -590,8 +590,8 @@ fn test_accounts_cursor_rejects_update_on_readonly() {
     let mut encoded = blob.encode();
     let mut cursor = AccountsCursor::parse(&mut encoded).unwrap();
 
-    // Update lamports should fail for readonly account
-    let result = cursor.update_lamports(0, 2000);
+    // Update motes should fail for readonly account
+    let result = cursor.update_motes(0, 2000);
     assert!(result.is_err());
     assert!(matches!(result, Err(ProgramError::AccountNotWritable)));
 }
@@ -670,7 +670,7 @@ fn test_determinism_parsing_produces_same_entries() {
         assert_eq!(decoded.entries.len(), accounts.len());
         for (i, entry) in decoded.entries.iter().enumerate() {
             assert_eq!(entry.pubkey, accounts[i].pubkey);
-            assert_eq!(entry.lamports, accounts[i].lamports);
+            assert_eq!(entry.motes, accounts[i].motes);
         }
     }
 }
@@ -800,7 +800,7 @@ fn create_test_serializable_accounts() -> Vec<SerializableAccount> {
         SerializableAccount {
             pubkey: Pubkey::new([1u8; 32]),
             owner: Pubkey::new([10u8; 32]),
-            lamports: 1000,
+            motes: 1000,
             data: vec![1, 2, 3, 4],
             is_signer: true,
             is_writable: true,
@@ -810,7 +810,7 @@ fn create_test_serializable_accounts() -> Vec<SerializableAccount> {
         SerializableAccount {
             pubkey: Pubkey::new([2u8; 32]),
             owner: Pubkey::new([20u8; 32]),
-            lamports: 2000,
+            motes: 2000,
             data: vec![5, 6, 7, 8],
             is_signer: false,
             is_writable: true,

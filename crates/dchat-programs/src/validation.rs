@@ -122,7 +122,7 @@ impl Default for ValidationConfig {
         allowed_imports.insert("sol_get_account_owner".to_string());
         allowed_imports.insert("sol_get_account_is_signer".to_string());
         allowed_imports.insert("sol_get_account_is_writable".to_string());
-        allowed_imports.insert("sol_get_account_lamports".to_string());
+        allowed_imports.insert("sol_get_account_motes".to_string());
         allowed_imports.insert("sol_get_account_data".to_string());
         // Memory operations
         allowed_imports.insert("sol_memcpy".to_string());

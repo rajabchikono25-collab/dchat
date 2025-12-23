@@ -49,9 +49,9 @@ pub struct CapabilityScope {
     pub accounts: Vec<Pubkey>,
     /// Allowed methods (empty = all methods)
     pub methods: Vec<String>,
-    /// Maximum lamports that can be transferred per invocation
+    /// Maximum motes that can be transferred per invocation
     pub max_transfer_per_call: Option<u64>,
-    /// Maximum total lamports that can be transferred
+    /// Maximum total motes that can be transferred
     pub max_transfer_total: Option<u64>,
     /// Maximum compute units per call
     pub max_compute_per_call: Option<u64>,

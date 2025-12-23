@@ -165,9 +165,9 @@ fn test_memory_costs() {
 #[test]
 fn test_compute_fee_calculation() {
     let budget = ComputeBudget::new(200_000);
-    let lamports_per_cu = 100; // 100 lamports per CU
+    let motes_per_cu = 100; // 100 motes per CU
 
-    let fee = budget.compute_fee(lamports_per_cu);
+    let fee = budget.compute_fee(motes_per_cu);
     assert_eq!(fee, 200_000 * 100);
 }
 
@@ -274,10 +274,10 @@ fn test_meter_snapshot_restore() {
 #[test]
 fn test_upfront_fee_reservation() {
     let budget = ComputeBudget::new(100_000);
-    let lamports_per_cu = 1;
+    let motes_per_cu = 1;
 
     // Calculate fee upfront
-    let max_fee = budget.compute_fee(lamports_per_cu);
+    let max_fee = budget.compute_fee(motes_per_cu);
     assert_eq!(max_fee, 100_000);
 
     // Simulate execution with less consumption
@@ -285,7 +285,7 @@ fn test_upfront_fee_reservation() {
     assert!(meter.consume(50_000).is_ok());
 
     // Actual fee would be refunded partially
-    let actual_fee = meter.consumed() * lamports_per_cu;
+    let actual_fee = meter.consumed() * motes_per_cu;
     let refund = max_fee - actual_fee;
     assert_eq!(refund, 50_000);
 }

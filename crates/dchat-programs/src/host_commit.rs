@@ -8,9 +8,9 @@
 //! - Account count must match input
 //! - Account order must match input
 //! - Account keys must match input
-//! - Readonly accounts cannot change lamports/data/owner/executable
-//! - Writable accounts may change lamports/data but NOT owner/executable in v1
-//! - Lamports conservation across all accounts (sum before == sum after)
+//! - Readonly accounts cannot change motes/data/owner/executable
+//! - Writable accounts may change motes/data but NOT owner/executable in v1
+//! - Motes conservation across all accounts (sum before == sum after)
 //!   - Exception: Native mint/burn paths must be explicitly allowed
 //! - Data cannot be resized in v1 (fixed-size accounts)
 //!
@@ -36,8 +36,8 @@ use crate::metering::ComputeMeter;
 pub struct CopyInContext {
     /// Account snapshots before execution
     pub snapshots: Vec<AccountSnapshot>,
-    /// Total lamports before (for conservation check)
-    pub total_lamports_before: u64,
+    /// Total motes before (for conservation check)
+    pub total_motes_before: u64,
     /// Serialized accounts blob
     pub accounts_blob: Vec<u8>,
     /// Account indices by pubkey for fast lookup
@@ -51,8 +51,8 @@ pub struct AccountSnapshot {
     pub pubkey: Pubkey,
     /// Owner
     pub owner: Pubkey,
-    /// Lamports before
-    pub lamports: u64,
+    /// Motes before
+    pub motes: u64,
     /// Data hash before
     pub data_hash: [u8; 32],
     /// Data length
@@ -75,7 +75,7 @@ impl AccountSnapshot {
         Self {
             pubkey: account.key,
             owner: account.owner,
-            lamports: account.lamports,
+            motes: account.motes,
             data_hash: *blake3::hash(account.data.as_slice()).as_bytes(),
             data_len: account.data.len(),
             is_signer: meta.is_signer,
@@ -98,7 +98,7 @@ pub fn prepare_copy_in(
     }
 
     let mut snapshots = Vec::with_capacity(accounts.len());
-    let mut total_lamports: u64 = 0;
+    let mut total_motes: u64 = 0;
     let mut index_by_key = HashMap::with_capacity(accounts.len());
 
     // Create serializable accounts
@@ -108,14 +108,14 @@ pub fn prepare_copy_in(
         .enumerate()
         .map(|(i, (acc, meta))| {
             let snapshot = AccountSnapshot::from_account(acc, meta);
-            total_lamports = total_lamports.saturating_add(acc.lamports);
+            total_motes = total_motes.saturating_add(acc.motes);
             index_by_key.insert(acc.key, i);
             snapshots.push(snapshot);
 
             SerializableAccount {
                 pubkey: acc.key,
                 owner: acc.owner,
-                lamports: acc.lamports,
+                motes: acc.motes,
                 data: acc.data.to_vec(),
                 is_signer: meta.is_signer,
                 is_writable: meta.is_writable,
@@ -135,7 +135,7 @@ pub fn prepare_copy_in(
 
     Ok(CopyInContext {
         snapshots,
-        total_lamports_before: total_lamports,
+        total_motes_before: total_motes,
         accounts_blob: encoded,
         index_by_key,
     })
@@ -165,10 +165,10 @@ pub struct CopyOutResult {
 pub struct AccountDelta {
     /// Account public key
     pub pubkey: Pubkey,
-    /// Lamports before
-    pub lamports_before: u64,
-    /// Lamports after
-    pub lamports_after: u64,
+    /// Motes before
+    pub motes_before: u64,
+    /// Motes after
+    pub motes_after: u64,
     /// Data changed
     pub data_changed: bool,
     /// New data (if changed)
@@ -182,13 +182,13 @@ pub struct AccountDelta {
 /// Configuration for copy-out commit
 #[derive(Debug, Clone)]
 pub struct CopyOutConfig {
-    /// Allow native mint (lamports creation)
+    /// Allow native mint (motes creation)
     pub allow_native_mint: bool,
-    /// Allow native burn (lamports destruction)
+    /// Allow native burn (motes destruction)
     pub allow_native_burn: bool,
     /// Native mint/burn authority (if allowed)
     pub mint_burn_authority: Option<Pubkey>,
-    /// Maximum lamports that can be minted/burned per instruction
+    /// Maximum motes that can be minted/burned per instruction
     pub max_mint_burn_amount: u64,
 }
 
@@ -234,7 +234,7 @@ pub fn validate_and_commit(
     let pre_state_hash = compute_state_hash(&copy_in.snapshots);
 
     let mut deltas = Vec::with_capacity(blob.entries.len());
-    let mut total_lamports_after: u64 = 0;
+    let mut total_motes_after: u64 = 0;
     let mut post_state_data = Vec::new();
 
     for (i, (entry, snapshot)) in blob
@@ -275,8 +275,8 @@ pub fn validate_and_commit(
 
         // ─── Invariant 7: Readonly accounts cannot change ──────────────────────
         if !snapshot.is_writable {
-            // Check lamports unchanged
-            if entry.lamports != snapshot.lamports {
+            // Check motes unchanged
+            if entry.motes != snapshot.motes {
                 return Err(ProgramError::Custom(AbiError::ReadonlyModified as u32));
             }
 
@@ -286,15 +286,15 @@ pub fn validate_and_commit(
             }
         }
 
-        // Track total lamports
-        total_lamports_after = total_lamports_after.saturating_add(entry.lamports);
+        // Track total motes
+        total_motes_after = total_motes_after.saturating_add(entry.motes);
 
         // Collect delta
         let data_changed = new_data_hash != snapshot.data_hash;
         deltas.push(AccountDelta {
             pubkey: entry.pubkey,
-            lamports_before: snapshot.lamports,
-            lamports_after: entry.lamports,
+            motes_before: snapshot.motes,
+            motes_after: entry.motes,
             data_changed,
             new_data: if data_changed {
                 Some(new_data.to_vec())
@@ -307,36 +307,36 @@ pub fn validate_and_commit(
 
         // Collect post-state data for hash
         post_state_data.extend_from_slice(&entry.pubkey.0);
-        post_state_data.extend_from_slice(&entry.lamports.to_le_bytes());
+        post_state_data.extend_from_slice(&entry.motes.to_le_bytes());
         post_state_data.extend_from_slice(&new_data_hash);
     }
 
-    // ─── Invariant 8: Lamports conservation ────────────────────────────────────
-    let lamports_delta = if total_lamports_after >= copy_in.total_lamports_before {
-        total_lamports_after - copy_in.total_lamports_before
+    // ─── Invariant 8: Motes conservation ───────────────────────────────────────
+    let motes_delta = if total_motes_after >= copy_in.total_motes_before {
+        total_motes_after - copy_in.total_motes_before
     } else {
-        copy_in.total_lamports_before - total_lamports_after
+        copy_in.total_motes_before - total_motes_after
     };
 
-    if total_lamports_after != copy_in.total_lamports_before {
+    if total_motes_after != copy_in.total_motes_before {
         // Check if mint/burn is allowed
-        let is_increase = total_lamports_after > copy_in.total_lamports_before;
+        let is_increase = total_motes_after > copy_in.total_motes_before;
 
         if is_increase {
-            if !config.allow_native_mint || lamports_delta > config.max_mint_burn_amount {
-                return Err(ProgramError::Custom(AbiError::LamportsConservation as u32));
+            if !config.allow_native_mint || motes_delta > config.max_mint_burn_amount {
+                return Err(ProgramError::Custom(AbiError::MotesConservation as u32));
             }
         } else {
-            if !config.allow_native_burn || lamports_delta > config.max_mint_burn_amount {
-                return Err(ProgramError::Custom(AbiError::LamportsConservation as u32));
+            if !config.allow_native_burn || motes_delta > config.max_mint_burn_amount {
+                return Err(ProgramError::Custom(AbiError::MotesConservation as u32));
             }
         }
     }
 
     // ─── Apply Changes to Host Accounts ────────────────────────────────────────
     for (i, delta) in deltas.iter().enumerate() {
-        if delta.lamports_before != delta.lamports_after {
-            accounts[i].lamports = delta.lamports_after;
+        if delta.motes_before != delta.motes_after {
+            accounts[i].motes = delta.motes_after;
         }
 
         if let Some(ref new_data) = delta.new_data {
@@ -364,7 +364,7 @@ fn compute_state_hash(snapshots: &[AccountSnapshot]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     for snapshot in snapshots {
         hasher.update(&snapshot.pubkey.0);
-        hasher.update(&snapshot.lamports.to_le_bytes());
+        hasher.update(&snapshot.motes.to_le_bytes());
         hasher.update(&snapshot.data_hash);
     }
     *hasher.finalize().as_bytes()
@@ -382,8 +382,8 @@ fn compute_receipt_hash(
 
     for delta in deltas {
         hasher.update(&delta.pubkey.0);
-        hasher.update(&delta.lamports_before.to_le_bytes());
-        hasher.update(&delta.lamports_after.to_le_bytes());
+        hasher.update(&delta.motes_before.to_le_bytes());
+        hasher.update(&delta.motes_after.to_le_bytes());
         hasher.update(&[delta.data_changed as u8]);
         hasher.update(&delta.pre_data_hash);
         hasher.update(&delta.post_data_hash);
@@ -561,10 +561,10 @@ mod tests {
     use crate::metering::ComputeBudget;
     use std::sync::Arc;
 
-    fn create_test_account(key: [u8; 32], lamports: u64, data: Vec<u8>) -> Account {
+    fn create_test_account(key: [u8; 32], motes: u64, data: Vec<u8>) -> Account {
         Account {
             key: Pubkey::new(key),
-            lamports,
+            motes,
             data: AccountData::new(data),
             owner: Pubkey::new([10u8; 32]),
             executable: false,
@@ -593,7 +593,7 @@ mod tests {
         let copy_in = prepare_copy_in(&accounts, &metas, &meter).unwrap();
 
         assert_eq!(copy_in.snapshots.len(), 2);
-        assert_eq!(copy_in.total_lamports_before, 3000);
+        assert_eq!(copy_in.total_motes_before, 3000);
         assert!(!copy_in.accounts_blob.is_empty());
     }
 
@@ -623,12 +623,12 @@ mod tests {
         .unwrap();
 
         assert!(result.deltas.iter().all(|d| !d.data_changed));
-        assert_eq!(accounts[0].lamports, 1000);
-        assert_eq!(accounts[1].lamports, 2000);
+        assert_eq!(accounts[0].motes, 1000);
+        assert_eq!(accounts[1].motes, 2000);
     }
 
     #[test]
-    fn test_copy_out_lamports_transfer() {
+    fn test_copy_out_motes_transfer() {
         let mut accounts = vec![
             create_test_account([1u8; 32], 1000, vec![1, 2, 3]),
             create_test_account([2u8; 32], 2000, vec![4, 5]),
@@ -642,15 +642,15 @@ mod tests {
         let meter = create_test_meter();
         let copy_in = prepare_copy_in(&accounts, &metas, &meter).unwrap();
 
-        // Simulate lamports transfer: -500 from acc1, +500 to acc2
+        // Simulate motes transfer: -500 from acc1, +500 to acc2
         let mut mutated_blob = copy_in.accounts_blob.clone();
 
         // Parse and modify
         let mut blob = AccountsBlob::decode(&mutated_blob).unwrap();
 
-        // Modify lamports in TOC entries
-        blob.entries[0].lamports = 500; // Was 1000
-        blob.entries[1].lamports = 2500; // Was 2000
+        // Modify motes in TOC entries
+        blob.entries[0].motes = 500; // Was 1000
+        blob.entries[1].motes = 2500; // Was 2000
 
         let mutated = blob.encode();
 
@@ -663,14 +663,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.deltas[0].lamports_before, 1000);
-        assert_eq!(result.deltas[0].lamports_after, 500);
-        assert_eq!(result.deltas[1].lamports_before, 2000);
-        assert_eq!(result.deltas[1].lamports_after, 2500);
+        assert_eq!(result.deltas[0].motes_before, 1000);
+        assert_eq!(result.deltas[0].motes_after, 500);
+        assert_eq!(result.deltas[1].motes_before, 2000);
+        assert_eq!(result.deltas[1].motes_after, 2500);
 
         // Verify accounts were updated
-        assert_eq!(accounts[0].lamports, 500);
-        assert_eq!(accounts[1].lamports, 2500);
+        assert_eq!(accounts[0].motes, 500);
+        assert_eq!(accounts[1].motes, 2500);
     }
 
     #[test]
@@ -682,9 +682,9 @@ mod tests {
         let meter = create_test_meter();
         let copy_in = prepare_copy_in(&accounts, &metas, &meter).unwrap();
 
-        // Try to modify lamports on readonly account
+        // Try to modify motes on readonly account
         let mut blob = AccountsBlob::decode(&copy_in.accounts_blob).unwrap();
-        blob.entries[0].lamports = 2000; // Try to change
+        blob.entries[0].motes = 2000; // Try to change
 
         let mutated = blob.encode();
 
@@ -703,7 +703,7 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_out_rejects_lamports_conservation_violation() {
+    fn test_copy_out_rejects_motes_conservation_violation() {
         let mut accounts = vec![create_test_account([1u8; 32], 1000, vec![1, 2, 3])];
 
         let metas = vec![AccountMeta::signer_writable(Pubkey::new([1u8; 32]))];
@@ -711,9 +711,9 @@ mod tests {
         let meter = create_test_meter();
         let copy_in = prepare_copy_in(&accounts, &metas, &meter).unwrap();
 
-        // Try to create lamports out of thin air
+        // Try to create motes out of thin air
         let mut blob = AccountsBlob::decode(&copy_in.accounts_blob).unwrap();
-        blob.entries[0].lamports = 2000; // Try to mint
+        blob.entries[0].motes = 2000; // Try to mint
 
         let mutated = blob.encode();
 
@@ -727,7 +727,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ProgramError::Custom(code)) if code == AbiError::LamportsConservation as u32
+            Err(ProgramError::Custom(code)) if code == AbiError::MotesConservation as u32
         ));
     }
 
@@ -740,9 +740,9 @@ mod tests {
         let meter = create_test_meter();
         let copy_in = prepare_copy_in(&accounts, &metas, &meter).unwrap();
 
-        // Mint 500 lamports
+        // Mint 500 motes
         let mut blob = AccountsBlob::decode(&copy_in.accounts_blob).unwrap();
-        blob.entries[0].lamports = 1500;
+        blob.entries[0].motes = 1500;
 
         let mutated = blob.encode();
 
@@ -755,7 +755,7 @@ mod tests {
         let result =
             validate_and_commit(&copy_in, &mutated, &mut accounts, &config, &meter).unwrap();
 
-        assert_eq!(accounts[0].lamports, 1500);
+        assert_eq!(accounts[0].motes, 1500);
     }
 
     #[test]
@@ -772,7 +772,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([1u8; 32]),
                 owner: Pubkey::new([10u8; 32]),
-                lamports: 1000,
+                motes: 1000,
                 data: vec![1, 2, 3],
                 is_signer: true,
                 is_writable: true,
@@ -782,7 +782,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([99u8; 32]),
                 owner: Pubkey::new([10u8; 32]),
-                lamports: 0,
+                motes: 0,
                 data: vec![],
                 is_signer: false,
                 is_writable: false,
@@ -819,7 +819,7 @@ mod tests {
         let fake_accounts = vec![SerializableAccount {
             pubkey: Pubkey::new([99u8; 32]), // Wrong key!
             owner: Pubkey::new([10u8; 32]),
-            lamports: 1000,
+            motes: 1000,
             data: vec![1, 2, 3],
             is_signer: true,
             is_writable: true,
@@ -855,7 +855,7 @@ mod tests {
         let fake_accounts = vec![SerializableAccount {
             pubkey: Pubkey::new([1u8; 32]),
             owner: Pubkey::new([99u8; 32]), // Different owner!
-            lamports: 1000,
+            motes: 1000,
             data: vec![1, 2, 3],
             is_signer: true,
             is_writable: true,

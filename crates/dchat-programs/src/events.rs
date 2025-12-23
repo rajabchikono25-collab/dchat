@@ -158,10 +158,10 @@ pub struct AccountDelta {
     pub prev_owner: Pubkey,
     /// New owner
     pub new_owner: Pubkey,
-    /// Previous lamports
-    pub prev_lamports: u64,
-    /// New lamports
-    pub new_lamports: u64,
+    /// Previous motes
+    pub prev_motes: u64,
+    /// New motes
+    pub new_motes: u64,
     /// Previous data hash
     pub prev_data_hash: [u8; 32],
     /// New data hash
@@ -180,8 +180,8 @@ impl AccountDelta {
         pubkey: Pubkey,
         prev_owner: Pubkey,
         new_owner: Pubkey,
-        prev_lamports: u64,
-        new_lamports: u64,
+        prev_motes: u64,
+        new_motes: u64,
         prev_data: &[u8],
         new_data: &[u8],
     ) -> Self {
@@ -189,8 +189,8 @@ impl AccountDelta {
             pubkey,
             prev_owner,
             new_owner,
-            prev_lamports,
-            new_lamports,
+            prev_motes,
+            new_motes,
             prev_data_hash: blake3::hash(prev_data).into(),
             new_data_hash: blake3::hash(new_data).into(),
             reallocated: prev_data.len() != new_data.len(),
@@ -202,7 +202,7 @@ impl AccountDelta {
     /// Whether account was modified
     pub fn is_modified(&self) -> bool {
         self.prev_owner != self.new_owner
-            || self.prev_lamports != self.new_lamports
+            || self.prev_motes != self.new_motes
             || self.prev_data_hash != self.new_data_hash
     }
 }

@@ -66,7 +66,12 @@ pub mod validation;
 pub mod vm;
 
 // Re-export primary types for ergonomic API
-pub use account::{Account, AccountData, AccountMeta, AccountState, Lamports, Pubkey, RentEpoch};
+// Note: Motes is the canonical currency unit (1 DCHAT = 100,000,000 motes)
+#[allow(deprecated)]
+pub use account::Lamports; // Deprecated alias for backward compatibility
+pub use account::{
+    Account, AccountData, AccountMeta, AccountState, Motes, Pubkey, RentEpoch, MOTES_PER_DCHAT,
+};
 pub use capability::{CapabilityId, CapabilityRegistry, CapabilityScope, CapabilityToken};
 pub use cpi::{CpiContext, CpiGuard, CpiResult, CrossProgramInvocation};
 pub use error::{ProgramError, ProgramResult};

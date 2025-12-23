@@ -82,10 +82,10 @@ pub struct ExecutionResult {
 pub struct AccountChange {
     /// Account address
     pub address: [u8; 32],
-    /// Previous lamports
-    pub prev_lamports: u64,
-    /// New lamports
-    pub new_lamports: u64,
+    /// Previous motes
+    pub prev_motes: u64,
+    /// New motes
+    pub new_motes: u64,
     /// Data changed
     pub data_changed: bool,
     /// Owner changed

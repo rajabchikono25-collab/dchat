@@ -41,10 +41,10 @@ fn test_system_program_create_account() {
     let payer = pubkey_n(1);
     let new_account = pubkey_n(2);
     let owner = native_programs::SYSTEM_PROGRAM_ID;
-    let lamports = 1_000_000;
+    let motes = 1_000_000;
     let space = 100;
 
-    let instruction = SystemProgram::create_account(payer, new_account, lamports, space, owner);
+    let instruction = SystemProgram::create_account(payer, new_account, motes, space, owner);
 
     assert_eq!(instruction.program_id, native_programs::SYSTEM_PROGRAM_ID);
     assert_eq!(instruction.accounts.len(), 2);
@@ -58,9 +58,9 @@ fn test_system_program_create_account() {
 fn test_system_program_transfer() {
     let from = pubkey_n(1);
     let to = pubkey_n(2);
-    let lamports = 500_000;
+    let motes = 500_000;
 
-    let instruction = SystemProgram::transfer(from, to, lamports);
+    let instruction = SystemProgram::transfer(from, to, motes);
 
     assert_eq!(instruction.program_id, native_programs::SYSTEM_PROGRAM_ID);
     assert_eq!(instruction.accounts.len(), 2);
@@ -209,7 +209,7 @@ fn test_in_memory_account_bank() {
     let loaded = bank.load(&pubkey);
     assert!(loaded.is_some());
     let loaded = loaded.unwrap();
-    assert_eq!(loaded.lamports, 1000);
+    assert_eq!(loaded.motes, 1000);
 }
 
 #[test]

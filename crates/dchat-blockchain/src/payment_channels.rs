@@ -16,6 +16,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use dchat_core::error::{Error, Result};
+use dchat_core::motes::MOTES_PER_DCHAT;
 use dchat_core::types::UserId;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -28,10 +29,10 @@ use uuid::Uuid;
 pub const DISPUTE_WINDOW_SECONDS: i64 = 48 * 60 * 60;
 
 /// Minimum channel capacity (10 DCHAT)
-pub const MIN_CHANNEL_CAPACITY: u64 = 10_000_000; // 10 tokens with 6 decimals
+pub const MIN_CHANNEL_CAPACITY: u64 = 10 * MOTES_PER_DCHAT; // 10 tokens with 8 decimals
 
 /// Maximum channel capacity (100,000 DCHAT)
-pub const MAX_CHANNEL_CAPACITY: u64 = 100_000_000_000;
+pub const MAX_CHANNEL_CAPACITY: u64 = 100_000 * MOTES_PER_DCHAT;
 
 /// Channel state at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -908,8 +909,8 @@ pub struct MessageCreditsChannel {
 }
 
 impl MessageCreditsChannel {
-    /// Default message fee (0.1 DCHAT with 6 decimals)
-    pub const DEFAULT_MESSAGE_FEE: u64 = 100_000;
+    /// Default message fee (0.1 DCHAT with 8 decimals)
+    pub const DEFAULT_MESSAGE_FEE: u64 = MOTES_PER_DCHAT / 10;
 
     /// Create new message credits channel
     pub fn new(channel_id: String, fee_per_message: Option<u64>) -> Self {

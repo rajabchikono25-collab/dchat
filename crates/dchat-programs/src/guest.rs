@@ -255,7 +255,7 @@ impl<'a> AccountsCursor<'a> {
     /// Get mutable view of account at index
     ///
     /// This method uses the complex split_at_mut approach to safely provide
-    /// non-overlapping mutable references to both the TOC entry (for lamports)
+    /// non-overlapping mutable references to both the TOC entry (for motes)
     /// and the account data section. This prevents undefined behavior from
     /// overlapping mutable borrows.
     ///
@@ -289,7 +289,7 @@ impl<'a> AccountsCursor<'a> {
         let data_len = entry.data_len;
         let entry_pubkey = entry.pubkey;
         let entry_owner = entry.owner;
-        let entry_lamports = entry.lamports;
+        let entry_motes = entry.motes;
         let entry_is_signer = entry.is_signer;
         let entry_executable = entry.executable;
         let entry_rent_epoch = entry.rent_epoch;
@@ -332,19 +332,19 @@ impl<'a> AccountsCursor<'a> {
             data_len,
             pubkey: entry_pubkey,
             owner: entry_owner,
-            lamports: entry_lamports,
+            motes: entry_motes,
             is_signer: entry_is_signer,
             executable: entry_executable,
             rent_epoch: entry_rent_epoch,
         })
     }
 
-    /// Update lamports for an account by index
+    /// Update motes for an account by index
     ///
-    /// This is the safe way to update lamports - through the cursor which
+    /// This is the safe way to update motes - through the cursor which
     /// owns the entire blob. Uses explicit offset calculation to avoid
     /// overlapping mutable borrows.
-    pub fn update_lamports(&mut self, index: usize, lamports: u64) -> ProgramResult<()> {
+    pub fn update_motes(&mut self, index: usize, motes: u64) -> ProgramResult<()> {
         let entry = self
             .entries
             .get(index)
@@ -355,16 +355,16 @@ impl<'a> AccountsCursor<'a> {
 
         // Update cached entry
         if let Some(e) = self.entries.get_mut(index) {
-            e.lamports = lamports;
+            e.motes = motes;
         }
 
-        // Write to TOC (lamports is at offset 64 in TOC entry: 32 pubkey + 32 owner)
+        // Write to TOC (motes is at offset 64 in TOC entry: 32 pubkey + 32 owner)
         let toc_offset = self.toc_offset(index);
-        let lamports_offset = toc_offset + 64;
-        if lamports_offset + 8 > self.data.len() {
+        let motes_offset = toc_offset + 64;
+        if motes_offset + 8 > self.data.len() {
             return Err(ProgramError::Custom(AbiError::BufferTooSmall as u32));
         }
-        self.data[lamports_offset..lamports_offset + 8].copy_from_slice(&lamports.to_le_bytes());
+        self.data[motes_offset..motes_offset + 8].copy_from_slice(&motes.to_le_bytes());
 
         Ok(())
     }
@@ -387,7 +387,7 @@ impl<'a> AccountsCursor<'a> {
 
         Ok(Signer {
             pubkey: view.entry.pubkey,
-            lamports: view.entry.lamports,
+            motes: view.entry.motes,
             _lifetime: std::marker::PhantomData,
             data: view.data.to_vec(),
             owner: view.entry.owner,
@@ -417,7 +417,7 @@ impl<'a> AccountsCursor<'a> {
 
         // Capture entry values
         let entry_pubkey = entry.pubkey;
-        let entry_lamports = entry.lamports;
+        let entry_motes = entry.motes;
         let entry_owner = entry.owner;
         let entry_data_len = entry.data_len as usize;
 
@@ -435,7 +435,7 @@ impl<'a> AccountsCursor<'a> {
 
         Ok(Writable {
             pubkey: entry_pubkey,
-            lamports: entry_lamports,
+            motes: entry_motes,
             owner: entry_owner,
             data: data_slice,
             toc_data: toc_slice,
@@ -452,7 +452,7 @@ impl<'a> AccountsCursor<'a> {
 
         Ok(Readonly {
             pubkey: view.entry.pubkey,
-            lamports: view.entry.lamports,
+            motes: view.entry.motes,
             data: view.data.to_vec(),
             owner: view.entry.owner,
             _lifetime: std::marker::PhantomData,
@@ -484,7 +484,7 @@ impl<'a> AccountsCursor<'a> {
 
         // Capture entry values
         let entry_pubkey = entry.pubkey;
-        let entry_lamports = entry.lamports;
+        let entry_motes = entry.motes;
         let entry_owner = entry.owner;
         let entry_data_len = entry.data_len as usize;
         let is_writable = entry.is_writable;
@@ -503,7 +503,7 @@ impl<'a> AccountsCursor<'a> {
 
         Ok(ProgramOwned {
             pubkey: entry_pubkey,
-            lamports: entry_lamports,
+            motes: entry_motes,
             owner: entry_owner,
             data: data_slice,
             toc_data: toc_slice,
@@ -538,7 +538,7 @@ impl<'a> AccountsCursor<'a> {
 
         // Capture entry values
         let entry_pubkey = entry.pubkey;
-        let entry_lamports = entry.lamports;
+        let entry_motes = entry.motes;
         let entry_owner = entry.owner;
         let entry_data_len = entry.data_len as usize;
         let is_writable = entry.is_writable;
@@ -558,7 +558,7 @@ impl<'a> AccountsCursor<'a> {
 
         Ok(Pda {
             pubkey: entry_pubkey,
-            lamports: entry_lamports,
+            motes: entry_motes,
             owner: entry_owner,
             data: data_slice,
             toc_data: toc_slice,
@@ -598,9 +598,9 @@ impl<'a> AccountView<'a> {
         &self.entry.pubkey
     }
 
-    /// Get lamports
-    pub fn lamports(&self) -> u64 {
-        self.entry.lamports
+    /// Get motes
+    pub fn motes(&self) -> u64 {
+        self.entry.motes
     }
 
     /// Get owner
@@ -629,7 +629,7 @@ impl<'a> AccountView<'a> {
 pub struct AccountViewMut<'a> {
     /// Account data (mutable)
     pub data: &'a mut [u8],
-    /// TOC data (for updating lamports)
+    /// TOC data (for updating motes)
     toc_data: &'a mut [u8],
     /// Is writable
     pub is_writable: bool,
@@ -639,8 +639,8 @@ pub struct AccountViewMut<'a> {
     pub pubkey: Pubkey,
     /// Owner
     pub owner: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Is signer
     pub is_signer: bool,
     /// Is executable
@@ -650,19 +650,18 @@ pub struct AccountViewMut<'a> {
 }
 
 impl<'a> AccountViewMut<'a> {
-    /// Update lamports in the TOC (writes back to blob)
-    pub fn set_lamports(&mut self, lamports: u64) -> ProgramResult<()> {
+    /// Update motes in the TOC (writes back to blob)
+    pub fn set_motes(&mut self, motes: u64) -> ProgramResult<()> {
         if !self.is_writable {
             return Err(ProgramError::AccountNotWritable);
         }
 
         // Update in-memory value
-        self.lamports = lamports;
+        self.motes = motes;
 
-        // Write to TOC (lamports is at offset 64 in TOC entry)
-        let lamports_offset = 64; // 32 (pubkey) + 32 (owner)
-        self.toc_data[lamports_offset..lamports_offset + 8]
-            .copy_from_slice(&lamports.to_le_bytes());
+        // Write to TOC (motes is at offset 64 in TOC entry)
+        let motes_offset = 64; // 32 (pubkey) + 32 (owner)
+        self.toc_data[motes_offset..motes_offset + 8].copy_from_slice(&motes.to_le_bytes());
 
         Ok(())
     }
@@ -682,8 +681,8 @@ impl<'a> AccountViewMut<'a> {
 pub struct Signer<'a> {
     /// Public key
     pub pubkey: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Data (copied)
     pub data: Vec<u8>,
     /// Owner
@@ -704,13 +703,13 @@ impl<'a> Signer<'a> {
 pub struct Writable<'a> {
     /// Public key
     pub pubkey: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Owner
     pub owner: Pubkey,
     /// Mutable data reference
     pub data: &'a mut [u8],
-    /// TOC data for lamports updates
+    /// TOC data for motes updates
     toc_data: &'a mut [u8],
     /// Index in cursor
     index: usize,
@@ -722,31 +721,30 @@ impl<'a> Writable<'a> {
         &self.pubkey
     }
 
-    /// Set lamports (writes to blob)
-    pub fn set_lamports(&mut self, lamports: u64) -> ProgramResult<()> {
-        self.lamports = lamports;
-        let lamports_offset = 64;
-        self.toc_data[lamports_offset..lamports_offset + 8]
-            .copy_from_slice(&lamports.to_le_bytes());
+    /// Set motes (writes to blob)
+    pub fn set_motes(&mut self, motes: u64) -> ProgramResult<()> {
+        self.motes = motes;
+        let motes_offset = 64;
+        self.toc_data[motes_offset..motes_offset + 8].copy_from_slice(&motes.to_le_bytes());
         Ok(())
     }
 
-    /// Subtract lamports with underflow check
-    pub fn sub_lamports(&mut self, amount: u64) -> ProgramResult<()> {
+    /// Subtract motes with underflow check
+    pub fn sub_motes(&mut self, amount: u64) -> ProgramResult<()> {
         let new_balance = self
-            .lamports
+            .motes
             .checked_sub(amount)
             .ok_or(ProgramError::InsufficientFunds)?;
-        self.set_lamports(new_balance)
+        self.set_motes(new_balance)
     }
 
-    /// Add lamports with overflow check
-    pub fn add_lamports(&mut self, amount: u64) -> ProgramResult<()> {
+    /// Add motes with overflow check
+    pub fn add_motes(&mut self, amount: u64) -> ProgramResult<()> {
         let new_balance = self
-            .lamports
+            .motes
             .checked_add(amount)
             .ok_or(ProgramError::ArithmeticOverflow)?;
-        self.set_lamports(new_balance)
+        self.set_motes(new_balance)
     }
 
     /// Get account index
@@ -760,8 +758,8 @@ impl<'a> Writable<'a> {
 pub struct Readonly<'a> {
     /// Public key
     pub pubkey: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Data (copied for safety)
     pub data: Vec<u8>,
     /// Owner
@@ -782,8 +780,8 @@ impl<'a> Readonly<'a> {
 pub struct ProgramOwned<'a> {
     /// Public key
     pub pubkey: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Owner
     pub owner: Pubkey,
     /// Mutable data reference
@@ -802,15 +800,14 @@ impl<'a> ProgramOwned<'a> {
         &self.pubkey
     }
 
-    /// Set lamports if writable
-    pub fn set_lamports(&mut self, lamports: u64) -> ProgramResult<()> {
+    /// Set motes if writable
+    pub fn set_motes(&mut self, motes: u64) -> ProgramResult<()> {
         if !self.is_writable {
             return Err(ProgramError::AccountNotWritable);
         }
-        self.lamports = lamports;
-        let lamports_offset = 64;
-        self.toc_data[lamports_offset..lamports_offset + 8]
-            .copy_from_slice(&lamports.to_le_bytes());
+        self.motes = motes;
+        let motes_offset = 64;
+        self.toc_data[motes_offset..motes_offset + 8].copy_from_slice(&motes.to_le_bytes());
         Ok(())
     }
 
@@ -825,8 +822,8 @@ impl<'a> ProgramOwned<'a> {
 pub struct Pda<'a> {
     /// Public key
     pub pubkey: Pubkey,
-    /// Lamports
-    pub lamports: u64,
+    /// Motes
+    pub motes: u64,
     /// Owner
     pub owner: Pubkey,
     /// Mutable data reference
@@ -852,15 +849,14 @@ impl<'a> Pda<'a> {
         self.bump
     }
 
-    /// Set lamports if writable
-    pub fn set_lamports(&mut self, lamports: u64) -> ProgramResult<()> {
+    /// Set motes if writable
+    pub fn set_motes(&mut self, motes: u64) -> ProgramResult<()> {
         if !self.is_writable {
             return Err(ProgramError::AccountNotWritable);
         }
-        self.lamports = lamports;
-        let lamports_offset = 64;
-        self.toc_data[lamports_offset..lamports_offset + 8]
-            .copy_from_slice(&lamports.to_le_bytes());
+        self.motes = motes;
+        let motes_offset = 64;
+        self.toc_data[motes_offset..motes_offset + 8].copy_from_slice(&motes.to_le_bytes());
         Ok(())
     }
 
@@ -1234,7 +1230,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([1u8; 32]),
                 owner: Pubkey::new([10u8; 32]),
-                lamports: 1000,
+                motes: 1000,
                 data: vec![1, 2, 3, 4],
                 is_signer: true,
                 is_writable: true,
@@ -1244,7 +1240,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([2u8; 32]),
                 owner: Pubkey::new([20u8; 32]),
-                lamports: 2000,
+                motes: 2000,
                 data: vec![5, 6, 7, 8],
                 is_signer: false,
                 is_writable: true,
@@ -1254,7 +1250,7 @@ mod tests {
             SerializableAccount {
                 pubkey: Pubkey::new([3u8; 32]),
                 owner: Pubkey::new([30u8; 32]),
-                lamports: 3000,
+                motes: 3000,
                 data: vec![9, 10],
                 is_signer: false,
                 is_writable: false,
@@ -1285,7 +1281,7 @@ mod tests {
 
         let acc0 = cursor.get(0).unwrap();
         assert_eq!(acc0.entry.pubkey, Pubkey::new([1u8; 32]));
-        assert_eq!(acc0.lamports(), 1000);
+        assert_eq!(acc0.motes(), 1000);
         assert!(acc0.is_signer());
         assert_eq!(acc0.data, &[1, 2, 3, 4]);
 
@@ -1304,7 +1300,7 @@ mod tests {
 
         let signer = cursor.next_signer().unwrap();
         assert_eq!(signer.pubkey, Pubkey::new([1u8; 32]));
-        assert_eq!(signer.lamports, 1000);
+        assert_eq!(signer.motes, 1000);
     }
 
     #[test]
@@ -1336,11 +1332,11 @@ mod tests {
 
         let mut writable = cursor.next_writable().unwrap();
         assert_eq!(writable.pubkey, Pubkey::new([1u8; 32]));
-        assert_eq!(writable.lamports, 1000);
+        assert_eq!(writable.motes, 1000);
 
-        // Modify lamports
-        writable.set_lamports(500).unwrap();
-        assert_eq!(writable.lamports, 500);
+        // Modify motes
+        writable.set_motes(500).unwrap();
+        assert_eq!(writable.motes, 500);
     }
 
     #[test]
@@ -1354,7 +1350,7 @@ mod tests {
 
         let readonly = cursor.next_readonly().unwrap();
         assert_eq!(readonly.pubkey, Pubkey::new([3u8; 32]));
-        assert_eq!(readonly.lamports, 3000);
+        assert_eq!(readonly.motes, 3000);
     }
 
     #[test]
@@ -1493,7 +1489,7 @@ mod tests {
     }
 
     #[test]
-    fn test_writable_sub_add_lamports() {
+    fn test_writable_sub_add_motes() {
         let accounts = create_test_accounts();
         let blob = AccountsBlob::new(&accounts).unwrap();
         let mut encoded = blob.encode();
@@ -1501,16 +1497,16 @@ mod tests {
         let mut cursor = AccountsCursor::parse(&mut encoded).unwrap();
         let mut writable = cursor.next_writable().unwrap();
 
-        assert_eq!(writable.lamports, 1000);
+        assert_eq!(writable.motes, 1000);
 
-        writable.sub_lamports(100).unwrap();
-        assert_eq!(writable.lamports, 900);
+        writable.sub_motes(100).unwrap();
+        assert_eq!(writable.motes, 900);
 
-        writable.add_lamports(50).unwrap();
-        assert_eq!(writable.lamports, 950);
+        writable.add_motes(50).unwrap();
+        assert_eq!(writable.motes, 950);
 
         // Should fail - underflow
-        let result = writable.sub_lamports(1000);
+        let result = writable.sub_motes(1000);
         assert!(matches!(result, Err(ProgramError::InsufficientFunds)));
     }
 }
