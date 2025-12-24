@@ -585,20 +585,61 @@ impl SyscallHandler for GetProgramManifestHandler {
         // Read program ID from memory
         let mut program_id_bytes = [0u8; 32];
         program_id_bytes.copy_from_slice(&memory[program_id_ptr..program_id_ptr + PUBKEY_SIZE]);
-        let _target_program_id = Pubkey::new(program_id_bytes);
+        let target_program_id = Pubkey::new(program_id_bytes);
 
-        // Look up program in accounts
-        // In a real implementation, this would look up the program's ProgramData account
-        // and read the manifest from it. For now, we'll check if the program is in
-        // the provided accounts list and has manifest data.
-        //
-        // TODO: In production, this needs access to the account database to look up
-        // the program's ProgramData account and extract the manifest.
-        //
-        // For now, return "no manifest" (value 1) to indicate the syscall works
-        // but manifest lookup isn't implemented yet in the runtime.
+        // Look up program in provided accounts
+        // The target program's ProgramData account must be passed to the transaction
+        // for this syscall to work. This follows the "explicit accounts" model.
+        for account in ctx.accounts.iter() {
+            // Check if this account is owned by the upgradeable loader and matches
+            // a pattern that indicates it's the ProgramData for our target program
+            if account.owner == crate::native_programs::LOADER_PROGRAM_ID
+                || account.owner == crate::loader::UPGRADEABLE_LOADER_ID
+            {
+                // Try to parse as ProgramAccountState
+                if let Ok(data) = account.try_borrow_data() {
+                    if let Ok(state) = crate::loader::ProgramAccountState::from_bytes(&data) {
+                        // Check if this is a ProgramData account with manifest
+                        if let crate::loader::ProgramAccountState::ProgramData {
+                            manifest: Some(ref manifest_info),
+                            ..
+                        } = state
+                        {
+                            // Verify this is the right program by checking if the
+                            // account key derives from the target program ID
+                            // (ProgramData PDA: [program_id, "programdata"])
+                            let expected_pda = crate::pda::find_program_address(
+                                &[target_program_id.as_bytes(), b"programdata"],
+                                &crate::loader::UPGRADEABLE_LOADER_ID,
+                            );
+                            if account.key == expected_pda.0 {
+                                // Write manifest info to output buffer
+                                // Format: schema_hash(32) + abi(1) + profile(1) + version(6) + edition(2) + caps(8) = 50 bytes
+                                memory[output_ptr..output_ptr + 32]
+                                    .copy_from_slice(&manifest_info.schema_hash);
+                                memory[output_ptr + 32] = manifest_info.abi_version;
+                                memory[output_ptr + 33] = manifest_info.import_profile;
+                                memory[output_ptr + 34..output_ptr + 36]
+                                    .copy_from_slice(&manifest_info.sdk_major.to_le_bytes());
+                                memory[output_ptr + 36..output_ptr + 38]
+                                    .copy_from_slice(&manifest_info.sdk_minor.to_le_bytes());
+                                memory[output_ptr + 38..output_ptr + 40]
+                                    .copy_from_slice(&manifest_info.sdk_patch.to_le_bytes());
+                                memory[output_ptr + 40..output_ptr + 42]
+                                    .copy_from_slice(&manifest_info.edition.to_le_bytes());
+                                memory[output_ptr + 42..output_ptr + 50]
+                                    .copy_from_slice(&manifest_info.capabilities.to_le_bytes());
 
-        // Return 1 to indicate no manifest found (placeholder)
+                                return SyscallResult::Ok(0); // Success: manifest found
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // No manifest found for the target program in the provided accounts
+        // The caller must include the program's ProgramData account in the transaction
         SyscallResult::Ok(1)
     }
 

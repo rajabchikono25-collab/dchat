@@ -146,9 +146,26 @@ pub fn get_program_manifest(_program_id: &[u8; 32]) -> Option<ProgramManifest> {
 
     #[cfg(not(feature = "std"))]
     {
-        // In no_std mode (actual WASM execution), this would call the syscall
-        // For now, return None until runtime integration is complete
-        None
+        // In no_std mode (actual WASM execution), invoke the syscall
+        extern "C" {
+            /// VM-provided syscall to query program manifests
+            /// Returns: 0 = success, 1 = no manifest, other = error
+            fn sol_get_program_manifest(program_id_ptr: *const u8, output_ptr: *mut u8) -> u64;
+        }
+
+        let mut output = [0u8; 50];
+
+        // SAFETY: We're passing valid pointers to properly sized buffers
+        // and the VM guarantees memory safety for syscall execution
+        let result = unsafe { sol_get_program_manifest(_program_id.as_ptr(), output.as_mut_ptr()) };
+
+        if result == 0 {
+            // Success - parse the manifest from output buffer
+            Some(ProgramManifest::from_bytes(&output))
+        } else {
+            // No manifest or error
+            None
+        }
     }
 }
 

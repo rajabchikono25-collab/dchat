@@ -54,7 +54,7 @@ This example shows how to build a production-ready DPL program with:
 ### Development Build
 
 ```bash
-cargo build --target wasm32-wasi --release
+cargo build --target wasm32-unknown-unknown --release
 ```
 
 ### Reproducible Build
@@ -65,19 +65,19 @@ export SOURCE_DATE_EPOCH=$(date +%s)
 export DPL_BUILD_HOST="release"
 
 # Build
-cargo build --target wasm32-wasi --release
+cargo build --target wasm32-unknown-unknown --release
 ```
 
 ### With Schema Verification
 
 ```bash
 # First, generate the IDL
-dchat program manifest target/wasm32-wasi/release/dpl_escrow_ironclad.wasm \
+dchat program manifest \
+    --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm \
     --format json > idl.json
 
 # Then build with verification
-DPL_SCHEMA_HASH=$(cat idl.json | dchat program schema-hash) \
-    cargo build --target wasm32-wasi --release --features release-verify
+cargo build --target wasm32-unknown-unknown --release --features release-verify
 ```
 
 ## Manifest Inspection
@@ -85,36 +85,82 @@ DPL_SCHEMA_HASH=$(cat idl.json | dchat program schema-hash) \
 ### View Manifest
 
 ```bash
-dchat program manifest target/wasm32-wasi/release/dpl_escrow_ironclad.wasm
+dchat program manifest \
+    --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm
 ```
 
 Expected output:
 
 ```
-DPL Manifest
-════════════════════════════════════════════════════════════════════
-SDK Version:     0.1.0
-Edition:         2025
-ABI Version:     1
-Import Profile:  WASI
-
-Schema Hash:     a1b2c3d4e5f6...
-Capabilities:    EMITS_EVENTS | USES_PDAS | REQUIRES_SIGNERS
+📋 PROGRAM MANIFEST INSPECTOR
+══════════════════════════════════════════════════════════════════
+Source: "target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm"
+SDK Version:    0.1.0
+Edition:        2025
+ABI Version:    1
+Import Profile: Wasi
+Schema Hash:    0000000000000000000000000000000000000000000000000000000000000000
+Capabilities:   Capabilities(0x0)
 ```
 
-### Extract IDL
+### Extract IDL as JSON
 
 ```bash
-dchat program manifest target/wasm32-wasi/release/dpl_escrow_ironclad.wasm \
-    --format json > idl.json
+dchat program manifest \
+    --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm \
+    --format json
 ```
 
-### Verify Manifest
+Output:
+
+```json
+{
+  "abi_version": 1,
+  "capabilities": "Capabilities(0x0)",
+  "edition": 2025,
+  "import_profile": "Wasi",
+  "schema_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sdk_version": "0.1.0"
+}
+```
+
+### Validate Bytecode
+
+```bash
+dchat program validate \
+    --wasm target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm \
+    --verbose
+```
+
+Output:
+
+```
+🔒 VALIDATE WASM BYTECODE
+══════════════════════════════════════════════════════════════════
+File: "target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm"
+Size: 46151 bytes (45.07 KB)
+
+✅ VALIDATION PASSED
+
+Code Hash:   3b98b7e696f3752780cf7974b7f09fec4ae7ce84e5b5e1e092597378e4eaee22
+
+📋 DPL Manifest:
+   SDK Version: 0.1.0
+   Edition:     2025
+   ABI Version: 1
+   Import:      1
+   Schema Hash: 0000000000000000000000000000000000000000000000000000000000000000
+   Capabilities: 0
+
+💡 This bytecode is ready for deployment!
+```
+
+### Verify Manifest Against Expected Hash
 
 ```bash
 dchat program verify-manifest \
-    --program target/wasm32-wasi/release/dpl_escrow_ironclad.wasm \
-    --idl idl.json
+    --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm \
+    --expected-hash <64-char-hex-hash>
 ```
 
 ## IDL Schema

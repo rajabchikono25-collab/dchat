@@ -30,13 +30,16 @@
 //!
 //! ```bash
 //! # Development build
-//! cargo build --target wasm32-wasi --release
+//! cargo build --target wasm32-unknown-unknown --release
 //!
-//! # Reproducible release build
-//! SOURCE_DATE_EPOCH=$(date +%s) cargo build --target wasm32-wasi --release
+//! # Validate bytecode
+//! dchat program validate --wasm target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm --verbose
 //!
-//! # Extract manifest
-//! dchat program manifest target/wasm32-wasi/release/dpl_escrow_ironclad.wasm
+//! # Inspect manifest
+//! dchat program manifest --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm
+//!
+//! # View manifest as JSON
+//! dchat program manifest --program target/wasm32-unknown-unknown/release/dpl_escrow_ironclad.wasm --format json
 //! ```
 
 use dchat_dpl::prelude::*;
