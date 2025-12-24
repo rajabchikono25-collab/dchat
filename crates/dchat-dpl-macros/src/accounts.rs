@@ -62,7 +62,7 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
 
         if constraints.is_signer {
             validations.push(quote! {
-                if !#field_name.is_signer {
+                if !#field_name.is_signer() {
                     return Err(dchat_dpl::DplError::MissingSigner);
                 }
             });
@@ -70,7 +70,7 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
 
         if constraints.is_mut {
             validations.push(quote! {
-                if !#field_name.is_writable {
+                if !#field_name.is_writable() {
                     return Err(dchat_dpl::DplError::AccountNotMutable);
                 }
             });
@@ -93,11 +93,48 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
             } else {
                 quote! { dchat_dpl::DplError::ConstraintHasOne }
             };
-            validations.push(quote! {
-                if #field_name.#has_one_ident != #has_one_ident.key() {
-                    return Err(#error_expr);
-                }
-            });
+
+            // Try to extract the inner account data type from Account<'info, T>
+            let inner_ty: Option<syn::Type> = if let syn::Type::Path(tp) = field_type {
+                tp.path.segments.last().and_then(|seg| {
+                    if seg.ident == "Account" {
+                        if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+                            ab.args
+                                .iter()
+                                .filter_map(|ga| {
+                                    if let syn::GenericArgument::Type(ty) = ga {
+                                        Some(ty.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .nth(1)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+
+            if let Some(inner) = inner_ty {
+                validations.push(quote! {
+                    let mut __buf = #field_name.data();
+                    let __parsed: #inner = dchat_dpl::AccountDeserialize::try_deserialize(&mut __buf)?;
+                    if __parsed.#has_one_ident != *#has_one_ident.key() {
+                        return Err(#error_expr);
+                    }
+                });
+            } else {
+                validations.push(quote! {
+                    if *#has_one_ident.key() != *#field_name.key() {
+                        return Err(#error_expr);
+                    }
+                });
+            }
         }
 
         // Handle PDA derivation with seeds and bump
@@ -113,14 +150,17 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
                 .collect();
 
             validations.push(quote! {
-                let (expected_key, bump) = dchat_dpl::derive_pda(
+                if let Some((expected_key, bump)) = dchat_dpl::derive_pda(
                     &[#(#seeds_tokens),*],
                     &ctx.program_id,
-                );
-                if #field_name.key() != expected_key {
+                ) {
+                    if *#field_name.key() != expected_key {
+                        return Err(dchat_dpl::DplError::InvalidPda);
+                    }
+                    bumps.#field_name = bump;
+                } else {
                     return Err(dchat_dpl::DplError::InvalidPda);
                 }
-                bumps.#field_name = bump;
             });
         }
 
@@ -130,9 +170,8 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
 
         // Generate deserialization based on field type
         field_deserializations.push(quote! {
-            let #field_name: #field_type = dchat_dpl::AccountDeserialize::try_deserialize(
-                &mut cursor.next_account()?,
-            )?;
+            let mut __entry = cursor.next_account()?;
+            let #field_name: #field_type = dchat_dpl::FromAccountEntry::from_entry(&mut __entry)?;
         });
     }
 
@@ -181,7 +220,7 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
 
             fn try_accounts(
                 ctx: &dchat_dpl::ContextInfo,
-                accounts_data: &[u8],
+                accounts_data: &#lifetime [u8],
                 bumps: &mut Self::Bumps,
             ) -> dchat_dpl::Result<Self> {
                 let mut cursor = dchat_dpl::abi::AccountsCursor::new(accounts_data)?;
@@ -258,6 +297,10 @@ fn parse_account_constraints(attrs: &[syn::Attribute]) -> Result<AccountConstrai
                 let expr: syn::Expr = value.parse()?;
                 constraints.constraint = Some(quote!(#expr).to_string());
             } else if meta.path.is_ident("seeds") {
+                // Support both `seeds = [..]` and `seeds[..]` syntaxes
+                if meta.input.peek(syn::Token![=]) {
+                    let _ = meta.value()?; // consume '=' and advance to bracket group
+                }
                 let content;
                 syn::bracketed!(content in meta.input);
                 let seeds: syn::punctuated::Punctuated<syn::Expr, syn::Token![,]> =

@@ -26,12 +26,20 @@ pub fn derive_instruction_impl(item: TokenStream) -> Result<TokenStream> {
     // Parse variants and their tags
     let mut serialize_arms = Vec::new();
     let mut deserialize_arms = Vec::new();
+    let mut tag_consts = Vec::new();
 
     for variant in &data_enum.variants {
         let variant_name = &variant.ident;
 
         // Parse #[tag(N)] attribute
         let tag = get_tag_attr(&variant.attrs)?;
+
+        // Emit associated TAG constant for this variant
+        let const_name = syn::Ident::new(
+            &format!("TAG_{}", variant_name.to_string().to_uppercase()),
+            proc_macro2::Span::call_site(),
+        );
+        tag_consts.push(quote! { pub const #const_name: u8 = #tag; });
 
         match &variant.fields {
             Fields::Named(fields) => {
@@ -104,6 +112,10 @@ pub fn derive_instruction_impl(item: TokenStream) -> Result<TokenStream> {
     }
 
     let output = quote! {
+        impl #impl_generics #name #ty_generics #where_clause {
+            #(#tag_consts)*
+        }
+
         impl #impl_generics dchat_dpl::DplSerialize for #name #ty_generics #where_clause {
             fn serialize(&self, output: &mut Vec<u8>) -> dchat_dpl::Result<()> {
                 match self {

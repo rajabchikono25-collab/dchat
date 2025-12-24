@@ -108,6 +108,17 @@ pub fn event_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream> 
         #discriminator
         #event_impl
         #emit_helper
+
+        // Implement DPL serialization for events via Borsh
+        impl #impl_generics dchat_dpl::DplSerialize for #name #ty_generics #where_clause {
+            fn serialize(&self, output: &mut ::std::vec::Vec<u8>) -> dchat_dpl::Result<()> {
+                let mut buf = ::std::vec::Vec::new();
+                borsh::BorshSerialize::serialize(self, &mut buf)
+                    .map_err(|e| dchat_dpl::DplError::SerializationError(e.to_string()))?;
+                output.extend_from_slice(&buf);
+                Ok(())
+            }
+        }
     };
 
     Ok(output)

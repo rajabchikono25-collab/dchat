@@ -2,7 +2,7 @@
 //!
 //! Generates the program entrypoint, instruction dispatcher, and DPL manifest.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{parse2, ItemMod, Result, Visibility};
 
@@ -62,35 +62,81 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
         })
         .collect();
 
-    // Generate dispatch match arms
-    let dispatch_arms: Vec<_> = handler_names
+    // Generate dispatch match arms using 8-byte function discriminators
+    fn to_static_lifetime(mut ty: syn::Type) -> syn::Type {
+        if let syn::Type::Path(tp) = &mut ty {
+            for seg in tp.path.segments.iter_mut() {
+                if let syn::PathArguments::AngleBracketed(ab) = &mut seg.arguments {
+                    let mut new_args: syn::punctuated::Punctuated<
+                        syn::GenericArgument,
+                        syn::Token![,],
+                    > = syn::punctuated::Punctuated::new();
+                    for arg in ab.args.clone() {
+                        let replaced = match arg {
+                            syn::GenericArgument::Lifetime(_) => syn::GenericArgument::Lifetime(
+                                syn::Lifetime::new("'static", Span::call_site()),
+                            ),
+                            other => other,
+                        };
+                        new_args.push(replaced);
+                    }
+                    ab.args = new_args;
+                }
+            }
+        }
+        ty
+    }
+
+    let dispatch_arms: Vec<_> = handlers
         .iter()
-        .zip(handlers.iter())
-        .map(|(name, func)| {
+        .map(|func| {
+            let name = &func.sig.ident;
             let const_name = format_ident!("{}_DISCRIMINATOR", name.to_string().to_uppercase());
 
-            // Extract function parameters (skip ctx)
-            let params: Vec<_> = func
-                .sig
-                .inputs
-                .iter()
-                .skip(1) // Skip Context parameter
-                .collect();
+            // Parse Context<T> from first argument (robustly search for a segment named Context)
+            let accounts_ty: syn::Type = match func.sig.inputs.first() {
+                Some(syn::FnArg::Typed(pat_ty)) => {
+                    if let syn::Type::Path(tp) = &*pat_ty.ty {
+                        let seg_opt = tp.path.segments.iter().find(|s| s.ident == "Context");
+                        if let Some(seg) = seg_opt {
+                            if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+                                if let Some(syn::GenericArgument::Type(ty)) = ab.args.iter().nth(1) {
+                                    to_static_lifetime(ty.clone())
+                                } else if let Some(syn::GenericArgument::Type(ty)) = ab.args.first() {
+                                    // Some users write Context<T> without explicit lifetime first
+                                    to_static_lifetime(ty.clone())
+                                } else { syn::parse_str("() ").unwrap() }
+                            } else { syn::parse_str("() ").unwrap() }
+                        } else { syn::parse_str("() ").unwrap() }
+                    } else { syn::parse_str("() ").unwrap() }
+                }
+                _ => syn::parse_str("() ").unwrap(),
+            };
 
-            if params.is_empty() {
+            // Extract remaining non-ctx parameters (support 0 or 1)
+            let other_params: Vec<_> = func.sig.inputs.iter().skip(1).collect();
+
+            if other_params.is_empty() {
                 quote! {
-                    disc if disc == #const_name => {
-                        let ctx = dchat_dpl::Context::new(&accounts_data, &mut remaining_data)?;
+                    disc if disc == #mod_name::#const_name => {
+                        let ctx_info = dchat_dpl::ContextInfo::new(#mod_name::PROGRAM_ID);
+                        let mut bumps: <#accounts_ty as dchat_dpl::Accounts>::Bumps = Default::default();
+                        let accounts = <#accounts_ty as dchat_dpl::Accounts>::try_accounts(&ctx_info, accounts_data, &mut bumps)?;
+                        let ctx = dchat_dpl::Context::new(accounts, &[], bumps, &#mod_name::PROGRAM_ID);
                         #mod_name::#name(ctx)
                     }
                 }
             } else {
+                // Single argument type
+                let arg_ty = if let syn::FnArg::Typed(pat_ty) = &other_params[0] { (*pat_ty.ty).clone() } else { syn::parse_str("()").unwrap() };
                 quote! {
-                    disc if disc == #const_name => {
-                        let ctx = dchat_dpl::Context::new(&accounts_data, &mut remaining_data)?;
-                        // Deserialize remaining instruction data as arguments
-                        let args = dchat_dpl::DplDeserialize::deserialize(&mut remaining_data)?;
-                        #mod_name::#name(ctx, args)
+                    disc if disc == #mod_name::#const_name => {
+                        let ctx_info = dchat_dpl::ContextInfo::new(#mod_name::PROGRAM_ID);
+                        let mut bumps: <#accounts_ty as dchat_dpl::Accounts>::Bumps = Default::default();
+                        let accounts = <#accounts_ty as dchat_dpl::Accounts>::try_accounts(&ctx_info, accounts_data, &mut bumps)?;
+                        let ctx = dchat_dpl::Context::new(accounts, &[], bumps, &#mod_name::PROGRAM_ID);
+                        let arg0: #arg_ty = dchat_dpl::DplDeserialize::deserialize(&mut remaining_data)?;
+                        #mod_name::#name(ctx, arg0)
                     }
                 }
             }
@@ -120,7 +166,7 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
                 unsafe { dchat_dpl::abi::parse_input(input)? };
 
             // Verify we're being called with our program ID
-            if program_id != PROGRAM_ID {
+            if program_id != #mod_name::PROGRAM_ID {
                 return Err(dchat_dpl::DplError::InvalidProgramId);
             }
 
@@ -131,7 +177,6 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
             let discriminator: [u8; 8] = instruction_data[..8].try_into().unwrap();
             let mut remaining_data = &instruction_data[8..];
 
-            // Dispatch to handler
             match discriminator {
                 #(#dispatch_arms,)*
                 _ => Err(dchat_dpl::DplError::InvalidInstructionDiscriminator),

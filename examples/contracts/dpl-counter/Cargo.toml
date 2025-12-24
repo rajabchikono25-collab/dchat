@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 dchat-dpl = { path = "../../../crates/dchat-dpl" }
+borsh = "1.6"
 
 [profile.release]
 opt-level = "z"

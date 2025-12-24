@@ -1,20 +1,17 @@
 //! Event emission for DPL programs
 
 use crate::serde::DplSerialize;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
 
 /// Emit an event to the runtime
 pub fn emit_event<T: DplSerialize>(event: &T) {
-    // Serialize the event
-    let mut buffer = [0u8; 1024];
-    if let Ok(len) = event.serialize(&mut buffer) {
-        // Compute discriminator (first 8 bytes of blake3 hash of type name)
+    let mut buf = Vec::new();
+    if event.serialize(&mut buf).is_ok() {
         let discriminator = compute_discriminator(core::any::type_name::<T>());
-
-        // In production, this would call the VM syscall to emit the event
-        // For now, we just log it
         #[cfg(feature = "std")]
         {
-            let _ = (discriminator, &buffer[..len]);
+            let _ = (discriminator, buf);
         }
     }
 }

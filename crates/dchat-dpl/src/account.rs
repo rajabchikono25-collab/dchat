@@ -1,5 +1,6 @@
 //! Account types for DPL programs
 
+use crate::error::DplError;
 use core::marker::PhantomData;
 
 /// 32-byte public key
@@ -69,6 +70,10 @@ impl<'info> Signer<'info> {
     pub fn key(&self) -> &Pubkey {
         self.info.key
     }
+    /// Whether this signer actually signed
+    pub fn is_signer(&self) -> bool {
+        self.info.is_signer
+    }
 }
 
 /// System account - just a pubkey with no data
@@ -94,6 +99,18 @@ impl<'info, T> Account<'info, T> {
     pub fn key(&self) -> &Pubkey {
         self.info.key
     }
+    /// Whether this account is a signer
+    pub fn is_signer(&self) -> bool {
+        self.info.is_signer
+    }
+    /// Whether this account is writable
+    pub fn is_writable(&self) -> bool {
+        self.info.is_writable
+    }
+    /// Get the raw account data bytes
+    pub fn data(&self) -> &'info [u8] {
+        self.info.data
+    }
 }
 
 impl<'info, T> core::ops::Deref for Account<'info, T>
@@ -118,16 +135,17 @@ where
     }
 }
 
-/// Trait for deserializing account data
+/// Trait for deserializing account data (structs) from raw bytes
 pub trait AccountDeserialize: Sized {
-    /// Deserialize from account data
-    fn try_deserialize(data: &[u8]) -> Result<Self, crate::error::DplError>;
+    /// Deserialize from raw account bytes
+    fn try_deserialize(buf: &mut &[u8]) -> Result<Self, crate::error::DplError>;
 }
 
 /// Trait for serializing account data
 pub trait AccountSerialize {
-    /// Serialize to account data
-    fn try_serialize(&self, data: &mut [u8]) -> Result<(), crate::error::DplError>;
+    /// Serialize to an io::Write
+    fn try_serialize(&self, writer: &mut impl std::io::Write)
+        -> Result<(), crate::error::DplError>;
 }
 
 /// Trait for creating account from AccountInfo
@@ -164,5 +182,77 @@ impl<'info, T> Program<'info, T> {
     /// Get the program key
     pub fn key(&self) -> &Pubkey {
         self.info.key
+    }
+}
+
+// Borsh support for Pubkey so it can be used in #[account] and #[event] structs
+impl borsh::BorshSerialize for Pubkey {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&self.0)
+    }
+}
+
+impl borsh::BorshDeserialize for Pubkey {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let mut bytes = [0u8; 32];
+        reader.read_exact(&mut bytes)?;
+        Ok(Pubkey(bytes))
+    }
+}
+
+/// Trait for constructing wrapper types from ABI entries
+pub trait FromAccountEntry<'info>: Sized {
+    fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError>;
+}
+
+impl<'info, T> FromAccountEntry<'info> for Account<'info, T> {
+    fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
+        // In a full implementation, key/owner/motes would be provided by ABI. Here we set defaults.
+        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        let info = AccountInfo {
+            key: &ZERO_KEY,
+            is_signer: entry.is_signer(),
+            is_writable: entry.is_writable(),
+            motes: 0,
+            data: entry.data,
+            owner: &ZERO_KEY,
+        };
+        Ok(Account {
+            info,
+            _phantom: PhantomData,
+        })
+    }
+}
+
+impl<'info> FromAccountEntry<'info> for Signer<'info> {
+    fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
+        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        let info = AccountInfo {
+            key: &ZERO_KEY,
+            is_signer: entry.is_signer(),
+            is_writable: entry.is_writable(),
+            motes: 0,
+            data: entry.data,
+            owner: &ZERO_KEY,
+        };
+        Ok(Signer { info })
+    }
+}
+
+impl<'info, T> FromAccountEntry<'info> for Program<'info, T> {
+    fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
+        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        let info = AccountInfo {
+            key: &ZERO_KEY,
+            is_signer: entry.is_signer(),
+            is_writable: entry.is_writable(),
+            motes: 0,
+            data: entry.data,
+            owner: &ZERO_KEY,
+        };
+        Ok(Program {
+            info,
+            _phantom: PhantomData,
+        })
     }
 }

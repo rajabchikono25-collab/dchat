@@ -83,8 +83,8 @@ pub mod syscall;
 
 // Types that macros reference as dchat_dpl::X
 pub use account::{
-    Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Program, Pubkey,
-    Signer, System, SystemAccount,
+    Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountEntry, FromAccountInfo,
+    Program, Pubkey, Signer, System, SystemAccount,
 };
 pub use context::{Accounts, Bumps, Context, ContextInfo};
 pub use error::{DplError, DplResult};

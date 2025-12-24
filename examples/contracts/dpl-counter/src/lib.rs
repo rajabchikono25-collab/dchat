@@ -30,16 +30,18 @@ pub mod counter {
     use super::*;
 
     /// Initialize a new counter with a starting value
-    pub fn initialize(ctx: Context<Initialize>, initial_value: u64) -> Result<()> {
+    pub fn initialize<'a>(mut ctx: Context<'a, Initialize<'a>>, initial_value: u64) -> Result<()> {
+        let counter_key = *ctx.accounts.counter.key();
+        let authority_key = *ctx.accounts.authority.key();
         let counter = &mut ctx.accounts.counter;
 
         counter.value = initial_value;
-        counter.authority = *ctx.accounts.authority.key;
+        counter.authority = authority_key;
         counter.bump = ctx.bumps.counter;
 
         emit!(CounterInitialized {
-            counter: *ctx.accounts.counter.key(),
-            authority: *ctx.accounts.authority.key,
+            counter: counter_key,
+            authority: authority_key,
             initial_value,
         });
 
@@ -47,14 +49,16 @@ pub mod counter {
     }
 
     /// Increment the counter by 1
-    pub fn increment(ctx: Context<Increment>) -> Result<()> {
+    pub fn increment<'a>(mut ctx: Context<'a, Increment<'a>>) -> Result<()> {
+        let counter_key = *ctx.accounts.counter.key();
         let counter = &mut ctx.accounts.counter;
+        let old_value = counter.value;
 
         counter.value = counter.value.checked_add(1).ok_or(CounterError::Overflow)?;
 
         emit!(CounterChanged {
-            counter: *ctx.accounts.counter.key(),
-            old_value: counter.value - 1,
+            counter: counter_key,
+            old_value,
             new_value: counter.value,
         });
 
@@ -62,8 +66,10 @@ pub mod counter {
     }
 
     /// Decrement the counter by 1
-    pub fn decrement(ctx: Context<Decrement>) -> Result<()> {
+    pub fn decrement<'a>(mut ctx: Context<'a, Decrement<'a>>) -> Result<()> {
+        let counter_key = *ctx.accounts.counter.key();
         let counter = &mut ctx.accounts.counter;
+        let old_value = counter.value;
 
         counter.value = counter
             .value
@@ -71,8 +77,8 @@ pub mod counter {
             .ok_or(CounterError::Underflow)?;
 
         emit!(CounterChanged {
-            counter: *ctx.accounts.counter.key(),
-            old_value: counter.value + 1,
+            counter: counter_key,
+            old_value,
             new_value: counter.value,
         });
 
@@ -80,14 +86,15 @@ pub mod counter {
     }
 
     /// Set the counter to a specific value (authority only)
-    pub fn set(ctx: Context<Set>, new_value: u64) -> Result<()> {
+    pub fn set<'a>(mut ctx: Context<'a, Set<'a>>, new_value: u64) -> Result<()> {
+        let counter_key = *ctx.accounts.counter.key();
         let counter = &mut ctx.accounts.counter;
         let old_value = counter.value;
 
         counter.value = new_value;
 
         emit!(CounterChanged {
-            counter: *ctx.accounts.counter.key(),
+            counter: counter_key,
             old_value,
             new_value,
         });
@@ -131,7 +138,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         space = Counter::SIZE,
-        seeds = [b"counter", authority.key.as_ref()],
+        seeds = [b"counter", authority.key().as_ref()],
         bump
     )]
     pub counter: Account<'info, Counter>,

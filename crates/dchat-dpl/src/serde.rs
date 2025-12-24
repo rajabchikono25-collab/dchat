@@ -1,6 +1,8 @@
 //! Serialization utilities for DPL programs
 
 use crate::error::DplError;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
 
 /// Cursor for reading bytes
 pub struct Cursor<'a> {
@@ -103,75 +105,70 @@ impl<'a> Cursor<'a> {
 
 /// Trait for DPL-compatible serialization
 pub trait DplSerialize {
-    /// Serialize to bytes, return number of bytes written
-    fn serialize(&self, buf: &mut [u8]) -> Result<usize, DplError>;
+    /// Serialize by appending to the provided buffer
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError>;
 }
 
 /// Trait for DPL-compatible deserialization
 pub trait DplDeserialize: Sized {
-    /// Deserialize from bytes
-    fn deserialize(data: &[u8]) -> Result<Self, DplError>;
+    /// Deserialize by consuming from the provided slice reference
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError>;
 }
 
 // Implement for primitive types
 
 impl DplSerialize for u8 {
-    fn serialize(&self, buf: &mut [u8]) -> Result<usize, DplError> {
-        if buf.is_empty() {
-            return Err(DplError::SerializationError("Buffer too small".into()));
-        }
-        buf[0] = *self;
-        Ok(1)
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.push(*self);
+        Ok(())
     }
 }
 
 impl DplDeserialize for u8 {
-    fn deserialize(data: &[u8]) -> Result<Self, DplError> {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
         if data.is_empty() {
             return Err(DplError::DeserializationError("Empty data".into()));
         }
-        Ok(data[0])
+        let v = data[0];
+        *data = &data[1..];
+        Ok(v)
     }
 }
 
 impl DplSerialize for u64 {
-    fn serialize(&self, buf: &mut [u8]) -> Result<usize, DplError> {
-        if buf.len() < 8 {
-            return Err(DplError::SerializationError("Buffer too small".into()));
-        }
-        buf[..8].copy_from_slice(&self.to_le_bytes());
-        Ok(8)
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(&self.to_le_bytes());
+        Ok(())
     }
 }
 
 impl DplDeserialize for u64 {
-    fn deserialize(data: &[u8]) -> Result<Self, DplError> {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
         if data.len() < 8 {
             return Err(DplError::DeserializationError("Data too short".into()));
         }
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&data[..8]);
+        *data = &data[8..];
         Ok(u64::from_le_bytes(bytes))
     }
 }
 
 impl DplSerialize for crate::account::Pubkey {
-    fn serialize(&self, buf: &mut [u8]) -> Result<usize, DplError> {
-        if buf.len() < 32 {
-            return Err(DplError::SerializationError("Buffer too small".into()));
-        }
-        buf[..32].copy_from_slice(&self.0);
-        Ok(32)
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(&self.0);
+        Ok(())
     }
 }
 
 impl DplDeserialize for crate::account::Pubkey {
-    fn deserialize(data: &[u8]) -> Result<Self, DplError> {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
         if data.len() < 32 {
             return Err(DplError::DeserializationError("Data too short".into()));
         }
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&data[..32]);
+        *data = &data[32..];
         Ok(crate::account::Pubkey(bytes))
     }
 }

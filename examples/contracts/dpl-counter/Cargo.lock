@@ -140,6 +140,7 @@ dependencies = [
 name = "dpl-counter"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "dchat-dpl",
 ]
 

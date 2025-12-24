@@ -10,7 +10,7 @@ pub trait Accounts<'info>: Sized {
     /// Try to deserialize and validate accounts from raw data
     fn try_accounts(
         ctx: &ContextInfo,
-        accounts_data: &[u8],
+        accounts_data: &'info [u8],
         bumps: &mut Self::Bumps,
     ) -> crate::error::DplResult<Self>;
 }

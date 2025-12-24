@@ -49,6 +49,10 @@ pub enum DplError {
     #[error("Invalid account data")]
     InvalidAccountData,
 
+    /// Account discriminator mismatch
+    #[error("Account discriminator mismatch")]
+    AccountDiscriminatorMismatch,
+
     /// Account data too small
     #[error("Account data too small")]
     AccountDataTooSmall,
@@ -120,6 +124,7 @@ impl DplError {
             Self::InvalidAccountData => 11,
             Self::AccountDataTooSmall => 12,
             Self::InvalidMagic => 13,
+            Self::AccountDiscriminatorMismatch => 22,
             Self::NotEnoughAccounts => 14,
             Self::InvalidProgramId => 15,
             Self::SerializationError(_) => 16,
@@ -137,6 +142,12 @@ impl DplError {
 impl From<DplError> for u64 {
     fn from(e: DplError) -> Self {
         e.code() as u64
+    }
+}
+
+impl From<std::io::Error> for DplError {
+    fn from(e: std::io::Error) -> Self {
+        DplError::SerializationError(e.to_string())
     }
 }
 
