@@ -207,15 +207,18 @@ pub trait FromAccountEntry<'info>: Sized {
 
 impl<'info, T> FromAccountEntry<'info> for Account<'info, T> {
     fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
-        // In a full implementation, key/owner/motes would be provided by ABI. Here we set defaults.
-        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        // Store key and owner in leaked boxes to get 'info lifetime references
+        // In a real runtime, these would be stored in a pre-allocated arena
+        let key: &'info Pubkey = Box::leak(Box::new(entry.key));
+        let owner: &'info Pubkey = Box::leak(Box::new(entry.owner));
+
         let info = AccountInfo {
-            key: &ZERO_KEY,
+            key,
             is_signer: entry.is_signer(),
             is_writable: entry.is_writable(),
-            motes: 0,
+            motes: entry.motes,
             data: entry.data,
-            owner: &ZERO_KEY,
+            owner,
         };
         Ok(Account {
             info,
@@ -226,14 +229,22 @@ impl<'info, T> FromAccountEntry<'info> for Account<'info, T> {
 
 impl<'info> FromAccountEntry<'info> for Signer<'info> {
     fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
-        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        // Validate that this account actually signed the transaction
+        if !entry.is_signer() {
+            return Err(DplError::MissingSigner);
+        }
+
+        // Store key and owner in leaked boxes to get 'info lifetime references
+        let key: &'info Pubkey = Box::leak(Box::new(entry.key));
+        let owner: &'info Pubkey = Box::leak(Box::new(entry.owner));
+
         let info = AccountInfo {
-            key: &ZERO_KEY,
-            is_signer: entry.is_signer(),
+            key,
+            is_signer: true,
             is_writable: entry.is_writable(),
-            motes: 0,
+            motes: entry.motes,
             data: entry.data,
-            owner: &ZERO_KEY,
+            owner,
         };
         Ok(Signer { info })
     }
@@ -241,14 +252,17 @@ impl<'info> FromAccountEntry<'info> for Signer<'info> {
 
 impl<'info, T> FromAccountEntry<'info> for Program<'info, T> {
     fn from_entry(entry: &mut crate::abi::AccountEntry<'info>) -> Result<Self, DplError> {
-        static ZERO_KEY: Pubkey = Pubkey([0u8; 32]);
+        // Store key and owner in leaked boxes to get 'info lifetime references
+        let key: &'info Pubkey = Box::leak(Box::new(entry.key));
+        let owner: &'info Pubkey = Box::leak(Box::new(entry.owner));
+
         let info = AccountInfo {
-            key: &ZERO_KEY,
+            key,
             is_signer: entry.is_signer(),
             is_writable: entry.is_writable(),
-            motes: 0,
+            motes: entry.motes,
             data: entry.data,
-            owner: &ZERO_KEY,
+            owner,
         };
         Ok(Program {
             info,

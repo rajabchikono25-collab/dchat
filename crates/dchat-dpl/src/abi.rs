@@ -147,9 +147,9 @@ impl<'a> AccountsCursor<'a> {
             return None;
         }
 
-        // TOC entry: offset (4) + len (4) + flags (1) = 9 bytes
-        let toc_offset = 8 + self.current * 9;
-        if toc_offset + 9 > self.data.len() {
+        // TOC entry: offset(4) + len(4) + flags(1) + key(32) + owner(32) + motes(8) = 81 bytes
+        let toc_offset = 8 + self.current * TOC_ENTRY_SIZE;
+        if toc_offset + TOC_ENTRY_SIZE > self.data.len() {
             return None;
         }
 
@@ -169,6 +169,28 @@ impl<'a> AccountsCursor<'a> {
 
         let flags = self.data[toc_offset + 8];
 
+        // Parse key (32 bytes at offset 9)
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&self.data[toc_offset + 9..toc_offset + 41]);
+        let key = crate::account::Pubkey::new(key_bytes);
+
+        // Parse owner (32 bytes at offset 41)
+        let mut owner_bytes = [0u8; 32];
+        owner_bytes.copy_from_slice(&self.data[toc_offset + 41..toc_offset + 73]);
+        let owner = crate::account::Pubkey::new(owner_bytes);
+
+        // Parse motes (8 bytes at offset 73)
+        let motes = u64::from_le_bytes([
+            self.data[toc_offset + 73],
+            self.data[toc_offset + 74],
+            self.data[toc_offset + 75],
+            self.data[toc_offset + 76],
+            self.data[toc_offset + 77],
+            self.data[toc_offset + 78],
+            self.data[toc_offset + 79],
+            self.data[toc_offset + 80],
+        ]);
+
         if entry_offset + entry_len > self.data.len() {
             return None;
         }
@@ -176,6 +198,9 @@ impl<'a> AccountsCursor<'a> {
         self.current += 1;
 
         Some(AccountEntry {
+            key,
+            owner,
+            motes,
             data: &self.data[entry_offset..entry_offset + entry_len],
             flags,
         })
@@ -188,8 +213,18 @@ impl<'a> AccountsCursor<'a> {
     }
 }
 
+/// Size of a TOC entry in the accounts blob
+/// Layout: offset(4) + len(4) + flags(1) + key(32) + owner(32) + motes(8) = 81 bytes
+pub const TOC_ENTRY_SIZE: usize = 81;
+
 /// Single account entry from blob
 pub struct AccountEntry<'a> {
+    /// Account public key
+    pub key: crate::account::Pubkey,
+    /// Account owner program
+    pub owner: crate::account::Pubkey,
+    /// Account balance in motes
+    pub motes: u64,
     /// Account data
     pub data: &'a [u8],
     /// Flags (writable, signer, etc.)
@@ -205,5 +240,20 @@ impl<'a> AccountEntry<'a> {
     /// Check if account is signer
     pub fn is_signer(&self) -> bool {
         self.flags & 0x02 != 0
+    }
+
+    /// Get the account key
+    pub fn key(&self) -> &crate::account::Pubkey {
+        &self.key
+    }
+
+    /// Get the account owner
+    pub fn owner(&self) -> &crate::account::Pubkey {
+        &self.owner
+    }
+
+    /// Get the account balance
+    pub fn motes(&self) -> u64 {
+        self.motes
     }
 }
