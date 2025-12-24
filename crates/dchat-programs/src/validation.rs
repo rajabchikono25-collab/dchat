@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ProgramError, ProgramResult};
+use crate::manifest::{extract_manifest, Capabilities, DplManifest, ImportProfile, ManifestError};
 use crate::wasi_shim::{is_allowed_wasi_import, is_forbidden_wasi_import, validate_wasi_imports};
 use crate::{MAX_PROGRAM_SIZE, PROTOCOL_VERSION};
 
@@ -12,6 +13,17 @@ use crate::{MAX_PROGRAM_SIZE, PROTOCOL_VERSION};
 pub fn validate_bytecode_strict(bytecode: &[u8]) -> Result<ValidationReport, ValidationError> {
     let validator = BytecodeValidator::new();
     let validated = validator.validate(bytecode)?;
+
+    // Convert manifest to ManifestInfo for the report
+    let manifest_info = validated.manifest.as_ref().map(|m| ManifestInfo {
+        schema_hash: m.schema_hash,
+        abi_version: m.abi_version,
+        import_profile: m.import_profile,
+        sdk_version: format!("{}.{}.{}", m.sdk_major, m.sdk_minor, m.sdk_patch),
+        capabilities: m.capabilities,
+        has_valid_schema_hash: m.schema_hash != [0u8; 32],
+    });
+
     Ok(ValidationReport {
         passed: true,
         function_count: validated.function_count,
@@ -19,6 +31,7 @@ pub fn validate_bytecode_strict(bytecode: &[u8]) -> Result<ValidationReport, Val
         bytecode_size: validated.size,
         warnings: Vec::new(),
         errors: Vec::new(),
+        manifest: manifest_info,
     })
 }
 
@@ -52,6 +65,25 @@ pub struct ValidationReport {
     pub warnings: Vec<String>,
     /// Errors (fatal issues)
     pub errors: Vec<String>,
+    /// DPL manifest info (if present)
+    pub manifest: Option<ManifestInfo>,
+}
+
+/// Summary of manifest information from validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestInfo {
+    /// Schema hash (BLAKE3 of IDL)
+    pub schema_hash: [u8; 32],
+    /// ABI version
+    pub abi_version: u8,
+    /// Import profile
+    pub import_profile: u8,
+    /// SDK version string
+    pub sdk_version: String,
+    /// Capabilities bitflags
+    pub capabilities: u64,
+    /// Whether schema hash is non-zero (valid for deployment)
+    pub has_valid_schema_hash: bool,
 }
 
 /// Maximum number of functions in a program
@@ -95,6 +127,12 @@ pub struct ValidationConfig {
     pub allowed_imports: HashSet<String>,
     /// Forbidden opcodes
     pub forbidden_opcodes: HashSet<String>,
+    /// Require DPL manifest to be present (strict mode)
+    #[serde(default)]
+    pub require_manifest: bool,
+    /// Reject programs with zero/placeholder schema hash (strict mode)
+    #[serde(default)]
+    pub reject_zero_schema_hash: bool,
 }
 
 impl Default for ValidationConfig {
@@ -207,6 +245,8 @@ impl Default for ValidationConfig {
             protocol_version: PROTOCOL_VERSION,
             allowed_imports,
             forbidden_opcodes,
+            require_manifest: false,
+            reject_zero_schema_hash: false,
         }
     }
 }
@@ -305,6 +345,33 @@ pub enum ValidationError {
         /// Error message from parser
         message: String,
     },
+    /// Manifest parsing error
+    ManifestError {
+        /// Error message
+        message: String,
+    },
+    /// Manifest custom section not found (required in strict mode)
+    ManifestMissing,
+    /// Invalid manifest magic bytes (expected DPLM)
+    ManifestInvalidMagic,
+    /// Manifest schema_hash is all zeros (invalid for production)
+    ManifestSchemaHashZero,
+    /// ABI version in manifest is incompatible with runtime
+    ManifestAbiVersionIncompatible {
+        /// ABI version found in manifest
+        found: u8,
+        /// Maximum ABI version supported by runtime
+        max: u8,
+    },
+    /// Import profile in manifest doesn't match actual imports
+    ManifestImportProfileMismatch {
+        /// Declared import profile
+        declared: String,
+        /// Actual import profile based on imports
+        actual: String,
+    },
+    /// Multiple dpl_manifest sections found
+    ManifestDuplicate,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -364,6 +431,38 @@ impl std::fmt::Display for ValidationError {
             ValidationError::ParseError { message } => {
                 write!(f, "Parse error: {}", message)
             }
+            ValidationError::ManifestError { message } => {
+                write!(f, "Manifest error: {}", message)
+            }
+            ValidationError::ManifestMissing => {
+                write!(
+                    f,
+                    "DPL manifest custom section not found (required for DPL programs)"
+                )
+            }
+            ValidationError::ManifestInvalidMagic => {
+                write!(f, "Invalid manifest magic bytes (expected DPLM)")
+            }
+            ValidationError::ManifestSchemaHashZero => {
+                write!(f, "Manifest schema_hash is zero (production programs must have valid schema hash)")
+            }
+            ValidationError::ManifestAbiVersionIncompatible { found, max } => {
+                write!(
+                    f,
+                    "Manifest ABI version {} is incompatible (runtime supports up to {})",
+                    found, max
+                )
+            }
+            ValidationError::ManifestImportProfileMismatch { declared, actual } => {
+                write!(
+                    f,
+                    "Manifest import profile mismatch: declared {}, actual {}",
+                    declared, actual
+                )
+            }
+            ValidationError::ManifestDuplicate => {
+                write!(f, "Multiple dpl_manifest sections found (only one allowed)")
+            }
         }
     }
 }
@@ -392,6 +491,29 @@ pub struct ValidatedBytecode {
     pub exports: Vec<String>,
     /// Protocol version
     pub protocol_version: u32,
+    /// DPL manifest (if present)
+    pub manifest: Option<ValidatedManifest>,
+}
+
+/// Validated manifest information stored in ValidatedBytecode
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatedManifest {
+    /// Schema hash (BLAKE3 of IDL)
+    pub schema_hash: [u8; 32],
+    /// ABI version
+    pub abi_version: u8,
+    /// Import profile (0=Legacy, 1=WASI, 2=Hybrid)
+    pub import_profile: u8,
+    /// SDK version (major.minor.patch)
+    pub sdk_major: u16,
+    /// SDK minor version
+    pub sdk_minor: u16,
+    /// SDK patch version
+    pub sdk_patch: u16,
+    /// Edition year
+    pub edition: u16,
+    /// Capabilities bitflags
+    pub capabilities: u64,
 }
 
 /// Bytecode validator
@@ -538,6 +660,17 @@ impl BytecodeValidator {
         // Compute code hash
         let code_hash = *blake3::hash(bytecode).as_bytes();
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // IRONCLAD: Extract and validate DPL manifest
+        // ═══════════════════════════════════════════════════════════════════════════
+        //
+        // The manifest is embedded in a WASM custom section named "dpl_manifest".
+        // For DPL programs, this provides cryptographic binding between the bytecode
+        // and its IDL (interface definition).
+
+        let manifest =
+            self.extract_and_validate_manifest(bytecode, &imports, &wasi_imports_for_validation)?;
+
         Ok(ValidatedBytecode {
             code_hash,
             size: bytecode.len(),
@@ -548,7 +681,100 @@ impl BytecodeValidator {
             imports,
             exports,
             protocol_version: self.config.protocol_version,
+            manifest,
         })
+    }
+
+    /// Extract and validate the DPL manifest from bytecode.
+    ///
+    /// This implements the "ironclad" manifest validation:
+    /// - Checks for valid magic bytes (DPLM)
+    /// - Validates ABI version compatibility
+    /// - Validates import profile matches actual imports
+    /// - For strict mode: requires non-zero schema hash
+    fn extract_and_validate_manifest(
+        &self,
+        bytecode: &[u8],
+        all_imports: &[String],
+        wasi_imports: &[String],
+    ) -> ValidationResult<Option<ValidatedManifest>> {
+        // Extract manifest from WASM custom section
+        let manifest_result = extract_manifest(bytecode);
+
+        let manifest = match manifest_result {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                // No manifest found - check if strict mode requires one
+                if self.config.require_manifest {
+                    return Err(ValidationError::ManifestMissing);
+                }
+                // Legacy programs without manifest are allowed in non-strict mode
+                return Ok(None);
+            }
+            Err(ManifestError::InvalidMagic) => {
+                return Err(ValidationError::ManifestInvalidMagic);
+            }
+            Err(e) => {
+                return Err(ValidationError::ManifestError {
+                    message: e.to_string(),
+                });
+            }
+        };
+
+        // Validate ABI version compatibility
+        // Runtime ABI version is 1 (current)
+        const RUNTIME_ABI_VERSION: u8 = 1;
+        if manifest.abi_version > RUNTIME_ABI_VERSION {
+            return Err(ValidationError::ManifestAbiVersionIncompatible {
+                found: manifest.abi_version,
+                max: RUNTIME_ABI_VERSION,
+            });
+        }
+
+        // Validate import profile matches actual imports
+        let has_wasi = !wasi_imports.is_empty();
+        let has_env = all_imports.iter().any(|i| i.starts_with("env:"));
+
+        let actual_profile = match (has_env, has_wasi) {
+            (false, true) => ImportProfile::Wasi,
+            (true, false) => ImportProfile::Legacy,
+            (true, true) => ImportProfile::Hybrid,
+            (false, false) => ImportProfile::Wasi, // Default for no imports
+        };
+
+        if manifest.import_profile != actual_profile {
+            return Err(ValidationError::ManifestImportProfileMismatch {
+                declared: format!("{:?}", manifest.import_profile),
+                actual: format!("{:?}", actual_profile),
+            });
+        }
+
+        // Check for zero/placeholder schema hash in strict mode
+        if self.config.reject_zero_schema_hash && manifest.schema_hash == [0u8; 32] {
+            return Err(ValidationError::ManifestSchemaHashZero);
+        }
+
+        Ok(Some(ValidatedManifest {
+            schema_hash: manifest.schema_hash,
+            abi_version: manifest.abi_version,
+            import_profile: manifest.import_profile as u8,
+            sdk_major: manifest.sdk_major,
+            sdk_minor: manifest.sdk_minor,
+            sdk_patch: manifest.sdk_patch,
+            edition: manifest.edition,
+            capabilities: manifest.capabilities.bits(),
+        }))
+    }
+
+    /// Validate manifest strictly (requires non-zero schema hash)
+    ///
+    /// Call this for production deployments to ensure the program has
+    /// a valid IDL binding.
+    pub fn validate_manifest_strict(&self, manifest: &ValidatedManifest) -> ValidationResult<()> {
+        if manifest.schema_hash == [0u8; 32] {
+            return Err(ValidationError::ManifestSchemaHashZero);
+        }
+        Ok(())
     }
 
     /// Quick check if bytecode looks valid (fast path)

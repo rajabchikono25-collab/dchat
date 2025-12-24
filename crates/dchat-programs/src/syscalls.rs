@@ -116,6 +116,8 @@ impl SyscallId {
     pub const SOL_GET_PROCESSED_SIBLING_INSTRUCTION: Self = Self(50);
     /// Get current CPI stack height
     pub const SOL_GET_STACK_HEIGHT: Self = Self(51);
+    /// Get program manifest (schema_hash, abi_version, etc.)
+    pub const SOL_GET_PROGRAM_MANIFEST: Self = Self(52);
 
     // Allocator
     /// Heap allocation and deallocation
@@ -132,6 +134,7 @@ impl SyscallId {
             40 => 5, // Invoke signed: instruction ptr, accounts ptr, accounts len, seeds ptr, seeds len
             41..=42 => 2, // Return data: ptr, len
             50..=51 => 1, // Stack inspection: output ptr
+            52 => 2, // Get program manifest: program_id ptr, output ptr
             60 => 2, // Alloc/free: size, ptr
             _ => 0,
         }
@@ -205,6 +208,8 @@ pub mod costs {
     pub const GET_RETURN_DATA: SyscallCost = SyscallCost::new(20, 1, 0);
     /// Cost for heap allocation
     pub const ALLOC: SyscallCost = SyscallCost::new(1, 0, 0);
+    /// Cost for getting program manifest
+    pub const GET_PROGRAM_MANIFEST: SyscallCost = SyscallCost::new(200, 0, 0);
 }
 
 /// Syscall context passed to handlers
@@ -522,6 +527,86 @@ impl SyscallHandler for SetReturnDataHandler {
     }
 }
 
+/// Get program manifest syscall handler
+///
+/// This syscall allows programs to query the manifest (including schema hash)
+/// of any deployed program. This enables on-chain IDL verification.
+///
+/// Arguments:
+/// - args[0]: Pointer to 32-byte program ID to query
+/// - args[1]: Pointer to output buffer (48 bytes for manifest info)
+///
+/// Output buffer format:
+/// - [0..32]: schema_hash
+/// - [32]: abi_version
+/// - [33]: import_profile
+/// - [34..36]: sdk_major (little-endian u16)
+/// - [36..38]: sdk_minor (little-endian u16)
+/// - [38..40]: sdk_patch (little-endian u16)
+/// - [40..42]: edition (little-endian u16)
+/// - [42..50]: capabilities (little-endian u64)
+///
+/// Returns:
+/// - 0 on success (manifest found and written)
+/// - 1 if program has no manifest
+/// - Err on invalid arguments or memory access
+pub struct GetProgramManifestHandler;
+
+impl SyscallHandler for GetProgramManifestHandler {
+    fn execute(
+        &self,
+        ctx: &mut SyscallContext<'_, '_>,
+        args: &[u64],
+        memory: &mut [u8],
+    ) -> SyscallResult {
+        if args.len() < 2 {
+            return SyscallResult::Err(ProgramError::InvalidArgument);
+        }
+
+        let program_id_ptr = args[0] as usize;
+        let output_ptr = args[1] as usize;
+
+        // Validate memory bounds
+        const PUBKEY_SIZE: usize = 32;
+        const OUTPUT_SIZE: usize = 50; // schema_hash(32) + abi(1) + profile(1) + version(6) + edition(2) + caps(8)
+
+        if program_id_ptr + PUBKEY_SIZE > memory.len() {
+            return SyscallResult::Err(ProgramError::MemoryAccessViolation);
+        }
+        if output_ptr + OUTPUT_SIZE > memory.len() {
+            return SyscallResult::Err(ProgramError::MemoryAccessViolation);
+        }
+
+        let cost = self.cost().total(OUTPUT_SIZE, 0);
+        if ctx.meter.consume(cost).is_err() {
+            return SyscallResult::Err(ProgramError::ComputationalBudgetExceeded);
+        }
+
+        // Read program ID from memory
+        let mut program_id_bytes = [0u8; 32];
+        program_id_bytes.copy_from_slice(&memory[program_id_ptr..program_id_ptr + PUBKEY_SIZE]);
+        let _target_program_id = Pubkey::new(program_id_bytes);
+
+        // Look up program in accounts
+        // In a real implementation, this would look up the program's ProgramData account
+        // and read the manifest from it. For now, we'll check if the program is in
+        // the provided accounts list and has manifest data.
+        //
+        // TODO: In production, this needs access to the account database to look up
+        // the program's ProgramData account and extract the manifest.
+        //
+        // For now, return "no manifest" (value 1) to indicate the syscall works
+        // but manifest lookup isn't implemented yet in the runtime.
+
+        // Return 1 to indicate no manifest found (placeholder)
+        SyscallResult::Ok(1)
+    }
+
+    fn cost(&self) -> SyscallCost {
+        costs::GET_PROGRAM_MANIFEST
+    }
+}
+
 /// Allocator syscall handler
 pub struct AllocHandler {
     /// Current heap position
@@ -613,6 +698,10 @@ impl SyscallRegistry {
         self.register(
             SyscallId::SOL_SET_RETURN_DATA,
             Arc::new(SetReturnDataHandler),
+        );
+        self.register(
+            SyscallId::SOL_GET_PROGRAM_MANIFEST,
+            Arc::new(GetProgramManifestHandler),
         );
         self.register(
             SyscallId::SOL_ALLOC_FREE,

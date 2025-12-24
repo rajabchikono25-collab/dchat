@@ -68,7 +68,7 @@ impl DeploymentRateLimiter {
 use crate::error::{ProgramError, ProgramResult};
 use crate::instruction::Instruction;
 use crate::metering::ComputeMeter;
-use crate::validation::BytecodeValidator;
+use crate::validation::{BytecodeValidator, ValidatedManifest};
 
 /// Loader program ID
 pub const LOADER_PROGRAM_ID: Pubkey = crate::native_programs::LOADER_PROGRAM_ID;
@@ -175,7 +175,31 @@ pub enum ProgramAccountState {
         frozen: bool,
         /// Pending upgrade awaiting timelock
         pending_upgrade: Option<PendingUpgrade>,
+        /// DPL manifest info (if program has manifest)
+        manifest: Option<ProgramManifestInfo>,
     },
+}
+
+/// Manifest info persisted in program data account
+/// This enables on-chain schema hash verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgramManifestInfo {
+    /// Schema hash (BLAKE3 of canonical IDL)
+    pub schema_hash: [u8; 32],
+    /// ABI version
+    pub abi_version: u8,
+    /// Import profile (0=Legacy, 1=WASI, 2=Hybrid)
+    pub import_profile: u8,
+    /// SDK version (major.minor.patch)
+    pub sdk_major: u16,
+    /// SDK minor version
+    pub sdk_minor: u16,
+    /// SDK patch version
+    pub sdk_patch: u16,
+    /// Edition year
+    pub edition: u16,
+    /// Capabilities bitflags
+    pub capabilities: u64,
 }
 
 impl ProgramAccountState {
@@ -577,11 +601,23 @@ impl LoaderProgramProcessor {
         // Get bytecode and validate before any mutations
         let bytecode = accounts[3].data.as_slice()[data_offset..].to_vec();
 
-        // Validate bytecode
+        // Validate bytecode and extract manifest (IRONCLAD)
         let validator = BytecodeValidator::new();
-        validator
+        let validated = validator
             .validate(&bytecode)
             .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
+
+        // Convert validated manifest to program manifest info for on-chain storage
+        let manifest_info = validated.manifest.map(|m| ProgramManifestInfo {
+            schema_hash: m.schema_hash,
+            abi_version: m.abi_version,
+            import_profile: m.import_profile,
+            sdk_major: m.sdk_major,
+            sdk_minor: m.sdk_minor,
+            sdk_patch: m.sdk_patch,
+            edition: m.edition,
+            capabilities: m.capabilities,
+        });
 
         // Check size
         if bytecode.len() > MAX_PROGRAM_SIZE {
@@ -602,11 +638,13 @@ impl LoaderProgramProcessor {
         let program_state_bytes = program_state.to_bytes();
 
         let slot = 0u64; // Would come from sysvar
+                         // IRONCLAD: Store manifest info in program data for on-chain verification
         let programdata_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority: Some(authority_key),
             frozen: false,
             pending_upgrade: None,
+            manifest: manifest_info,
         };
 
         let state_bytes = programdata_state.to_bytes();
@@ -678,11 +716,23 @@ impl LoaderProgramProcessor {
         // Charge for upgrade
         meter.consume(new_bytecode.len() as u64)?;
 
-        // Validate new bytecode
+        // Validate new bytecode and extract manifest (IRONCLAD)
         let validator = BytecodeValidator::new();
-        validator
+        let validated = validator
             .validate(&new_bytecode)
             .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
+
+        // Convert validated manifest to program manifest info for on-chain storage
+        let manifest_info = validated.manifest.map(|m| ProgramManifestInfo {
+            schema_hash: m.schema_hash,
+            abi_version: m.abi_version,
+            import_profile: m.import_profile,
+            sdk_major: m.sdk_major,
+            sdk_minor: m.sdk_minor,
+            sdk_patch: m.sdk_patch,
+            edition: m.edition,
+            capabilities: m.capabilities,
+        });
 
         // Check size fits
         let state_len = ProgramAccountState::HEADER_SIZE;
@@ -690,12 +740,14 @@ impl LoaderProgramProcessor {
             return Err(ProgramError::AccountDataTooLarge);
         }
 
-        // Second phase: prepare new state
+        // Second phase: prepare new state with updated manifest
+        // IRONCLAD: Store new manifest info in program data
         let new_state = ProgramAccountState::ProgramData {
             slot: 0, // Would come from sysvar
             upgrade_authority: Some(authority_key),
             frozen: false,
             pending_upgrade: None,
+            manifest: manifest_info,
         };
 
         let state_bytes = new_state.to_bytes();
@@ -756,6 +808,7 @@ impl LoaderProgramProcessor {
                 frozen,
                 pending_upgrade,
                 upgrade_authority,
+                manifest,
             } => {
                 match upgrade_authority {
                     Some(auth) if auth == current_authority_key => {}
@@ -771,6 +824,7 @@ impl LoaderProgramProcessor {
                     upgrade_authority: new_authority_key,
                     frozen,
                     pending_upgrade,
+                    manifest,
                 };
                 new_state.to_bytes()
             }
@@ -835,13 +889,14 @@ impl LoaderProgramProcessor {
         // Read and validate state
         let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
-        let (slot, upgrade_authority, pending_upgrade) = match state {
+        let (slot, upgrade_authority, pending_upgrade, manifest) = match state {
             ProgramAccountState::ProgramData {
                 slot,
                 upgrade_authority,
                 pending_upgrade,
+                manifest,
                 ..
-            } => (slot, upgrade_authority, pending_upgrade),
+            } => (slot, upgrade_authority, pending_upgrade, manifest),
             _ => return Err(ProgramError::InvalidAccountData),
         };
 
@@ -857,6 +912,7 @@ impl LoaderProgramProcessor {
             upgrade_authority: None, // Remove authority
             frozen: true,
             pending_upgrade,
+            manifest,
         };
 
         let bytes = new_state.to_bytes();
@@ -881,17 +937,18 @@ impl LoaderProgramProcessor {
         // Read programdata state
         let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
-        let (slot, upgrade_authority, frozen) = match state {
+        let (slot, upgrade_authority, frozen, manifest) = match state {
             ProgramAccountState::ProgramData {
                 slot,
                 upgrade_authority,
                 frozen,
                 pending_upgrade,
+                manifest,
             } => {
                 if pending_upgrade.is_some() {
                     return Err(ProgramError::UpgradeAlreadyPending);
                 }
-                (slot, upgrade_authority, frozen)
+                (slot, upgrade_authority, frozen, manifest)
             }
             _ => return Err(ProgramError::InvalidAccountData),
         };
@@ -935,6 +992,7 @@ impl LoaderProgramProcessor {
             upgrade_authority,
             frozen,
             pending_upgrade: Some(pending),
+            manifest,
         };
 
         let bytes = new_state.to_bytes();
@@ -958,14 +1016,15 @@ impl LoaderProgramProcessor {
 
         let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
-        let (slot, upgrade_authority, pending) = match state {
+        let (slot, upgrade_authority, pending, _old_manifest) = match state {
             ProgramAccountState::ProgramData {
                 slot,
                 upgrade_authority,
                 pending_upgrade,
+                manifest,
                 ..
             } => match pending_upgrade {
-                Some(p) => (slot, upgrade_authority, p),
+                Some(p) => (slot, upgrade_authority, p, manifest),
                 None => return Err(ProgramError::NoUpgradePending),
             },
             _ => return Err(ProgramError::InvalidAccountData),
@@ -1010,18 +1069,31 @@ impl LoaderProgramProcessor {
         // Charge for upgrade
         meter.consume(new_bytecode.len() as u64)?;
 
-        // Validate
+        // Validate and extract manifest
         let validator = BytecodeValidator::new();
-        validator
+        let validated = validator
             .validate(&new_bytecode)
             .map_err(|e| ProgramError::InvalidBytecode(e.to_string()))?;
 
-        // Second phase: prepare new state
+        // Extract manifest info from validated bytecode
+        let new_manifest = validated.manifest.map(|m| ProgramManifestInfo {
+            schema_hash: m.schema_hash,
+            abi_version: m.abi_version,
+            import_profile: m.import_profile,
+            sdk_major: m.sdk_major,
+            sdk_minor: m.sdk_minor,
+            sdk_patch: m.sdk_patch,
+            edition: m.edition,
+            capabilities: m.capabilities,
+        });
+
+        // Second phase: prepare new state with updated manifest
         let new_state = ProgramAccountState::ProgramData {
             slot,
             upgrade_authority,
             frozen: false,
             pending_upgrade: None,
+            manifest: new_manifest,
         };
 
         let state_bytes = new_state.to_bytes();
@@ -1054,17 +1126,18 @@ impl LoaderProgramProcessor {
 
         let state = ProgramAccountState::from_bytes(accounts[0].data.as_slice())?;
 
-        let (slot, upgrade_authority, frozen) = match state {
+        let (slot, upgrade_authority, frozen, manifest) = match state {
             ProgramAccountState::ProgramData {
                 slot,
                 upgrade_authority,
                 frozen,
                 pending_upgrade,
+                manifest,
             } => {
                 if pending_upgrade.is_none() {
                     return Err(ProgramError::NoUpgradePending);
                 }
-                (slot, upgrade_authority, frozen)
+                (slot, upgrade_authority, frozen, manifest)
             }
             _ => return Err(ProgramError::InvalidAccountData),
         };
@@ -1081,6 +1154,7 @@ impl LoaderProgramProcessor {
             upgrade_authority,
             frozen,
             pending_upgrade: None,
+            manifest,
         };
 
         let bytes = new_state.to_bytes();
@@ -1149,6 +1223,7 @@ mod tests {
             upgrade_authority: Some(Pubkey::new([4u8; 32])),
             frozen: false,
             pending_upgrade: Some(pending.clone()),
+            manifest: None,
         };
 
         let bytes = state.to_bytes();

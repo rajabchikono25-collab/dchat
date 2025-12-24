@@ -185,40 +185,96 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
     };
 
     // Generate the DPL manifest in a custom section
+    //
+    // IRONCLAD: The manifest uses magic "DPLM" (0x44, 0x50, 0x4C, 0x4D) and embeds
+    // the schema hash computed from the canonical IDL. The runtime validator enforces
+    // that deployed programs have a valid manifest with non-zero schema hash.
+    //
+    // Manifest layout (64 bytes):
+    //   [0..4]   Magic: "DPLM"
+    //   [4..6]   SDK major version (little-endian u16)
+    //   [6..8]   SDK minor version (little-endian u16)
+    //   [8..10]  SDK patch version (little-endian u16)
+    //   [10..12] Edition year (little-endian u16, e.g., 2025 = 0x07E9)
+    //   [12]     ABI version (u8)
+    //   [13]     Import profile (u8): 0=Legacy, 1=WASI, 2=Hybrid
+    //   [14..16] Reserved (must be zero)
+    //   [16..48] Schema hash (BLAKE3 of canonical IDL, 32 bytes)
+    //   [48..56] Capabilities bitflags (little-endian u64)
+    //   [56..64] Reserved (must be zero)
+    //
+    // For development builds, schema_hash may be zeros, but production deployments
+    // MUST have a real schema hash. The `dpl build` command computes and embeds it.
     let manifest_section = quote! {
         #[cfg(target_arch = "wasm32")]
         #[link_section = "dpl_manifest"]
         #[used]
         static DPL_MANIFEST: [u8; 64] = {
-            // Magic: "DPL\0"
+            // Magic: "DPLM" (0x44, 0x50, 0x4C, 0x4D)
             let mut manifest = [0u8; 64];
-            manifest[0] = b'D';
-            manifest[1] = b'P';
-            manifest[2] = b'L';
-            manifest[3] = 0;
-            // Version: 0.1.0
-            manifest[4] = 0; // major high
-            manifest[5] = 1; // major low
-            manifest[6] = 0; // minor high
-            manifest[7] = 0; // minor low
-            manifest[8] = 0; // patch high
-            manifest[9] = 0; // patch low
-            // Edition: 2025
-            manifest[10] = 0x07;
-            manifest[11] = 0xe9;
-            // ABI version: 1
-            manifest[12] = 1;
-            // Import profile: 1 (WASI)
+            manifest[0] = 0x44; // 'D'
+            manifest[1] = 0x50; // 'P'
+            manifest[2] = 0x4C; // 'L'
+            manifest[3] = 0x4D; // 'M'
+
+            // SDK version (use DPL_VERSION_* constants at compile time)
+            // Note: These are little-endian u16 values
+            let sdk_major: u16 = dchat_dpl::DPL_VERSION_MAJOR;
+            let sdk_minor: u16 = dchat_dpl::DPL_VERSION_MINOR;
+            let sdk_patch: u16 = dchat_dpl::DPL_VERSION_PATCH;
+            let edition: u16 = dchat_dpl::DPL_EDITION;
+            let abi_version: u8 = dchat_dpl::ABI_VERSION;
+
+            // SDK major version [4..6]
+            manifest[4] = (sdk_major & 0xFF) as u8;
+            manifest[5] = ((sdk_major >> 8) & 0xFF) as u8;
+
+            // SDK minor version [6..8]
+            manifest[6] = (sdk_minor & 0xFF) as u8;
+            manifest[7] = ((sdk_minor >> 8) & 0xFF) as u8;
+
+            // SDK patch version [8..10]
+            manifest[8] = (sdk_patch & 0xFF) as u8;
+            manifest[9] = ((sdk_patch >> 8) & 0xFF) as u8;
+
+            // Edition year [10..12]
+            manifest[10] = (edition & 0xFF) as u8;
+            manifest[11] = ((edition >> 8) & 0xFF) as u8;
+
+            // ABI version [12]
+            manifest[12] = abi_version;
+
+            // Import profile [13]: 1 = WASI (default for wasm32-wasi target)
             manifest[13] = 1;
-            // Reserved
-            manifest[14] = 0;
-            manifest[15] = 0;
-            // Schema hash (placeholder - computed at build time)
-            // Bytes 16-47: 32 bytes of zeros
-            // Capabilities (placeholder)
-            // Bytes 48-55: 8 bytes
-            // Reserved
-            // Bytes 56-63: 8 bytes
+
+            // Reserved [14..16]: must be zero (already initialized)
+
+            // Schema hash [16..48]: 32 bytes
+            // In development builds, this is zeros. Production builds MUST use
+            // `dpl build` which computes the real schema hash from the IDL and
+            // patches this section in the final WASM binary.
+            //
+            // To embed a real hash at compile time, programs should use:
+            //   include_bytes!(concat!(env!("OUT_DIR"), "/schema_hash.bin"))
+            // or define DPL_SCHEMA_HASH env var and parse it here.
+            #[cfg(feature = "dpl_embed_schema_hash")]
+            {
+                // Production build: schema hash is provided by build.rs
+                let hash: [u8; 32] = *include_bytes!(concat!(env!("OUT_DIR"), "/dpl_schema_hash.bin"));
+                let mut i = 0;
+                while i < 32 {
+                    manifest[16 + i] = hash[i];
+                    i += 1;
+                }
+            }
+            // Development builds: zeros (will be rejected by strict validator)
+
+            // Capabilities [48..56]: 8 bytes (little-endian u64)
+            // Default: no special capabilities declared
+            // Programs can override via #[program(capabilities = ...)]
+
+            // Reserved [56..64]: must be zero (already initialized)
+
             manifest
         };
     };

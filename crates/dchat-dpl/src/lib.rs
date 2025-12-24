@@ -72,6 +72,7 @@ pub mod account;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod idl;
 pub mod manifest;
 pub mod pda;
 pub mod serde;
@@ -91,6 +92,13 @@ pub use error::{DplError, DplResult};
 pub use event::{emit_event, Event};
 pub use pda::derive_pda;
 pub use serde::{DplDeserialize, DplSerialize};
+
+// IDL types for schema generation
+pub use idl::{account_discriminator, event_discriminator, instruction_discriminator};
+pub use idl::{Idl, IdlAccountDef, IdlAccountMeta, IdlEvent, IdlField, IdlInstruction, IdlType};
+
+// Syscall types for program introspection
+pub use syscall::{get_program_manifest, verify_program_schema, ProgramManifest};
 
 /// Convenience Result type alias
 pub type Result<T> = core::result::Result<T, DplError>;

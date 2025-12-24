@@ -1711,6 +1711,52 @@ enum ProgramCommand {
         /// Show detailed validation report
         #[arg(long)]
         verbose: bool,
+
+        /// Require manifest to be present (strict mode)
+        #[arg(long)]
+        require_manifest: bool,
+
+        /// Reject zero/placeholder schema hash
+        #[arg(long)]
+        reject_zero_hash: bool,
+    },
+
+    /// Inspect program manifest (DPL manifest section)
+    Manifest {
+        /// Path to WASM file OR deployed program ID
+        #[arg(long)]
+        program: String,
+
+        /// RPC endpoint URL (required if program is an ID)
+        #[arg(long, default_value = "http://localhost:8545")]
+        rpc_url: String,
+
+        /// Output format: text, json, or yaml
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Show raw manifest bytes (hex)
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Verify program manifest matches expected IDL/schema hash
+    VerifyManifest {
+        /// Path to WASM file OR deployed program ID
+        #[arg(long)]
+        program: String,
+
+        /// Expected schema hash (hex string, 64 chars)
+        #[arg(long)]
+        expected_hash: Option<String>,
+
+        /// Path to IDL file to compute expected hash from
+        #[arg(long)]
+        idl: Option<PathBuf>,
+
+        /// RPC endpoint URL (required if program is an ID)
+        #[arg(long, default_value = "http://localhost:8545")]
+        rpc_url: String,
     },
 
     /// Build and deploy from a contract source directory
