@@ -27,52 +27,30 @@ pub const MIN_STAKE_CONFIRMATIONS: u32 = 3;
 #[async_trait]
 pub trait StakingBackend: Send + Sync {
     /// Lock tokens for relay staking
-    async fn stake(
-        &self,
-        operator: &UserId,
-        amount: u64,
-        lock_duration: u64,
-    ) -> Result<String>; // Returns transaction ID
+    async fn stake(&self, operator: &UserId, amount: u64, lock_duration: u64) -> Result<String>; // Returns transaction ID
 
     /// Wait for stake confirmation
-    async fn wait_for_confirmation(
-        &self,
-        tx_id: &str,
-        min_confirmations: u32,
-    ) -> Result<bool>;
+    async fn wait_for_confirmation(&self, tx_id: &str, min_confirmations: u32) -> Result<bool>;
 
     /// Unlock staked tokens (when relay unregisters)
-    async fn unstake(
-        &self,
-        operator: &UserId,
-        stake_tx_id: &str,
-    ) -> Result<String>; // Returns unstake transaction ID
+    async fn unstake(&self, operator: &UserId, stake_tx_id: &str) -> Result<String>; // Returns unstake transaction ID
 
     /// Slash staked tokens for misbehavior
-    async fn slash(
-        &self,
-        operator: &UserId,
-        amount: u64,
-        reason: &str,
-    ) -> Result<String>; // Returns slash transaction ID
+    async fn slash(&self, operator: &UserId, amount: u64, reason: &str) -> Result<String>; // Returns slash transaction ID
 
     /// Distribute rewards to a relay operator
-    /// 
+    ///
     /// This should mint new tokens as relay rewards using the currency chain.
-    /// 
+    ///
     /// # Arguments
     /// * `operator` - The relay operator to receive rewards
     /// * `amount` - Amount of tokens to mint as rewards
     /// * `epoch` - The epoch for which rewards are being distributed
-    /// 
+    ///
     /// # Returns
     /// Transaction ID of the reward mint operation
-    async fn distribute_reward(
-        &self,
-        operator: &UserId,
-        amount: u64,
-        epoch: u64,
-    ) -> Result<String>;
+    async fn distribute_reward(&self, operator: &UserId, amount: u64, epoch: u64)
+        -> Result<String>;
 }
 
 /// Reward distribution record for a single relay
@@ -443,7 +421,7 @@ impl RelayNetworkManager {
     }
 
     /// Register a new relay node with on-chain staking
-    /// 
+    ///
     /// This method locks the operator's tokens on the currency chain
     /// before registering the relay.
     pub async fn register_relay_with_staking(&mut self, relay_info: RelayInfo) -> Result<()> {
@@ -479,7 +457,9 @@ impl RelayNetworkManager {
                 .map_err(|e| Error::network(format!("Stake confirmation failed: {}", e)))?;
 
             if !confirmed {
-                return Err(Error::network("Stake transaction not confirmed".to_string()));
+                return Err(Error::network(
+                    "Stake transaction not confirmed".to_string(),
+                ));
             }
 
             // 3. Store stake transaction ID for later unstaking
@@ -511,10 +491,12 @@ impl RelayNetworkManager {
     }
 
     /// Remove a relay node with unstaking
-    /// 
+    ///
     /// This method unlocks the operator's staked tokens when unregistering.
     pub async fn remove_relay_with_unstaking(&mut self, relay_id: &str) -> Result<()> {
-        let relay = self.relays.get(relay_id)
+        let relay = self
+            .relays
+            .get(relay_id)
             .ok_or_else(|| Error::network("Relay not found".to_string()))?
             .clone();
 
@@ -538,7 +520,9 @@ impl RelayNetworkManager {
 
     /// Slash a relay for misbehavior
     pub async fn slash_relay(&mut self, relay_id: &str, amount: u64, reason: &str) -> Result<()> {
-        let relay = self.relays.get(relay_id)
+        let relay = self
+            .relays
+            .get(relay_id)
             .ok_or_else(|| Error::network("Relay not found".to_string()))?
             .clone();
 
@@ -742,24 +726,72 @@ impl RelayNetworkManager {
         self.active_pool.contains(relay_id)
     }
 
+    /// Get all registered relays for epoch eligibility computation
+    ///
+    /// Converts internal RelayInfo to RegisteredRelay format suitable for
+    /// the relay_eligibility module. Block height must be provided for
+    /// timestamp-to-block conversion.
+    ///
+    /// # Arguments
+    /// * `genesis_timestamp` - Unix timestamp of genesis block
+    /// * `block_time_secs` - Seconds per block (e.g., 2 or 6)
+    ///
+    /// # Returns
+    /// Vector of tuples: (relay_id, operator, stake, registered_at_block, is_suspended)
+    /// This can be converted to RegisteredRelay by the caller in dchat-blockchain
+    pub fn get_registered_relays_for_eligibility(
+        &self,
+        genesis_timestamp: u64,
+        block_time_secs: u64,
+    ) -> Vec<(String, UserId, u64, u64, bool)> {
+        self.relays
+            .values()
+            .map(|info| {
+                // Convert SystemTime to block height estimate
+                let registered_timestamp = info
+                    .registered_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                let registered_at_block =
+                    if registered_timestamp >= genesis_timestamp && block_time_secs > 0 {
+                        (registered_timestamp - genesis_timestamp) / block_time_secs
+                    } else {
+                        0
+                    };
+
+                // Relay is suspended if it's not in the active pool AND has low uptime
+                let is_suspended = !self.active_pool.contains(&info.relay_id)
+                    && info.stake < self.config.min_stake;
+
+                (
+                    info.relay_id.clone(),
+                    info.operator.clone(),
+                    info.stake,
+                    registered_at_block,
+                    is_suspended,
+                )
+            })
+            .collect()
+    }
+
     /// Distribute rewards to relays based on performance
-    /// 
+    ///
     /// This method calculates and mints rewards for all active relays based on:
     /// - Messages relayed during the epoch
     /// - Uptime percentage
     /// - Geographic diversity bonus (underserved regions)
-    /// 
+    ///
     /// # Arguments
     /// * `epoch` - The epoch number for which rewards are being distributed
-    /// 
+    ///
     /// # Returns
     /// Vector of reward distributions with transaction IDs
-    pub async fn distribute_relay_rewards(
-        &self,
-        epoch: u64,
-    ) -> Result<Vec<RewardDistribution>> {
-        let staking = self.staking_backend.as_ref()
-            .ok_or_else(|| Error::network("No staking backend configured for reward distribution"))?;
+    pub async fn distribute_relay_rewards(&self, epoch: u64) -> Result<Vec<RewardDistribution>> {
+        let staking = self.staking_backend.as_ref().ok_or_else(|| {
+            Error::network("No staking backend configured for reward distribution")
+        })?;
 
         let mut distributions = Vec::new();
 
@@ -775,7 +807,10 @@ impl RelayNetworkManager {
             if reward > 0 {
                 // Use staking backend to distribute reward
                 // The staking backend should call currency_chain.mint_rewards internally
-                match staking.distribute_reward(&info.operator, reward, epoch).await {
+                match staking
+                    .distribute_reward(&info.operator, reward, epoch)
+                    .await
+                {
                     Ok(tx_id) => {
                         distributions.push(RewardDistribution {
                             relay_id: relay_id.clone(),
@@ -789,10 +824,7 @@ impl RelayNetworkManager {
                         });
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to distribute reward to relay {}: {}",
-                            relay_id, e
-                        );
+                        tracing::warn!("Failed to distribute reward to relay {}: {}", relay_id, e);
                     }
                 }
             }

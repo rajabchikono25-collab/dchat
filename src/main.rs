@@ -5834,12 +5834,17 @@ async fn run_validator_node(
                                     info!("🔄 Epoch {} complete. Triggering reward distribution...", new_epoch - 1);
 
                                     // 2. Trigger Rewards
+                                    // Note: relay_registry and relay_work_events should be collected from
+                                    // the relay network manager when available. For now, pass None to
+                                    // carry forward relay rewards until relay data sources are wired up.
                                     if let Err(e) = perform_epoch_rewards(
                                         new_epoch,
                                         &staking_manager_consensus,
                                         &currency_client,
                                         &fee_manager,
-                                        &tokenomics_manager
+                                        &tokenomics_manager,
+                                        None, // relay_registry - wire up from RelayNetworkManager
+                                        None, // relay_work_events - wire up from proof store
                                     ).await {
                                         error!("Failed to perform epoch rewards: {}", e);
                                     }
@@ -12088,9 +12093,15 @@ async fn perform_epoch_rewards(
     currency_client: &Arc<CurrencyChainClient>,
     fee_manager: &Arc<std::sync::RwLock<FeeDistributionManager>>,
     tokenomics_manager: &Arc<TokenomicsManager>,
+    relay_registry: Option<&[dchat_blockchain::RegisteredRelay]>,
+    relay_work_events: Option<&[dchat_blockchain::RelayWorkEvent]>,
 ) -> Result<()> {
     use dchat_blockchain::fee_distribution::{RELAY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS};
     use dchat_blockchain::hardened_consensus::threshold_normalization::EPOCH_LENGTH_BLOCKS;
+    use dchat_blockchain::relay_eligibility::{
+        aggregate_eligible_relays, compute_relay_eligibility, summarize_eligibility,
+        EligibilityConfig,
+    };
 
     info!("💰 Performing reward distribution for epoch {}", epoch);
 
@@ -12214,38 +12225,88 @@ async fn perform_epoch_rewards(
         }
     }
 
-    // 5. Distribute Relay Fee Pool (if relays are registered)
+    // 5. Distribute Relay Fee Pool (to eligible relay operators only)
     let relay_pool_balance = {
         let manager = fee_manager.read().unwrap();
         manager.get_pool_balance_by_type(PoolType::RelayRewards)
     };
 
     if relay_pool_balance > 0 {
-        // For now, relay rewards go to validators proportionally
-        // TODO: When relay registry is implemented, distribute to actual relay operators
-        let recipients: Vec<(UserId, u64)> = validators
-            .iter()
-            .map(|v| (v.validator_id, v.staked_amount))
-            .collect();
+        // Compute relay eligibility using the new eligibility system
+        let eligible_recipients = if let (Some(relays), Some(work_events)) =
+            (relay_registry, relay_work_events)
+        {
+            let config = EligibilityConfig::default();
+            let eligibility_results =
+                compute_relay_eligibility(epoch, relays, work_events, &config);
 
-        let manager = fee_manager.read().unwrap();
-        match manager.distribute_rewards(PoolType::RelayRewards, &recipients, relay_pool_balance) {
-            Ok(distributions) => {
-                info!(
-                    "💸 Distributed {} relay fees to {} recipients",
-                    relay_pool_balance,
-                    distributions.len()
+            // Log eligibility summary
+            let summary = summarize_eligibility(epoch, &eligibility_results);
+            info!(
+                "📡 Epoch {} relay eligibility: {}/{} relays eligible, {} operators, {} total stake",
+                epoch,
+                summary.eligible_relays,
+                summary.total_relays,
+                summary.unique_operators,
+                summary.total_eligible_stake
+            );
+
+            if summary.ineligible_relays > 0 {
+                debug!(
+                    "📡 Ineligibility breakdown: {} registered late, {} suspended, {} low uptime, {} low work events",
+                    summary.ineligibility_breakdown.registered_after_start,
+                    summary.ineligibility_breakdown.suspended,
+                    summary.ineligibility_breakdown.insufficient_uptime,
+                    summary.ineligibility_breakdown.insufficient_work_events
                 );
-                drop(manager);
-                if let Err(e) = fee_manager
-                    .read()
-                    .unwrap()
-                    .complete_distribution(PoolType::RelayRewards, relay_pool_balance)
-                {
-                    warn!("Failed to complete relay fee distribution: {}", e);
+            }
+
+            // Aggregate eligible relays by operator
+            aggregate_eligible_relays(&eligibility_results)
+        } else {
+            // No relay registry provided - cannot distribute
+            warn!(
+                "⚠️ No relay registry available for epoch {} - relay rewards will carry forward",
+                epoch
+            );
+            None
+        };
+
+        match eligible_recipients {
+            Some(recipients) if !recipients.is_empty() => {
+                let manager = fee_manager.read().unwrap();
+                match manager.distribute_rewards(
+                    PoolType::RelayRewards,
+                    &recipients,
+                    relay_pool_balance,
+                ) {
+                    Ok(distributions) => {
+                        info!(
+                            "💸 Distributed {} relay fees to {} relay operators",
+                            relay_pool_balance,
+                            distributions.len()
+                        );
+                        drop(manager);
+                        if let Err(e) = fee_manager
+                            .read()
+                            .unwrap()
+                            .complete_distribution(PoolType::RelayRewards, relay_pool_balance)
+                        {
+                            warn!("Failed to complete relay fee distribution: {}", e);
+                        }
+                    }
+                    Err(e) => error!("Failed to distribute relay fees: {}", e),
                 }
             }
-            Err(e) => error!("Failed to distribute relay fees: {}", e),
+            _ => {
+                // NO ELIGIBLE RELAYS - carry balance forward (do NOT distribute to validators)
+                warn!(
+                    "⚠️⚠️⚠️ EPOCH {}: NO ELIGIBLE RELAYS - {} relay rewards CARRIED FORWARD ⚠️⚠️⚠️",
+                    epoch, relay_pool_balance
+                );
+                warn!("📡 Relay pool balance will accumulate until eligible relays are available");
+                // Balance remains in the pool for next epoch
+            }
         }
     }
 

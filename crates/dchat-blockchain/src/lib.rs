@@ -14,6 +14,7 @@ pub mod hardened_consensus;
 pub mod hash_merkle;
 pub mod proof_of_relay_work;
 pub mod proof_of_transit;
+pub mod relay_eligibility;
 pub mod rpc;
 pub mod staking;
 pub mod state_validation;
@@ -92,6 +93,14 @@ pub use fee_distribution::{
     FeeType, PoolDelta, PoolState, PoolType, ProtocolSinks, UnifiedPoolState,
     DEFAULT_BURN_RATE_BPS, INSURANCE_FUND_ALLOCATION_BPS, RELAY_FEE_SHARE_BPS,
     TREASURY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS,
+};
+
+// Relay eligibility for epoch-based reward distribution
+pub use relay_eligibility::{
+    aggregate_eligible_relays, compute_relay_eligibility, epoch_block_range, summarize_eligibility,
+    EligibilityConfig, EligibilitySummary, IneligibilityBreakdown, IneligibilityReason,
+    RegisteredRelay, RelayEligibility, RelayWorkEvent, WorkEventType, BLOCKS_PER_SLOT,
+    DEFAULT_MIN_UPTIME_RATIO, DEFAULT_MIN_WORK_EVENTS, SLOTS_PER_EPOCH,
 };
 
 // Hardened consensus infrastructure exports (mainnet-critical)
