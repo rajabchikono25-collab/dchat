@@ -2,6 +2,9 @@
 //!
 //! Defines the binary format for instruction envelopes and account blobs.
 
+use crate::account::Pubkey;
+use crate::error::{DplError, DplResult};
+
 /// ABI version
 pub const ABI_VERSION: u8 = 1;
 
@@ -13,6 +16,41 @@ pub const ACCOUNTS_MAGIC: [u8; 4] = *b"DCHA";
 
 /// Maximum payload size (1 MB)
 pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
+
+/// Parse the raw input pointer into program components
+///
+/// # Safety
+/// The input pointer must be valid and point to properly formatted data.
+pub unsafe fn parse_input(input: *mut u8) -> DplResult<(Pubkey, &'static [u8], &'static [u8])> {
+    // Input layout:
+    // [0..32] - program ID
+    // [32..40] - accounts data length (u64 LE)
+    // [40..48] - instruction data length (u64 LE)
+    // [48..48+accounts_len] - accounts data
+    // [48+accounts_len..] - instruction data
+
+    let program_id_bytes = core::slice::from_raw_parts(input, 32);
+    let program_id =
+        Pubkey::from_slice(program_id_bytes).ok_or(DplError::InvalidInstructionData)?;
+
+    let accounts_len = u64::from_le_bytes(
+        core::slice::from_raw_parts(input.add(32), 8)
+            .try_into()
+            .map_err(|_| DplError::InvalidInstructionData)?,
+    ) as usize;
+
+    let instruction_len = u64::from_le_bytes(
+        core::slice::from_raw_parts(input.add(40), 8)
+            .try_into()
+            .map_err(|_| DplError::InvalidInstructionData)?,
+    ) as usize;
+
+    let accounts_data = core::slice::from_raw_parts(input.add(48), accounts_len);
+    let instruction_data =
+        core::slice::from_raw_parts(input.add(48 + accounts_len), instruction_len);
+
+    Ok((program_id, accounts_data, instruction_data))
+}
 
 /// Instruction envelope header
 #[derive(Debug, Clone, Copy)]
@@ -76,19 +114,21 @@ pub struct AccountsCursor<'a> {
 
 impl<'a> AccountsCursor<'a> {
     /// Parse accounts blob header
-    pub fn new(data: &'a [u8]) -> Option<Self> {
+    pub fn new(data: &'a [u8]) -> crate::error::DplResult<Self> {
         if data.len() < 8 {
-            return None;
+            return Err(crate::error::DplError::AccountDataTooSmall);
         }
 
-        let magic: [u8; 4] = data[0..4].try_into().ok()?;
+        let magic: [u8; 4] = data[0..4]
+            .try_into()
+            .map_err(|_| crate::error::DplError::AccountDataTooSmall)?;
         if magic != ACCOUNTS_MAGIC {
-            return None;
+            return Err(crate::error::DplError::InvalidMagic);
         }
 
         let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
 
-        Some(Self {
+        Ok(Self {
             data,
             offset: 8,
             count,
@@ -139,6 +179,12 @@ impl<'a> AccountsCursor<'a> {
             data: &self.data[entry_offset..entry_offset + entry_len],
             flags,
         })
+    }
+
+    /// Read next account entry, returning error if not available
+    pub fn next_account(&mut self) -> crate::error::DplResult<AccountEntry<'a>> {
+        self.next_entry()
+            .ok_or(crate::error::DplError::NotEnoughAccounts)
     }
 }
 

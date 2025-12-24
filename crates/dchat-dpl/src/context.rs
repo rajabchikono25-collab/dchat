@@ -2,30 +2,63 @@
 
 use core::marker::PhantomData;
 
+/// Trait for account structures that can be deserialized and validated
+pub trait Accounts<'info>: Sized {
+    /// The bumps structure type
+    type Bumps: Default;
+
+    /// Try to deserialize and validate accounts from raw data
+    fn try_accounts(
+        ctx: &ContextInfo,
+        accounts_data: &[u8],
+        bumps: &mut Self::Bumps,
+    ) -> crate::error::DplResult<Self>;
+}
+
+/// Context info passed during account parsing
+pub struct ContextInfo {
+    /// Program ID
+    pub program_id: crate::account::Pubkey,
+}
+
+impl ContextInfo {
+    /// Create a new context info
+    pub fn new(program_id: crate::account::Pubkey) -> Self {
+        Self { program_id }
+    }
+}
+
 /// Execution context passed to instruction handlers
-pub struct Context<'info, T> {
+pub struct Context<'info, T>
+where
+    T: Accounts<'info>,
+{
     /// Parsed and validated accounts
     pub accounts: T,
     /// Remaining accounts not parsed by the struct
     pub remaining_accounts: &'info [crate::account::AccountInfo<'info>],
     /// PDA bump seeds discovered during account parsing
-    pub bumps: Bumps,
+    pub bumps: T::Bumps,
     /// Program ID
     pub program_id: &'info crate::account::Pubkey,
     _phantom: PhantomData<&'info ()>,
 }
 
-impl<'info, T> Context<'info, T> {
+impl<'info, T> Context<'info, T>
+where
+    T: Accounts<'info>,
+{
     /// Create a new context
     pub fn new(
         accounts: T,
         remaining_accounts: &'info [crate::account::AccountInfo<'info>],
+        bumps: T::Bumps,
         program_id: &'info crate::account::Pubkey,
     ) -> Self {
         Self {
             accounts,
             remaining_accounts,
-            bumps: Bumps::default(),
+            bumps,
             program_id,
             _phantom: PhantomData,
         }

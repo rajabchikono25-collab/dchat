@@ -34,9 +34,10 @@ pub fn error_code_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStr
 
     for (i, variant) in data_enum.variants.iter().enumerate() {
         let variant_name = &variant.ident;
-        let code = ERROR_CODE_OFFSET + i as u32;
+        // Use explicit #[code = N] if provided, otherwise auto-increment from 6000
+        let code = get_code_attr(&variant.attrs).unwrap_or(ERROR_CODE_OFFSET + i as u32);
 
-        // Get the error message from #[msg("...")] attribute
+        // Get the error message from #[msg("...")] or #[msg = "..."] attribute
         let msg = get_msg_attr(&variant.attrs).unwrap_or_else(|| variant_name.to_string());
 
         match &variant.fields {
@@ -157,12 +158,52 @@ pub fn error_code_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStr
     Ok(output)
 }
 
-/// Extracts the message string from #[msg("...")] attribute.
+/// Extracts the message string from #[msg("...")] or #[msg = "..."] attribute.
 fn get_msg_attr(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("msg") {
+            // Try #[msg("...")] format first
             if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
                 return Some(lit.value());
+            }
+
+            // Try #[msg = "..."] format
+            if let syn::Meta::NameValue(meta) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit),
+                    ..
+                }) = &meta.value
+                {
+                    return Some(lit.value());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extracts the error code from #[code(N)] or #[code = N] attribute.
+fn get_code_attr(attrs: &[syn::Attribute]) -> Option<u32> {
+    for attr in attrs {
+        if attr.path().is_ident("code") {
+            // Try #[code(N)] format first
+            if let Ok(lit) = attr.parse_args::<syn::LitInt>() {
+                if let Ok(val) = lit.base10_parse::<u32>() {
+                    return Some(val);
+                }
+            }
+
+            // Try #[code = N] format
+            if let syn::Meta::NameValue(meta) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit),
+                    ..
+                }) = &meta.value
+                {
+                    if let Ok(val) = lit.base10_parse::<u32>() {
+                        return Some(val);
+                    }
+                }
             }
         }
     }

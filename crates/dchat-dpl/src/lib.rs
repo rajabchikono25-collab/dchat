@@ -83,10 +83,10 @@ pub mod syscall;
 
 // Types that macros reference as dchat_dpl::X
 pub use account::{
-    Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Pubkey, Signer,
-    SystemAccount,
+    Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Program, Pubkey,
+    Signer, System, SystemAccount,
 };
-pub use context::{Bumps, Context, ContextInfo};
+pub use context::{Accounts, Bumps, Context, ContextInfo};
 pub use error::{DplError, DplResult};
 pub use event::{emit_event, Event};
 pub use pda::derive_pda;
@@ -106,8 +106,8 @@ pub mod prelude {
 
     // Core types
     pub use crate::account::{
-        Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Pubkey,
-        Signer, SystemAccount,
+        Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Program,
+        Pubkey, Signer, System, SystemAccount,
     };
     pub use crate::context::Context;
     pub use crate::error::{DplError, DplResult};
@@ -118,12 +118,7 @@ pub mod prelude {
     // Convenience type alias
     pub type Result<T> = core::result::Result<T, DplError>;
 
-    // Placeholder types that will be provided by generated code
-    pub struct Program<'info, T> {
-        _phantom: core::marker::PhantomData<&'info T>,
-    }
-
-    pub struct System;
+    // Token placeholder
     pub struct Token;
 
     // Clock placeholder
@@ -154,13 +149,8 @@ pub mod prelude {
         };
     }
 
-    // Emit macro for events
-    #[macro_export]
-    macro_rules! emit {
-        ($event:expr) => {
-            $crate::event::emit_event(&$event)
-        };
-    }
+    // Re-export emit macro
+    pub use crate::emit;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

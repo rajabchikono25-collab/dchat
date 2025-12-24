@@ -87,9 +87,15 @@ pub fn derive_accounts_impl(item: TokenStream) -> Result<TokenStream> {
 
         if let Some(ref has_one_field) = constraints.has_one {
             let has_one_ident = format_ident!("{}", has_one_field);
+            let error_expr = if let Some(ref error_path) = constraints.has_one_error {
+                let path: syn::Path = syn::parse_str(error_path).unwrap();
+                quote! { #path.into() }
+            } else {
+                quote! { dchat_dpl::DplError::ConstraintHasOne }
+            };
             validations.push(quote! {
                 if #field_name.#has_one_ident != #has_one_ident.key() {
-                    return Err(dchat_dpl::DplError::ConstraintHasOne);
+                    return Err(#error_expr);
                 }
             });
         }
@@ -206,6 +212,7 @@ struct AccountConstraints {
     seeds: Vec<String>,
     bump: bool,
     has_one: Option<String>,
+    has_one_error: Option<String>,
     constraint: Option<String>,
 }
 
@@ -237,8 +244,15 @@ fn parse_account_constraints(attrs: &[syn::Attribute]) -> Result<AccountConstrai
                 constraints.space = Some(quote!(#expr).to_string());
             } else if meta.path.is_ident("has_one") {
                 let value = meta.value()?;
-                let lit: syn::Ident = value.parse()?;
-                constraints.has_one = Some(lit.to_string());
+                // Parse the field name
+                let field_ident: syn::Ident = value.parse()?;
+                constraints.has_one = Some(field_ident.to_string());
+                // Check for optional @ Error syntax
+                if meta.input.peek(syn::Token![@]) {
+                    let _: syn::Token![@] = meta.input.parse()?;
+                    let error_path: syn::Path = meta.input.parse()?;
+                    constraints.has_one_error = Some(quote!(#error_path).to_string());
+                }
             } else if meta.path.is_ident("constraint") {
                 let value = meta.value()?;
                 let expr: syn::Expr = value.parse()?;

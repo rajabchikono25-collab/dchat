@@ -150,3 +150,19 @@ pub trait AccountsValidate {
     /// Validate all account constraints
     fn validate(&self) -> Result<(), crate::error::DplError>;
 }
+
+/// System program type marker
+pub struct System;
+
+/// Program account wrapper - represents a program account
+pub struct Program<'info, T> {
+    info: AccountInfo<'info>,
+    _phantom: PhantomData<T>,
+}
+
+impl<'info, T> Program<'info, T> {
+    /// Get the program key
+    pub fn key(&self) -> &Pubkey {
+        self.info.key
+    }
+}

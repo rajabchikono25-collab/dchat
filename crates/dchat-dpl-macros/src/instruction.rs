@@ -131,16 +131,34 @@ pub fn derive_instruction_impl(item: TokenStream) -> Result<TokenStream> {
     Ok(output)
 }
 
-/// Extracts the tag value from #[tag(N)] attribute.
+/// Extracts the tag value from #[tag(N)] or #[tag = N] attribute.
 fn get_tag_attr(attrs: &[syn::Attribute]) -> Result<u8> {
     for attr in attrs {
         if attr.path().is_ident("tag") {
-            let lit: syn::LitInt = attr.parse_args()?;
-            return Ok(lit.base10_parse()?);
+            // Try #[tag(N)] format first
+            if let Ok(lit) = attr.parse_args::<syn::LitInt>() {
+                return Ok(lit.base10_parse()?);
+            }
+
+            // Try #[tag = N] format
+            if let syn::Meta::NameValue(meta) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit),
+                    ..
+                }) = &meta.value
+                {
+                    return Ok(lit.base10_parse()?);
+                }
+            }
+
+            return Err(syn::Error::new_spanned(
+                attr,
+                "Expected #[tag(N)] or #[tag = N]",
+            ));
         }
     }
     Err(syn::Error::new(
         proc_macro2::Span::call_site(),
-        "Instruction variants must have a #[tag(N)] attribute",
+        "Instruction variants must have a #[tag(N)] or #[tag = N] attribute",
     ))
 }

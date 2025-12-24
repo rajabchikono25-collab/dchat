@@ -40,3 +40,19 @@ pub trait Event: DplSerialize {
         emit_event(self);
     }
 }
+
+/// Macro to emit an event
+///
+/// # Example
+/// ```ignore
+/// emit!(CounterIncremented {
+///     counter: counter_key,
+///     new_value: counter.value,
+/// });
+/// ```
+#[macro_export]
+macro_rules! emit {
+    ($event:expr) => {
+        $crate::event::emit_event(&$event)
+    };
+}

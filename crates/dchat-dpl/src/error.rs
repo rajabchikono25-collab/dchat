@@ -10,8 +10,12 @@ pub enum DplError {
     AccountNotFound(u8),
 
     /// Account constraint violation
-    #[error("Constraint violation: {0}")]
-    ConstraintViolation(&'static str),
+    #[error("Constraint violation")]
+    ConstraintViolation,
+
+    /// Has one constraint failed
+    #[error("Has one constraint failed")]
+    ConstraintHasOne,
 
     /// Invalid account owner
     #[error("Invalid account owner")]
@@ -23,7 +27,7 @@ pub enum DplError {
 
     /// Account not writable
     #[error("Account must be writable")]
-    NotWritable,
+    AccountNotMutable,
 
     /// Account already initialized
     #[error("Account already initialized")]
@@ -37,9 +41,29 @@ pub enum DplError {
     #[error("Invalid instruction data")]
     InvalidInstructionData,
 
+    /// Invalid instruction discriminator
+    #[error("Invalid instruction discriminator")]
+    InvalidInstructionDiscriminator,
+
     /// Invalid account data
     #[error("Invalid account data")]
     InvalidAccountData,
+
+    /// Account data too small
+    #[error("Account data too small")]
+    AccountDataTooSmall,
+
+    /// Invalid magic bytes
+    #[error("Invalid magic bytes")]
+    InvalidMagic,
+
+    /// Not enough accounts provided
+    #[error("Not enough accounts provided")]
+    NotEnoughAccounts,
+
+    /// Invalid program ID
+    #[error("Invalid program ID")]
+    InvalidProgramId,
 
     /// Serialization error
     #[error("Serialization error: {0}")]
@@ -70,12 +94,12 @@ pub enum DplError {
     InvalidPda,
 
     /// Custom error with code and message
-    #[error("Custom error {code}: {message}")]
+    #[error("Custom error {code}: {msg}")]
     Custom {
         /// Error code
         code: u32,
         /// Error message
-        message: &'static str,
+        msg: String,
     },
 }
 
@@ -84,23 +108,35 @@ impl DplError {
     pub fn code(&self) -> u32 {
         match self {
             Self::AccountNotFound(_) => 1,
-            Self::ConstraintViolation(_) => 2,
-            Self::InvalidOwner => 3,
-            Self::MissingSigner => 4,
-            Self::NotWritable => 5,
-            Self::AlreadyInitialized => 6,
-            Self::NotInitialized => 7,
-            Self::InvalidInstructionData => 8,
-            Self::InvalidAccountData => 9,
-            Self::SerializationError(_) => 10,
-            Self::DeserializationError(_) => 11,
+            Self::ConstraintViolation => 2,
+            Self::ConstraintHasOne => 3,
+            Self::InvalidOwner => 4,
+            Self::MissingSigner => 5,
+            Self::AccountNotMutable => 6,
+            Self::AlreadyInitialized => 7,
+            Self::NotInitialized => 8,
+            Self::InvalidInstructionData => 9,
+            Self::InvalidInstructionDiscriminator => 10,
+            Self::InvalidAccountData => 11,
+            Self::AccountDataTooSmall => 12,
+            Self::InvalidMagic => 13,
+            Self::NotEnoughAccounts => 14,
+            Self::InvalidProgramId => 15,
+            Self::SerializationError(_) => 16,
+            Self::DeserializationError(_) => 17,
             Self::ProgramError(code) => *code,
-            Self::InsufficientFunds => 12,
-            Self::Overflow => 13,
-            Self::Underflow => 14,
-            Self::InvalidPda => 15,
+            Self::InsufficientFunds => 18,
+            Self::Overflow => 19,
+            Self::Underflow => 20,
+            Self::InvalidPda => 21,
             Self::Custom { code, .. } => *code,
         }
+    }
+}
+
+impl From<DplError> for u64 {
+    fn from(e: DplError) -> Self {
+        e.code() as u64
     }
 }
 
@@ -117,7 +153,7 @@ impl<E: core::fmt::Display> IntoDplError for E {
     fn into_dpl_error(self) -> DplError {
         DplError::Custom {
             code: 0,
-            message: "Unknown error",
+            msg: "Unknown error".to_string(),
         }
     }
 }
