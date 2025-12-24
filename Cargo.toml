@@ -33,6 +33,7 @@ exclude = [
   "examples/contracts/voting",
   "examples/contracts/dpl-counter",
   "examples/contracts/dpl-treasury",
+  "examples/contracts/dpl-token-mint",
 ]
 resolver = "2"
 
