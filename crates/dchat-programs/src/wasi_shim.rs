@@ -6,8 +6,8 @@
 //!
 //! # Allowed Functions
 //!
-//! - `fd_write` - Write to stdout/stderr (logged, not actual I/O)
-//! - `proc_exit` - Exit the program
+//! - `fd_write` - Write to stdout/stderr (logged deterministically)
+//! - `proc_exit` - Exit the program (sets error code, no actual exit)
 //! - `environ_sizes_get` - Returns 0 environment variables
 //! - `environ_get` - No-op (no environment)
 //! - `args_sizes_get` - Returns 0 arguments
@@ -49,7 +49,20 @@ pub mod wasi_fd {
     pub const STDERR: u32 = 2;
 }
 
-/// List of allowed WASI imports (with wasi: prefix for validation)
+/// List of allowed WASI imports (without module prefix for matching)
+pub const ALLOWED_WASI_FUNCTIONS: &[&str] = &[
+    "fd_write",
+    "proc_exit",
+    "environ_sizes_get",
+    "environ_get",
+    "args_sizes_get",
+    "args_get",
+    "fd_prestat_get",
+    "fd_prestat_dir_name",
+    "fd_close",
+];
+
+/// List of allowed WASI imports (with wasi: prefix for validation config)
 pub const ALLOWED_WASI_IMPORTS: &[&str] = &[
     "wasi:fd_write",
     "wasi:proc_exit",
@@ -104,16 +117,53 @@ pub const FORBIDDEN_WASI_IMPORTS: &[&str] = &[
 
 /// Check if a WASI import function name is in the allowed list.
 pub fn is_allowed_wasi_import(name: &str) -> bool {
-    // Check both with and without wasi: prefix
-    let with_prefix = format!("wasi:{}", name);
-    ALLOWED_WASI_IMPORTS
-        .iter()
-        .any(|&s| s == name || s == with_prefix || s.ends_with(&format!(":{}", name)))
+    // Strip module prefix if present
+    let func_name = name
+        .strip_prefix("wasi:")
+        .or_else(|| name.strip_prefix("wasi_snapshot_preview1:"))
+        .unwrap_or(name);
+
+    ALLOWED_WASI_FUNCTIONS.contains(&func_name)
 }
 
 /// Check if a WASI import function name is in the forbidden list.
 pub fn is_forbidden_wasi_import(name: &str) -> bool {
-    FORBIDDEN_WASI_IMPORTS.contains(&name)
+    // Strip module prefix if present
+    let func_name = name
+        .strip_prefix("wasi:")
+        .or_else(|| name.strip_prefix("wasi_snapshot_preview1:"))
+        .unwrap_or(name);
+
+    FORBIDDEN_WASI_IMPORTS.contains(&func_name)
+}
+
+/// Validate all WASI imports in a module.
+/// Returns Ok(()) if all imports are allowed, Err with the first forbidden import otherwise.
+pub fn validate_wasi_imports(imports: &[String]) -> Result<(), String> {
+    for import in imports {
+        // Check if this is a WASI import
+        if import.starts_with("wasi_snapshot_preview1:") || import.starts_with("wasi:") {
+            let func_name = import
+                .strip_prefix("wasi_snapshot_preview1:")
+                .or_else(|| import.strip_prefix("wasi:"))
+                .unwrap_or(import);
+
+            if is_forbidden_wasi_import(func_name) {
+                return Err(format!(
+                    "Forbidden WASI import '{}': non-deterministic operation",
+                    import
+                ));
+            }
+
+            if !is_allowed_wasi_import(func_name) {
+                return Err(format!(
+                    "Unknown WASI import '{}': not in allowed list",
+                    import
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Register WASI shim functions with the linker.
@@ -123,7 +173,7 @@ pub fn is_forbidden_wasi_import(name: &str) -> bool {
 pub fn register_wasi_shim(linker: &mut Linker<VmState>) -> Result<(), wasmi::Error> {
     let module = "wasi_snapshot_preview1";
 
-    // fd_write: write to stdout/stderr
+    // fd_write: write to stdout/stderr (routed to deterministic logs)
     linker.func_wrap(
         module,
         "fd_write",
@@ -158,15 +208,23 @@ pub fn register_wasi_shim(linker: &mut Linker<VmState>) -> Result<(), wasmi::Err
                 let iov_base = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
                 let iov_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
-                // Read the actual data (for logging)
-                let mut data = vec![0u8; iov_len as usize];
-                if memory.read(&caller, iov_base as usize, &mut data).is_err() {
-                    return wasi_errno::EINVAL;
-                }
+                // Read the actual data and log it deterministically
+                if iov_len > 0 {
+                    let mut data = vec![0u8; iov_len as usize];
+                    if memory.read(&caller, iov_base as usize, &mut data).is_err() {
+                        return wasi_errno::EINVAL;
+                    }
 
-                // In a real implementation, this would log to the transaction log
-                // For now, we just count bytes as "written"
-                total_written += iov_len;
+                    // Route fd_write output to the deterministic logging system
+                    if let Ok(msg) = String::from_utf8(data) {
+                        let trimmed = msg.trim_end_matches('\n');
+                        if !trimmed.is_empty() {
+                            caller.data_mut().log(trimmed.to_string());
+                        }
+                    }
+
+                    total_written += iov_len;
+                }
             }
 
             // Write number of bytes written

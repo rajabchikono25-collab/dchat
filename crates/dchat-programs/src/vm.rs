@@ -463,6 +463,11 @@ impl VmInstance {
 
     /// Register all host functions in the linker
     fn register_host_functions(&self, linker: &mut Linker<VmState>) -> ProgramResult<()> {
+        // ── WASI Shim (for DPL programs targeting wasm32-wasi) ─────────────────
+        // Register deterministic WASI subset before legacy syscalls
+        crate::wasi_shim::register_wasi_shim(linker)
+            .map_err(|e| ProgramError::VmError(format!("WASI shim registration failed: {}", e)))?;
+
         // ── Logging Syscalls ───────────────────────────────────────────────────
 
         // sol_log_ - Log a string message

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ProgramError, ProgramResult};
+use crate::wasi_shim::{is_allowed_wasi_import, is_forbidden_wasi_import, validate_wasi_imports};
 use crate::{MAX_PROGRAM_SIZE, PROTOCOL_VERSION};
 
 /// Validate a bytecode blob and return detailed results
@@ -460,26 +461,65 @@ impl BytecodeValidator {
         // Collect module information
         let mut imports = Vec::new();
         let mut exports = Vec::new();
+        let mut wasi_imports_for_validation = Vec::new();
 
-        // Validate imports
+        // Validate imports - check both legacy (env module) and WASI imports
         for import in module.imports() {
-            let import_name = format!("{}:{}", import.module(), import.name());
+            let module_name = import.module();
+            let func_name = import.name().to_string();
+            let import_name = format!("{}:{}", module_name, func_name);
 
-            // Check if import is allowed
-            let base_name = import.name().to_string();
-            if !self.config.allowed_imports.contains(&base_name) {
-                // Check if it starts with any allowed prefix
-                let is_allowed = self
-                    .config
-                    .allowed_imports
-                    .iter()
-                    .any(|allowed| base_name.starts_with(allowed));
-                if !is_allowed {
-                    return Err(ValidationError::UnknownImport { name: import_name });
+            // Handle WASI imports specifically
+            if module_name == "wasi_snapshot_preview1" {
+                // Check if this WASI function is forbidden (non-deterministic)
+                if is_forbidden_wasi_import(&func_name) {
+                    return Err(ValidationError::ForbiddenImport {
+                        name: format!(
+                            "{}: non-deterministic WASI function forbidden for determinism",
+                            import_name
+                        ),
+                    });
                 }
+
+                // Check if this WASI function is in the allowed list
+                if !is_allowed_wasi_import(&func_name) {
+                    return Err(ValidationError::UnknownImport {
+                        name: format!(
+                            "{}: not in allowed WASI subset for DPL programs",
+                            import_name
+                        ),
+                    });
+                }
+
+                wasi_imports_for_validation.push(import_name.clone());
+            } else if module_name == "env" {
+                // Legacy env module imports - check against allowed list
+                if !self.config.allowed_imports.contains(&func_name) {
+                    // Check if it starts with any allowed prefix
+                    let is_allowed = self
+                        .config
+                        .allowed_imports
+                        .iter()
+                        .any(|allowed| func_name.starts_with(allowed));
+                    if !is_allowed {
+                        return Err(ValidationError::UnknownImport { name: import_name });
+                    }
+                }
+            } else {
+                // Unknown module - reject
+                return Err(ValidationError::UnknownImport {
+                    name: format!("{}: unknown import module", import_name),
+                });
             }
 
             imports.push(import_name);
+        }
+
+        // Additional WASI validation using the comprehensive validator
+        if !wasi_imports_for_validation.is_empty() {
+            if let Err(e) = validate_wasi_imports(&wasi_imports_for_validation) {
+                return Err(ValidationError::ForbiddenImport { name: e });
+            }
         }
 
         // Collect exports
@@ -490,7 +530,7 @@ impl BytecodeValidator {
         // Check for entrypoint
         let has_entrypoint = exports
             .iter()
-            .any(|e| e == "entrypoint" || e == "process_instruction");
+            .any(|e| e == "entrypoint" || e == "process_instruction" || e == "_start");
         if !has_entrypoint {
             return Err(ValidationError::MissingEntrypoint);
         }
