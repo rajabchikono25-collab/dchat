@@ -113,7 +113,7 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
                 _ => syn::parse_str("() ").unwrap(),
             };
 
-            // Extract remaining non-ctx parameters (support 0 or 1)
+            // Extract remaining non-ctx parameters (support 0, 1, 2, or more)
             let other_params: Vec<_> = func.sig.inputs.iter().skip(1).collect();
 
             if other_params.is_empty() {
@@ -127,16 +127,26 @@ pub fn program_impl(_attr: TokenStream, item: TokenStream) -> Result<TokenStream
                     }
                 }
             } else {
-                // Single argument type
-                let arg_ty = if let syn::FnArg::Typed(pat_ty) = &other_params[0] { (*pat_ty.ty).clone() } else { syn::parse_str("()").unwrap() };
+                // Multiple argument types - deserialize each in order
+                let arg_types: Vec<syn::Type> = other_params.iter().map(|p| {
+                    if let syn::FnArg::Typed(pat_ty) = p { (*pat_ty.ty).clone() } else { syn::parse_str("()").unwrap() }
+                }).collect();
+
+                let arg_count = arg_types.len();
+                let arg_names: Vec<_> = (0..arg_count).map(|i| format_ident!("arg{}", i)).collect();
+
+                let deserialize_stmts: Vec<_> = arg_types.iter().zip(arg_names.iter()).map(|(ty, name)| {
+                    quote! { let #name: #ty = dchat_dpl::DplDeserialize::deserialize(&mut remaining_data)?; }
+                }).collect();
+
                 quote! {
                     disc if disc == #mod_name::#const_name => {
                         let ctx_info = dchat_dpl::ContextInfo::new(#mod_name::PROGRAM_ID);
                         let mut bumps: <#accounts_ty as dchat_dpl::Accounts>::Bumps = Default::default();
                         let accounts = <#accounts_ty as dchat_dpl::Accounts>::try_accounts(&ctx_info, accounts_data, &mut bumps)?;
                         let ctx = dchat_dpl::Context::new(accounts, &[], bumps, &#mod_name::PROGRAM_ID);
-                        let arg0: #arg_ty = dchat_dpl::DplDeserialize::deserialize(&mut remaining_data)?;
-                        #mod_name::#name(ctx, arg0)
+                        #(#deserialize_stmts)*
+                        #mod_name::#name(ctx, #(#arg_names),*)
                     }
                 }
             }

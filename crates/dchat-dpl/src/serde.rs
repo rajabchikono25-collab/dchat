@@ -172,3 +172,86 @@ impl DplDeserialize for crate::account::Pubkey {
         Ok(crate::account::Pubkey(bytes))
     }
 }
+
+// Additional primitive type implementations
+
+impl DplSerialize for i64 {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(&self.to_le_bytes());
+        Ok(())
+    }
+}
+
+impl DplDeserialize for i64 {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 8 {
+            return Err(DplError::DeserializationError(
+                "Data too short for i64".into(),
+            ));
+        }
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&data[..8]);
+        *data = &data[8..];
+        Ok(i64::from_le_bytes(bytes))
+    }
+}
+
+impl DplSerialize for bool {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.push(if *self { 1 } else { 0 });
+        Ok(())
+    }
+}
+
+impl DplDeserialize for bool {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.is_empty() {
+            return Err(DplError::DeserializationError("Empty data for bool".into()));
+        }
+        let v = data[0] != 0;
+        *data = &data[1..];
+        Ok(v)
+    }
+}
+
+impl DplSerialize for u32 {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(&self.to_le_bytes());
+        Ok(())
+    }
+}
+
+impl DplDeserialize for u32 {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 4 {
+            return Err(DplError::DeserializationError(
+                "Data too short for u32".into(),
+            ));
+        }
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&data[..4]);
+        *data = &data[4..];
+        Ok(u32::from_le_bytes(bytes))
+    }
+}
+
+impl DplSerialize for i32 {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(&self.to_le_bytes());
+        Ok(())
+    }
+}
+
+impl DplDeserialize for i32 {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 4 {
+            return Err(DplError::DeserializationError(
+                "Data too short for i32".into(),
+            ));
+        }
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&data[..4]);
+        *data = &data[4..];
+        Ok(i32::from_le_bytes(bytes))
+    }
+}
