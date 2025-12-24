@@ -24,11 +24,15 @@ members = [
   "crates/dchat-vr",
   "crates/dchat-programs",
   "crates/dchat-miniapps",
+  "crates/dchat-dpl",
+  "crates/dchat-dpl-macros",
 ]
 exclude = [
   "examples/contracts/counter",
   "examples/contracts/treasury",
   "examples/contracts/voting",
+  "examples/contracts/dpl-counter",
+  "examples/contracts/dpl-treasury",
 ]
 resolver = "2"
 

@@ -1,0 +1,29 @@
+[package]
+name = "dchat-dpl"
+version = "0.1.0"
+edition = "2021"
+description = "Dchat Program Language SDK - ergonomic contract authoring framework"
+license = "MIT OR Apache-2.0"
+authors = ["dchat contributors"]
+
+[dependencies]
+# DPL macros (proc-macro crate)
+dchat-dpl-macros = { path = "../dchat-dpl-macros" }
+
+# Serialization
+borsh = { version = "1", features = ["derive"] }
+
+# Hashing (for PDAs and events)
+blake3 = { version = "1" }
+sha2 = { version = "0.10" }
+
+# Error handling
+thiserror = { version = "2" }
+
+[features]
+default = ["std"]
+std = []
+no_std = []
+idl = []          # Enable IDL generation
+
+[dev-dependencies]

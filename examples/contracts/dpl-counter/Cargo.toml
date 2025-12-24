@@ -1,0 +1,19 @@
+[package]
+name = "dpl-counter"
+version = "0.1.0"
+edition = "2021"
+description = "DPL Counter Example Contract - demonstrates DPL macro-based authoring"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dchat-dpl = { path = "../../../crates/dchat-dpl" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
