@@ -58,7 +58,7 @@ impl TryFrom<u8> for ImportProfile {
 
 bitflags::bitflags! {
     /// Program capabilities declared in manifest
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Capabilities: u64 {
         /// Program emits events
         const EMITS_EVENTS = 1 << 0;
@@ -80,6 +80,26 @@ bitflags::bitflags! {
         const USES_GOVERNANCE = 1 << 8;
         /// Program uses staking features
         const USES_STAKING = 1 << 9;
+    }
+}
+
+// Manual serde implementation for Capabilities
+impl Serialize for Capabilities {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u64(self.bits())
+    }
+}
+
+impl<'de> Deserialize<'de> for Capabilities {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bits = u64::deserialize(deserializer)?;
+        Ok(Capabilities::from_bits_truncate(bits))
     }
 }
 

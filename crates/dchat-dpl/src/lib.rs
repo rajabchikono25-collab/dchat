@@ -57,6 +57,9 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+// Re-export borsh for use by generated code
+pub use borsh;
+
 // Re-export the proc-macro crate
 pub use dchat_dpl_macros::*;
 
@@ -73,6 +76,24 @@ pub mod manifest;
 pub mod pda;
 pub mod serde;
 pub mod syscall;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOT-LEVEL RE-EXPORTS (for macro-generated code)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Types that macros reference as dchat_dpl::X
+pub use account::{
+    Account, AccountDeserialize, AccountInfo, AccountSerialize, FromAccountInfo, Pubkey, Signer,
+    SystemAccount,
+};
+pub use context::{Bumps, Context, ContextInfo};
+pub use error::{DplError, DplResult};
+pub use event::{emit_event, Event};
+pub use pda::derive_pda;
+pub use serde::{DplDeserialize, DplSerialize};
+
+/// Convenience Result type alias
+pub type Result<T> = core::result::Result<T, DplError>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRELUDE

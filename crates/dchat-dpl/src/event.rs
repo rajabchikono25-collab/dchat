@@ -33,7 +33,10 @@ pub trait Event: DplSerialize {
     fn discriminator() -> [u8; 8];
 
     /// Emit this event
-    fn emit(&self) {
+    fn emit(&self)
+    where
+        Self: Sized,
+    {
         emit_event(self);
     }
 }

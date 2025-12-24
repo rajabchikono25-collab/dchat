@@ -54,6 +54,7 @@ pub mod error;
 pub mod events;
 pub mod instruction;
 pub mod loader;
+pub mod manifest;
 pub mod metering;
 pub mod pda;
 pub mod privacy;
@@ -64,6 +65,7 @@ pub mod system_program;
 pub mod token;
 pub mod validation;
 pub mod vm;
+pub mod wasi_shim;
 
 // Re-export primary types for ergonomic API
 // Note: Motes is the canonical currency unit (1 DCHAT = 100,000,000 motes)

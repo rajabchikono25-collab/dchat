@@ -134,6 +134,17 @@ impl Default for ValidationConfig {
         // Privacy operations
         allowed_imports.insert("sol_verify_commitment".to_string());
 
+        // WASI imports (deterministic subset for DPL programs targeting wasm32-wasi)
+        allowed_imports.insert("wasi:fd_write".to_string());
+        allowed_imports.insert("wasi:proc_exit".to_string());
+        allowed_imports.insert("wasi:environ_sizes_get".to_string());
+        allowed_imports.insert("wasi:environ_get".to_string());
+        allowed_imports.insert("wasi:args_sizes_get".to_string());
+        allowed_imports.insert("wasi:args_get".to_string());
+        allowed_imports.insert("wasi:fd_prestat_get".to_string());
+        allowed_imports.insert("wasi:fd_prestat_dir_name".to_string());
+        allowed_imports.insert("wasi:fd_close".to_string());
+
         // Forbidden opcodes that break determinism
         let mut forbidden_opcodes = HashSet::new();
         forbidden_opcodes.insert("f32.const".to_string());
