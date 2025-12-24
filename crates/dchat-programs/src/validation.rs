@@ -170,6 +170,8 @@ impl Default for ValidationConfig {
         allowed_imports.insert("sol_memcmp".to_string());
         // Capability verification
         allowed_imports.insert("sol_verify_capability".to_string());
+        // Program manifest query
+        allowed_imports.insert("sol_get_program_manifest".to_string());
         // Privacy operations
         allowed_imports.insert("sol_verify_commitment".to_string());
 

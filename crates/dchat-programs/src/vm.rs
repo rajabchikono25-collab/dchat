@@ -829,6 +829,39 @@ impl VmInstance {
             )
             .map_err(|e| ProgramError::VmError(e.to_string()))?;
 
+        // sol_get_program_manifest - Query program manifest for schema verification
+        //
+        // Note: In the VM execution context, accounts are passed as serialized bytes
+        // and not in a form that allows manifest lookup. Programs that need manifest
+        // verification should use the runtime's SyscallContext-based implementation
+        // by including the target program's ProgramData account in the transaction.
+        //
+        // This syscall will return 1 (no manifest) in the pure VM execution path.
+        // The full implementation is in SyscallRegistry::GetProgramManifestHandler.
+        linker
+            .func_wrap(
+                "env",
+                "sol_get_program_manifest",
+                |mut caller: Caller<'_, VmState>, _program_id_ptr: u32, _output_ptr: u32| -> u64 {
+                    // Cost: moderate for metadata lookup
+                    const COST: u64 = 200;
+                    if let Ok(current) = caller.get_fuel() {
+                        if current < COST {
+                            return 2; // Out of compute
+                        }
+                        let _ = caller.set_fuel(current - COST);
+                    } else {
+                        return 2;
+                    }
+
+                    // In the VM execution context, we don't have deserialized account access.
+                    // Return 1 to indicate no manifest found.
+                    // The full implementation with account lookup is in SyscallRegistry.
+                    1 // No manifest found
+                },
+            )
+            .map_err(|e| ProgramError::VmError(e.to_string()))?;
+
         Ok(())
     }
 

@@ -26,6 +26,7 @@ members = [
   "crates/dchat-miniapps",
   "crates/dchat-dpl",
   "crates/dchat-dpl-macros",
+  "crates/ironclad-cli",
 ]
 exclude = [
   "examples/contracts/counter",

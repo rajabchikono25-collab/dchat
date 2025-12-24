@@ -593,8 +593,8 @@ impl SyscallHandler for GetProgramManifestHandler {
         for account in ctx.accounts.iter() {
             // Check if this account is owned by the upgradeable loader and matches
             // a pattern that indicates it's the ProgramData for our target program
-            if account.owner == crate::native_programs::LOADER_PROGRAM_ID
-                || account.owner == crate::loader::UPGRADEABLE_LOADER_ID
+            if *account.owner == crate::native_programs::LOADER_PROGRAM_ID
+                || *account.owner == crate::loader::UPGRADEABLE_LOADER_ID
             {
                 // Try to parse as ProgramAccountState
                 if let Ok(data) = account.try_borrow_data() {
@@ -608,29 +608,32 @@ impl SyscallHandler for GetProgramManifestHandler {
                             // Verify this is the right program by checking if the
                             // account key derives from the target program ID
                             // (ProgramData PDA: [program_id, "programdata"])
-                            let expected_pda = crate::pda::find_program_address(
-                                &[target_program_id.as_bytes(), b"programdata"],
-                                &crate::loader::UPGRADEABLE_LOADER_ID,
-                            );
-                            if account.key == expected_pda.0 {
-                                // Write manifest info to output buffer
-                                // Format: schema_hash(32) + abi(1) + profile(1) + version(6) + edition(2) + caps(8) = 50 bytes
-                                memory[output_ptr..output_ptr + 32]
-                                    .copy_from_slice(&manifest_info.schema_hash);
-                                memory[output_ptr + 32] = manifest_info.abi_version;
-                                memory[output_ptr + 33] = manifest_info.import_profile;
-                                memory[output_ptr + 34..output_ptr + 36]
-                                    .copy_from_slice(&manifest_info.sdk_major.to_le_bytes());
-                                memory[output_ptr + 36..output_ptr + 38]
-                                    .copy_from_slice(&manifest_info.sdk_minor.to_le_bytes());
-                                memory[output_ptr + 38..output_ptr + 40]
-                                    .copy_from_slice(&manifest_info.sdk_patch.to_le_bytes());
-                                memory[output_ptr + 40..output_ptr + 42]
-                                    .copy_from_slice(&manifest_info.edition.to_le_bytes());
-                                memory[output_ptr + 42..output_ptr + 50]
-                                    .copy_from_slice(&manifest_info.capabilities.to_le_bytes());
+                            if let Ok(expected_pda) =
+                                crate::pda::PdaDerivation::find_program_address(
+                                    &[target_program_id.as_bytes(), b"programdata"],
+                                    &crate::loader::UPGRADEABLE_LOADER_ID,
+                                )
+                            {
+                                if *account.key == expected_pda.address {
+                                    // Write manifest info to output buffer
+                                    // Format: schema_hash(32) + abi(1) + profile(1) + version(6) + edition(2) + caps(8) = 50 bytes
+                                    memory[output_ptr..output_ptr + 32]
+                                        .copy_from_slice(&manifest_info.schema_hash);
+                                    memory[output_ptr + 32] = manifest_info.abi_version;
+                                    memory[output_ptr + 33] = manifest_info.import_profile;
+                                    memory[output_ptr + 34..output_ptr + 36]
+                                        .copy_from_slice(&manifest_info.sdk_major.to_le_bytes());
+                                    memory[output_ptr + 36..output_ptr + 38]
+                                        .copy_from_slice(&manifest_info.sdk_minor.to_le_bytes());
+                                    memory[output_ptr + 38..output_ptr + 40]
+                                        .copy_from_slice(&manifest_info.sdk_patch.to_le_bytes());
+                                    memory[output_ptr + 40..output_ptr + 42]
+                                        .copy_from_slice(&manifest_info.edition.to_le_bytes());
+                                    memory[output_ptr + 42..output_ptr + 50]
+                                        .copy_from_slice(&manifest_info.capabilities.to_le_bytes());
 
-                                return SyscallResult::Ok(0); // Success: manifest found
+                                    return SyscallResult::Ok(0); // Success: manifest found
+                                }
                             }
                         }
                     }
@@ -790,6 +793,9 @@ impl SyscallRegistry {
                 .handlers
                 .contains_key(&SyscallId::SOL_CREATE_PROGRAM_ADDRESS),
             "sol_set_return_data" => self.handlers.contains_key(&SyscallId::SOL_SET_RETURN_DATA),
+            "sol_get_program_manifest" => self
+                .handlers
+                .contains_key(&SyscallId::SOL_GET_PROGRAM_MANIFEST),
             "sol_alloc_free" => self.handlers.contains_key(&SyscallId::SOL_ALLOC_FREE),
             _ => false,
         }
