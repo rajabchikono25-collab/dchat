@@ -39,14 +39,18 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Test Capabilities parsing with arbitrary bits
-    if data.len() >= 4 {
-        let bits = u32::from_le_bytes([
+    if data.len() >= 8 {
+        let bits = u64::from_le_bytes([
             data[0],
             data.get(1).copied().unwrap_or(0),
             data.get(2).copied().unwrap_or(0),
             data.get(3).copied().unwrap_or(0),
+            data.get(4).copied().unwrap_or(0),
+            data.get(5).copied().unwrap_or(0),
+            data.get(6).copied().unwrap_or(0),
+            data.get(7).copied().unwrap_or(0),
         ]);
-        // Capabilities::from_bits_retain handles any u32 safely
+        // Capabilities::from_bits_retain handles any u64 safely
         let _ = dchat_programs::manifest::Capabilities::from_bits_retain(bits);
     }
 

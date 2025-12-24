@@ -37,9 +37,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = limited_validator.validate(data);
     }
 
-    // Test extract_and_validate_manifest directly
-    let config = dchat_programs::validation::ValidationConfig::default();
-    let _ = dchat_programs::validation::extract_and_validate_manifest(data, &config);
+    // Test direct manifest extraction from raw bytes
+    let _ = dchat_programs::manifest::extract_manifest(data);
 
     // Test with WASM magic prefix but corrupted body
     if data.len() >= 8 {
