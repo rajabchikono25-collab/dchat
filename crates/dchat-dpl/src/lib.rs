@@ -78,6 +78,10 @@ pub mod pda;
 pub mod serde;
 pub mod syscall;
 
+// Build-time helpers (only available with "build" feature and std)
+#[cfg(all(feature = "build", feature = "std"))]
+pub mod build;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOT-LEVEL RE-EXPORTS (for macro-generated code)
 // ═══════════════════════════════════════════════════════════════════════════════

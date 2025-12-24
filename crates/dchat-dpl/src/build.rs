@@ -29,7 +29,6 @@
 
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
 /// Build configuration for manifest generation
@@ -374,7 +373,7 @@ fn read_leb128(data: &[u8]) -> Result<(usize, usize), &'static str> {
 }
 
 /// CLI tool for manifest verification (can be run as standalone binary)
-#[cfg(feature = "cli")]
+#[allow(dead_code)]
 pub fn cli_main() {
     use std::process;
 

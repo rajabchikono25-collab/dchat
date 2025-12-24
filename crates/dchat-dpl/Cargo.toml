@@ -13,10 +13,14 @@ dchat-dpl-macros = { path = "../dchat-dpl-macros" }
 # Serialization
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 # Hashing (for PDAs and events)
 blake3 = { version = "1" }
 sha2 = { version = "0.10" }
+
+# Encoding (for manifest verification)
+hex = { version = "0.4", optional = true }
 
 # Error handling
 thiserror = { version = "2" }
@@ -25,7 +29,8 @@ thiserror = { version = "2" }
 default = ["std"]
 std = ["serde"]
 no_std = []
-idl = []              # Enable IDL generation
-serde = ["dep:serde"] # Enable serde serialization for IDL types
+idl = []                                      # Enable IDL generation
+serde = ["dep:serde"]                         # Enable serde serialization for IDL types
+build = ["std", "serde", "serde_json", "hex"] # Enable build-time helpers
 
 [dev-dependencies]
