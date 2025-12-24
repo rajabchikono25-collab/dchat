@@ -11364,7 +11364,12 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             Ok(())
         }
 
-        ProgramCommand::Validate { wasm, verbose } => {
+        ProgramCommand::Validate {
+            wasm,
+            verbose,
+            require_manifest,
+            reject_zero_hash,
+        } => {
             println!("\n🔍 VALIDATE WASM BYTECODE");
             println!("══════════════════════════════════════════════════════════════════");
 
@@ -11384,15 +11389,43 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
                 wasm_bytes.len(),
                 wasm_bytes.len() as f64 / 1024.0
             );
+            if require_manifest {
+                println!("Mode: Strict (manifest required)");
+            }
+            if reject_zero_hash {
+                println!("Mode: Strict (zero schema hash rejected)");
+            }
             println!();
 
-            let validator = dchat_programs::validation::BytecodeValidator::new();
+            // Configure validator with strict mode options
+            let mut config = dchat_programs::validation::ValidationConfig::default();
+            config.require_manifest = require_manifest;
+            config.reject_zero_schema_hash = reject_zero_hash;
+            let validator = dchat_programs::validation::BytecodeValidator::with_config(config);
 
             match validator.validate(&wasm_bytes) {
                 Ok(validated) => {
                     println!("✅ VALIDATION PASSED");
                     println!();
                     println!("Code Hash:   {}", hex::encode(&validated.code_hash));
+
+                    // Show manifest if present
+                    if let Some(ref manifest) = validated.manifest {
+                        println!();
+                        println!("📋 DPL Manifest:");
+                        println!(
+                            "   SDK Version: {}.{}.{}",
+                            manifest.sdk_major, manifest.sdk_minor, manifest.sdk_patch
+                        );
+                        println!("   Edition:     {}", manifest.edition);
+                        println!("   ABI Version: {}", manifest.abi_version);
+                        println!("   Import:      {:?}", manifest.import_profile);
+                        println!("   Schema Hash: {}", hex::encode(&manifest.schema_hash));
+                        println!("   Capabilities: {:?}", manifest.capabilities);
+                    } else {
+                        println!();
+                        println!("⚠️  No DPL manifest found (legacy program)");
+                    }
 
                     if verbose {
                         println!();
@@ -11425,6 +11458,225 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
                     println!("💡 Fix the issues above before deploying.");
                     return Err(Error::validation(format!("Validation failed: {:?}", e)));
                 }
+            }
+
+            Ok(())
+        }
+
+        ProgramCommand::Manifest {
+            program,
+            rpc_url,
+            format,
+            raw,
+        } => {
+            println!("\n📋 PROGRAM MANIFEST INSPECTOR");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            let manifest = if program.ends_with(".wasm") || std::path::Path::new(&program).exists()
+            {
+                // Load from file
+                let path = std::path::Path::new(&program);
+                if !path.exists() {
+                    return Err(Error::validation(format!(
+                        "WASM file not found: {}",
+                        program
+                    )));
+                }
+
+                let wasm_bytes = std::fs::read(path)
+                    .map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
+
+                println!("Source: {:?}", path);
+
+                // Extract manifest from WASM
+                match dchat_programs::manifest::extract_manifest(&wasm_bytes) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => {
+                        println!();
+                        println!("❌ No DPL manifest found in this WASM file");
+                        println!("   This appears to be a legacy program without manifest.");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        println!();
+                        println!("❌ Failed to parse manifest: {:?}", e);
+                        return Err(Error::validation(format!("Manifest parse error: {:?}", e)));
+                    }
+                }
+            } else {
+                // Query from deployed program
+                println!("Source: Program ID {}", program);
+                println!("RPC:    {}", rpc_url);
+                println!();
+                println!("⚠️  On-chain manifest query not yet implemented.");
+                println!("   Use --program with a local WASM file path for now.");
+                return Ok(());
+            };
+
+            println!();
+
+            if raw {
+                let manifest_bytes = manifest.to_bytes();
+                println!("Raw Manifest ({} bytes):", manifest_bytes.len());
+                println!("{}", hex::encode(&manifest_bytes));
+                return Ok(());
+            }
+
+            match format.as_str() {
+                "json" => {
+                    let json = serde_json::json!({
+                        "sdk_version": format!("{}.{}.{}", manifest.sdk_major, manifest.sdk_minor, manifest.sdk_patch),
+                        "edition": manifest.edition,
+                        "abi_version": manifest.abi_version,
+                        "import_profile": format!("{:?}", manifest.import_profile),
+                        "schema_hash": hex::encode(&manifest.schema_hash),
+                        "capabilities": format!("{:?}", manifest.capabilities),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                }
+                "yaml" => {
+                    println!(
+                        "sdk_version: {}.{}.{}",
+                        manifest.sdk_major, manifest.sdk_minor, manifest.sdk_patch
+                    );
+                    println!("edition: {}", manifest.edition);
+                    println!("abi_version: {}", manifest.abi_version);
+                    println!("import_profile: {:?}", manifest.import_profile);
+                    println!("schema_hash: {}", hex::encode(&manifest.schema_hash));
+                    println!("capabilities: {:?}", manifest.capabilities);
+                }
+                _ => {
+                    // Default text format
+                    println!(
+                        "SDK Version:    {}.{}.{}",
+                        manifest.sdk_major, manifest.sdk_minor, manifest.sdk_patch
+                    );
+                    println!("Edition:        {}", manifest.edition);
+                    println!("ABI Version:    {}", manifest.abi_version);
+                    println!("Import Profile: {:?}", manifest.import_profile);
+                    println!("Schema Hash:    {}", hex::encode(&manifest.schema_hash));
+                    println!("Capabilities:   {:?}", manifest.capabilities);
+
+                    // Check for placeholder hash
+                    if manifest.schema_hash == [0u8; 32] {
+                        println!();
+                        println!("⚠️  Schema hash is zero (placeholder)");
+                        println!("   This program was built without IDL integration.");
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        ProgramCommand::VerifyManifest {
+            program,
+            expected_hash,
+            idl,
+            rpc_url,
+        } => {
+            println!("\n🔐 MANIFEST VERIFICATION");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            // Load program manifest
+            let manifest = if program.ends_with(".wasm") || std::path::Path::new(&program).exists()
+            {
+                let path = std::path::Path::new(&program);
+                if !path.exists() {
+                    return Err(Error::validation(format!(
+                        "WASM file not found: {}",
+                        program
+                    )));
+                }
+
+                let wasm_bytes = std::fs::read(path)
+                    .map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
+
+                println!("Program:  {:?}", path);
+
+                match dchat_programs::manifest::extract_manifest(&wasm_bytes) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => {
+                        println!();
+                        println!("❌ VERIFICATION FAILED: No manifest in program");
+                        return Err(Error::validation("No manifest found"));
+                    }
+                    Err(e) => {
+                        println!();
+                        println!("❌ VERIFICATION FAILED: Manifest parse error: {:?}", e);
+                        return Err(Error::validation(format!("Manifest error: {:?}", e)));
+                    }
+                }
+            } else {
+                println!("Program: {}", program);
+                println!("RPC:     {}", rpc_url);
+                println!();
+                println!("⚠️  On-chain manifest query not yet implemented.");
+                return Ok(());
+            };
+
+            // Determine expected hash
+            let expected = if let Some(hash_str) = expected_hash {
+                let bytes = hex::decode(&hash_str)
+                    .map_err(|e| Error::validation(format!("Invalid hex hash: {}", e)))?;
+                if bytes.len() != 32 {
+                    return Err(Error::validation(
+                        "Expected hash must be 32 bytes (64 hex chars)",
+                    ));
+                }
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                println!("Expected: {} (from --expected-hash)", hash_str);
+                arr
+            } else if let Some(idl_path) = idl {
+                if !idl_path.exists() {
+                    return Err(Error::validation(format!(
+                        "IDL file not found: {:?}",
+                        idl_path
+                    )));
+                }
+
+                // Detect format by extension: .json for JSON, .idl/.bin for Borsh
+                let ext = idl_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                let parsed_idl = if ext == "json" {
+                    // Parse JSON IDL format
+                    let idl_json = std::fs::read_to_string(&idl_path)
+                        .map_err(|e| Error::storage(format!("Failed to read IDL: {}", e)))?;
+                    serde_json::from_str::<dchat_programs::idl::Idl>(&idl_json)
+                        .map_err(|e| Error::validation(format!("Invalid IDL JSON: {}", e)))?
+                } else {
+                    // Parse Borsh (binary) IDL format
+                    let idl_bytes = std::fs::read(&idl_path)
+                        .map_err(|e| Error::storage(format!("Failed to read IDL: {}", e)))?;
+                    dchat_programs::borsh::BorshDeserialize::try_from_slice(&idl_bytes)
+                        .map_err(|e| Error::validation(format!("Invalid IDL (Borsh): {}", e)))?
+                };
+
+                let computed = parsed_idl.schema_hash();
+                println!("Expected: {} (from {:?})", hex::encode(&computed), idl_path);
+                computed
+            } else {
+                return Err(Error::validation(
+                    "Must specify either --expected-hash or --idl for verification",
+                ));
+            };
+
+            let actual = manifest.schema_hash;
+            println!("Actual:   {}", hex::encode(&actual));
+            println!();
+
+            if actual == expected {
+                println!("✅ VERIFICATION PASSED");
+                println!("   Schema hash matches expected value.");
+            } else {
+                println!("❌ VERIFICATION FAILED");
+                println!("   Schema hash does not match!");
+                println!();
+                println!("   This could mean:");
+                println!("   - The program was built with a different IDL version");
+                println!("   - The program binary was modified after build");
+                println!("   - The expected hash is incorrect");
+                return Err(Error::validation("Schema hash mismatch"));
             }
 
             Ok(())

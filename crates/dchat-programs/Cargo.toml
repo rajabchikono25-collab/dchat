@@ -67,6 +67,9 @@ once_cell = { version = "1" }
 # Alternative considered: wasmtime (faster but JIT introduces potential non-determinism)
 wasmi = { version = "=0.40.0", optional = true }
 
+# IDL for schema hash computation (re-exported for CLI tooling)
+dchat-dpl = { path = "../dchat-dpl", features = ["std"] }
+
 [dev-dependencies]
 tokio = { version = "1.44", features = ["full", "test-util"] }
 tempfile = { version = "3.14" }

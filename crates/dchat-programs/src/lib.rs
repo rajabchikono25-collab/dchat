@@ -67,6 +67,12 @@ pub mod validation;
 pub mod vm;
 pub mod wasi_shim;
 
+// Re-export IDL from dchat-dpl for CLI and tooling access
+pub use dchat_dpl::idl;
+
+// Re-export borsh for IDL deserialization in CLI tools (via dchat-dpl)
+pub use dchat_dpl::borsh;
+
 // Re-export primary types for ergonomic API
 // Note: Motes is the canonical currency unit (1 DCHAT = 100,000,000 motes)
 #[allow(deprecated)]

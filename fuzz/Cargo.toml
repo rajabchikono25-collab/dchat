@@ -13,6 +13,8 @@ dchat-crypto = { path = "../crates/dchat-crypto" }
 dchat-messaging = { path = "../crates/dchat-messaging" }
 dchat-network = { path = "../crates/dchat-network" }
 dchat-identity = { path = "../crates/dchat-identity" }
+dchat-programs = { path = "../crates/dchat-programs", features = ["full"] }
+dchat-dpl = { path = "../crates/dchat-dpl", features = ["std"] }
 
 # Dependencies for fuzz targets
 blake3 = "1.5"
@@ -57,5 +59,23 @@ doc = false
 [[bin]]
 name = "identity_derivation"
 path = "fuzz_targets/identity_derivation.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest_parsing"
+path = "fuzz_targets/manifest_parsing.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "idl_parsing"
+path = "fuzz_targets/idl_parsing.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "wasm_validation"
+path = "fuzz_targets/wasm_validation.rs"
 test = false
 doc = false

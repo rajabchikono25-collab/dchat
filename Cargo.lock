@@ -2584,6 +2584,7 @@ dependencies = [
  "blake3",
  "borsh",
  "dchat-dpl-macros",
+ "serde",
  "sha2",
  "thiserror 2.0.17",
 ]

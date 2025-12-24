@@ -36,6 +36,9 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
@@ -47,6 +50,7 @@ use alloc::{string::String, vec::Vec};
 ///
 /// This structure is serialized canonically to compute the schema hash.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Idl {
     /// IDL format version (for forward compatibility)
     pub version: IdlVersion,
@@ -64,11 +68,16 @@ pub struct Idl {
     pub errors: Vec<IdlError>,
     /// Program metadata (not included in hash computation)
     #[borsh(skip)]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub metadata: Option<IdlMetadata>,
 }
 
 /// IDL format version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlVersion {
     pub major: u8,
     pub minor: u8,
@@ -91,6 +100,7 @@ impl Default for IdlVersion {
 
 /// An instruction defined in the program
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlInstruction {
     /// Instruction name (function name)
     pub name: String,
@@ -106,6 +116,7 @@ pub struct IdlInstruction {
 
 /// Account metadata for an instruction
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlAccountMeta {
     /// Account name
     pub name: String,
@@ -123,6 +134,7 @@ pub struct IdlAccountMeta {
 
 /// PDA derivation information
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlPda {
     /// Seeds used to derive the PDA
     pub seeds: Vec<IdlSeed>,
@@ -132,6 +144,7 @@ pub struct IdlPda {
 
 /// A seed component for PDA derivation
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum IdlSeed {
     /// Literal bytes
     Const(Vec<u8>),
@@ -147,6 +160,7 @@ pub enum IdlSeed {
 
 /// A field in a struct or instruction args
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlField {
     /// Field name
     pub name: String,
@@ -156,6 +170,7 @@ pub struct IdlField {
 
 /// Type definitions for custom structs/enums
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlTypeDef {
     /// Type name
     pub name: String,
@@ -165,6 +180,7 @@ pub struct IdlTypeDef {
 
 /// Kind of type definition
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum IdlTypeKind {
     /// Struct with named fields
     Struct { fields: Vec<IdlField> },
@@ -174,6 +190,7 @@ pub enum IdlTypeKind {
 
 /// An enum variant
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlEnumVariant {
     /// Variant name
     pub name: String,
@@ -183,6 +200,7 @@ pub struct IdlEnumVariant {
 
 /// Account type definition (for #[account] structs)
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlAccountDef {
     /// Account type name
     pub name: String,
@@ -194,6 +212,7 @@ pub struct IdlAccountDef {
 
 /// Primitive and composite types
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum IdlType {
     // Primitives
     Bool,
@@ -233,6 +252,7 @@ pub enum IdlType {
 
 /// An event emitted by the program
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlEvent {
     /// Event name
     pub name: String,
@@ -248,6 +268,7 @@ pub struct IdlEvent {
 
 /// A custom error code
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlError {
     /// Error code (numeric)
     pub code: u32,
@@ -255,6 +276,10 @@ pub struct IdlError {
     pub name: String,
     /// Error message (not included in hash)
     #[borsh(skip)]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub msg: Option<String>,
 }
 
@@ -264,6 +289,7 @@ pub struct IdlError {
 
 /// Program metadata (excluded from schema hash)
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlMetadata {
     /// Program description
     pub description: Option<String>,
@@ -277,6 +303,7 @@ pub struct IdlMetadata {
 
 /// Build information for reproducibility
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IdlBuildInfo {
     /// Rust compiler version
     pub rustc_version: String,
