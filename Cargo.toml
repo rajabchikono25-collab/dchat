@@ -63,7 +63,9 @@ dchat-messaging = { path = "crates/dchat-messaging" }
 dchat-storage = { path = "crates/dchat-storage" }
 dchat-chain = { path = "crates/dchat-chain" }
 dchat-validator = { path = "crates/dchat-validator" }
-dchat-blockchain = { path = "crates/dchat-blockchain" }
+dchat-blockchain = { path = "crates/dchat-blockchain", features = [
+  "hardened-consensus-integration",
+] }
 dchat-privacy = { path = "crates/dchat-privacy" }
 dchat-governance = { path = "crates/dchat-governance" }
 dchat-distribution = { path = "crates/dchat-distribution" }
@@ -104,6 +106,7 @@ libp2p = { version = "0.54", features = [
 bincode = "1.3"
 prometheus = "0.13"
 once_cell = "1.19"
+parking_lot = "0.12"
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 hmac = "0.12"

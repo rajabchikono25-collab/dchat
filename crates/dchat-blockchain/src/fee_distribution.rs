@@ -1003,12 +1003,6 @@ impl FeeDistributionManager {
         self.unified_pool_state.read().unwrap().clone()
     }
 
-    /// Get pool balance by type
-    pub fn get_pool_balance_by_type(&self, pool_type: PoolType) -> u64 {
-        let state = self.unified_pool_state.read().unwrap();
-        state.get_pool(pool_type).map(|p| p.balance).unwrap_or(0)
-    }
-
     /// Get pool epoch accrual by type
     pub fn get_pool_epoch_accrual(&self, pool_type: PoolType) -> u64 {
         let state = self.unified_pool_state.read().unwrap();
@@ -1256,6 +1250,16 @@ impl FeeDistributionManager {
     /// Get pool balance (legacy API)
     pub fn get_pool_balance(&self, pool: &UserId) -> u64 {
         *self.pool_balances.read().unwrap().get(pool).unwrap_or(&0)
+    }
+
+    /// Get pool balance by type
+    pub fn get_pool_balance_by_type(&self, pool_type: PoolType) -> u64 {
+        self.unified_pool_state
+            .read()
+            .unwrap()
+            .get_pool(pool_type)
+            .map(|p| p.available_balance())
+            .unwrap_or(0)
     }
 
     /// Withdraw from a pool for distribution (uses unified state)

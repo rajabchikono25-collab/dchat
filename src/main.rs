@@ -66,6 +66,12 @@ use dchat::blockchain::{
     PaymentProcessor, PaymentProcessorConfig,
 };
 use dchat::prelude::*;
+use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionManager, PoolType};
+use dchat_blockchain::hardened_consensus::batch_verification::VerificationPipeline;
+use dchat_blockchain::hardened_consensus::epoch_snapshot::SnapshotStore;
+use dchat_blockchain::hardened_consensus::integration::HardenedPoRW;
+use dchat_blockchain::tokenomics::{MintReason, TokenSupplyConfig, TokenomicsManager};
+use parking_lot::RwLock as ParkingRwLock;
 
 use clap::{Parser, Subcommand};
 use dchat_accessibility::Color;
@@ -5567,9 +5573,32 @@ async fn run_validator_node(
         let validator_key_arc_clone = Arc::clone(&validator_key_arc);
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone = state_validator.clone();
+        let staking_manager_consensus = staking_manager.clone();
 
         tokio::spawn(async move {
             info!("Starting consensus engine with BFT verification and FULL state validation...");
+
+            // Initialize Consensus and Reward Managers
+            let snapshot_store = Arc::new(SnapshotStore::new(10));
+            let batch_verifier = Arc::new(ParkingRwLock::new(VerificationPipeline::new(100, 1000)));
+            let hardened_consensus =
+                HardenedPoRW::new(snapshot_store.clone(), batch_verifier.clone());
+
+            let currency_chain_config = CurrencyChainConfig {
+                rpc_url: std::env::var("CURRENCY_CHAIN_RPC")
+                    .unwrap_or_else(|_| "http://localhost:8545".to_string()),
+                ..Default::default()
+            };
+            let currency_client = Arc::new(
+                CurrencyChainClient::new(currency_chain_config).unwrap_or_else(|e| {
+                    panic!("Failed to create currency client: {}", e);
+                }),
+            );
+
+            let fee_manager = Arc::new(std::sync::RwLock::new(FeeDistributionManager::new(
+                FeeDistributionConfig::default(),
+            )));
+            let tokenomics_manager = Arc::new(TokenomicsManager::new(TokenSupplyConfig::default()));
 
             // PRODUCTION IMPLEMENTATION: Full state validation with Merkle proofs
             // This implementation now uses the complete dchat_blockchain::Block structure
@@ -5797,6 +5826,27 @@ async fn run_validator_node(
                             let mut state_root_bytes = [0u8; 32];
                             state_root_bytes.copy_from_slice(&state_root[..32.min(state_root.len())]);
                             block.state_root = BlockHash::from(state_root_bytes);
+
+                            // 1. Notify Consensus Integration
+                            let block_hash = block.calculate_hash();
+                            match hardened_consensus.process_block(block_height, block_hash) {
+                                Ok(Some(new_epoch)) => {
+                                    info!("🔄 Epoch {} complete. Triggering reward distribution...", new_epoch - 1);
+
+                                    // 2. Trigger Rewards
+                                    if let Err(e) = perform_epoch_rewards(
+                                        new_epoch,
+                                        &staking_manager_consensus,
+                                        &currency_client,
+                                        &fee_manager,
+                                        &tokenomics_manager
+                                    ).await {
+                                        error!("Failed to perform epoch rewards: {}", e);
+                                    }
+                                }
+                                Ok(None) => {} // Normal block
+                                Err(e) => error!("Consensus integration failed: {:?}", e),
+                            }
 
                             let _ = block.add_subblock(subblock);
 
@@ -12030,4 +12080,175 @@ async fn run_deploy_command(action: DeployCommand) -> Result<()> {
             Ok(())
         }
     }
+}
+
+async fn perform_epoch_rewards(
+    epoch: u64,
+    staking_manager: &Arc<dchat_blockchain::staking::StakingManager>,
+    currency_client: &Arc<CurrencyChainClient>,
+    fee_manager: &Arc<std::sync::RwLock<FeeDistributionManager>>,
+    tokenomics_manager: &Arc<TokenomicsManager>,
+) -> Result<()> {
+    use dchat_blockchain::fee_distribution::{RELAY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS};
+    use dchat_blockchain::hardened_consensus::threshold_normalization::EPOCH_LENGTH_BLOCKS;
+
+    info!("💰 Performing reward distribution for epoch {}", epoch);
+
+    // 1. Get Active Validators
+    let validators = staking_manager.get_active_validators();
+    if validators.is_empty() {
+        warn!("No active validators to reward");
+        return Ok(());
+    }
+
+    // Calculate total validator stake weight
+    let total_validator_stake: u64 = validators.iter().map(|v| v.staked_amount).sum();
+    if total_validator_stake == 0 {
+        warn!("Total validator stake is zero, skipping inflation distribution");
+        return Ok(());
+    }
+
+    // 2. Calculate Epoch Inflation using TokenomicsManager
+    // Inflation = (circulating_supply * annual_rate_bps / 10000) / epochs_per_year
+    let stats = tokenomics_manager.get_statistics();
+    let circulating_supply = stats.circulating_supply;
+    let annual_rate_bps = stats.inflation_rate_bps as u64;
+
+    // Calculate epochs per year: (seconds_per_year / seconds_per_block) / blocks_per_epoch
+    // Assuming 6-second blocks (from validator loop interval)
+    const SECONDS_PER_YEAR: u64 = 365 * 24 * 3600;
+    const SECONDS_PER_BLOCK: u64 = 6;
+    let blocks_per_year = SECONDS_PER_YEAR / SECONDS_PER_BLOCK;
+    let epochs_per_year = blocks_per_year / EPOCH_LENGTH_BLOCKS;
+
+    // Calculate epoch inflation in motes
+    // epoch_inflation = (circulating_supply * annual_rate_bps) / (10000 * epochs_per_year)
+    let epoch_inflation = if epochs_per_year > 0 {
+        (circulating_supply as u128 * annual_rate_bps as u128 / (10000 * epochs_per_year) as u128)
+            as u64
+    } else {
+        0
+    };
+
+    // Split inflation: 70% validators, 20% relays, 10% treasury (matching fee split)
+    let validator_inflation =
+        (epoch_inflation as u128 * VALIDATOR_FEE_SHARE_BPS as u128 / 10000) as u64;
+    let relay_inflation = (epoch_inflation as u128 * RELAY_FEE_SHARE_BPS as u128 / 10000) as u64;
+    let treasury_inflation = epoch_inflation
+        .saturating_sub(validator_inflation)
+        .saturating_sub(relay_inflation);
+
+    info!(
+        "📊 Epoch {} inflation: total={} motes, validators={}, relays={}, treasury={}",
+        epoch, epoch_inflation, validator_inflation, relay_inflation, treasury_inflation
+    );
+
+    // 3. Distribute Validator Inflation (Minting)
+    let mut total_minted: u64 = 0;
+    for validator in &validators {
+        let share = (validator_inflation as u128 * validator.staked_amount as u128
+            / total_validator_stake as u128) as u64;
+        if share > 0 {
+            match currency_client.mint_rewards(
+                &validator.validator_id,
+                share,
+                MintReason::Inflation,
+            ) {
+                Ok(_) => {
+                    total_minted += share;
+                    debug!(
+                        "Minted {} inflation rewards for validator {}",
+                        share, validator.validator_id
+                    );
+                }
+                Err(e) => error!(
+                    "Failed to mint inflation for validator {}: {}",
+                    validator.validator_id, e
+                ),
+            }
+        }
+    }
+
+    // Record mints in tokenomics for accounting
+    if total_minted > 0 {
+        if let Err(e) = tokenomics_manager.record_mint(total_minted, MintReason::Inflation) {
+            warn!("Failed to record validator inflation in tokenomics: {}", e);
+        }
+    }
+
+    // 4. Distribute Validator Fee Pool
+    let validator_pool_balance = {
+        let manager = fee_manager.read().unwrap();
+        manager.get_pool_balance_by_type(PoolType::ValidatorRewards)
+    };
+
+    if validator_pool_balance > 0 {
+        let recipients: Vec<(UserId, u64)> = validators
+            .iter()
+            .map(|v| (v.validator_id, v.staked_amount))
+            .collect();
+
+        let manager = fee_manager.read().unwrap();
+        match manager.distribute_rewards(
+            PoolType::ValidatorRewards,
+            &recipients,
+            validator_pool_balance,
+        ) {
+            Ok(distributions) => {
+                info!(
+                    "💸 Distributed {} validator fees to {} validators",
+                    validator_pool_balance,
+                    distributions.len()
+                );
+                // Complete the distribution (mark as withdrawn)
+                drop(manager);
+                if let Err(e) = fee_manager
+                    .read()
+                    .unwrap()
+                    .complete_distribution(PoolType::ValidatorRewards, validator_pool_balance)
+                {
+                    warn!("Failed to complete validator fee distribution: {}", e);
+                }
+            }
+            Err(e) => error!("Failed to distribute validator fees: {}", e),
+        }
+    }
+
+    // 5. Distribute Relay Fee Pool (if relays are registered)
+    let relay_pool_balance = {
+        let manager = fee_manager.read().unwrap();
+        manager.get_pool_balance_by_type(PoolType::RelayRewards)
+    };
+
+    if relay_pool_balance > 0 {
+        // For now, relay rewards go to validators proportionally
+        // TODO: When relay registry is implemented, distribute to actual relay operators
+        let recipients: Vec<(UserId, u64)> = validators
+            .iter()
+            .map(|v| (v.validator_id, v.staked_amount))
+            .collect();
+
+        let manager = fee_manager.read().unwrap();
+        match manager.distribute_rewards(PoolType::RelayRewards, &recipients, relay_pool_balance) {
+            Ok(distributions) => {
+                info!(
+                    "💸 Distributed {} relay fees to {} recipients",
+                    relay_pool_balance,
+                    distributions.len()
+                );
+                drop(manager);
+                if let Err(e) = fee_manager
+                    .read()
+                    .unwrap()
+                    .complete_distribution(PoolType::RelayRewards, relay_pool_balance)
+                {
+                    warn!("Failed to complete relay fee distribution: {}", e);
+                }
+            }
+            Err(e) => error!("Failed to distribute relay fees: {}", e),
+        }
+    }
+
+    info!("✅ Epoch {} reward distribution complete", epoch);
+    Ok(())
 }

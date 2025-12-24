@@ -301,12 +301,15 @@ impl HardenedPoRW {
         &self,
         block_height: u64,
         block_hash: Hash,
-    ) -> Result<(), IntegrationError> {
+    ) -> Result<Option<u64>, IntegrationError> {
         self.current_block.store(block_height, Ordering::Release);
+
+        let mut epoch_transition = None;
 
         // Check for epoch transition
         if let Some(new_epoch) = self.snapshot_store.process_block(block_height) {
             tracing::info!("Epoch transition to {}", new_epoch);
+            epoch_transition = Some(new_epoch);
         }
 
         // Initialize vote aggregation for this block
@@ -327,7 +330,7 @@ impl HardenedPoRW {
             .insert(block_hash.as_bytes().to_vec(), votes);
         self.finality_tracker.track_block(&block_hash);
 
-        Ok(())
+        Ok(epoch_transition)
     }
 
     /// Derive VRF seed for committee selection
@@ -630,6 +633,7 @@ impl HardenedPoRW {
                     block_id: commitment.root, // Use root as ID
                     epoch,
                     timestamp,
+                    committer_id: None,
                     signature: commitment.signature.to_bytes().to_vec(),
                 },
                 sample_indices: indices,
