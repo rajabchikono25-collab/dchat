@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ironclad Configuration for DPL Counter Contract
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# This configuration file defines how the contract is built, tested, and deployed
+# using the Ironclad CLI framework.
+
+[project]
+name = "dpl-counter"
+version = "0.1.0"
+description = "A simple counter contract demonstrating DPL basics with wasmi wasip1 runtime"
+authors = ["dchat contributors"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Target wasm32-wasip1 for compatibility with the wasmi runtime's deterministic
+# WASI shim. This ensures consensus-safe execution while allowing basic I/O.
+
+[build]
+# Target the wasip1 standard for wasmi runtime compatibility
+target = "wasm32-wasip1"
+
+# Generate IDL automatically on build
+generate_idl = true
+
+# Verify schema hash on build (CI/CD)
+verify_schema = false
+
+# Enable reproducible builds for production deployments
+reproducible = true
+
+# Rust compiler flags for optimization
+rustflags = [
+  "-C",
+  "link-arg=-zstack-size=16384", # Reduce stack size
+  "-C",
+  "target-feature=+bulk-memory", # Enable bulk memory ops
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Network Configurations
+# ─────────────────────────────────────────────────────────────────────────────
+
+[networks.localnet]
+url = "http://127.0.0.1:8899"
+confirm = true
+
+[networks.devnet]
+url = "https://devnet.dchat.network"
+confirm = true
+
+[networks.testnet]
+url = "https://testnet.dchat.network"
+confirm = true
+
+[networks.mainnet]
+url = "https://mainnet.dchat.network"
+confirm = true
+# keypair = "~/.config/dchat/mainnet-keypair.json"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+[test]
+timeout = 300 # 5 minutes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IDL Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+[idl]
+output_path = "idl/dpl_counter.json"

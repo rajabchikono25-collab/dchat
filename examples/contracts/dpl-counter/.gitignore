@@ -1,0 +1,10 @@
+/target
+Cargo.lock
+*.swp
+*.swo
+.DS_Store
+.env
+.env.local
+*.pem
+# Keep IDL JSON files
+!idl/*.json

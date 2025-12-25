@@ -2,19 +2,45 @@
 name = "dpl-counter"
 version = "0.1.0"
 edition = "2021"
-description = "DPL Counter Example Contract - demonstrates DPL macro-based authoring"
-license = "MIT OR Apache-2.0"
+description = "A simple counter contract demonstrating DPL basics with wasmi wasip1 runtime"
+authors = ["dchat contributors"]
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-dchat-dpl = { path = "../../../crates/dchat-dpl" }
-borsh = "1.6"
+# DPL SDK for contract development
+dchat-dpl = { path = "../../../crates/dchat-dpl", features = ["std"] }
+
+# Borsh for deterministic serialization
+borsh = "1.5"
+
+[build-dependencies]
+dchat-dpl = { path = "../../../crates/dchat-dpl", features = ["build", "std"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+wasmi = "0.40"
+
+[features]
+default = []
+# Enable for release verification
+release-verify = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build Configuration for wasmi/wasip1 runtime
+# ─────────────────────────────────────────────────────────────────────────────
+# The contract targets wasm32-wasip1 for compatibility with the wasmi runtime.
+# This enables a deterministic subset of WASI for basic I/O while ensuring
+# consensus-safe execution.
 
 [profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+opt-level = "z"   # Optimize for size (important for on-chain deployment)
+lto = true        # Link-time optimization for smaller binaries
+codegen-units = 1 # Single codegen unit for consistent builds
+panic = "abort"   # No unwinding (reduces binary size)
+strip = true      # Strip symbols for minimal size
+
+[profile.dev]
+opt-level = 1 # Some optimization for faster dev testing
