@@ -568,3 +568,330 @@ fn test_empty_block_accounting() {
     assert_eq!(accounting.pre_block_supply, initial_supply);
     assert_eq!(accounting.post_block_supply, initial_supply);
 }
+
+// =============================================================================
+// FEE ORCHESTRATOR INTEGRATION TESTS
+// =============================================================================
+
+use dchat_blockchain::currency_chain::{CurrencyChainClient, CurrencyChainConfig};
+use dchat_blockchain::fee_distribution::PoolType;
+use dchat_blockchain::fee_orchestrator::{FeeConfig, FeeOrchestrator};
+use dchat_chain::TransactionType;
+use std::sync::Arc;
+
+fn create_test_fee_orchestrator() -> (FeeOrchestrator, UserId) {
+    let currency_config = CurrencyChainConfig::default();
+    let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+
+    let fee_distribution = Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+    fee_distribution.start_block(1, 1_000_000_000);
+
+    let fee_config = FeeConfig::default();
+
+    // Create a test user with balance
+    let payer = UserId(Uuid::new_v4());
+    currency_chain
+        .create_wallet(&payer, 100_000_000_000) // 100 DCHAT
+        .unwrap();
+
+    let orchestrator = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+
+    (orchestrator, payer)
+}
+
+/// Test that payer balance decreases by exact gas fee amount
+#[test]
+fn test_gas_fee_payer_balance_decrease() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+    let initial_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    let operation_id = [0xAAu8; 32];
+    let receipt = orchestrator
+        .charge_gas_fee(&payer, TransactionType::RegisterUser, 100, operation_id)
+        .unwrap();
+
+    let final_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    // Exact debit matches gross amount
+    assert_eq!(initial_balance - final_balance, receipt.gross_amount);
+}
+
+/// Test that pool sinks receive correct amounts matching receipt
+#[test]
+fn test_gas_fee_pool_credits_match_receipt() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+
+    // Get initial pool balances
+    let init_validator = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::ValidatorRewards);
+    let init_relay = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::RelayRewards);
+    let init_treasury = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::Treasury);
+    let init_insurance = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::InsuranceFund);
+
+    let operation_id = [0xBBu8; 32];
+    let receipt = orchestrator
+        .charge_gas_fee(&payer, TransactionType::CreateChannel, 500, operation_id)
+        .unwrap();
+
+    // Verify pool increases match receipt
+    let final_validator = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::ValidatorRewards);
+    let final_relay = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::RelayRewards);
+    let final_treasury = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::Treasury);
+    let final_insurance = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::InsuranceFund);
+
+    assert_eq!(
+        final_validator - init_validator,
+        receipt.sink_amounts.validator_pool
+    );
+    assert_eq!(final_relay - init_relay, receipt.sink_amounts.relay_pool);
+    assert_eq!(
+        final_treasury - init_treasury,
+        receipt.sink_amounts.treasury
+    );
+    assert_eq!(
+        final_insurance - init_insurance,
+        receipt.sink_amounts.insurance_fund
+    );
+}
+
+/// Test that FeeDistributionManager totals match wallet movements
+#[test]
+fn test_fee_distribution_manager_totals_match_wallets() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+
+    // Charge multiple fees
+    for i in 0..5 {
+        let mut op_id = [0u8; 32];
+        op_id[0] = i;
+        orchestrator
+            .charge_gas_fee(&payer, TransactionType::SendDirectMessage, 200, op_id)
+            .unwrap();
+    }
+
+    // Get FeeDistributionManager totals
+    let fee_dist = orchestrator.fee_distribution().clone();
+    let validator_balance = fee_dist.get_pool_balance(&fee_dist.sinks().validator_pool);
+    let relay_balance = fee_dist.get_pool_balance(&fee_dist.sinks().relay_pool);
+    let treasury_balance = fee_dist.get_pool_balance(&fee_dist.sinks().treasury);
+
+    // Get actual wallet balances
+    let wallet_validator = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::ValidatorRewards);
+    let wallet_relay = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::RelayRewards);
+    let wallet_treasury = orchestrator
+        .currency_chain()
+        .get_pool_balance(PoolType::Treasury);
+
+    // Wallet balances should match FeeDistributionManager accounting
+    assert_eq!(
+        wallet_validator, validator_balance,
+        "Validator pool wallet != accounting"
+    );
+    assert_eq!(
+        wallet_relay, relay_balance,
+        "Relay pool wallet != accounting"
+    );
+    assert_eq!(
+        wallet_treasury, treasury_balance,
+        "Treasury wallet != accounting"
+    );
+}
+
+/// Test idempotency - same operation_id doesn't double-charge
+#[test]
+fn test_idempotency_no_double_charge() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+    let initial_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    let operation_id = [0xCCu8; 32];
+
+    // First charge
+    let receipt1 = orchestrator
+        .charge_gas_fee(&payer, TransactionType::JoinChannel, 50, operation_id)
+        .unwrap();
+    assert!(!receipt1.was_replay);
+
+    let balance_after_first = orchestrator.currency_chain().get_balance(&payer).unwrap();
+    let charged_amount = initial_balance - balance_after_first;
+
+    // Second charge with same operation_id
+    let receipt2 = orchestrator
+        .charge_gas_fee(&payer, TransactionType::JoinChannel, 50, operation_id)
+        .unwrap();
+    assert!(receipt2.was_replay);
+    assert_eq!(receipt2.fee_tx_id, receipt1.fee_tx_id);
+
+    // Balance unchanged
+    let balance_after_second = orchestrator.currency_chain().get_balance(&payer).unwrap();
+    assert_eq!(balance_after_first, balance_after_second);
+
+    // Total charge was exactly once
+    assert_eq!(charged_amount, receipt1.gross_amount);
+}
+
+/// Test refund results in net-zero charge
+#[test]
+fn test_refund_net_zero_charge() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+    let initial_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    let operation_id = [0xDDu8; 32];
+
+    // Charge fee
+    let receipt = orchestrator
+        .charge_gas_fee(&payer, TransactionType::UpdateProfile, 100, operation_id)
+        .unwrap();
+
+    let charged_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+    assert!(charged_balance < initial_balance);
+
+    // Refund
+    let refund = orchestrator
+        .refund_fee(operation_id, "test: chat-chain tx failed")
+        .unwrap();
+
+    assert_eq!(refund.refund_amount, receipt.gross_amount);
+
+    // Balance fully restored
+    let refunded_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+    assert_eq!(refunded_balance, initial_balance);
+}
+
+/// Test channel creation fee charges correctly (pool-funded, no burn)
+#[test]
+fn test_channel_creation_fee_no_burn() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+
+    let operation_id = [0xEEu8; 32];
+    let receipt = orchestrator
+        .charge_channel_creation_fee(&payer, operation_id)
+        .unwrap();
+
+    // Should be ChannelCreationFee type
+    assert_eq!(receipt.fee_type, FeeType::ChannelCreationFee);
+
+    // No burn for channel fees
+    assert_eq!(receipt.sink_amounts.burned, 0);
+
+    // Fee goes to pools (68/20/10/2 split)
+    assert!(receipt.sink_amounts.validator_pool > 0);
+    assert!(receipt.sink_amounts.relay_pool > 0);
+    assert!(receipt.sink_amounts.treasury > 0);
+    assert!(receipt.sink_amounts.insurance_fund > 0);
+
+    // Conservation: sum of all sinks equals gross amount
+    assert_eq!(receipt.sink_amounts.total(), receipt.gross_amount);
+}
+
+/// Test combined gas fee + channel creation fee for CreateChannel
+#[test]
+fn test_create_channel_combined_fees() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+    let initial_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    // Charge gas fee
+    let gas_op_id = [0x11u8; 32];
+    let gas_receipt = orchestrator
+        .charge_gas_fee(&payer, TransactionType::CreateChannel, 1000, gas_op_id)
+        .unwrap();
+
+    // Charge channel creation fee
+    let channel_op_id = [0x12u8; 32];
+    let channel_receipt = orchestrator
+        .charge_channel_creation_fee(&payer, channel_op_id)
+        .unwrap();
+
+    let final_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    // Total charged is sum of both fees
+    let total_charged = gas_receipt.gross_amount + channel_receipt.gross_amount;
+    assert_eq!(initial_balance - final_balance, total_charged);
+}
+
+/// Test that conservation holds across multiple operations
+#[test]
+fn test_fee_conservation_multiple_operations() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+    let initial_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    let mut total_charged: u64 = 0;
+    let mut total_to_pools: u64 = 0;
+
+    // Charge various fees
+    for i in 0..10 {
+        let mut op_id = [0u8; 32];
+        op_id[0] = i;
+
+        let tx_type = match i % 4 {
+            0 => TransactionType::RegisterUser,
+            1 => TransactionType::SendDirectMessage,
+            2 => TransactionType::PostToChannel,
+            _ => TransactionType::JoinChannel,
+        };
+
+        let receipt = orchestrator
+            .charge_gas_fee(&payer, tx_type, (i as usize + 1) * 100, op_id)
+            .unwrap();
+
+        total_charged += receipt.gross_amount;
+        total_to_pools += receipt.sink_amounts.total();
+    }
+
+    let final_balance = orchestrator.currency_chain().get_balance(&payer).unwrap();
+
+    // Payer debit matches total charged
+    assert_eq!(initial_balance - final_balance, total_charged);
+
+    // Pool credits match total charged (conservation)
+    assert_eq!(total_to_pools, total_charged);
+}
+
+/// Test refund after partial commit scenario
+#[test]
+fn test_refund_state_transitions() {
+    let (orchestrator, payer) = create_test_fee_orchestrator();
+
+    let op_id1 = [0xF1u8; 32];
+    let op_id2 = [0xF2u8; 32];
+
+    // Charge two fees
+    orchestrator
+        .charge_gas_fee(&payer, TransactionType::RegisterUser, 100, op_id1)
+        .unwrap();
+    orchestrator
+        .charge_gas_fee(&payer, TransactionType::CreateChannel, 100, op_id2)
+        .unwrap();
+
+    // Commit first, refund second
+    orchestrator.mark_committed(op_id1, Uuid::new_v4()).unwrap();
+    orchestrator.refund_fee(op_id2, "test failure").unwrap();
+
+    // First is committed - cannot refund
+    let result1 = orchestrator.refund_fee(op_id1, "try to refund committed");
+    assert!(result1.is_err());
+    assert!(result1.unwrap_err().to_string().contains("committed"));
+
+    // Second is refunded - can recharge
+    let receipt = orchestrator
+        .charge_gas_fee(&payer, TransactionType::CreateChannel, 100, op_id2)
+        .unwrap();
+    assert!(!receipt.was_replay); // Not a replay since it was refunded
+}

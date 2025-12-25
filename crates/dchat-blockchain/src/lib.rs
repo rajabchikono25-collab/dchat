@@ -29,6 +29,7 @@ pub mod vote_persistence;
 // Economic infrastructure (plan2.md implementation)
 pub mod faucet;
 pub mod fee_distribution;
+pub mod fee_orchestrator;
 pub mod payment_channels;
 pub mod payment_processor;
 pub mod staking_backend;
@@ -93,6 +94,12 @@ pub use fee_distribution::{
     FeeType, PoolDelta, PoolState, PoolType, ProtocolSinks, UnifiedPoolState,
     DEFAULT_BURN_RATE_BPS, INSURANCE_FUND_ALLOCATION_BPS, RELAY_FEE_SHARE_BPS,
     TREASURY_FEE_SHARE_BPS, VALIDATOR_FEE_SHARE_BPS,
+};
+
+// Fee orchestrator for end-to-end fee charging pipeline (mainnet production)
+pub use fee_orchestrator::{
+    FeeConfig, FeeGatedChatChain, FeeGatedResult, FeeOrchestrator, FeeReceipt, OperationState,
+    RefundReceipt, SinkAmounts,
 };
 
 // Relay eligibility for epoch-based reward distribution

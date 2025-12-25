@@ -1025,6 +1025,237 @@ impl CurrencyChainClient {
         Ok(())
     }
 
+    /// Get pool balance by pool type
+    ///
+    /// Returns the current balance of a protocol fee pool.
+    pub fn get_pool_balance(&self, pool_type: crate::fee_distribution::PoolType) -> u64 {
+        let pool_sink = pool_type.sink_address();
+        self.wallets
+            .read()
+            .unwrap()
+            .get(&pool_sink)
+            .map(|w| w.balance)
+            .unwrap_or(0)
+    }
+
+    /// Debit payer for protocol fee (fee orchestrator use only)
+    ///
+    /// This debits the payer's wallet for a protocol fee. The amount is removed
+    /// from the payer but not yet credited anywhere - call `fund_pool` to credit
+    /// the protocol pools.
+    ///
+    /// # Arguments
+    /// * `payer` - User to debit
+    /// * `amount` - Amount to debit
+    /// * `tx_id` - Transaction ID for tracking
+    ///
+    /// # Returns
+    /// Ok(()) on success
+    pub fn debit_for_protocol_fee(&self, payer: &UserId, amount: u64, tx_id: Uuid) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let mut wallets = self.wallets.write().unwrap();
+
+        let payer_wallet = wallets
+            .get_mut(payer)
+            .ok_or_else(|| Error::NotFound(format!("Payer not found: {}", payer)))?;
+
+        if payer_wallet.balance < amount {
+            return Err(Error::InvalidInput(format!(
+                "Insufficient balance for protocol fee: have {}, need {}",
+                payer_wallet.balance, amount
+            )));
+        }
+
+        payer_wallet.balance -= amount;
+
+        // Record debit transaction
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: "protocol_fee_debit".to_string(),
+            from: payer.clone(),
+            to: None, // Will be distributed to pools separately
+            amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::debug!(
+            "Protocol fee debited: {} from {} (tx: {})",
+            amount,
+            payer,
+            tx_id
+        );
+
+        Ok(())
+    }
+
+    /// Credit a direct recipient for a fee (e.g., relay for message fees)
+    ///
+    /// Used by fee orchestrator to pay direct recipients without pool routing.
+    pub fn credit_direct_recipient(
+        &self,
+        recipient: &UserId,
+        amount: u64,
+        reason: &str,
+    ) -> Result<Uuid> {
+        if amount == 0 {
+            return Ok(Uuid::nil());
+        }
+
+        let tx_id = Uuid::new_v4();
+        let mut wallets = self.wallets.write().unwrap();
+
+        let recipient_wallet = wallets.entry(recipient.clone()).or_insert_with(|| Wallet {
+            user_id: recipient.clone(),
+            balance: 0,
+            staked: 0,
+            rewards_pending: 0,
+        });
+
+        recipient_wallet.balance =
+            recipient_wallet
+                .balance
+                .checked_add(amount)
+                .ok_or_else(|| {
+                    Error::validation(format!(
+                        "Recipient balance overflow: {} + {}",
+                        recipient_wallet.balance, amount
+                    ))
+                })?;
+
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: format!("fee_credit:{}", reason),
+            from: UserId::default(), // Protocol
+            to: Some(recipient.clone()),
+            amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::debug!(
+            "Fee credit: {} to {} for {} (tx: {})",
+            amount,
+            recipient,
+            reason,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
+    /// Refund a protocol fee (fee orchestrator use only)
+    ///
+    /// This refunds a previously charged protocol fee by:
+    /// 1. Debiting from the protocol pools proportionally
+    /// 2. Crediting back to the payer
+    ///
+    /// Used when a chat-chain transaction fails after fees were charged.
+    pub fn refund_protocol_fee(
+        &self,
+        payer: &UserId,
+        amount: u64,
+        sink_amounts: &crate::fee_orchestrator::SinkAmounts,
+    ) -> Result<Uuid> {
+        if amount == 0 {
+            return Ok(Uuid::nil());
+        }
+
+        let tx_id = Uuid::new_v4();
+
+        // Debit from pools
+        {
+            let mut wallets = self.wallets.write().unwrap();
+
+            // Debit from validator pool
+            if sink_amounts.validator_pool > 0 {
+                let pool_sink = crate::fee_distribution::PoolType::ValidatorRewards.sink_address();
+                if let Some(pool_wallet) = wallets.get_mut(&pool_sink) {
+                    pool_wallet.balance = pool_wallet
+                        .balance
+                        .saturating_sub(sink_amounts.validator_pool);
+                }
+            }
+
+            // Debit from relay pool
+            if sink_amounts.relay_pool > 0 {
+                let pool_sink = crate::fee_distribution::PoolType::RelayRewards.sink_address();
+                if let Some(pool_wallet) = wallets.get_mut(&pool_sink) {
+                    pool_wallet.balance =
+                        pool_wallet.balance.saturating_sub(sink_amounts.relay_pool);
+                }
+            }
+
+            // Debit from treasury
+            if sink_amounts.treasury > 0 {
+                let pool_sink = crate::fee_distribution::PoolType::Treasury.sink_address();
+                if let Some(pool_wallet) = wallets.get_mut(&pool_sink) {
+                    pool_wallet.balance = pool_wallet.balance.saturating_sub(sink_amounts.treasury);
+                }
+            }
+
+            // Debit from insurance fund
+            if sink_amounts.insurance_fund > 0 {
+                let pool_sink = crate::fee_distribution::PoolType::InsuranceFund.sink_address();
+                if let Some(pool_wallet) = wallets.get_mut(&pool_sink) {
+                    pool_wallet.balance = pool_wallet
+                        .balance
+                        .saturating_sub(sink_amounts.insurance_fund);
+                }
+            }
+
+            // Credit back to payer
+            let payer_wallet = wallets.entry(payer.clone()).or_insert_with(|| Wallet {
+                user_id: payer.clone(),
+                balance: 0,
+                staked: 0,
+                rewards_pending: 0,
+            });
+
+            payer_wallet.balance = payer_wallet.balance.checked_add(amount).ok_or_else(|| {
+                Error::validation(format!(
+                    "Payer balance overflow on refund: {} + {}",
+                    payer_wallet.balance, amount
+                ))
+            })?;
+        }
+
+        // Record refund transaction
+        let tx = CurrencyTransaction {
+            id: tx_id,
+            tx_type: "protocol_fee_refund".to_string(),
+            from: UserId::default(), // Protocol
+            to: Some(payer.clone()),
+            amount,
+            status: "confirmed".to_string(),
+            confirmations: 1,
+            block_height: *self.current_block.read().unwrap(),
+            created_at: Utc::now().timestamp(),
+        };
+
+        self.transactions.write().unwrap().insert(tx_id, tx);
+
+        tracing::info!(
+            "💸 Protocol fee refunded: {} to {} (tx: {})",
+            amount,
+            payer,
+            tx_id
+        );
+
+        Ok(tx_id)
+    }
+
     /// Collect message fee with proper distribution
     ///
     /// Message fees are collected from sender and distributed to the relay
