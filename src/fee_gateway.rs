@@ -1394,4 +1394,247 @@ mod tests {
         assert_ne!(EscrowStatus::Held, EscrowStatus::Refunded);
         assert_ne!(EscrowStatus::Released, EscrowStatus::Refunded);
     }
+
+    #[test]
+    fn test_operation_id_different_tx_types() {
+        let payer = UserId(Uuid::new_v4());
+        let payload_hash = [0xAB; 32];
+        let nonce = 12345u64;
+
+        let id_dm = FeeOrchestrator::compute_operation_id(
+            &payer,
+            TransactionType::SendDirectMessage,
+            &payload_hash,
+            nonce,
+        );
+        let id_channel = FeeOrchestrator::compute_operation_id(
+            &payer,
+            TransactionType::PostToChannel,
+            &payload_hash,
+            nonce,
+        );
+
+        // Same payload/nonce but different tx type = different ID
+        assert_ne!(id_dm, id_channel);
+    }
+
+    #[test]
+    fn test_operation_id_different_payers() {
+        let payer1 = UserId(Uuid::new_v4());
+        let payer2 = UserId(Uuid::new_v4());
+        let payload_hash = [0xAB; 32];
+        let nonce = 12345u64;
+
+        let id1 = FeeOrchestrator::compute_operation_id(
+            &payer1,
+            TransactionType::SendDirectMessage,
+            &payload_hash,
+            nonce,
+        );
+        let id2 = FeeOrchestrator::compute_operation_id(
+            &payer2,
+            TransactionType::SendDirectMessage,
+            &payload_hash,
+            nonce,
+        );
+
+        // Different payer = different operation ID
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_operation_id_different_payload() {
+        let payer = UserId(Uuid::new_v4());
+        let payload_hash1 = [0xAB; 32];
+        let payload_hash2 = [0xCD; 32];
+        let nonce = 12345u64;
+
+        let id1 = FeeOrchestrator::compute_operation_id(
+            &payer,
+            TransactionType::SendDirectMessage,
+            &payload_hash1,
+            nonce,
+        );
+        let id2 = FeeOrchestrator::compute_operation_id(
+            &payer,
+            TransactionType::SendDirectMessage,
+            &payload_hash2,
+            nonce,
+        );
+
+        // Different payload = different operation ID
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_uuid_to_bytes() {
+        let uuid = Uuid::new_v4();
+        let bytes = uuid_to_bytes(&uuid);
+
+        // First 16 bytes are the UUID
+        assert_eq!(&bytes[..16], uuid.as_bytes());
+        // Last 16 bytes are zero-padded
+        assert_eq!(&bytes[16..], &[0u8; 16]);
+    }
+
+    #[test]
+    fn test_storage_tier_inline_threshold() {
+        // Content under threshold should be inline
+        assert!(BLOB_THRESHOLD > 1024); // At least 1KB threshold
+
+        // Blob threshold should be reasonable for production
+        assert!(BLOB_THRESHOLD <= 1024 * 1024); // At most 1MB
+    }
+
+    #[test]
+    fn test_fee_gated_response_serialization() {
+        let response = FeeGatedResponse {
+            operation_id: [0xAB; 32],
+            client_nonce: 12345,
+            payload_hash: [0xCD; 32],
+            gas_fee_receipt: GasFeeReceipt {
+                fee_tx_id: Uuid::new_v4(),
+                amount: 1000,
+                sink_breakdown: SinkAmounts::default(),
+                was_replay: false,
+                charged_at: Utc::now(),
+            },
+            message_fee_receipt: MessageFeeReceipt {
+                fee_tx_id: Uuid::new_v4(),
+                escrow_tx_id: Some(Uuid::new_v4()),
+                amount: 500,
+                relay_id: UserId(Uuid::new_v4()),
+                escrow_status: EscrowStatus::Released,
+                charged_at: Utc::now(),
+            },
+            chat_tx: ChatChainTxDetails {
+                tx_id: Uuid::new_v4(),
+                tx_hash: "abc123".to_string(),
+                block_height: 100,
+                confirmations: 3,
+                finality_achieved: true,
+                finalized_at: Some(Utc::now()),
+            },
+            message_id: MessageId(Uuid::new_v4()),
+            storage_tier: StorageTier::Inline,
+            storage_receipt: None,
+            status: OperationStatus::Success,
+            timestamp: Utc::now(),
+        };
+
+        // Should serialize to JSON without panicking
+        let json = serde_json::to_string(&response).expect("Serialization failed");
+        assert!(json.contains("operation_id"));
+        assert!(json.contains("client_nonce"));
+        assert!(json.contains("gas_fee_receipt"));
+        assert!(json.contains("message_fee_receipt"));
+    }
+
+    #[test]
+    fn test_message_fee_escrow_lifecycle() {
+        let op_id = [0xAB; 32];
+        let payer = UserId(Uuid::new_v4());
+        let relay = UserId(Uuid::new_v4());
+
+        let escrow = MessageFeeEscrow {
+            operation_id: op_id,
+            payer: payer.clone(),
+            relay: relay.clone(),
+            amount: 1000,
+            escrow_tx_id: Uuid::new_v4(),
+            status: EscrowStatus::Held,
+            created_at: Utc::now(),
+            settled_at: None,
+            settlement_tx_id: None,
+        };
+
+        // Initial state is Held
+        assert_eq!(escrow.status, EscrowStatus::Held);
+        assert!(escrow.settled_at.is_none());
+        assert!(escrow.settlement_tx_id.is_none());
+
+        // Verify payer and relay are preserved
+        assert_eq!(escrow.payer, payer);
+        assert_eq!(escrow.relay, relay);
+    }
+
+    #[test]
+    fn test_operation_mapping_completeness() {
+        let mapping = OperationMapping {
+            operation_id: [0xAB; 32],
+            payer: UserId(Uuid::new_v4()),
+            tx_type: TransactionType::SendDirectMessage,
+            client_nonce: 12345,
+            payload_hash: [0xCD; 32],
+            gas_fee_tx_id: Uuid::new_v4(),
+            message_fee_tx_id: Some(Uuid::new_v4()),
+            escrow_tx_id: Some(Uuid::new_v4()),
+            chat_tx_id: Uuid::new_v4(),
+            chat_tx_hash: "abc123".to_string(),
+            message_id: MessageId(Uuid::new_v4()),
+            relay_id: Some(UserId(Uuid::new_v4())),
+            storage_tier: StorageTier::Inline,
+            blob_hash: None,
+            storage_payment_tx_id: None,
+            status: OperationStatus::Success,
+            created_at: Utc::now(),
+            finalized_at: Some(Utc::now()),
+        };
+
+        // Verify all required fields are present
+        assert!(!mapping.chat_tx_hash.is_empty());
+        assert!(mapping.gas_fee_tx_id != Uuid::nil());
+        assert!(mapping.chat_tx_id != Uuid::nil());
+        assert!(mapping.message_fee_tx_id.is_some());
+        assert!(mapping.relay_id.is_some());
+    }
+
+    #[test]
+    fn test_storage_payment_receipt_blob_tier() {
+        let receipt = StoragePaymentReceipt {
+            payment_tx_id: Uuid::new_v4(),
+            amount: 10_000_000, // 1 MB storage fee
+            tier: StorageTier::Blob,
+            blob_hash: Some([0xAB; 32]),
+            stream_id: None,
+            paid_at: Utc::now(),
+        };
+
+        assert_eq!(receipt.tier, StorageTier::Blob);
+        assert!(receipt.blob_hash.is_some());
+        assert!(receipt.amount > 0);
+    }
+
+    #[test]
+    fn test_default_fee_constants() {
+        // Verify default constants are sane
+        assert!(DEFAULT_MESSAGE_FEE > 0, "Message fee should be positive");
+        assert!(STORAGE_COST_PER_MB > 0, "Storage cost should be positive");
+        assert!(
+            MIN_FINALITY_CONFIRMATIONS >= 1,
+            "Need at least 1 confirmation"
+        );
+
+        // Message fee should be reasonable (not exorbitant)
+        assert!(
+            DEFAULT_MESSAGE_FEE < 1_000_000_000,
+            "Message fee shouldn't exceed 1 DCHAT"
+        );
+    }
+
+    #[test]
+    fn test_operation_status_variants() {
+        // Ensure all status variants are distinct and usable
+        let success = OperationStatus::Success;
+        let failed = OperationStatus::FailedRefunded;
+        let pending = OperationStatus::PendingFinality;
+
+        assert_ne!(success, failed);
+        assert_ne!(success, pending);
+        assert_ne!(failed, pending);
+
+        // Verify serialization produces expected strings
+        let json = serde_json::to_string(&success).unwrap();
+        assert!(json.contains("Success"));
+    }
 }

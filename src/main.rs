@@ -7401,10 +7401,15 @@ fn start_health_server(
 
 /// Handle user account management commands
 async fn run_account_command(_config: Config, action: AccountCommand) -> Result<()> {
+    use dchat::fee_gateway::{FeeGatedRequest, FeeGateway, OperationPayload};
+    use dchat::storage_routed_user_management::StorageRoutedUserManager;
     use dchat::UserManager;
+    use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionManager};
+    use dchat_blockchain::fee_orchestrator::{FeeConfig, FeeOrchestrator};
+    use dchat_network::relay_network::{RelayNetworkConfig, RelayNetworkManager};
     use dchat_storage::DatabaseConfig;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
 
     // Initialize database - MAINNET-SAFE: Use config.storage.data_dir
     let db_config = DatabaseConfig {
@@ -7425,12 +7430,48 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         Arc::clone(&currency_chain),
     ));
 
+    // Initialize legacy user manager (for non-messaging operations)
     let user_manager = UserManager::new(
-        database,
+        database.clone(),
         Arc::clone(&chat_chain),
         Arc::clone(&currency_chain),
         Arc::clone(&bridge),
         PathBuf::from("./keys"),
+    );
+
+    // Initialize FeeGateway for production-grade messaging with fee enforcement
+    let fee_distribution = Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+    let fee_orchestrator = Arc::new(FeeOrchestrator::new(
+        Arc::clone(&currency_chain),
+        fee_distribution,
+        FeeConfig::default(),
+    ));
+
+    // Initialize relay network manager
+    let relay_network = Arc::new(RwLock::new(RelayNetworkManager::new(
+        RelayNetworkConfig::default(),
+    )));
+
+    // Initialize storage-routed user manager for message storage (offline mode)
+    let storage_manager = Arc::new(
+        StorageRoutedUserManager::offline(
+            _config.storage.data_dir.join("messages.db"),
+            database,
+            Arc::clone(&chat_chain),
+            Arc::clone(&currency_chain),
+            Arc::clone(&bridge),
+            PathBuf::from("./keys"),
+        )
+        .await?,
+    );
+
+    // Create production FeeGateway
+    let fee_gateway = FeeGateway::new(
+        fee_orchestrator,
+        Arc::clone(&currency_chain),
+        Arc::clone(&chat_chain),
+        storage_manager,
+        relay_network,
     );
 
     match action {
@@ -7494,24 +7535,59 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         }
 
         AccountCommand::SendDm { from, to, message } => {
-            // TODO(mainnet-critical): Use FeeGateway instead of user_manager
-            // This currently bypasses fee enforcement. Before mainnet, this must call:
-            //   fee_gateway.send_direct_message(FeeGatedRequest { ... })
-            // See FeeGateway::send_direct_message for the production-grade implementation.
-            #[allow(deprecated)]
-            let response = user_manager
-                .send_direct_message(&from, &to, &message)
-                .await?;
-            info!(
-                "💬 Sending DM from {} to {} (⚠️ USING DEPRECATED BYPASS)",
-                from, to
+            info!("💬 Sending DM from {} to {} via FeeGateway", from, to);
+
+            // Parse user IDs
+            let from_id = dchat_core::types::UserId(
+                uuid::Uuid::parse_str(&from)
+                    .map_err(|e| Error::validation(format!("Invalid from user ID: {}", e)))?,
+            );
+            let to_id = dchat_core::types::UserId(
+                uuid::Uuid::parse_str(&to)
+                    .map_err(|e| Error::validation(format!("Invalid to user ID: {}", e)))?,
             );
 
-            println!("\n✅ Direct Message Sent!");
+            // Create fee-gated request
+            let request = FeeGatedRequest {
+                payer: from_id.clone(),
+                client_nonce: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+                payload: OperationPayload::DirectMessage {
+                    recipient: to_id,
+                    content: message.as_bytes().to_vec(),
+                    encrypted: false,
+                    encryption_key_id: None,
+                },
+                preferred_relay: None,
+            };
+
+            // Send via FeeGateway (enforces fee payment + finality)
+            let response = fee_gateway.send_direct_message(request).await?;
+
+            println!("\n✅ Direct Message Sent (Fee-Gated)!");
             println!("  Message ID: {}", response.message_id);
-            println!("  Status: {}", response.status);
-            println!("  Sent: {}", response.timestamp);
-            println!("  On-chain: {}", response.on_chain_confirmed);
+            println!(
+                "  Operation ID: {}",
+                hex::encode(&response.operation_id[..8])
+            );
+            println!("  Chat TX: {}", response.chat_tx.tx_id);
+            println!("  Chat TX Hash: {}", response.chat_tx.tx_hash);
+            println!(
+                "  Finality: {} confirmations",
+                response.chat_tx.confirmations
+            );
+            println!(
+                "  Gas Fee: {} (tx: {})",
+                response.gas_fee_receipt.amount, response.gas_fee_receipt.fee_tx_id
+            );
+            println!(
+                "  Message Fee: {} to relay {}",
+                response.message_fee_receipt.amount, response.message_fee_receipt.relay_id
+            );
+            println!("  Storage Tier: {:?}", response.storage_tier);
+            println!("  Timestamp: {}", response.timestamp);
 
             Ok(())
         }
@@ -7541,23 +7617,57 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
             channel_id,
             message,
         } => {
-            // TODO(mainnet-critical): Use FeeGateway instead of user_manager
-            // This currently bypasses fee enforcement. Before mainnet, this must call:
-            //   fee_gateway.post_to_channel(FeeGatedRequest { ... })
-            // See FeeGateway::post_to_channel for the production-grade implementation.
-            #[allow(deprecated)]
-            let response = user_manager
-                .post_to_channel(&user_id, &channel_id, &message)
-                .await?;
-            info!(
-                "📝 Posting to channel: {} (⚠️ USING DEPRECATED BYPASS)",
-                channel_id
+            info!("📝 Posting to channel: {} via FeeGateway", channel_id);
+
+            // Parse IDs
+            let user = dchat_core::types::UserId(
+                uuid::Uuid::parse_str(&user_id)
+                    .map_err(|e| Error::validation(format!("Invalid user ID: {}", e)))?,
+            );
+            let channel = dchat_core::types::ChannelId(
+                uuid::Uuid::parse_str(&channel_id)
+                    .map_err(|e| Error::validation(format!("Invalid channel ID: {}", e)))?,
             );
 
-            println!("\n✅ Message Posted!");
+            // Create fee-gated request
+            let request = FeeGatedRequest {
+                payer: user.clone(),
+                client_nonce: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+                payload: OperationPayload::ChannelPost {
+                    channel_id: channel,
+                    content: message.as_bytes().to_vec(),
+                    encrypted: false,
+                    encryption_key_id: None,
+                },
+                preferred_relay: None,
+            };
+
+            // Post via FeeGateway (enforces fee payment + finality)
+            let response = fee_gateway.post_to_channel(request).await?;
+
+            println!("\n✅ Message Posted (Fee-Gated)!");
             println!("  Message ID: {}", response.message_id);
-            println!("  Status: {}", response.status);
-            println!("  Posted: {}", response.timestamp);
+            println!(
+                "  Operation ID: {}",
+                hex::encode(&response.operation_id[..8])
+            );
+            println!("  Chat TX: {}", response.chat_tx.tx_id);
+            println!(
+                "  Finality: {} confirmations",
+                response.chat_tx.confirmations
+            );
+            println!(
+                "  Gas Fee: {} (tx: {})",
+                response.gas_fee_receipt.amount, response.gas_fee_receipt.fee_tx_id
+            );
+            println!(
+                "  Message Fee: {} to relay {}",
+                response.message_fee_receipt.amount, response.message_fee_receipt.relay_id
+            );
+            println!("  Timestamp: {}", response.timestamp);
 
             Ok(())
         }
