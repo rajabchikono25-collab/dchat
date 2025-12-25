@@ -97,6 +97,8 @@
 pub mod user_management;
 // Storage-routed user management (tiered storage via StorageRouter)
 pub mod storage_routed_user_management;
+// Fee Gateway - Single entry point for all fee-gated operations
+pub mod fee_gateway;
 // Onboarding flows (keyless, enrollment, MPC backups)
 pub mod onboarding;
 
@@ -130,7 +132,13 @@ pub use user_management::{
 };
 
 // Re-export storage-routed user management
-pub use storage_routed_user_management::{StorageRoutedUserManager, StorageStats};
+pub use storage_routed_user_management::{StorageRoutedUserManager, StorageStats, StorageTier};
+
+// Re-export fee gateway for production-grade fee enforcement
+pub use fee_gateway::{
+    ChatChainTxDetails, EscrowStatus, FeeGatedRequest, FeeGatedResponse, FeeGateway, GasFeeReceipt,
+    MessageFeeReceipt, OperationMapping, OperationPayload, OperationStatus, StoragePaymentReceipt,
+};
 
 /// Commonly used types and traits
 pub mod prelude {

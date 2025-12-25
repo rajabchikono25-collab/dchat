@@ -417,6 +417,116 @@ impl ChatChainClient {
         // Timeout reached
         Ok(false)
     }
+
+    /// Get detailed transaction status including confirmation count
+    pub async fn get_transaction_status(&self, tx_id: &Uuid) -> Result<TransactionStatusDetail> {
+        // Get transaction hash for RPC queries
+        let (tx, tx_hash) = {
+            let transactions = self.transactions.read().unwrap();
+            let tx_data = transactions
+                .get(tx_id)
+                .ok_or_else(|| Error::NotFound(format!("Transaction {}", tx_id)))?;
+            (tx_data.0.clone(), tx_data.1.clone())
+        };
+
+        let tx_hash = tx_hash.ok_or_else(|| {
+            Error::Chain(format!(
+                "Transaction not yet submitted to blockchain: {}",
+                tx_id
+            ))
+        })?;
+
+        // Query blockchain for transaction status
+        let status = self
+            .rpc_client
+            .get_transaction_status(&tx_hash)
+            .await
+            .map_err(|e| Error::Chain(format!("RPC error querying status: {}", e)))?;
+
+        match &status {
+            TransactionStatus::Confirmed {
+                block_height,
+                block_hash,
+            } => {
+                // Get current height to calculate confirmations
+                let current_height = self
+                    .rpc_client
+                    .get_current_height()
+                    .await
+                    .map_err(|e| Error::Chain(format!("RPC error querying height: {}", e)))?;
+
+                let confirmations = current_height.saturating_sub(*block_height) as u32;
+
+                Ok(TransactionStatusDetail {
+                    tx_id: *tx_id,
+                    tx_hash,
+                    status: status.clone(),
+                    block_height: *block_height,
+                    block_hash: Some(block_hash.clone()),
+                    confirmations,
+                    finality_achieved: confirmations >= self.config.confirmation_blocks,
+                    submitted_at: tx.submitted_at,
+                    confirmed_at: tx.confirmed_at,
+                })
+            }
+            TransactionStatus::Pending => Ok(TransactionStatusDetail {
+                tx_id: *tx_id,
+                tx_hash,
+                status: status.clone(),
+                block_height: 0,
+                block_hash: None,
+                confirmations: 0,
+                finality_achieved: false,
+                submitted_at: tx.submitted_at,
+                confirmed_at: None,
+            }),
+            TransactionStatus::Failed { reason: _ } => Ok(TransactionStatusDetail {
+                tx_id: *tx_id,
+                tx_hash,
+                status: status.clone(),
+                block_height: 0,
+                block_hash: None,
+                confirmations: 0,
+                finality_achieved: false,
+                submitted_at: tx.submitted_at,
+                confirmed_at: None,
+            }),
+            TransactionStatus::TimedOut => Ok(TransactionStatusDetail {
+                tx_id: *tx_id,
+                tx_hash,
+                status: status.clone(),
+                block_height: 0,
+                block_hash: None,
+                confirmations: 0,
+                finality_achieved: false,
+                submitted_at: tx.submitted_at,
+                confirmed_at: None,
+            }),
+        }
+    }
+}
+
+/// Detailed transaction status with confirmation count
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionStatusDetail {
+    /// Transaction ID
+    pub tx_id: Uuid,
+    /// Transaction hash on chain
+    pub tx_hash: String,
+    /// Status enum
+    pub status: TransactionStatus,
+    /// Block height (0 if not confirmed)
+    pub block_height: u64,
+    /// Block hash (None if not confirmed)
+    pub block_hash: Option<String>,
+    /// Number of confirmations
+    pub confirmations: u32,
+    /// Whether finality threshold has been reached
+    pub finality_achieved: bool,
+    /// When transaction was submitted
+    pub submitted_at: chrono::DateTime<Utc>,
+    /// When transaction was confirmed (if confirmed)
+    pub confirmed_at: Option<chrono::DateTime<Utc>>,
 }
 
 /// Implementation of dchat-privacy's BlockchainClient trait

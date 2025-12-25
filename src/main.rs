@@ -7494,10 +7494,18 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         }
 
         AccountCommand::SendDm { from, to, message } => {
-            info!("💬 Sending DM from {} to {}", from, to);
+            // TODO(mainnet-critical): Use FeeGateway instead of user_manager
+            // This currently bypasses fee enforcement. Before mainnet, this must call:
+            //   fee_gateway.send_direct_message(FeeGatedRequest { ... })
+            // See FeeGateway::send_direct_message for the production-grade implementation.
+            #[allow(deprecated)]
             let response = user_manager
                 .send_direct_message(&from, &to, &message)
                 .await?;
+            info!(
+                "💬 Sending DM from {} to {} (⚠️ USING DEPRECATED BYPASS)",
+                from, to
+            );
 
             println!("\n✅ Direct Message Sent!");
             println!("  Message ID: {}", response.message_id);
@@ -7533,10 +7541,18 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
             channel_id,
             message,
         } => {
-            info!("📝 Posting to channel: {}", channel_id);
+            // TODO(mainnet-critical): Use FeeGateway instead of user_manager
+            // This currently bypasses fee enforcement. Before mainnet, this must call:
+            //   fee_gateway.post_to_channel(FeeGatedRequest { ... })
+            // See FeeGateway::post_to_channel for the production-grade implementation.
+            #[allow(deprecated)]
             let response = user_manager
                 .post_to_channel(&user_id, &channel_id, &message)
                 .await?;
+            info!(
+                "📝 Posting to channel: {} (⚠️ USING DEPRECATED BYPASS)",
+                channel_id
+            );
 
             println!("\n✅ Message Posted!");
             println!("  Message ID: {}", response.message_id);

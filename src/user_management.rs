@@ -249,6 +249,18 @@ impl UserManager {
     }
 
     /// Send direct message with on-chain confirmation
+    ///
+    /// # Deprecated
+    ///
+    /// **WARNING**: This method bypasses the fee gateway and does NOT charge message fees
+    /// or enforce proper finality. Use `FeeGateway::send_direct_message()` instead.
+    ///
+    /// This bypass will be removed before mainnet. Any code path calling this method
+    /// directly allows unpaid message storage, which is a critical security issue.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use FeeGateway::send_direct_message() to enforce fee payment. This bypass will be removed."
+    )]
     pub async fn send_direct_message(
         &self,
         sender_id: &str,
@@ -389,6 +401,18 @@ impl UserManager {
     }
 
     /// Post message to channel with on-chain confirmation
+    ///
+    /// # Deprecated
+    ///
+    /// **WARNING**: This method bypasses the fee gateway and does NOT charge message fees
+    /// or enforce proper finality. Use `FeeGateway::post_to_channel()` instead.
+    ///
+    /// This bypass will be removed before mainnet. Any code path calling this method
+    /// directly allows unpaid message storage, which is a critical security issue.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use FeeGateway::post_to_channel() to enforce fee payment. This bypass will be removed."
+    )]
     pub async fn post_to_channel(
         &self,
         sender_id: &str,

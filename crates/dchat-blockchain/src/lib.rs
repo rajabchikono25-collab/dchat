@@ -49,7 +49,7 @@ pub use chain_synchronizer::{
     CurrencyHierarchicalBlock, CurrencyMiniblock, CurrencySubblock, CurrencyTransaction,
     CurrencyTxType, FinalityAnchor, SyncEpoch, SyncError, SyncStatusReport, ThroughputReport,
 };
-pub use chat_chain::{ChatChainClient, ChatChainConfig};
+pub use chat_chain::{ChatChainClient, ChatChainConfig, TransactionStatusDetail};
 pub use client::{BlockchainClient, BlockchainConfig};
 pub use consensus_types::{
     BlockVotes, ConsensusError, DeliveryProof, GeographicRegion, RelayScore, RelayVote,

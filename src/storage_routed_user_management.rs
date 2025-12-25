@@ -1166,7 +1166,7 @@ pub struct StorageBondResult {
 }
 
 /// Storage tier for content
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StorageTier {
     /// Content stored inline in message metadata (< BLOB_THRESHOLD)
     Inline,
