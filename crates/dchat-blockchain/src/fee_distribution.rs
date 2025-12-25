@@ -7,9 +7,12 @@
 //! All fees collected by the protocol are distributed according to the following split
 //! (derived from PRODUCTION_IMPROVEMENTS_ROADMAP.md Section 16.1):
 //!
-//! - **Validators**: 70% - Block producers and consensus participants
+//! - **Validators**: 68% - Block producers and consensus participants
 //! - **Relays**: 20% - Message relay operators
 //! - **Treasury**: 10% - Protocol development and operations
+//! - **Insurance Fund**: 2% - User protection against losses
+//!
+//! Note: These must sum to exactly 100% (6800 + 2000 + 1000 + 200 = 10000 bps)
 //!
 //! # Burn Policy
 //!
@@ -535,7 +538,7 @@ pub struct ProtocolSinks {
     /// Funds protocol development, audits, operations
     pub treasury: UserId,
 
-    /// Validator reward pool - receives 70% of protocol fees
+    /// Validator reward pool - receives 68% of protocol fees
     /// Distributed to validators proportional to stake
     pub validator_pool: UserId,
 
@@ -546,7 +549,7 @@ pub struct ProtocolSinks {
     /// Burn sink - tokens sent here are burned (tracked but removed from supply)
     pub burn_sink: UserId,
 
-    /// Insurance fund - receives portion of fees for user protection
+    /// Insurance fund - receives 2% of fees for user protection
     pub insurance_fund: UserId,
 
     /// Storage bond pool - collateral for storage commitments
@@ -886,7 +889,7 @@ impl BlockFeeAccounting {
 /// Fee distribution configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeDistributionConfig {
-    /// Validator share in basis points (default: 7000 = 70%)
+    /// Validator share in basis points (default: 6800 = 68%)
     pub validator_share_bps: u16,
     /// Relay share in basis points (default: 2000 = 20%)
     pub relay_share_bps: u16,
@@ -895,7 +898,6 @@ pub struct FeeDistributionConfig {
     /// Burn rate in basis points (default: 100 = 1%)
     pub burn_rate_bps: u16,
     /// Insurance fund allocation in basis points (default: 200 = 2%)
-    /// This is deducted from treasury share
     pub insurance_fund_bps: u16,
     /// Whether to apply burn to reward distributions (default: false)
     pub burn_on_rewards: bool,

@@ -12505,18 +12505,45 @@ async fn perform_epoch_rewards(
         ) {
             Ok(distributions) => {
                 info!(
-                    "💸 Distributed {} validator fees to {} validators",
+                    "💸 Distributing {} validator fees to {} validators",
                     validator_pool_balance,
                     distributions.len()
                 );
-                // Complete the distribution (mark as withdrawn)
                 drop(manager);
-                if let Err(e) = fee_manager
-                    .read()
-                    .unwrap()
-                    .complete_distribution(PoolType::ValidatorRewards, validator_pool_balance)
-                {
-                    warn!("Failed to complete validator fee distribution: {}", e);
+
+                // ACTUALLY PAY OUT: Transfer from pool sink wallet to each validator
+                let payment_results = currency_client.pay_from_pool(
+                    PoolType::ValidatorRewards,
+                    &distributions,
+                    "validator_fee_reward",
+                );
+
+                // Count successful payments
+                let successful_amount: u64 = payment_results
+                    .iter()
+                    .zip(distributions.iter())
+                    .filter(|(result, _)| result.2) // result.2 is success bool
+                    .map(|(_, (_, amount))| amount)
+                    .sum();
+
+                let failed_count = payment_results.iter().filter(|r| !r.2).count();
+                if failed_count > 0 {
+                    warn!(
+                        "⚠️ {} validator fee payments failed, {} succeeded",
+                        failed_count,
+                        payment_results.len() - failed_count
+                    );
+                }
+
+                // Complete distribution only for the amount actually paid out
+                if successful_amount > 0 {
+                    if let Err(e) = fee_manager
+                        .read()
+                        .unwrap()
+                        .complete_distribution(PoolType::ValidatorRewards, successful_amount)
+                    {
+                        warn!("Failed to complete validator fee distribution: {}", e);
+                    }
                 }
             }
             Err(e) => error!("Failed to distribute validator fees: {}", e),
@@ -12580,17 +12607,45 @@ async fn perform_epoch_rewards(
                 ) {
                     Ok(distributions) => {
                         info!(
-                            "💸 Distributed {} relay fees to {} relay operators",
+                            "💸 Distributing {} relay fees to {} relay operators",
                             relay_pool_balance,
                             distributions.len()
                         );
                         drop(manager);
-                        if let Err(e) = fee_manager
-                            .read()
-                            .unwrap()
-                            .complete_distribution(PoolType::RelayRewards, relay_pool_balance)
-                        {
-                            warn!("Failed to complete relay fee distribution: {}", e);
+
+                        // ACTUALLY PAY OUT: Transfer from pool sink wallet to each relay operator
+                        let payment_results = currency_client.pay_from_pool(
+                            PoolType::RelayRewards,
+                            &distributions,
+                            "relay_fee_reward",
+                        );
+
+                        // Count successful payments
+                        let successful_amount: u64 = payment_results
+                            .iter()
+                            .zip(distributions.iter())
+                            .filter(|(result, _)| result.2) // result.2 is success bool
+                            .map(|(_, (_, amount))| amount)
+                            .sum();
+
+                        let failed_count = payment_results.iter().filter(|r| !r.2).count();
+                        if failed_count > 0 {
+                            warn!(
+                                "⚠️ {} relay fee payments failed, {} succeeded",
+                                failed_count,
+                                payment_results.len() - failed_count
+                            );
+                        }
+
+                        // Complete distribution only for the amount actually paid out
+                        if successful_amount > 0 {
+                            if let Err(e) = fee_manager
+                                .read()
+                                .unwrap()
+                                .complete_distribution(PoolType::RelayRewards, successful_amount)
+                            {
+                                warn!("Failed to complete relay fee distribution: {}", e);
+                            }
                         }
                     }
                     Err(e) => error!("Failed to distribute relay fees: {}", e),
