@@ -38,7 +38,7 @@ pub struct LightClientConfig {
     /// Display name / username
     pub display_name: String,
 
-    /// Path to identity file (if None, generates ephemeral)
+    /// Optional identity file path (import/export). Identity is persisted in the local DB.
     pub identity_path: Option<PathBuf>,
 
     /// Data directory for local storage
@@ -1022,10 +1022,24 @@ fn generate_identity(display_name: &str) -> Result<Identity> {
 }
 
 async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
-    let content = tokio::fs::read_to_string(path).await.map_err(Error::Io)?;
-    let data: serde_json::Value = serde_json::from_str(&content)?;
+    let bytes = tokio::fs::read(path).await.map_err(Error::Io)?;
 
-    // Parse identity JSON
+    // Preferred format: full `Identity` JSON (matches main CLI helpers).
+    if let Ok(identity) = serde_json::from_slice::<Identity>(&bytes) {
+        validate_identity_username(&identity.username)?;
+        if identity.public_key.as_bytes().len() != 32 {
+            return Err(Error::validation(
+                "Invalid public_key length in identity file",
+            ));
+        }
+        return Ok(identity);
+    }
+
+    // Backward-compatibility: legacy metadata JSON (username/user_id/public_key hex).
+    let content = std::str::from_utf8(&bytes)
+        .map_err(|e| Error::validation(format!("Identity file is not valid UTF-8: {e}")))?;
+    let data: serde_json::Value = serde_json::from_str(content)?;
+
     let username = data["username"]
         .as_str()
         .ok_or_else(|| Error::validation("Missing username in identity file"))?;
@@ -1043,11 +1057,16 @@ async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
         .map_err(|e| Error::validation(format!("Invalid public_key hex: {e}")))?;
 
     validate_identity_username(username)?;
+    if public_key_bytes.len() != 32 {
+        return Err(Error::validation(
+            "Invalid public_key length in identity file",
+        ));
+    }
 
     Ok(Identity {
         user_id: UserId(user_uuid),
         username: username.to_string(),
-        normalized_username: username.to_ascii_lowercase(),
+        normalized_username: dchat_identity::identity::normalize_username_for_collision(username),
         public_key: dchat_core::types::PublicKey::new(public_key_bytes),
         display_name: None,
         bio: None,
@@ -1060,27 +1079,27 @@ async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
 }
 
 async fn save_identity_to_file(identity: &Identity, path: &PathBuf) -> Result<()> {
-    // SECURITY WARNING: This saves identity metadata only (no private key).
-    // Private keys should NEVER be saved to plain files in production.
-    // Use platform keystore (Keychain/Credential Manager/Android Keystore) instead.
-    // For development: generate ephemeral keys or use --identity flag with HSM/KMS.
-    warn!("⚠️  Saving identity to file. Private key NOT included for security.");
-    warn!("⚠️  Use platform keystore for production deployments.");
-
-    let data = serde_json::json!({
-        "username": identity.username,
-        "user_id": identity.user_id.to_string(),
-        "public_key": hex::encode(identity.public_key.as_bytes()),
-        // Private key intentionally excluded - use keystore APIs
-    });
-
-    let json = serde_json::to_string_pretty(&data)?;
+    // Persist the same JSON format used by the main CLI (`Identity` serde).
+    // Note: `Identity` does not contain private key material.
+    let json = serde_json::to_string_pretty(identity)?;
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(Error::Io)?;
     }
 
     tokio::fs::write(path, json).await.map_err(Error::Io)?;
+
+    // Restrict permissions on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = tokio::fs::metadata(path).await.map_err(Error::Io)?;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        tokio::fs::set_permissions(path, permissions)
+            .await
+            .map_err(Error::Io)?;
+    }
     info!("✓ Identity saved to {:?}", path);
 
     Ok(())
@@ -1113,7 +1132,7 @@ fn identity_to_stored(identity: &Identity) -> StoredIdentityV1 {
         user_id: identity.user_id.to_string(),
         username: identity.username.clone(),
         normalized_username: identity.normalized_username.clone(),
-        public_key_b64: general_purpose::STANDARD.encode(&identity.public_key.0),
+        public_key_b64: general_purpose::STANDARD.encode(identity.public_key.as_bytes()),
         created_at: identity.created_at.timestamp(),
         verified: identity.verified,
         badges: identity.badges.clone(),
@@ -1137,10 +1156,20 @@ fn stored_to_identity(stored: StoredIdentityV1) -> Result<Identity> {
         .decode(stored.public_key_b64)
         .map_err(|e| Error::validation(format!("Invalid stored public_key: {e}")))?;
 
-    let created_at = chrono::Utc
-        .timestamp_opt(stored.created_at, 0)
-        .single()
-        .unwrap_or_else(chrono::Utc::now);
+    if public_key_bytes.len() != 32 {
+        return Err(Error::validation("Invalid stored public_key length"));
+    }
+
+    let created_at = match chrono::Utc.timestamp_opt(stored.created_at, 0).single() {
+        Some(dt) => dt,
+        None => {
+            warn!(
+                "⚠ Invalid stored created_at timestamp ({}); defaulting to now",
+                stored.created_at
+            );
+            chrono::Utc::now()
+        }
+    };
 
     Ok(Identity {
         user_id: UserId(user_uuid),
@@ -1170,14 +1199,14 @@ async fn load_or_create_identity(
     // No stored identity; import metadata file if present.
     let identity = if let Some(path) = &config.identity_path {
         if path.exists() {
-            info!("Importing identity metadata from {:?}", path);
+            info!("Importing identity from {:?}", path);
             load_identity_from_file(path).await?
         } else {
-            info!("No identity metadata file; creating a new identity");
+            info!("No identity file; creating a new identity");
             generate_identity(&config.display_name)?
         }
     } else {
-        info!("No identity metadata file; creating a new identity");
+        info!("No identity file; creating a new identity");
         generate_identity(&config.display_name)?
     };
 
