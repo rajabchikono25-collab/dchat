@@ -13,8 +13,11 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::TimeZone;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{MessageId, UserId};
-use dchat_crypto::keys::KeyPair;
-use dchat_crypto::{decrypt_with_key, encrypt_with_key, generate_encryption_key, KEY_SIZE};
+use dchat_crypto::keys::{KeyPair, PrivateKey};
+use dchat_crypto::{
+    decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
+    generate_encryption_key, EncryptedData, KEY_SIZE,
+};
 use dchat_identity::Identity;
 use dchat_network::{DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId};
 use dchat_storage::{Database, DatabaseConfig, MessageRow};
@@ -242,6 +245,9 @@ pub enum LightClientEvent {
 const KV_SYNC_CURSOR: &str = "light_client.sync_cursor.v1";
 const KV_OFFLINE_QUEUE: &str = "light_client.offline_queue.v1";
 const KV_IDENTITY: &str = "light_client.identity.v1";
+const KV_IDENTITY_KEY: &str = "light_client.identity_key.v1";
+
+const ENV_IDENTITY_PASSPHRASE: &str = "DCHAT_LIGHT_CLIENT_IDENTITY_PASSPHRASE";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredIdentityV1 {
@@ -256,6 +262,14 @@ struct StoredIdentityV1 {
     metadata: HashMap<String, String>,
     display_name: Option<String>,
     bio: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredIdentityKeyV1 {
+    version: u8,
+    user_id: String,
+    public_key_b64: String,
+    encrypted_private_key: EncryptedData,
 }
 
 // ============================================================================
@@ -296,6 +310,8 @@ pub struct LightClient {
     config: LightClientConfig,
     /// User identity
     identity: Identity,
+    /// Identity signing keypair (private key encrypted-at-rest in SQLite)
+    identity_keypair: KeyPair,
     /// Local database (Option to allow taking for close)
     database: Option<Database>,
     /// Connection state
@@ -343,8 +359,9 @@ impl LightClient {
         let database = Database::new(db_config).await?;
         info!("✓ Database initialized");
 
-        // Load or create identity (persisted in DB)
-        let identity = load_or_create_identity(&database, &config).await?;
+        // Load or create identity + keypair (identity persisted in DB; private key encrypted-at-rest)
+        let (identity, identity_keypair) =
+            load_or_create_identity_and_keypair(&database, &config).await?;
         info!("✓ Identity: {} ({})", identity.username, identity.user_id);
 
         // Load sync cursor from database (if exists)
@@ -365,6 +382,7 @@ impl LightClient {
         Ok(Self {
             config,
             identity,
+            identity_keypair,
             database: Some(database),
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
             channels: Arc::new(RwLock::new(vec![])),
@@ -382,6 +400,11 @@ impl LightClient {
     /// Get the identity
     pub fn identity(&self) -> &Identity {
         &self.identity
+    }
+
+    /// Get the identity signing keypair
+    pub fn identity_keypair(&self) -> &KeyPair {
+        &self.identity_keypair
     }
 
     /// Get current connection state
@@ -1015,10 +1038,83 @@ impl LightClient {
 // HELPER FUNCTIONS
 // ============================================================================
 
-fn generate_identity(display_name: &str) -> Result<Identity> {
+fn generate_identity_with_keypair(display_name: &str) -> Result<(Identity, KeyPair)> {
     let keypair = KeyPair::try_generate()
         .map_err(|e| Error::crypto(format!("Failed to generate keypair: {e}")))?;
-    Identity::try_new(display_name.to_string(), &keypair)
+    let identity = Identity::try_new(display_name.to_string(), &keypair)?;
+    Ok((identity, keypair))
+}
+
+fn read_identity_passphrase() -> Result<String> {
+    std::env::var(ENV_IDENTITY_PASSPHRASE).map_err(|_| {
+        Error::crypto(format!(
+            "{ENV_IDENTITY_PASSPHRASE} not set: required to encrypt/decrypt the light client identity private key"
+        ))
+    })
+}
+
+fn keypair_to_stored_key(
+    identity: &Identity,
+    keypair: &KeyPair,
+    passphrase: &str,
+) -> Result<StoredIdentityKeyV1> {
+    let mut private_key_bytes = *keypair.private_key().as_bytes();
+    let encrypted_private_key = encrypt_with_password(passphrase, &private_key_bytes)?;
+
+    // Best-effort memory cleanup of the stack copy.
+    private_key_bytes.fill(0);
+
+    Ok(StoredIdentityKeyV1 {
+        version: 1,
+        user_id: identity.user_id.to_string(),
+        public_key_b64: general_purpose::STANDARD.encode(identity.public_key.as_bytes()),
+        encrypted_private_key,
+    })
+}
+
+fn stored_key_to_keypair(
+    identity: &Identity,
+    stored: StoredIdentityKeyV1,
+    passphrase: &str,
+) -> Result<KeyPair> {
+    if stored.version != 1 {
+        return Err(Error::validation("Unsupported identity key store version"));
+    }
+
+    if stored.user_id != identity.user_id.to_string() {
+        return Err(Error::validation(
+            "Stored identity key does not match stored identity (user_id mismatch)",
+        ));
+    }
+
+    let expected_pk_b64 = general_purpose::STANDARD.encode(identity.public_key.as_bytes());
+    if stored.public_key_b64 != expected_pk_b64 {
+        return Err(Error::validation(
+            "Stored identity key does not match stored identity (public_key mismatch)",
+        ));
+    }
+
+    let plaintext = decrypt_with_password(passphrase, &stored.encrypted_private_key)?;
+    if plaintext.len() != 32 {
+        return Err(Error::validation("Invalid decrypted private key length"));
+    }
+
+    let mut sk = [0u8; 32];
+    sk.copy_from_slice(&plaintext);
+    let private_key = PrivateKey::from_bytes(sk);
+    // Best-effort cleanup for the stack copy.
+    sk.fill(0);
+
+    let keypair = KeyPair::from_private_key(private_key);
+
+    let derived_pk = keypair.public_key().to_core_public_key();
+    if derived_pk.as_bytes() != identity.public_key.as_bytes() {
+        return Err(Error::validation(
+            "Decrypted private key does not correspond to stored identity public key",
+        ));
+    }
+
+    Ok(keypair)
 }
 
 async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
@@ -1186,42 +1282,77 @@ fn stored_to_identity(stored: StoredIdentityV1) -> Result<Identity> {
     })
 }
 
-async fn load_or_create_identity(
+async fn load_or_create_identity_and_keypair(
     database: &Database,
     config: &LightClientConfig,
-) -> Result<Identity> {
-    if let Some(json) = database.get_client_kv(KV_IDENTITY).await? {
+) -> Result<(Identity, KeyPair)> {
+    let identity = if let Some(json) = database.get_client_kv(KV_IDENTITY).await? {
         let stored: StoredIdentityV1 = serde_json::from_str(&json)
             .map_err(|e| Error::storage(format!("Invalid identity JSON in DB: {e}")))?;
-        return stored_to_identity(stored);
-    }
-
-    // No stored identity; import metadata file if present.
-    let identity = if let Some(path) = &config.identity_path {
-        if path.exists() {
-            info!("Importing identity from {:?}", path);
-            load_identity_from_file(path).await?
+        stored_to_identity(stored)?
+    } else {
+        // No stored identity; import identity file if present.
+        let identity = if let Some(path) = &config.identity_path {
+            if path.exists() {
+                info!("Importing identity from {:?}", path);
+                load_identity_from_file(path).await?
+            } else {
+                info!("No identity file; creating a new identity");
+                let (identity, keypair) = generate_identity_with_keypair(&config.display_name)?;
+                persist_identity_and_key(database, config, &identity, &keypair).await?;
+                return Ok((identity, keypair));
+            }
         } else {
             info!("No identity file; creating a new identity");
-            generate_identity(&config.display_name)?
-        }
-    } else {
-        info!("No identity file; creating a new identity");
-        generate_identity(&config.display_name)?
+            let (identity, keypair) = generate_identity_with_keypair(&config.display_name)?;
+            persist_identity_and_key(database, config, &identity, &keypair).await?;
+            return Ok((identity, keypair));
+        };
+
+        // We imported an identity, but import formats do not include private key material.
+        // We require key material to be present in the DB to operate.
+        let identity_json = serde_json::to_string(&identity_to_stored(&identity))?;
+        database.put_client_kv(KV_IDENTITY, &identity_json).await?;
+        identity
     };
 
-    // Persist identity metadata to DB
-    let json = serde_json::to_string(&identity_to_stored(&identity))?;
-    database.put_client_kv(KV_IDENTITY, &json).await?;
+    let Some(key_json) = database.get_client_kv(KV_IDENTITY_KEY).await? else {
+        return Err(Error::crypto(
+            "Light client identity key material is missing. Set DCHAT_LIGHT_CLIENT_IDENTITY_PASSPHRASE and reset identity, or restore the key store from backup.".to_string(),
+        ));
+    };
 
-    // Optional export of metadata file for portability/debugging
+    let stored_key: StoredIdentityKeyV1 = serde_json::from_str(&key_json)
+        .map_err(|e| Error::storage(format!("Invalid identity key JSON in DB: {e}")))?;
+
+    let passphrase = read_identity_passphrase()?;
+    let keypair = stored_key_to_keypair(&identity, stored_key, &passphrase)?;
+
+    Ok((identity, keypair))
+}
+
+async fn persist_identity_and_key(
+    database: &Database,
+    config: &LightClientConfig,
+    identity: &Identity,
+    keypair: &KeyPair,
+) -> Result<()> {
+    let identity_json = serde_json::to_string(&identity_to_stored(identity))?;
+    database.put_client_kv(KV_IDENTITY, &identity_json).await?;
+
+    let passphrase = read_identity_passphrase()?;
+    let stored_key = keypair_to_stored_key(identity, keypair, &passphrase)?;
+    let key_json = serde_json::to_string(&stored_key)?;
+    database.put_client_kv(KV_IDENTITY_KEY, &key_json).await?;
+
+    // Optional export of public identity file for portability/debugging.
     if let Some(path) = &config.identity_path {
         if !path.exists() {
-            save_identity_to_file(&identity, path).await?;
+            save_identity_to_file(identity, path).await?;
         }
     }
 
-    Ok(identity)
+    Ok(())
 }
 
 async fn load_sync_cursor(database: &Database) -> Result<SyncCursor> {
@@ -1267,6 +1398,17 @@ pub fn generate_channel_key() -> [u8; KEY_SIZE] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use tempfile::tempdir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_identity_passphrase(passphrase: Option<&str>) {
+        match passphrase {
+            Some(value) => std::env::set_var(ENV_IDENTITY_PASSPHRASE, value),
+            None => std::env::remove_var(ENV_IDENTITY_PASSPHRASE),
+        }
+    }
 
     #[test]
     fn test_client_profile_settings() {
@@ -1286,6 +1428,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_operation() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_identity_passphrase(Some("test-light-client-passphrase"));
+
         let temp_dir = std::env::temp_dir().join(format!("dchat_test_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -1310,5 +1455,146 @@ mod tests {
         assert_eq!(client.offline_queue.read().await.len(), 1);
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_identity_keypair_persisted_encrypted_roundtrip() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        set_identity_passphrase(Some("roundtrip-passphrase"));
+
+        let dir = tempdir().unwrap();
+        let config = LightClientConfig {
+            data_dir: dir.path().to_path_buf(),
+            display_name: "alice".to_string(),
+            health_addr: None,
+            metrics_addr: None,
+            ..Default::default()
+        };
+
+        let client1 = LightClient::new(config.clone()).await.unwrap();
+        let identity1 = client1.identity().clone();
+        let pk1 = client1.identity_keypair().public_key().to_core_public_key();
+
+        let client2 = LightClient::new(config).await.unwrap();
+        let identity2 = client2.identity().clone();
+        let pk2 = client2.identity_keypair().public_key().to_core_public_key();
+
+        assert_eq!(identity1.user_id, identity2.user_id);
+        assert_eq!(
+            identity1.public_key.as_bytes(),
+            identity2.public_key.as_bytes()
+        );
+        assert_eq!(pk1.as_bytes(), pk2.as_bytes());
+        assert_eq!(pk2.as_bytes(), identity2.public_key.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn test_identity_keypair_wrong_passphrase_fails() {
+        let _lock = ENV_LOCK.lock().unwrap();
+
+        let dir = tempdir().unwrap();
+        let config = LightClientConfig {
+            data_dir: dir.path().to_path_buf(),
+            display_name: "alice".to_string(),
+            health_addr: None,
+            metrics_addr: None,
+            ..Default::default()
+        };
+
+        set_identity_passphrase(Some("correct"));
+        let _client1 = LightClient::new(config.clone()).await.unwrap();
+
+        set_identity_passphrase(Some("wrong"));
+        let err = match LightClient::new(config).await {
+            Ok(_) => panic!("expected identity key decryption to fail"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Incorrect password") || msg.contains("Decryption"));
+    }
+
+    #[tokio::test]
+    async fn test_identity_file_roundtrip_full_identity_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("identity.json");
+
+        let keypair = KeyPair::try_generate().expect("CSPRNG available");
+        let identity = Identity::try_new("alice".to_string(), &keypair).unwrap();
+
+        tokio::fs::write(&path, serde_json::to_vec(&identity).unwrap())
+            .await
+            .unwrap();
+
+        let loaded = load_identity_from_file(&path).await.unwrap();
+        assert_eq!(loaded.user_id, identity.user_id);
+        assert_eq!(loaded.username, identity.username);
+        assert_eq!(loaded.normalized_username, identity.normalized_username);
+        assert_eq!(loaded.public_key.as_bytes(), identity.public_key.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn test_identity_file_loads_legacy_metadata_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("identity_legacy.json");
+
+        let keypair = KeyPair::try_generate().expect("CSPRNG available");
+        let identity = Identity::try_new("bob".to_string(), &keypair).unwrap();
+
+        let legacy = serde_json::json!({
+            "username": identity.username,
+            "user_id": identity.user_id.to_string(),
+            "public_key": hex::encode(identity.public_key.as_bytes()),
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&legacy).unwrap())
+            .await
+            .unwrap();
+
+        let loaded = load_identity_from_file(&path).await.unwrap();
+        assert_eq!(loaded.user_id, identity.user_id);
+        assert_eq!(loaded.username, identity.username);
+        assert_eq!(loaded.public_key.as_bytes(), identity.public_key.as_bytes());
+    }
+
+    #[test]
+    fn test_stored_identity_rejects_bad_public_key_len() {
+        let stored = StoredIdentityV1 {
+            version: 1,
+            user_id: Uuid::new_v4().to_string(),
+            username: "carol".to_string(),
+            normalized_username: "carol".to_string(),
+            public_key_b64: general_purpose::STANDARD.encode([1u8, 2, 3]),
+            created_at: chrono::Utc::now().timestamp(),
+            verified: false,
+            badges: Vec::new(),
+            metadata: HashMap::new(),
+            display_name: None,
+            bio: None,
+        };
+
+        let err = stored_to_identity(stored).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("public_key"));
+    }
+
+    #[test]
+    fn test_stored_identity_invalid_timestamp_defaults_now() {
+        let stored = StoredIdentityV1 {
+            version: 1,
+            user_id: Uuid::new_v4().to_string(),
+            username: "dave".to_string(),
+            normalized_username: "dave".to_string(),
+            public_key_b64: general_purpose::STANDARD.encode([7u8; 32]),
+            created_at: i64::MAX,
+            verified: false,
+            badges: Vec::new(),
+            metadata: HashMap::new(),
+            display_name: None,
+            bio: None,
+        };
+
+        let now = chrono::Utc::now();
+        let identity = stored_to_identity(stored).unwrap();
+        let delta = identity.created_at.signed_duration_since(now);
+        assert!(delta.num_seconds().abs() <= 5);
     }
 }

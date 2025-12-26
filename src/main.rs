@@ -3926,6 +3926,13 @@ async fn run_light_client(
     info!("Channels: {:?}", light_config.default_channels);
     info!("Data dir: {:?}", light_config.data_dir);
 
+    if std::env::var("DCHAT_LIGHT_CLIENT_IDENTITY_PASSPHRASE").is_err() {
+        return Err(Error::crypto(
+            "DCHAT_LIGHT_CLIENT_IDENTITY_PASSPHRASE not set. This passphrase is required to encrypt/decrypt the light client identity private key stored in SQLite."
+                .to_string(),
+        ));
+    }
+
     // Create light client
     let mut client = LightClient::new(light_config).await?;
 
