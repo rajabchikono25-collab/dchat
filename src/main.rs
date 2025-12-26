@@ -3879,7 +3879,9 @@ async fn run_light_client(
     metrics_addr: String,
     health_addr: String,
 ) -> Result<()> {
-    use dchat::light_client::{ClientProfile, LightClient, LightClientConfig, LightClientEvent};
+    use dchat::light_client::{
+        ClientProfile, LightClient, LightClientConfig, LightClientEvent, VerificationStatus,
+    };
 
     info!("╔═══════════════════════════════════════════════════════════╗");
     info!("║                 dchat Light Client                        ║");
@@ -3951,9 +3953,14 @@ async fn run_light_client(
             tokio::select! {
                 event = event_rx.recv() => {
                     match event {
-                        Some(LightClientEvent::MessageReceived { channel_id, sender, content, timestamp, verified }) => {
+                        Some(LightClientEvent::MessageReceived { channel_id, sender, content, timestamp, verification }) => {
                             let channel = channel_id.as_deref().unwrap_or("DM");
-                            let status = if verified { "✓" } else { "?" };
+                            let status = match verification {
+                                VerificationStatus::Verified { .. } => "✓",
+                                VerificationStatus::Pending => "⏳",
+                                VerificationStatus::Failed { .. } => "⚠",
+                                VerificationStatus::Skipped => "○",
+                            };
                             info!("[{}] #{} {}: {} {}", timestamp, channel, sender, content, status);
                         }
                         Some(LightClientEvent::MessageSent { message_id, channel_id }) => {
