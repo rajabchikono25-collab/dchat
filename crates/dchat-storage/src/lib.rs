@@ -89,12 +89,16 @@ pub use provider::{
     ArchiveObjectCapability,
     // Blob references
     BlobCodec,
+    // Health status
+    BlobHealthStatus,
     BlobLocation,
     BlobRef,
+    ChallengeConfig,
     // Challenge system
     ChallengeProof,
     ChallengeResult,
     ChallengeStatus,
+    HealthLevel,
     IpfsPinningCapability,
     LocationStatus,
     ObjectS3Capability,
@@ -105,15 +109,30 @@ pub use provider::{
     ProviderRegistryConfig,
     // Provider selection
     ProviderSelection,
+    ProviderSelector,
     RegisteredProvider,
     ReplicationConfig,
     SelectionCriteria,
     StorageChallenge,
     StorageChallengeManager,
+    // Storage class
+    StorageClass,
+    // Storage facade (main entry point for SDK)
+    StorageFacade,
+    StorageFacadeConfig,
+    StorageFacadeError,
     StorageLimits,
+    StorageOperation,
+    StorageReceipt,
     // Storage router
     StorageRouter,
     StorageRouterConfig,
+    // Result types
+    StoreBlobResult,
+    StoreMessageResult,
+    // Tier migration
+    TierMigrationRequest,
+    UserStorageQuota,
 };
 pub use resilience::{
     BackendHealth, CircuitBreaker, CircuitBreakerConfig, CircuitState, FallbackManager,

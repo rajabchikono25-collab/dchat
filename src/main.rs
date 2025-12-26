@@ -3951,12 +3951,129 @@ async fn run_user_node(
     let database = Database::new(db_config).await?;
     info!("✓ Database initialized");
 
+    // Drive the libp2p swarm from a single task.
+    // This prevents deadlocks from holding a mutex across `.await` and ensures
+    // the swarm is continuously polled so publish/receive works reliably.
+    use tokio::sync::{mpsc, oneshot};
+
+    enum ClientNetCmd {
+        Publish {
+            channel_id: String,
+            message: DchatMessage,
+            resp: oneshot::Sender<Result<()>>,
+        },
+        GetMeshCount {
+            channel_id: String,
+            resp: oneshot::Sender<usize>,
+        },
+        Shutdown {
+            resp: oneshot::Sender<()>,
+        },
+    }
+
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<ClientNetCmd>(256);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<NetworkEvent>(2048);
+
+    let db_for_net = database.clone();
+    let self_user_id = identity.user_id.clone();
+
+    let net_handle = tokio::spawn(async move {
+        use dchat_storage::MessageRow;
+        use sha2::Digest;
+
+        loop {
+            tokio::select! {
+                cmd = cmd_rx.recv() => {
+                    match cmd {
+                        Some(ClientNetCmd::Publish { channel_id, message, resp }) => {
+                            let publish_res = network.publish_to_channel(&channel_id, &message);
+
+                            // Best-effort local persistence for outbound messages.
+                            if publish_res.is_ok() {
+                                if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = &message {
+                                    let content_hash = format!("{:x}", sha2::Sha256::digest(encrypted_payload));
+                                    let _ = db_for_net.insert_message(&MessageRow {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        sender_id: sender.0.to_string(),
+                                        recipient_id: None,
+                                        channel_id: Some(channel_id.clone()),
+                                        content_type: "channel_message".to_string(),
+                                        content: String::from_utf8_lossy(encrypted_payload).to_string(),
+                                        encrypted_payload: encrypted_payload.clone(),
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        sequence_num: None,
+                                        status: "sent".to_string(),
+                                        expires_at: None,
+                                        size: encrypted_payload.len(),
+                                        content_hash: Some(content_hash),
+                                    }).await;
+                                }
+                            }
+
+                            let _ = resp.send(publish_res);
+                        }
+                        Some(ClientNetCmd::GetMeshCount { channel_id, resp }) => {
+                            let count = network.get_mesh_peer_count(&channel_id);
+                            let _ = resp.send(count);
+                        }
+                        Some(ClientNetCmd::Shutdown { resp }) => {
+                            let _ = resp.send(());
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+
+                event = network.next_event() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+
+                    // Persist inbound channel messages (best-effort).
+                    if let NetworkEvent::MessageReceived { from: _, message } = &event {
+                        if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = message {
+                            if sender != &self_user_id {
+                                let content_hash = format!("{:x}", sha2::Sha256::digest(encrypted_payload));
+                                let _ = db_for_net.insert_message(&MessageRow {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    sender_id: sender.0.to_string(),
+                                    recipient_id: None,
+                                    channel_id: Some(channel_id.clone()),
+                                    content_type: "channel_message".to_string(),
+                                    content: String::from_utf8_lossy(encrypted_payload).to_string(),
+                                    encrypted_payload: encrypted_payload.clone(),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                    sequence_num: None,
+                                    status: "delivered".to_string(),
+                                    expires_at: None,
+                                    size: encrypted_payload.len(),
+                                    content_hash: Some(content_hash),
+                                }).await;
+                            }
+                        }
+                    }
+
+                    // Forward event to UI loop (best-effort).
+                    let _ = evt_tx.send(event).await;
+                }
+            }
+        }
+    });
+
     if non_interactive {
         // Non-interactive mode for testing
         info!("Running in non-interactive test mode");
 
         // Wait additional time for mesh to stabilize
-        let mesh_count = network.get_mesh_peer_count("global");
+        let (mesh_tx, mesh_rx) = oneshot::channel::<usize>();
+        let _ = cmd_tx
+            .send(ClientNetCmd::GetMeshCount {
+                channel_id: "global".to_string(),
+                resp: mesh_tx,
+            })
+            .await;
+
+        let mesh_count = mesh_rx.await.unwrap_or(0);
         info!(
             "📊 Current mesh status: {} peers before publishing",
             mesh_count
@@ -3965,7 +4082,14 @@ async fn run_user_node(
         if mesh_count == 0 {
             warn!("⚠️  No mesh peers yet, waiting 10s for mesh to stabilize...");
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-            let new_mesh_count = network.get_mesh_peer_count("global");
+            let (mesh_tx, mesh_rx) = oneshot::channel::<usize>();
+            let _ = cmd_tx
+                .send(ClientNetCmd::GetMeshCount {
+                    channel_id: "global".to_string(),
+                    resp: mesh_tx,
+                })
+                .await;
+            let new_mesh_count = mesh_rx.await.unwrap_or(0);
             info!("📊 Mesh status after wait: {} peers", new_mesh_count);
         } else {
             info!(
@@ -3985,7 +4109,23 @@ async fn run_user_node(
             // Retry up to 3 times if publish fails
             let mut attempts = 0;
             loop {
-                match network.publish_to_channel("global", &message) {
+                let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+                let send_res = cmd_tx
+                    .send(ClientNetCmd::Publish {
+                        channel_id: "global".to_string(),
+                        message: message.clone(),
+                        resp: resp_tx,
+                    })
+                    .await;
+
+                if send_res.is_err() {
+                    return Err(Error::network("Network task is not running".to_string()));
+                }
+
+                match resp_rx
+                    .await
+                    .unwrap_or_else(|_| Err(Error::network("Network task stopped".to_string())))
+                {
                     Ok(_) => {
                         info!("📤 Sent test message #{}", i);
                         break;
@@ -4004,7 +4144,7 @@ async fn run_user_node(
                             attempts + 1,
                             e
                         );
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
             }
@@ -4020,84 +4160,93 @@ async fn run_user_node(
         info!("Type your messages and press Enter to send to #global");
         info!("Press Ctrl+C to exit");
 
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
+        use tokio::io::{self, AsyncBufReadExt};
 
-        // Wrap network in Arc<Mutex> for shared access
-        let network_arc = Arc::new(Mutex::new(network));
-        let network_clone = network_arc.clone();
+        let mut stdin_lines = io::BufReader::new(io::stdin()).lines();
+        print!("You: ");
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
 
-        // Spawn message receiver
-        let rx_identity = identity.user_id.clone();
-        let rx_handle = tokio::spawn(async move {
-            loop {
-                if let Some(event) = network_clone.lock().await.next_event().await {
+        loop {
+            tokio::select! {
+                maybe_event = evt_rx.recv() => {
+                    let Some(event) = maybe_event else {
+                        break;
+                    };
+
                     if let NetworkEvent::MessageReceived { from, message } = event {
-                        if let DchatMessage::ChannelMessage {
-                            sender,
-                            channel_id,
-                            encrypted_payload,
-                        } = message
-                        {
-                            if sender != rx_identity {
+                        if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = message {
+                            if sender != identity.user_id {
                                 let msg_text = String::from_utf8_lossy(&encrypted_payload);
                                 println!("\n[#{}] {}: {}", channel_id, from, msg_text);
                                 print!("You: ");
                                 use std::io::Write;
-                                std::io::stdout().flush().ok();
+                                let _ = std::io::stdout().flush();
                             }
                         }
                     }
                 }
-            }
-        });
 
-        // Read user input
-        use std::io::{self, BufRead};
-        let stdin = io::stdin();
-        let reader = stdin.lock();
+                line = stdin_lines.next_line() => {
+                    match line {
+                        Ok(Some(text)) => {
+                            if !text.trim().is_empty() {
+                                let message = DchatMessage::ChannelMessage {
+                                    sender: identity.user_id.clone(),
+                                    channel_id: "global".to_string(),
+                                    encrypted_payload: text.as_bytes().to_vec(),
+                                };
 
-        let tx_identity = identity.user_id.clone();
+                                let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+                                if cmd_tx.send(ClientNetCmd::Publish {
+                                    channel_id: "global".to_string(),
+                                    message,
+                                    resp: resp_tx,
+                                }).await.is_err() {
+                                    return Err(Error::network("Network task is not running".to_string()));
+                                }
 
-        for line in reader.lines() {
-            if let Ok(text) = line {
-                if !text.trim().is_empty() {
-                    let message = DchatMessage::ChannelMessage {
-                        sender: tx_identity.clone(),
-                        channel_id: "global".to_string(),
-                        encrypted_payload: text.as_bytes().to_vec(),
-                    };
+                                match resp_rx.await.unwrap_or_else(|_| Err(Error::network("Network task stopped".to_string()))) {
+                                    Ok(_) => {
+                                        info!("📤 Sent: {}", text);
+                                    }
+                                    Err(e) => {
+                                        info!("❌ Failed to send: {}", e);
+                                        println!("Error sending message: {}", e);
+                                    }
+                                }
 
-                    match network_arc
-                        .lock()
-                        .await
-                        .publish_to_channel("global", &message)
-                    {
-                        Ok(_) => {
-                            info!("📤 Sent: {}", text);
-                            println!("Message sent!");
-                            print!("You: ");
-                            use std::io::Write;
-                            std::io::stdout().flush().ok();
+                                print!("You: ");
+                                use std::io::Write;
+                                let _ = std::io::stdout().flush();
+                            }
+                        }
+                        Ok(None) => {
+                            // stdin closed
+                            break;
                         }
                         Err(e) => {
-                            info!("❌ Failed to send: {}", e);
-                            println!("Error sending message: {}", e);
-                            print!("You: ");
-                            use std::io::Write;
-                            std::io::stdout().flush().ok();
+                            return Err(Error::Io(e));
                         }
                     }
                 }
+
+                _ = tokio::signal::ctrl_c() => {
+                    break;
+                }
             }
         }
-
-        rx_handle.abort();
     }
 
     // Graceful shutdown
     info!("Shutting down user client...");
     let _ = shutdown_tx.send(());
+    let (resp_tx, resp_rx) = oneshot::channel::<()>();
+    let _ = cmd_tx.send(ClientNetCmd::Shutdown { resp: resp_tx }).await;
+    let _ = resp_rx.await;
+    let _ = net_handle.await;
     database.close().await?;
     info!("✓ Shutdown complete");
     Ok(())
