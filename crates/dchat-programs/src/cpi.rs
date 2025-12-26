@@ -11,6 +11,7 @@
 //! - Deterministic return data and event/log merging
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,23 @@ use crate::instruction::Instruction;
 use crate::metering::{MeterSnapshot, SharedComputeMeter};
 use crate::pda::{PdaDerivation, MAX_SEEDS, MAX_SEED_LEN};
 use crate::MAX_CPI_DEPTH;
+
+/// CPI dispatch hook.
+///
+/// This exists to allow `CrossProgramInvocation::{invoke, invoke_signed}` to
+/// execute the callee via the runtime without creating hard dependencies on any
+/// specific VM implementation.
+///
+/// Production callers should provide a runtime-backed implementation.
+pub trait CpiExecutor {
+    /// Execute a CPI call originating from `caller`.
+    fn execute_cpi(
+        &mut self,
+        caller: Pubkey,
+        instruction: Instruction,
+        signer_seeds: Vec<Vec<Vec<u8>>>,
+    ) -> ProgramResult<CpiResult>;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CPI COSTS (CONSENSUS-CRITICAL)
@@ -127,7 +145,6 @@ impl CpiResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// CPI context containing caller information
-#[derive(Debug)]
 pub struct CpiContext<'a, 'b> {
     /// Current caller program ID
     pub caller: Pubkey,
@@ -141,10 +158,24 @@ pub struct CpiContext<'a, 'b> {
     pub compute_meter: SharedComputeMeter,
     /// Account borrow tracker (shared across CPI chain)
     pub borrow_tracker: &'a mut AccountAccessTracker,
+    /// Runtime-backed CPI executor
+    pub executor: &'a mut dyn CpiExecutor,
     /// Programs in the call chain (for reentrancy detection)
     pub call_chain: Vec<Pubkey>,
     /// Signer seeds for PDA signing (owned seeds per CPI call)
     pub signer_seeds: Vec<Vec<Vec<u8>>>,
+}
+
+impl<'a, 'b> fmt::Debug for CpiContext<'a, 'b> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CpiContext")
+            .field("caller", &self.caller)
+            .field("depth", &self.depth)
+            .field("max_depth", &self.max_depth)
+            .field("call_chain", &self.call_chain)
+            .field("signer_seeds", &self.signer_seeds)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a, 'b> CpiContext<'a, 'b> {
@@ -154,6 +185,7 @@ impl<'a, 'b> CpiContext<'a, 'b> {
         accounts: &'a [AccountInfo<'b>],
         compute_meter: SharedComputeMeter,
         borrow_tracker: &'a mut AccountAccessTracker,
+        executor: &'a mut dyn CpiExecutor,
     ) -> Self {
         Self {
             caller,
@@ -162,6 +194,7 @@ impl<'a, 'b> CpiContext<'a, 'b> {
             max_depth: MAX_CPI_DEPTH,
             compute_meter,
             borrow_tracker,
+            executor,
             call_chain: vec![caller],
             signer_seeds: Vec::new(),
         }
@@ -188,6 +221,7 @@ impl<'a, 'b> CpiContext<'a, 'b> {
             max_depth: self.max_depth,
             compute_meter: self.compute_meter.clone(),
             borrow_tracker: self.borrow_tracker,
+            executor: self.executor,
             call_chain: new_chain,
             signer_seeds: Vec::new(),
         })
@@ -639,114 +673,30 @@ impl CrossProgramInvocation {
             return Err(ProgramError::CallDepthExceeded);
         }
 
-        // 2. Consume base CPI cost
-        let base_cost = CPI_BASE_COST
-            + (instruction.accounts.len() as u64 * CPI_PER_ACCOUNT_COST)
-            + (instruction.data.len() as u64 * CPI_PER_DATA_BYTE_COST);
-        ctx.compute_meter.consume(base_cost)?;
-
-        // 3. Validate instruction format
+        // 2. Validate instruction format
         instruction.validate()?;
 
-        // 4. Check for reentrancy (A -> B -> A is forbidden)
+        // 3. Check for reentrancy (A -> B -> A is forbidden)
         if ctx.call_chain.contains(&instruction.program_id) {
             return Err(ProgramError::ReentrancyDetected);
         }
 
-        // 5. Derive PDA signers from seeds (using caller's program ID)
-        let pda_signers = derive_pda_signers(&ctx.caller, signer_seeds, &ctx.compute_meter)?;
+        // 4. Convert signer seeds into owned representation.
+        let owned_seeds: Vec<Vec<Vec<u8>>> = signer_seeds
+            .iter()
+            .map(|set| set.iter().map(|s| s.to_vec()).collect())
+            .collect();
 
-        // 6. Validate PDA usage
-        validate_pda_signer_usage(&pda_signers, instruction)?;
+        // 5. Execute via the provided runtime-backed executor.
+        // All consensus-critical enforcement (compute metering, borrows, privilege
+        // checks, rollback, bounded logs/events/return-data) is handled by the executor.
+        ctx.call_chain.push(instruction.program_id);
+        let result = ctx
+            .executor
+            .execute_cpi(ctx.caller, instruction.clone(), owned_seeds);
+        ctx.call_chain.pop();
 
-        // 7. Create CPI guard with execution overlay
-        let mut guard = CpiGuard::new(ctx.compute_meter.clone(), ctx.depth as u8);
-
-        // 8. Verify account permissions and establish borrows
-        let mut borrowed_accounts = Vec::new();
-        for meta in &instruction.accounts {
-            let account = ctx.get_account(&meta.pubkey)?;
-
-            // Verify signer requirement
-            if meta.is_signer {
-                // Either the account is already a signer, or PDA seeds satisfy it
-                if !account.is_signer && !pda_signers.contains(&meta.pubkey) {
-                    return Err(ProgramError::MissingRequiredSignature);
-                }
-            }
-
-            // Verify writable requirement and establish borrows
-            if meta.is_writable {
-                // Must have been writable in caller's context
-                if !account.is_writable {
-                    return Err(ProgramError::AccountNotWritable);
-                }
-                // Check global borrow rules
-                if !ctx.borrow_tracker.can_borrow_mutable(&meta.pubkey) {
-                    return Err(ProgramError::BorrowsOverlap);
-                }
-                ctx.borrow_tracker.add_mutable_borrow(meta.pubkey)?;
-                guard.overlay_mut().record_borrow(meta.pubkey, true);
-                borrowed_accounts.push((meta.pubkey, true));
-            } else {
-                // Read-only access
-                if !ctx.borrow_tracker.can_borrow_immutable(&meta.pubkey) {
-                    return Err(ProgramError::BorrowsOverlap);
-                }
-                ctx.borrow_tracker.add_immutable_borrow(meta.pubkey)?;
-                guard.overlay_mut().record_borrow(meta.pubkey, false);
-                borrowed_accounts.push((meta.pubkey, false));
-            }
-        }
-
-        // 9. Calculate compute consumed at this point (before actual execution)
-        let pre_execution_consumed = ctx.compute_meter.consumed();
-
-        // 10. The actual execution happens in the runtime via CpiInvoker
-        // This method returns a CpiResult computed from the actual execution.
-        // Since we cannot call the runtime directly from here (to avoid circular deps),
-        // we return a prepared result structure that the runtime will fill in.
-        //
-        // The runtime's invoke_cpi method handles:
-        // - Loading program bytecode
-        // - Creating child execution context
-        // - Running the VM
-        // - Collecting events/logs/return data
-        // - Committing or rolling back state
-
-        // For the interface module, we return what we've validated so far.
-        // The runtime will intercept this call and perform actual execution.
-        let result = CpiResult {
-            success: true,
-            error_code: None,
-            return_data: Vec::new(),
-            compute_consumed: ctx
-                .compute_meter
-                .consumed()
-                .saturating_sub(pre_execution_consumed),
-            events: Vec::new(),
-            logs: Vec::new(),
-        };
-
-        // 11. Release borrows (always done, even on failure)
-        for (key, is_mutable) in &borrowed_accounts {
-            if *is_mutable {
-                ctx.borrow_tracker.release_mutable_borrow(key);
-            } else {
-                ctx.borrow_tracker.release_immutable_borrow(key);
-            }
-        }
-
-        // 12. Finalize guard
-        if result.success {
-            let (_events, _logs, _return_data) = guard.commit();
-            Ok(result)
-        } else {
-            // Rollback would happen here with account access
-            // For interface-only, we just mark as finalized
-            let _logs = guard.rollback(&mut HashMap::new());
-            Err(ProgramError::from_code(result.error_code.unwrap_or(0)))
-        }
+        result
     }
 
     /// Check if an account can be borrowed for CPI
@@ -811,6 +761,19 @@ mod tests {
     use crate::metering::ComputeBudget;
     use std::sync::Arc;
 
+    struct NoopExecutor;
+
+    impl CpiExecutor for NoopExecutor {
+        fn execute_cpi(
+            &mut self,
+            _caller: Pubkey,
+            _instruction: Instruction,
+            _signer_seeds: Vec<Vec<Vec<u8>>>,
+        ) -> ProgramResult<CpiResult> {
+            Err(ProgramError::UnsupportedProgram)
+        }
+    }
+
     fn pubkey_n(n: u8) -> Pubkey {
         let mut bytes = [0u8; 32];
         bytes[0] = n;
@@ -822,7 +785,9 @@ mod tests {
         let meter = Arc::new(crate::metering::ComputeMeter::new(ComputeBudget::default()));
         let mut tracker = AccountAccessTracker::new();
 
-        let mut ctx = CpiContext::new(pubkey_n(1), &[], meter, &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let mut ctx = CpiContext::new(pubkey_n(1), &[], meter, &mut tracker, &mut exec);
 
         // Should be able to create children up to max depth
         let mut current = ctx.child(pubkey_n(2)).unwrap();
@@ -847,7 +812,9 @@ mod tests {
         let program1 = pubkey_n(1);
         let program2 = pubkey_n(2);
 
-        let mut ctx = CpiContext::new(program1, &[], meter, &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let mut ctx = CpiContext::new(program1, &[], meter, &mut tracker, &mut exec);
 
         // Can call different program
         let child = ctx.child(program2);
@@ -867,7 +834,9 @@ mod tests {
         let meter = Arc::new(crate::metering::ComputeMeter::new(ComputeBudget::default()));
         let mut tracker = AccountAccessTracker::new();
 
-        let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
         // Call chain starts with A
         assert!(ctx.call_chain.contains(&program_a));
@@ -893,7 +862,9 @@ mod tests {
         let meter = Arc::new(crate::metering::ComputeMeter::new(budget));
         let mut tracker = AccountAccessTracker::new();
 
-        let mut ctx_a = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let mut ctx_a = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
         // Consume in parent
         assert!(ctx_a.compute_meter.consume(1000).is_ok());
@@ -914,7 +885,9 @@ mod tests {
         let meter = Arc::new(crate::metering::ComputeMeter::new(ComputeBudget::default()));
         let mut tracker = AccountAccessTracker::new();
 
-        let ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
         // Add signer seeds for PDA
         let seeds = vec![b"seed1".to_vec(), b"seed2".to_vec()];
@@ -1206,7 +1179,9 @@ mod tests {
         let meter = Arc::new(crate::metering::ComputeMeter::new(ComputeBudget::default()));
         let mut tracker = AccountAccessTracker::new();
 
-        let ctx = CpiContext::new(program_a, &[], meter, &mut tracker);
+        let mut exec = NoopExecutor;
+
+        let ctx = CpiContext::new(program_a, &[], meter, &mut tracker, &mut exec);
 
         assert!(ctx.is_in_call_chain(&program_a));
         assert!(!ctx.is_in_call_chain(&program_b));

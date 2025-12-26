@@ -19,8 +19,9 @@ use crate::account::{
     Account, AccountAccessTracker, AccountData, AccountInfo, AccountMeta, AccountState, Pubkey,
 };
 use crate::cpi::{
-    AccountSnapshot, CpiExecutionOverlay, CpiGuard, CpiResult, PrivilegeChecker, CPI_BASE_COST,
-    CPI_PDA_DERIVATION_COST, CPI_PER_ACCOUNT_COST, CPI_PER_DATA_BYTE_COST, MAX_CPI_RETURN_DATA,
+    AccountSnapshot, CpiExecutionOverlay, CpiExecutor, CpiGuard, CpiResult, PrivilegeChecker,
+    CPI_BASE_COST, CPI_PDA_DERIVATION_COST, CPI_PER_ACCOUNT_COST, CPI_PER_DATA_BYTE_COST,
+    MAX_CPI_EVENTS, MAX_CPI_LOGS, MAX_CPI_RETURN_DATA,
 };
 use crate::cpi::{CpiContext, CrossProgramInvocation};
 use crate::error::{ProgramError, ProgramResult};
@@ -87,7 +88,7 @@ pub trait CpiInvoker: Send + Sync {
         &self,
         ctx: &mut ExecutionContext,
         request: CpiInvocationRequest,
-    ) -> ProgramResult<CpiInvocationResponse>;
+    ) -> ProgramResult<CpiResult>;
 }
 
 /// CPI invocation request payload
@@ -101,13 +102,37 @@ pub struct CpiInvocationRequest {
     pub signer_seeds: Vec<Vec<Vec<u8>>>,
 }
 
-/// CPI invocation response payload
-#[derive(Debug, Clone)]
-pub struct CpiInvocationResponse {
-    /// Callee return data (if set)
-    pub return_data: Vec<u8>,
-    /// Compute consumed by callee
-    pub compute_consumed: u64,
+/// Runtime-backed CPI executor for the `cpi.rs` interface layer.
+///
+/// This allows callers that build a `CpiContext` to delegate execution to the
+/// production runtime while sharing the same `ExecutionContext` (compute meter,
+/// borrow tracker, call chain, return data, and event/log buffers).
+pub struct RuntimeCpiExecutor<'a> {
+    runtime: &'a ProgramRuntime,
+    ctx: &'a mut ExecutionContext,
+}
+
+impl<'a> RuntimeCpiExecutor<'a> {
+    /// Create a new executor bound to a live transaction context.
+    pub fn new(runtime: &'a ProgramRuntime, ctx: &'a mut ExecutionContext) -> Self {
+        Self { runtime, ctx }
+    }
+}
+
+impl CpiExecutor for RuntimeCpiExecutor<'_> {
+    fn execute_cpi(
+        &mut self,
+        caller: Pubkey,
+        instruction: Instruction,
+        signer_seeds: Vec<Vec<Vec<u8>>>,
+    ) -> ProgramResult<CpiResult> {
+        let request = CpiInvocationRequest {
+            instruction,
+            caller_program: caller,
+            signer_seeds,
+        };
+        self.runtime.invoke_cpi(self.ctx, request)
+    }
 }
 
 /// Execution batch processor using parallel scheduler
@@ -601,7 +626,7 @@ impl ProgramRuntime {
         &self,
         ctx: &mut ExecutionContext,
         request: CpiInvocationRequest,
-    ) -> ProgramResult<CpiInvocationResponse> {
+    ) -> ProgramResult<CpiResult> {
         // 1. Depth check
         if ctx.cpi_depth >= MAX_CPI_DEPTH {
             return Err(ProgramError::CallDepthExceeded);
@@ -632,14 +657,16 @@ impl ProgramRuntime {
             return Err(ProgramError::ReentrancyDetected);
         }
 
-        // 4. Consume base CPI cost upfront (before any other work)
+        // 4. Track compute snapshot for accounting (NOT for rollback)
+        // This must be taken before any CPI-related charging so the delta includes:
+        // base CPI cost + PDA derivations + callee execution.
+        let pre_consumed = ctx.meter.consumed();
+
+        // 5. Consume base CPI cost upfront (before any other work)
         let base_cost = CPI_BASE_COST
             + (instruction.accounts.len() as u64 * CPI_PER_ACCOUNT_COST)
             + (instruction.data.len() as u64 * CPI_PER_DATA_BYTE_COST);
         ctx.meter.consume(base_cost)?;
-
-        // 5. Track compute snapshot for accounting (NOT for rollback)
-        let pre_consumed = ctx.meter.consumed();
 
         // 6. Preserve return data so it can be restored on failure
         let prev_return = ctx.return_data.clone();
@@ -788,10 +815,16 @@ impl ProgramRuntime {
                     })
                     .unwrap_or_default();
 
-                Ok(CpiInvocationResponse {
-                    return_data: ret_data,
-                    compute_consumed: compute_delta,
-                })
+                // Capture per-CPI deltas for logs/events and bound them for determinism.
+                let (mut events, mut logs) = ctx.events.clone_since(events_checkpoint);
+                if events.len() > MAX_CPI_EVENTS {
+                    events.truncate(MAX_CPI_EVENTS);
+                }
+                if logs.len() > MAX_CPI_LOGS {
+                    logs.truncate(MAX_CPI_LOGS);
+                }
+
+                Ok(CpiResult::success(ret_data, compute_delta, events, logs))
             }
             Err(e) => {
                 // FAILURE: Roll back all writable account state changes
@@ -1436,7 +1469,7 @@ impl CpiInvoker for ProgramRuntime {
         &self,
         ctx: &mut ExecutionContext,
         request: CpiInvocationRequest,
-    ) -> ProgramResult<CpiInvocationResponse> {
+    ) -> ProgramResult<CpiResult> {
         self.invoke_cpi(ctx, request)
     }
 }

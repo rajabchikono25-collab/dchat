@@ -476,6 +476,23 @@ impl EventCollector {
         }
     }
 
+    /// Clone the events/logs added since a checkpoint.
+    ///
+    /// This is used by CPI to return a bounded per-call view of side effects
+    /// while still retaining the full transaction-level buffers for receipts.
+    pub fn clone_since(
+        &self,
+        checkpoint: EventCollectorCheckpoint,
+    ) -> (Vec<ProgramEvent>, Vec<LogEntry>) {
+        let events = self
+            .events
+            .get(checkpoint.events_len..)
+            .unwrap_or(&[])
+            .to_vec();
+        let logs = self.logs.get(checkpoint.logs_len..).unwrap_or(&[]).to_vec();
+        (events, logs)
+    }
+
     /// Roll back collector state to a previous checkpoint.
     ///
     /// This truncates event/log buffers and restores internal counters so subsequent

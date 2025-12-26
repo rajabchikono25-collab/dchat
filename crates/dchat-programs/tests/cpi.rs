@@ -11,11 +11,26 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use dchat_programs::account::{AccountAccessTracker, AccountInfo, AccountMeta, Pubkey};
-use dchat_programs::cpi::{CpiContext, CpiResult, CrossProgramInvocation, PrivilegeChecker};
+use dchat_programs::cpi::{
+    CpiContext, CpiExecutor, CpiResult, CrossProgramInvocation, PrivilegeChecker,
+};
 use dchat_programs::error::ProgramError;
 use dchat_programs::instruction::Instruction;
 use dchat_programs::metering::{ComputeBudget, ComputeMeter};
 use dchat_programs::MAX_CPI_DEPTH;
+
+struct NoopExecutor;
+
+impl CpiExecutor for NoopExecutor {
+    fn execute_cpi(
+        &mut self,
+        _caller: Pubkey,
+        _instruction: Instruction,
+        _signer_seeds: Vec<Vec<Vec<u8>>>,
+    ) -> dchat_programs::ProgramResult<CpiResult> {
+        Err(ProgramError::UnsupportedProgram)
+    }
+}
 
 fn pubkey_n(n: u8) -> Pubkey {
     let mut bytes = [0u8; 32];
@@ -414,8 +429,10 @@ fn test_cpi_depth_enforcement() {
     let meter = Arc::new(ComputeMeter::new(budget));
     let mut tracker = AccountAccessTracker::new();
 
+    let mut exec = NoopExecutor;
+
     // Start at depth 0
-    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
     assert_eq!(ctx.depth, 0);
 
     // Create nested context up to max depth
@@ -437,7 +454,9 @@ fn test_reentrancy_detection() {
     let meter = Arc::new(ComputeMeter::new(budget));
     let mut tracker = AccountAccessTracker::new();
 
-    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+    let mut exec = NoopExecutor;
+
+    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
     // Child context for program B
     let mut child_b = ctx.child(program_b).expect("child b");
@@ -570,7 +589,9 @@ fn test_cpi_signer_seeds() {
     let meter = Arc::new(ComputeMeter::new(budget));
     let mut tracker = AccountAccessTracker::new();
 
-    let ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+    let mut exec = NoopExecutor;
+
+    let ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
     // Add signer seeds for PDA
     let seeds = vec![b"seed1".to_vec(), b"seed2".to_vec()];
@@ -620,7 +641,9 @@ fn test_call_chain_tracking() {
     let meter = Arc::new(ComputeMeter::new(budget));
     let mut tracker = AccountAccessTracker::new();
 
-    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+    let mut exec = NoopExecutor;
+
+    let mut ctx = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
     // Call chain starts with A
     assert!(ctx.call_chain.contains(&program_a));
@@ -646,7 +669,9 @@ fn test_compute_meter_shared_across_cpi() {
     let meter = Arc::new(ComputeMeter::new(budget));
     let mut tracker = AccountAccessTracker::new();
 
-    let mut ctx_a = CpiContext::new(program_a, &[], meter.clone(), &mut tracker);
+    let mut exec = NoopExecutor;
+
+    let mut ctx_a = CpiContext::new(program_a, &[], meter.clone(), &mut tracker, &mut exec);
 
     // Consume in parent
     assert!(ctx_a.compute_meter.consume(1000).is_ok());
@@ -676,7 +701,9 @@ mod proptest_tests {
             let meter = Arc::new(ComputeMeter::new(budget));
             let mut tracker = AccountAccessTracker::new();
 
-            let mut ctx = CpiContext::new(program, &[], meter.clone(), &mut tracker);
+            let mut exec = NoopExecutor;
+
+            let mut ctx = CpiContext::new(program, &[], meter.clone(), &mut tracker, &mut exec);
             ctx.depth = depth;
 
             if depth >= MAX_CPI_DEPTH {

@@ -4,14 +4,29 @@
 //! through the dchat deterministic VM.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use dchat_programs::account::Pubkey;
+use dchat_programs::metering::{ComputeBudget, ComputeMeter};
+use dchat_programs::syscalls::SyscallRegistry;
 use dchat_programs::validation::BytecodeValidator;
-use dchat_programs::vm::{VmConfig, VmInstance};
+use dchat_programs::vm::VmState;
+use dchat_programs::wasi_shim::register_wasi_shim;
 
 /// Path to the compiled WASM contract
 fn get_wasm_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.join("../..").join(
+    let repo_root = manifest_dir.join("../..");
+
+    // Primary: DPL counter example built for wasmi + wasm32-wasip1.
+    let dpl_counter = repo_root
+        .join("examples/contracts/dpl-counter/target/wasm32-wasip1/release/dpl_counter.wasm");
+    if dpl_counter.exists() {
+        return dpl_counter;
+    }
+
+    // Fallback: legacy path (kept for compatibility with older layouts).
+    repo_root.join(
         "examples/contracts/counter/target/wasm32-unknown-unknown/release/counter_contract.wasm",
     )
 }
@@ -35,7 +50,11 @@ fn test_wasm_exists_and_validates() {
     // Check file exists
     if !wasm_path.exists() {
         eprintln!("WASM not found at {:?}", wasm_path);
-        eprintln!("Please compile the counter contract first:");
+        eprintln!("Please compile the counter contract first (wasmi/wasip1):");
+        eprintln!("  rustup target add wasm32-wasip1");
+        eprintln!("  cd examples/contracts/dpl-counter");
+        eprintln!("  cargo build --target wasm32-wasip1 --release");
+        eprintln!("\nIf you're using the legacy counter example instead:");
         eprintln!("  cd examples/contracts/counter");
         eprintln!("  cargo build --target wasm32-unknown-unknown --release");
         panic!("Counter contract WASM not found");
@@ -105,15 +124,29 @@ fn test_counter_contract_execution() {
 
     let wasm_bytes = std::fs::read(&wasm_path).expect("Failed to read WASM file");
 
-    // Set up wasmi engine and store
-    let engine = wasmi::Engine::default();
+    // Set up deterministic wasmi engine (matches dchat VM constraints)
+    let mut engine_config = wasmi::Config::default();
+    engine_config.consume_fuel(true);
+    engine_config.floats(false);
+
+    let engine = wasmi::Engine::new(&engine_config);
     let module = wasmi::Module::new(&engine, &wasm_bytes).expect("Failed to parse module");
 
-    // Create store with no external state needed for this simple test
-    let mut store = wasmi::Store::new(&engine, ());
+    // Create store with VM state so WASI shims can log deterministically.
+    let compute_meter = Arc::new(ComputeMeter::new(ComputeBudget::new(2_000_000)));
+    let syscalls = Arc::new(SyscallRegistry::new());
+    let program_id = Pubkey::new([9u8; 32]);
+    let state = VmState::new(compute_meter.clone(), program_id, syscalls, 32);
 
-    // Create linker (no imports needed for this contract)
-    let linker = wasmi::Linker::new(&engine);
+    let mut store = wasmi::Store::new(&engine, state);
+    store.limiter(|state| &mut state.limits);
+
+    let fuel = compute_meter.remaining();
+    store.set_fuel(fuel).expect("Failed to set initial fuel");
+
+    // Create linker and register deterministic WASI preview1 shim.
+    let mut linker = wasmi::Linker::<VmState>::new(&engine);
+    register_wasi_shim(&mut linker).expect("Failed to register WASI shim");
 
     // Instantiate the module
     let instance = linker
@@ -295,10 +328,26 @@ fn test_counter_error_cases() {
 
     let wasm_bytes = std::fs::read(&wasm_path).expect("Failed to read WASM file");
 
-    let engine = wasmi::Engine::default();
+    let mut engine_config = wasmi::Config::default();
+    engine_config.consume_fuel(true);
+    engine_config.floats(false);
+
+    let engine = wasmi::Engine::new(&engine_config);
     let module = wasmi::Module::new(&engine, &wasm_bytes).expect("Failed to parse module");
-    let mut store = wasmi::Store::new(&engine, ());
-    let linker = wasmi::Linker::new(&engine);
+
+    let compute_meter = Arc::new(ComputeMeter::new(ComputeBudget::new(2_000_000)));
+    let syscalls = Arc::new(SyscallRegistry::new());
+    let program_id = Pubkey::new([9u8; 32]);
+    let state = VmState::new(compute_meter.clone(), program_id, syscalls, 32);
+
+    let mut store = wasmi::Store::new(&engine, state);
+    store.limiter(|state| &mut state.limits);
+
+    let fuel = compute_meter.remaining();
+    store.set_fuel(fuel).expect("Failed to set initial fuel");
+
+    let mut linker = wasmi::Linker::<VmState>::new(&engine);
+    register_wasi_shim(&mut linker).expect("Failed to register WASI shim");
     let instance = linker
         .instantiate(&mut store, &module)
         .expect("Failed to instantiate")

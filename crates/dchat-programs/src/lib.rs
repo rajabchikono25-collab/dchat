@@ -81,7 +81,7 @@ pub use account::{
     Account, AccountData, AccountMeta, AccountState, Motes, Pubkey, RentEpoch, MOTES_PER_DCHAT,
 };
 pub use capability::{CapabilityId, CapabilityRegistry, CapabilityScope, CapabilityToken};
-pub use cpi::{CpiContext, CpiGuard, CpiResult, CrossProgramInvocation};
+pub use cpi::{CpiContext, CpiExecutor, CpiGuard, CpiResult, CrossProgramInvocation};
 pub use error::{ProgramError, ProgramResult};
 pub use events::{EventFilter, ExecutionReceipt, ProgramEvent};
 pub use instruction::{CompiledInstruction, Instruction, InstructionAccount, InstructionData};
