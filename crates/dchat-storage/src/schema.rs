@@ -135,6 +135,14 @@ impl Schema {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             "#,
+            // Generic key/value store for lightweight client metadata
+            r#"
+            CREATE TABLE IF NOT EXISTS client_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            "#,
         ]
     }
 

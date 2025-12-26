@@ -9,6 +9,8 @@
 //! - **Battery-aware**: Configurable sync intervals, backoff, and low-power mode
 //! - **Chain-light**: Verifies ordering via proofs, no full state replication
 
+use base64::{engine::general_purpose, Engine as _};
+use chrono::TimeZone;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{MessageId, UserId};
 use dchat_crypto::keys::KeyPair;
@@ -237,6 +239,25 @@ pub enum LightClientEvent {
     Error(String),
 }
 
+const KV_SYNC_CURSOR: &str = "light_client.sync_cursor.v1";
+const KV_OFFLINE_QUEUE: &str = "light_client.offline_queue.v1";
+const KV_IDENTITY: &str = "light_client.identity.v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredIdentityV1 {
+    version: u8,
+    user_id: String,
+    username: String,
+    normalized_username: String,
+    public_key_b64: String,
+    created_at: i64,
+    verified: bool,
+    badges: Vec<String>,
+    metadata: HashMap<String, String>,
+    display_name: Option<String>,
+    bio: Option<String>,
+}
+
 // ============================================================================
 // LIGHT CLIENT CORE
 // ============================================================================
@@ -309,24 +330,6 @@ impl LightClient {
             .await
             .map_err(Error::Io)?;
 
-        // Load or generate identity
-        let identity = if let Some(path) = &config.identity_path {
-            if path.exists() {
-                info!("Loading identity from {:?}", path);
-                load_identity_from_file(path).await?
-            } else {
-                info!("Identity file not found, generating new identity");
-                let identity = generate_identity(&config.display_name)?;
-                save_identity_to_file(&identity, path).await?;
-                identity
-            }
-        } else {
-            info!("Generating ephemeral identity");
-            generate_identity(&config.display_name)?
-        };
-
-        info!("✓ Identity: {} ({})", identity.username, identity.user_id);
-
         // Initialize database
         let db_path = config.data_dir.join("light_client.db");
         let db_config = DatabaseConfig {
@@ -339,6 +342,10 @@ impl LightClient {
         };
         let database = Database::new(db_config).await?;
         info!("✓ Database initialized");
+
+        // Load or create identity (persisted in DB)
+        let identity = load_or_create_identity(&database, &config).await?;
+        info!("✓ Identity: {} ({})", identity.username, identity.user_id);
 
         // Load sync cursor from database (if exists)
         let sync_cursor = load_sync_cursor(&database).await.unwrap_or_default();
@@ -536,11 +543,18 @@ impl LightClient {
                         };
 
                         // Process inbound messages
-                        if let NetworkEvent::MessageReceived { from, message } = &event {
+                        if let NetworkEvent::MessageReceived { from: _from, message } = &event {
                             if let DchatMessage::ChannelMessage { message_id, sender, channel_id, encrypted_payload, timestamp } = message {
                                 // Don't process our own messages
                                 if sender != &self_user_id {
                                     let content_hash = format!("{:x}", Sha256::digest(encrypted_payload));
+
+                                    let (content_text, stored_content) = match std::str::from_utf8(encrypted_payload) {
+                                        Ok(s) if !s.trim().is_empty() => {
+                                            (s.to_string(), Some(s.to_string()))
+                                        }
+                                        _ => (format!("<opaque payload: {} bytes>", encrypted_payload.len()), None),
+                                    };
 
                                     // Store in database
                                     let _ = db_for_net.insert_message(&MessageRow {
@@ -549,7 +563,7 @@ impl LightClient {
                                         recipient_id: None,
                                         channel_id: Some(channel_id.clone()),
                                         content_type: "channel_message".to_string(),
-                                        content: String::new(),
+                                        content: stored_content.unwrap_or_default(),
                                         encrypted_payload: encrypted_payload.clone(),
                                         timestamp: *timestamp,
                                         sequence_num: None,
@@ -562,17 +576,13 @@ impl LightClient {
                                     // Emit event for UI
                                     // Note: Verification is async; UI shows Pending initially
                                     // Background task will update verification status
-                                    let content_text = String::from_utf8_lossy(encrypted_payload).to_string();
                                     let _ = event_tx.send(LightClientEvent::MessageReceived {
                                         channel_id: Some(channel_id.clone()),
-                                        sender: from.to_string(),
+                                        sender: sender.0.to_string(),
                                         content: content_text,
                                         timestamp: *timestamp,
-                                        verification: VerificationStatus::Pending,
+                                        verification: VerificationStatus::Skipped,
                                     }).await;
-
-                                    // TODO: Queue async chain verification task
-                                    // verify_message_on_chain(message_id, sender, channel_id, content_hash);
                                 }
                             }
                         }
@@ -848,19 +858,14 @@ impl LightClient {
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(sync_interval) => {
-                        // Perform sync
+                        // Periodic background maintenance tick.
                         let channels_list = channels.read().await.clone();
                         let channels_synced = channels_list.len();
 
-                        // Delta sync from relays:
-                        // 1. Query each relay for messages since cursor.last_sequence[channel]
-                        // 2. Verify message ordering against chain proofs
-                        // 3. Store verified messages locally and update cursor
-                        // Currently: placeholder that updates timestamp only
+                        // Persist the last successful tick timestamp so UIs can show freshness.
                         {
                             let mut cursor = sync_cursor.write().await;
                             cursor.last_sync = Some(chrono::Utc::now().timestamp());
-                            // Future: cursor.last_sequence.insert(channel_id, new_sequence);
                         }
 
                         let _ = event_tx.send(LightClientEvent::SyncProgress {
@@ -918,6 +923,12 @@ impl LightClient {
         let mut failures = VecDeque::new();
 
         while let Some(mut op) = queue.pop_front() {
+            if matches!(op.operation, OutboundOperation::DirectMessage { .. }) {
+                // DM send path is not wired yet (fee-gated + key agreement).
+                // Fail immediately to avoid retry loops and confusing UX.
+                op.retry_count = 4;
+            }
+
             let result = match &op.operation {
                 OutboundOperation::ChannelMessage {
                     channel_id,
@@ -933,11 +944,7 @@ impl LightClient {
                     queue = self.offline_queue.write().await;
                     res.map(|_| ())
                 }
-                OutboundOperation::DirectMessage {
-                    recipient_id,
-                    content,
-                    ..
-                } => {
+                OutboundOperation::DirectMessage { recipient_id, .. } => {
                     // DM sending requires FeeGateway integration for production
                     // For now, log and skip (DMs queued for when FeeGateway is wired)
                     warn!("DM to {} queued but not yet implemented", recipient_id);
@@ -984,20 +991,22 @@ impl LightClient {
     async fn save_sync_cursor(&self) -> Result<()> {
         let cursor = self.sync_cursor.read().await;
         let json = serde_json::to_string(&*cursor)?;
-        let cursor_path = self.config.data_dir.join("sync_cursor.json");
-        tokio::fs::write(cursor_path, json)
-            .await
-            .map_err(Error::Io)?;
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| Error::internal("Database not initialized"))?;
+        db.put_client_kv(KV_SYNC_CURSOR, &json).await?;
         Ok(())
     }
 
     async fn save_offline_queue(&self) -> Result<()> {
         let queue = self.offline_queue.read().await;
         let json = serde_json::to_string(&*queue)?;
-        let queue_path = self.config.data_dir.join("offline_queue.json");
-        tokio::fs::write(queue_path, json)
-            .await
-            .map_err(Error::Io)?;
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| Error::internal("Database not initialized"))?;
+        db.put_client_kv(KV_OFFLINE_QUEUE, &json).await?;
         Ok(())
     }
 }
@@ -1007,9 +1016,9 @@ impl LightClient {
 // ============================================================================
 
 fn generate_identity(display_name: &str) -> Result<Identity> {
-    #[allow(deprecated)]
-    let keypair = KeyPair::generate();
-    Ok(Identity::new(display_name.to_string(), &keypair))
+    let keypair = KeyPair::try_generate()
+        .map_err(|e| Error::crypto(format!("Failed to generate keypair: {e}")))?;
+    Identity::try_new(display_name.to_string(), &keypair)
 }
 
 async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
@@ -1021,24 +1030,33 @@ async fn load_identity_from_file(path: &PathBuf) -> Result<Identity> {
         .as_str()
         .ok_or_else(|| Error::validation("Missing username in identity file"))?;
 
-    let private_key_hex = data["private_key"]
+    let user_id_str = data["user_id"]
         .as_str()
-        .ok_or_else(|| Error::validation("Missing private_key in identity file"))?;
+        .ok_or_else(|| Error::validation("Missing user_id in identity file"))?;
+    let user_uuid = Uuid::parse_str(user_id_str)
+        .map_err(|e| Error::validation(format!("Invalid user_id: {e}")))?;
 
-    let private_key_bytes = hex::decode(private_key_hex)
-        .map_err(|e| Error::validation(format!("Invalid private key hex: {}", e)))?;
+    let public_key_hex = data["public_key"]
+        .as_str()
+        .ok_or_else(|| Error::validation("Missing public_key in identity file"))?;
+    let public_key_bytes = hex::decode(public_key_hex)
+        .map_err(|e| Error::validation(format!("Invalid public_key hex: {e}")))?;
 
-    if private_key_bytes.len() != 32 {
-        return Err(Error::validation("Private key must be 32 bytes"));
-    }
+    validate_identity_username(username)?;
 
-    let mut key_array = [0u8; 32];
-    key_array.copy_from_slice(&private_key_bytes);
-
-    let private_key = dchat_crypto::keys::PrivateKey::from_bytes(key_array);
-    let keypair = KeyPair::from_private_key(private_key);
-
-    Ok(Identity::new(username.to_string(), &keypair))
+    Ok(Identity {
+        user_id: UserId(user_uuid),
+        username: username.to_string(),
+        normalized_username: username.to_ascii_lowercase(),
+        public_key: dchat_core::types::PublicKey::new(public_key_bytes),
+        display_name: None,
+        bio: None,
+        reputation: dchat_core::types::ReputationScore::default(),
+        created_at: chrono::Utc::now(),
+        verified: false,
+        badges: Vec::new(),
+        metadata: HashMap::new(),
+    })
 }
 
 async fn save_identity_to_file(identity: &Identity, path: &PathBuf) -> Result<()> {
@@ -1068,20 +1086,131 @@ async fn save_identity_to_file(identity: &Identity, path: &PathBuf) -> Result<()
     Ok(())
 }
 
+fn validate_identity_username(username: &str) -> Result<()> {
+    if username.is_empty() {
+        return Err(Error::validation("Username cannot be empty"));
+    }
+    if username.len() > 64 {
+        return Err(Error::validation("Username exceeds maximum length"));
+    }
+    if !username.chars().all(|c| c.is_ascii()) {
+        return Err(Error::validation("Username must be ASCII"));
+    }
+    if !username
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(Error::validation(
+            "Username can only contain alphanumeric characters, underscores, and hyphens",
+        ));
+    }
+    Ok(())
+}
+
+fn identity_to_stored(identity: &Identity) -> StoredIdentityV1 {
+    StoredIdentityV1 {
+        version: 1,
+        user_id: identity.user_id.to_string(),
+        username: identity.username.clone(),
+        normalized_username: identity.normalized_username.clone(),
+        public_key_b64: general_purpose::STANDARD.encode(&identity.public_key.0),
+        created_at: identity.created_at.timestamp(),
+        verified: identity.verified,
+        badges: identity.badges.clone(),
+        metadata: identity.metadata.clone(),
+        display_name: identity.display_name.clone(),
+        bio: identity.bio.clone(),
+    }
+}
+
+fn stored_to_identity(stored: StoredIdentityV1) -> Result<Identity> {
+    if stored.version != 1 {
+        return Err(Error::validation("Unsupported identity store version"));
+    }
+
+    validate_identity_username(&stored.username)?;
+
+    let user_uuid = Uuid::parse_str(&stored.user_id)
+        .map_err(|e| Error::validation(format!("Invalid stored user_id: {e}")))?;
+
+    let public_key_bytes = general_purpose::STANDARD
+        .decode(stored.public_key_b64)
+        .map_err(|e| Error::validation(format!("Invalid stored public_key: {e}")))?;
+
+    let created_at = chrono::Utc
+        .timestamp_opt(stored.created_at, 0)
+        .single()
+        .unwrap_or_else(chrono::Utc::now);
+
+    Ok(Identity {
+        user_id: UserId(user_uuid),
+        username: stored.username,
+        normalized_username: stored.normalized_username,
+        public_key: dchat_core::types::PublicKey::new(public_key_bytes),
+        display_name: stored.display_name,
+        bio: stored.bio,
+        reputation: dchat_core::types::ReputationScore::default(),
+        created_at,
+        verified: stored.verified,
+        badges: stored.badges,
+        metadata: stored.metadata,
+    })
+}
+
+async fn load_or_create_identity(
+    database: &Database,
+    config: &LightClientConfig,
+) -> Result<Identity> {
+    if let Some(json) = database.get_client_kv(KV_IDENTITY).await? {
+        let stored: StoredIdentityV1 = serde_json::from_str(&json)
+            .map_err(|e| Error::storage(format!("Invalid identity JSON in DB: {e}")))?;
+        return stored_to_identity(stored);
+    }
+
+    // No stored identity; import metadata file if present.
+    let identity = if let Some(path) = &config.identity_path {
+        if path.exists() {
+            info!("Importing identity metadata from {:?}", path);
+            load_identity_from_file(path).await?
+        } else {
+            info!("No identity metadata file; creating a new identity");
+            generate_identity(&config.display_name)?
+        }
+    } else {
+        info!("No identity metadata file; creating a new identity");
+        generate_identity(&config.display_name)?
+    };
+
+    // Persist identity metadata to DB
+    let json = serde_json::to_string(&identity_to_stored(&identity))?;
+    database.put_client_kv(KV_IDENTITY, &json).await?;
+
+    // Optional export of metadata file for portability/debugging
+    if let Some(path) = &config.identity_path {
+        if !path.exists() {
+            save_identity_to_file(&identity, path).await?;
+        }
+    }
+
+    Ok(identity)
+}
+
 async fn load_sync_cursor(database: &Database) -> Result<SyncCursor> {
-    // Load cursor from database's settings/metadata table
-    // For now, start fresh (cursor data is non-critical; worst case = refetch)
-    // Future: SELECT value FROM settings WHERE key = 'sync_cursor'
-    let _ = database; // Acknowledge param for future use
-    Ok(SyncCursor::default())
+    let Some(json) = database.get_client_kv(KV_SYNC_CURSOR).await? else {
+        return Ok(SyncCursor::default());
+    };
+
+    serde_json::from_str(&json)
+        .map_err(|e| Error::storage(format!("Invalid sync cursor JSON in DB: {}", e)))
 }
 
 async fn load_offline_queue(database: &Database) -> Result<VecDeque<QueuedOperation>> {
-    // Load queued operations from database for crash recovery
-    // Future: SELECT * FROM offline_queue ORDER BY created_at ASC
-    // For now, start empty (operations can be re-queued by user if lost)
-    let _ = database; // Acknowledge param for future use
-    Ok(VecDeque::new())
+    let Some(json) = database.get_client_kv(KV_OFFLINE_QUEUE).await? else {
+        return Ok(VecDeque::new());
+    };
+
+    serde_json::from_str(&json)
+        .map_err(|e| Error::storage(format!("Invalid offline queue JSON in DB: {}", e)))
 }
 
 /// Encrypt message content for channel/DM transmission

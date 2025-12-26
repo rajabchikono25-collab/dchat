@@ -4081,10 +4081,12 @@ async fn run_light_client(
                                                 } else {
                                                     println!("Recent messages:");
                                                     for msg in msgs {
-                                                        let content = if msg.content.is_empty() {
-                                                            String::from_utf8_lossy(&msg.encrypted_payload).to_string()
-                                                        } else {
+                                                        let content = if !msg.content.is_empty() {
                                                             msg.content
+                                                        } else if !msg.encrypted_payload.is_empty() {
+                                                            format!("<opaque payload: {} bytes>", msg.encrypted_payload.len())
+                                                        } else {
+                                                            String::new()
                                                         };
                                                         println!("  [{}] {}: {}", msg.timestamp, msg.sender_id, content);
                                                     }

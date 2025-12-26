@@ -211,6 +211,45 @@ impl Database {
         Ok(())
     }
 
+    /// Store a client-scoped key/value blob (JSON, etc.)
+    pub async fn put_client_kv(&self, key: &str, value: &str) -> Result<()> {
+        let updated_at = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO client_kv (key, value, updated_at) VALUES (?, ?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::storage(format!("Failed to put client_kv: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load a client-scoped key/value blob
+    pub async fn get_client_kv(&self, key: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT value FROM client_kv WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to get client_kv: {}", e)))?;
+
+        Ok(row.map(|r| r.get::<String, _>("value")))
+    }
+
+    /// Delete a client-scoped key/value blob
+    pub async fn delete_client_kv(&self, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM client_kv WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to delete client_kv: {}", e)))?;
+        Ok(())
+    }
+
     /// Get messages for a user
     pub async fn get_messages_for_user(
         &self,
