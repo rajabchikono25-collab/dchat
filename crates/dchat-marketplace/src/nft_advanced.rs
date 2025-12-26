@@ -25,31 +25,31 @@ pub struct AdvancedNft {
     pub creator: UserId,
     pub current_owner: UserId,
     pub created_at: DateTime<Utc>,
-    
+
     /// Dynamic attributes that can evolve over time
     pub dynamic_traits: Vec<DynamicTrait>,
-    
+
     /// Composed NFTs (this NFT is made from these)
     pub composed_from: Vec<String>,
-    
+
     /// Can this NFT be decomposed back to components?
     pub is_decomposable: bool,
-    
+
     /// Royalty percentage for creator on secondary sales (0-100)
     pub royalty_percentage: u8,
-    
+
     /// Collection identifier
     pub collection_id: Option<Uuid>,
-    
+
     /// Rarity score (0-100, calculated)
     pub rarity_score: f32,
-    
+
     /// Staking info
     pub staking_info: Option<StakingInfo>,
-    
+
     /// Fractionalization info (if NFT is fractionalized)
     pub fractionalization: Option<FractionalizationInfo>,
-    
+
     /// Transaction history
     pub history: Vec<NftTransaction>,
 }
@@ -77,13 +77,13 @@ pub enum TraitValue {
 pub enum TraitUpdateRule {
     /// Update based on time (e.g., age increases daily)
     TimeBased { interval_seconds: u64 },
-    
+
     /// Update based on owner activity
     ActivityBased { threshold: u64 },
-    
+
     /// Update based on market conditions
     MarketBased { condition: String },
-    
+
     /// Update based on staking duration
     StakingBased { duration_days: u32 },
 }
@@ -261,9 +261,10 @@ impl AdvancedNftManager {
     ) -> Result<String> {
         // Verify all components exist and are owned by user
         for token_id in &component_token_ids {
-            let nft = self.nfts.get(token_id)
-                .ok_or_else(|| Error::validation(format!("Component NFT {} not found", token_id)))?;
-            
+            let nft = self.nfts.get(token_id).ok_or_else(|| {
+                Error::validation(format!("Component NFT {} not found", token_id))
+            })?;
+
             if nft.current_owner != owner {
                 return Err(Error::validation("User does not own all component NFTs"));
             }
@@ -284,7 +285,9 @@ impl AdvancedNftManager {
         }
 
         // Generate new image hash from combined hashes
-        let combined_image_hash = blake3::hash(combined_image_hashes.join(",").as_bytes()).to_hex().to_string();
+        let combined_image_hash = blake3::hash(combined_image_hashes.join(",").as_bytes())
+            .to_hex()
+            .to_string();
 
         // Create composed NFT
         let composed_nft = AdvancedNft {
@@ -334,7 +337,9 @@ impl AdvancedNftManager {
 
     /// Decompose a composed NFT back into components
     pub fn decompose_nft(&mut self, token_id: &str, owner: UserId) -> Result<Vec<String>> {
-        let nft = self.nfts.get(token_id)
+        let nft = self
+            .nfts
+            .get(token_id)
             .ok_or_else(|| Error::validation("NFT not found"))?;
 
         if nft.current_owner != owner {
@@ -395,7 +400,9 @@ impl AdvancedNftManager {
 
     /// Stake an NFT to earn rewards
     pub fn stake_nft(&mut self, token_id: &str, owner: UserId) -> Result<()> {
-        let nft = self.nfts.get_mut(token_id)
+        let nft = self
+            .nfts
+            .get_mut(token_id)
             .ok_or_else(|| Error::validation("NFT not found"))?;
 
         if nft.current_owner != owner {
@@ -429,14 +436,18 @@ impl AdvancedNftManager {
 
     /// Unstake an NFT and claim rewards
     pub fn unstake_nft(&mut self, token_id: &str, owner: UserId) -> Result<u64> {
-        let nft = self.nfts.get_mut(token_id)
+        let nft = self
+            .nfts
+            .get_mut(token_id)
             .ok_or_else(|| Error::validation("NFT not found"))?;
 
         if nft.current_owner != owner {
             return Err(Error::validation("User does not own this NFT"));
         }
 
-        let staking_info = nft.staking_info.as_ref()
+        let staking_info = nft
+            .staking_info
+            .as_ref()
             .ok_or_else(|| Error::validation("NFT is not staked"))?;
 
         if !staking_info.is_staked {
@@ -473,7 +484,9 @@ impl AdvancedNftManager {
         total_shares: u64,
         minimum_buy_in: u64,
     ) -> Result<()> {
-        let nft = self.nfts.get_mut(token_id)
+        let nft = self
+            .nfts
+            .get_mut(token_id)
             .ok_or_else(|| Error::validation("NFT not found"))?;
 
         if nft.current_owner != owner {
@@ -519,7 +532,9 @@ impl AdvancedNftManager {
         to_user: UserId,
         sale_price: u64,
     ) -> Result<RoyaltyPayment> {
-        let nft = self.nfts.get_mut(token_id)
+        let nft = self
+            .nfts
+            .get_mut(token_id)
             .ok_or_else(|| Error::validation("NFT not found"))?;
 
         if nft.current_owner != from_user {
@@ -567,8 +582,7 @@ impl AdvancedNftManager {
 
         // Get collection trait schema if available
         let _trait_weights = if let Some(coll_id) = nft.collection_id {
-            self.collections.get(&coll_id)
-                .map(|c| &c.traits_schema)
+            self.collections.get(&coll_id).map(|c| &c.traits_schema)
         } else {
             None
         };
@@ -578,9 +592,12 @@ impl AdvancedNftManager {
         let base_score = 40.0 + (num_traits as f32 * 5.0).min(30.0);
 
         // Bonus for dynamic traits
-        let dynamic_bonus = nft.dynamic_traits.iter()
+        let dynamic_bonus = nft
+            .dynamic_traits
+            .iter()
             .filter(|t| t.update_rule.is_some())
-            .count() as f32 * 3.0;
+            .count() as f32
+            * 3.0;
 
         Ok((base_score + dynamic_bonus).min(100.0))
     }
@@ -621,7 +638,8 @@ impl AdvancedNftManager {
 
     /// Get NFTs by owner
     pub fn get_nfts_by_owner(&self, owner: &UserId) -> Vec<&AdvancedNft> {
-        self.nfts.values()
+        self.nfts
+            .values()
             .filter(|nft| &nft.current_owner == owner)
             .collect()
     }
@@ -633,7 +651,8 @@ impl AdvancedNftManager {
 
     /// Get royalty payments for creator
     pub fn get_creator_royalties(&self, creator: &UserId) -> Vec<&RoyaltyPayment> {
-        self.royalty_payments.iter()
+        self.royalty_payments
+            .iter()
             .filter(|r| &r.creator == creator)
             .collect()
     }
@@ -658,25 +677,25 @@ mod tests {
         let mut manager = AdvancedNftManager::new();
         let creator = create_test_user();
 
-        let traits = vec![
-            DynamicTrait {
-                trait_type: "Level".to_string(),
-                value: TraitValue::Number(1.0),
-                last_updated: Utc::now(),
-                update_rule: Some(TraitUpdateRule::ActivityBased { threshold: 100 }),
-            },
-        ];
+        let traits = vec![DynamicTrait {
+            trait_type: "Level".to_string(),
+            value: TraitValue::Number(1.0),
+            last_updated: Utc::now(),
+            update_rule: Some(TraitUpdateRule::ActivityBased { threshold: 100 }),
+        }];
 
-        let token_id = manager.mint_nft(
-            "token_001".to_string(),
-            "Dynamic NFT".to_string(),
-            "An NFT that evolves".to_string(),
-            "QmHash123".to_string(),
-            creator,
-            10,
-            None,
-            traits,
-        ).unwrap();
+        let token_id = manager
+            .mint_nft(
+                "token_001".to_string(),
+                "Dynamic NFT".to_string(),
+                "An NFT that evolves".to_string(),
+                "QmHash123".to_string(),
+                creator,
+                10,
+                None,
+                traits,
+            )
+            .unwrap();
 
         assert_eq!(token_id, "token_001");
         let nft = manager.get_nft(&token_id).unwrap();
@@ -689,37 +708,43 @@ mod tests {
         let owner = create_test_user();
 
         // Mint two NFTs
-        manager.mint_nft(
-            "token_001".to_string(),
-            "Part 1".to_string(),
-            "Component 1".to_string(),
-            "hash1".to_string(),
-            owner.clone(),
-            5,
-            None,
-            vec![],
-        ).unwrap();
+        manager
+            .mint_nft(
+                "token_001".to_string(),
+                "Part 1".to_string(),
+                "Component 1".to_string(),
+                "hash1".to_string(),
+                owner.clone(),
+                5,
+                None,
+                vec![],
+            )
+            .unwrap();
 
-        manager.mint_nft(
-            "token_002".to_string(),
-            "Part 2".to_string(),
-            "Component 2".to_string(),
-            "hash2".to_string(),
-            owner.clone(),
-            5,
-            None,
-            vec![],
-        ).unwrap();
+        manager
+            .mint_nft(
+                "token_002".to_string(),
+                "Part 2".to_string(),
+                "Component 2".to_string(),
+                "hash2".to_string(),
+                owner.clone(),
+                5,
+                None,
+                vec![],
+            )
+            .unwrap();
 
         // Compose them
-        let composed_id = manager.compose_nfts(
-            vec!["token_001".to_string(), "token_002".to_string()],
-            "token_composed".to_string(),
-            "Combined NFT".to_string(),
-            "Two NFTs merged".to_string(),
-            owner,
-            true,
-        ).unwrap();
+        let composed_id = manager
+            .compose_nfts(
+                vec!["token_001".to_string(), "token_002".to_string()],
+                "token_composed".to_string(),
+                "Combined NFT".to_string(),
+                "Two NFTs merged".to_string(),
+                owner,
+                true,
+            )
+            .unwrap();
 
         assert_eq!(composed_id, "token_composed");
         assert!(manager.get_nft(&composed_id).is_some());
@@ -731,16 +756,18 @@ mod tests {
         let mut manager = AdvancedNftManager::new();
         let owner = create_test_user();
 
-        let token_id = manager.mint_nft(
-            "token_stake".to_string(),
-            "Stakeable".to_string(),
-            "Can be staked".to_string(),
-            "hash".to_string(),
-            owner.clone(),
-            5,
-            None,
-            vec![],
-        ).unwrap();
+        let token_id = manager
+            .mint_nft(
+                "token_stake".to_string(),
+                "Stakeable".to_string(),
+                "Can be staked".to_string(),
+                "hash".to_string(),
+                owner.clone(),
+                5,
+                None,
+                vec![],
+            )
+            .unwrap();
 
         // Stake
         manager.stake_nft(&token_id, owner.clone()).unwrap();
@@ -758,18 +785,22 @@ mod tests {
         let mut manager = AdvancedNftManager::new();
         let owner = create_test_user();
 
-        let token_id = manager.mint_nft(
-            "token_frac".to_string(),
-            "Fractional".to_string(),
-            "Can be split".to_string(),
-            "hash".to_string(),
-            owner.clone(),
-            5,
-            None,
-            vec![],
-        ).unwrap();
+        let token_id = manager
+            .mint_nft(
+                "token_frac".to_string(),
+                "Fractional".to_string(),
+                "Can be split".to_string(),
+                "hash".to_string(),
+                owner.clone(),
+                5,
+                None,
+                vec![],
+            )
+            .unwrap();
 
-        manager.fractionalize_nft(&token_id, owner.clone(), 1000, 10).unwrap();
+        manager
+            .fractionalize_nft(&token_id, owner.clone(), 1000, 10)
+            .unwrap();
 
         let nft = manager.get_nft(&token_id).unwrap();
         assert!(nft.fractionalization.is_some());
@@ -783,23 +814,27 @@ mod tests {
         let seller = create_test_user();
         let buyer = create_test_user();
 
-        let token_id = manager.mint_nft(
-            "token_royalty".to_string(),
-            "Royalty NFT".to_string(),
-            "Has royalties".to_string(),
-            "hash".to_string(),
-            creator.clone(),
-            10, // 10% royalty
-            None,
-            vec![],
-        ).unwrap();
+        let token_id = manager
+            .mint_nft(
+                "token_royalty".to_string(),
+                "Royalty NFT".to_string(),
+                "Has royalties".to_string(),
+                "hash".to_string(),
+                creator.clone(),
+                10, // 10% royalty
+                None,
+                vec![],
+            )
+            .unwrap();
 
         // Transfer to first owner (seller)
         let nft = manager.nfts.get_mut(&token_id).unwrap();
         nft.current_owner = seller.clone();
 
         // Secondary sale with royalty
-        let royalty = manager.transfer_with_royalty(&token_id, seller, buyer, 1000).unwrap();
+        let royalty = manager
+            .transfer_with_royalty(&token_id, seller, buyer, 1000)
+            .unwrap();
 
         assert_eq!(royalty.royalty_amount, 100); // 10% of 1000
         assert_eq!(royalty.creator, creator);
@@ -810,13 +845,15 @@ mod tests {
         let mut manager = AdvancedNftManager::new();
         let creator = create_test_user();
 
-        let collection_id = manager.create_collection(
-            "Cool Collection".to_string(),
-            "A collection of cool NFTs".to_string(),
-            creator,
-            5,
-            vec![],
-        ).unwrap();
+        let collection_id = manager
+            .create_collection(
+                "Cool Collection".to_string(),
+                "A collection of cool NFTs".to_string(),
+                creator,
+                5,
+                vec![],
+            )
+            .unwrap();
 
         assert!(manager.get_collection(collection_id).is_some());
     }

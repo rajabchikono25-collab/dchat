@@ -101,6 +101,8 @@ pub mod storage_routed_user_management;
 pub mod fee_gateway;
 // Onboarding flows (keyless, enrollment, MPC backups)
 pub mod onboarding;
+// Light client core for mobile/desktop apps
+pub mod light_client;
 
 // Re-export all crate modules
 pub use dchat_accessibility as accessibility;

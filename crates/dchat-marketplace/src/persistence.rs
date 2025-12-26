@@ -10,7 +10,7 @@
 use crate::attestations::{
     AttestationValidatorSet, MarketplaceAttestation, MarketplaceAttestationKind,
 };
-use crate::{DigitalGoodType, Listing, OnChainStorageType, PricingModel, Purchase};
+use crate::{CreatorStats, DigitalGoodType, Listing, OnChainStorageType, PricingModel, Purchase};
 use chrono::{DateTime, Utc};
 use dchat_core::{types::UserId, Error, Result};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,23 @@ pub struct Entitlement {
     pub lock_tx_hash: String,
     pub lock_block_hash: String,
     pub lock_block_number: u64,
+}
+
+/// Terminal settlement outcome for an escrow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SettlementOutcome {
+    ReleasedToSeller = 1,
+    RefundedToBuyer = 2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementRecord {
+    pub escrow_id: Uuid,
+    pub outcome: SettlementOutcome,
+    pub settled_at: DateTime<Utc>,
+    pub settlement_tx_hash: String,
+    pub settlement_block_hash: String,
+    pub settlement_block_number: u64,
 }
 
 /// A persisted marker preventing re-use of the same escrow event.
@@ -190,6 +207,23 @@ impl MarketplaceStore {
         .await
         .map_err(|e| Error::storage(format!("Failed to create entitlements listing index: {e}")))?;
 
+        // Terminal settlement record: ensure only one of (release/refund) per escrow.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS marketplace_escrow_settlements (
+                escrow_id TEXT PRIMARY KEY,
+                outcome INTEGER NOT NULL,
+                settled_at INTEGER NOT NULL,
+                settlement_tx_hash TEXT NOT NULL,
+                settlement_block_hash TEXT NOT NULL,
+                settlement_block_number INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::storage(format!("Failed to create settlements table: {e}")))?;
+
         Ok(())
     }
 
@@ -246,6 +280,81 @@ impl MarketplaceStore {
         .map_err(|e| Error::storage(format!("Failed to insert listing: {e}")))?;
 
         Ok(listing.id)
+    }
+
+    pub async fn get_creator_stats(&self, creator: &UserId) -> Result<CreatorStats> {
+        let creator_id = creator.0.to_string();
+
+        let listing_rows = sqlx::query(
+            r#"
+            SELECT json
+            FROM marketplace_listings
+            WHERE creator_id = ?
+            "#,
+        )
+        .bind(&creator_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::storage(format!("Failed to query listings: {e}")))?;
+
+        let mut listings: Vec<Listing> = Vec::with_capacity(listing_rows.len());
+        for row in listing_rows {
+            let json: String = row
+                .try_get("json")
+                .map_err(|e| Error::storage(format!("Failed to read listing json: {e}")))?;
+            let listing: Listing = serde_json::from_str(&json)
+                .map_err(|e| Error::storage(format!("Invalid listing JSON: {e}")))?;
+            listings.push(listing);
+        }
+
+        let active_listings = listings.len() as u64;
+
+        let mut total_sales: u64 = 0;
+        let mut total_earnings: u64 = 0;
+        let mut total_downloads: u64 = 0;
+
+        // Calculate purchase-driven metrics per listing.
+        for listing in &listings {
+            let purchase_rows = sqlx::query(
+                r#"
+                SELECT json
+                FROM marketplace_purchases
+                WHERE listing_id = ?
+                "#,
+            )
+            .bind(listing.id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to query purchases: {e}")))?;
+
+            total_sales = total_sales.saturating_add(purchase_rows.len() as u64);
+            total_downloads = total_downloads.saturating_add(purchase_rows.len() as u64);
+
+            for row in purchase_rows {
+                let json: String = row
+                    .try_get("json")
+                    .map_err(|e| Error::storage(format!("Failed to read purchase json: {e}")))?;
+                let purchase: Purchase = serde_json::from_str(&json)
+                    .map_err(|e| Error::storage(format!("Invalid purchase JSON: {e}")))?;
+                total_earnings = total_earnings.saturating_add(purchase.amount_paid);
+            }
+        }
+
+        let avg_rating: f32 = if listings.is_empty() {
+            0.0
+        } else {
+            let total_rating: f32 = listings.iter().map(|l| l.rating).sum();
+            total_rating / (listings.len() as f32)
+        };
+
+        Ok(CreatorStats {
+            creator: creator.clone(),
+            total_sales,
+            total_earnings,
+            active_listings,
+            total_downloads,
+            average_rating: avg_rating,
+        })
     }
 
     pub async fn get_listing(&self, listing_id: Uuid) -> Result<Option<Listing>> {
@@ -475,6 +584,166 @@ impl MarketplaceStore {
         };
 
         Ok(Some(entitlement))
+    }
+
+    pub async fn get_settlement(&self, escrow_id: Uuid) -> Result<Option<SettlementRecord>> {
+        let row = sqlx::query(
+            r#"SELECT
+                escrow_id, outcome, settled_at,
+                settlement_tx_hash, settlement_block_hash, settlement_block_number
+               FROM marketplace_escrow_settlements
+               WHERE escrow_id = ?"#,
+        )
+        .bind(escrow_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::storage(format!("Failed to fetch settlement: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let escrow_id: String = row
+            .try_get("escrow_id")
+            .map_err(|e| Error::storage(format!("Failed to read settlement escrow_id: {e}")))?;
+        let outcome: i64 = row
+            .try_get("outcome")
+            .map_err(|e| Error::storage(format!("Failed to read settlement outcome: {e}")))?;
+        let settled_at: i64 = row
+            .try_get("settled_at")
+            .map_err(|e| Error::storage(format!("Failed to read settlement settled_at: {e}")))?;
+        let settlement_tx_hash: String = row
+            .try_get("settlement_tx_hash")
+            .map_err(|e| Error::storage(format!("Failed to read settlement_tx_hash: {e}")))?;
+        let settlement_block_hash: String = row
+            .try_get("settlement_block_hash")
+            .map_err(|e| Error::storage(format!("Failed to read settlement_block_hash: {e}")))?;
+        let settlement_block_number: i64 = row
+            .try_get("settlement_block_number")
+            .map_err(|e| Error::storage(format!("Failed to read settlement_block_number: {e}")))?;
+
+        let outcome = match outcome {
+            1 => SettlementOutcome::ReleasedToSeller,
+            2 => SettlementOutcome::RefundedToBuyer,
+            _ => return Err(Error::validation("Invalid settlement outcome")),
+        };
+
+        let settled_at = DateTime::<Utc>::from_timestamp(settled_at, 0)
+            .ok_or_else(|| Error::validation("Invalid settlement settled_at"))?;
+
+        Ok(Some(SettlementRecord {
+            escrow_id: Uuid::parse_str(&escrow_id)
+                .map_err(|_| Error::validation("Invalid settlement escrow_id"))?,
+            outcome,
+            settled_at,
+            settlement_tx_hash,
+            settlement_block_hash,
+            settlement_block_number: settlement_block_number as u64,
+        }))
+    }
+
+    pub async fn finalize_settlement_from_attestation(
+        &self,
+        attestation: &MarketplaceAttestation,
+        validator_set: &AttestationValidatorSet,
+    ) -> Result<SettlementRecord> {
+        attestation.verify(validator_set)?;
+
+        let outcome = match attestation.payload.kind {
+            MarketplaceAttestationKind::EscrowReleased => SettlementOutcome::ReleasedToSeller,
+            MarketplaceAttestationKind::EscrowRefunded => SettlementOutcome::RefundedToBuyer,
+            MarketplaceAttestationKind::EscrowLocked => {
+                return Err(Error::validation(
+                    "EscrowLocked attestations cannot finalize settlement",
+                ));
+            }
+        };
+
+        let entitlement = self
+            .get_entitlement(attestation.payload.escrow_id)
+            .await?
+            .ok_or_else(|| {
+                Error::validation(
+                    "No entitlement found for escrow_id; mint entitlement before finalizing settlement",
+                )
+            })?;
+
+        if entitlement.listing_id != attestation.payload.listing_id {
+            return Err(Error::validation(
+                "Settlement attestation listing_id does not match entitlement",
+            ));
+        }
+        if entitlement.buyer != attestation.payload.buyer {
+            return Err(Error::validation(
+                "Settlement attestation buyer does not match entitlement",
+            ));
+        }
+        if entitlement.seller != attestation.payload.seller {
+            return Err(Error::validation(
+                "Settlement attestation seller does not match entitlement",
+            ));
+        }
+        if entitlement.amount != attestation.payload.amount {
+            return Err(Error::validation(
+                "Settlement attestation amount does not match entitlement",
+            ));
+        }
+
+        let payload_hash = attestation.payload.payload_hash();
+        let now = Utc::now();
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::storage(format!("Failed to start transaction: {e}")))?;
+
+        // Enforce one terminal settlement per escrow_id.
+        let settlement_insert = sqlx::query(
+            "INSERT OR IGNORE INTO marketplace_escrow_settlements (escrow_id, outcome, settled_at, settlement_tx_hash, settlement_block_hash, settlement_block_number) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(attestation.payload.escrow_id.to_string())
+        .bind(outcome as i64)
+        .bind(now.timestamp())
+        .bind(&attestation.payload.tx_hash)
+        .bind(&attestation.payload.block_hash)
+        .bind(attestation.payload.block_number as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::storage(format!("Failed to insert settlement: {e}")))?;
+
+        if settlement_insert.rows_affected() == 0 {
+            return Err(Error::validation("Escrow already settled"));
+        }
+
+        // Also consume the attestation kind with a nullifier.
+        let nullifier_outcome = insert_nullifier(
+            &mut tx,
+            attestation.payload.escrow_id,
+            attestation.payload.kind,
+            payload_hash.as_bytes(),
+            now.timestamp(),
+        )
+        .await?;
+
+        if nullifier_outcome == NullifierInsertOutcome::AlreadyExists {
+            return Err(Error::validation(
+                "Settlement attestation already consumed (replay detected)",
+            ));
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| Error::storage(format!("Failed to commit transaction: {e}")))?;
+
+        Ok(SettlementRecord {
+            escrow_id: attestation.payload.escrow_id,
+            outcome,
+            settled_at: now,
+            settlement_tx_hash: attestation.payload.tx_hash.clone(),
+            settlement_block_hash: attestation.payload.block_hash.clone(),
+            settlement_block_number: attestation.payload.block_number,
+        })
     }
 }
 

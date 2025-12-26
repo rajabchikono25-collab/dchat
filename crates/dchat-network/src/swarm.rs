@@ -286,6 +286,16 @@ impl NetworkManager {
         Ok(())
     }
 
+    /// Unsubscribe from a gossipsub channel topic
+    pub fn unsubscribe_from_channel(&mut self, channel_id: &str) -> Result<()> {
+        self.swarm
+            .behaviour_mut()
+            .unsubscribe_channel(channel_id)
+            .map_err(|e| Error::network(format!("Unsubscribe failed: {}", e)))?;
+        tracing::info!("🔕 Unsubscribed from channel: {}", channel_id);
+        Ok(())
+    }
+
     /// Publish message to channel
     pub fn publish_to_channel(&mut self, channel_id: &str, message: &DchatMessage) -> Result<()> {
         self.swarm

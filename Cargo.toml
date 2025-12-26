@@ -231,6 +231,7 @@ tempfile = "3.8"
 [features]
 default = []
 deployment = ["dchat-deployment"]
+dev-tools = []
 
 [profile.release]
 opt-level = 3

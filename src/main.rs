@@ -1008,9 +1008,29 @@ enum Commands {
         #[arg(long)]
         username: Option<String>,
 
-        /// Non-interactive mode (for testing)
+        /// Non-interactive mode (for testing) - deprecated, use --light-client --daemon
         #[arg(long)]
         non_interactive: bool,
+
+        /// Light client mode (relay-centric, mobile/desktop friendly)
+        #[arg(long)]
+        light_client: bool,
+
+        /// Run as background daemon (with --light-client)
+        #[arg(long)]
+        daemon: bool,
+
+        /// Client profile: performance, balanced, low-power, relay-only
+        #[arg(long, default_value = "balanced")]
+        profile: String,
+
+        /// Default channels to join (comma-separated)
+        #[arg(long, default_value = "global")]
+        channels: String,
+
+        /// Data directory for light client storage
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
 
         /// Metrics server address
         #[arg(long)]
@@ -1899,6 +1919,10 @@ enum MarketplaceCommand {
         /// Filter by item type (sticker-pack, emoji-pack, theme, bot, nft, image, subscription, badge, channel, membership)
         #[arg(long)]
         item_type: Option<String>,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
 
     /// Create a new listing
@@ -1938,6 +1962,10 @@ enum MarketplaceCommand {
         /// Membership duration in days (if selling membership)
         #[arg(long)]
         membership_duration: Option<u32>,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
 
     /// Buy a marketplace item
@@ -1949,6 +1977,44 @@ enum MarketplaceCommand {
         /// Listing ID
         #[arg(long)]
         listing_id: String,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+    },
+
+    /// Mint an entitlement from a verified currency-chain escrow lock attestation.
+    ///
+    /// This is the security-critical step that enforces replay protection via a persisted nullifier.
+    MintEntitlement {
+        /// Attestation JSON file path
+        #[arg(long)]
+        attestation: PathBuf,
+
+        /// Validator set JSON file path
+        #[arg(long)]
+        validator_set: PathBuf,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+    },
+
+    /// Finalize escrow settlement from a verified currency-chain attestation.
+    ///
+    /// Accepts EscrowReleased or EscrowRefunded attestations and records a terminal settlement.
+    FinalizeSettlement {
+        /// Attestation JSON file path
+        #[arg(long)]
+        attestation: PathBuf,
+
+        /// Validator set JSON file path
+        #[arg(long)]
+        validator_set: PathBuf,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
 
     /// Get creator statistics
@@ -1956,8 +2022,15 @@ enum MarketplaceCommand {
         /// Creator user ID
         #[arg(long)]
         creator_id: String,
+
+        /// SQLite DB path for marketplace persistence (defaults to ./dchat.db)
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
 
+    // Developer-only commands backed by in-memory MarketplaceManager state.
+    // These are intentionally compiled out of production builds.
+    #[cfg(feature = "dev-tools")]
     /// Create escrow for a transaction
     CreateEscrow {
         /// Buyer user ID
@@ -1971,8 +2044,13 @@ enum MarketplaceCommand {
         /// Amount in tokens
         #[arg(long)]
         amount: u64,
+
+        /// Listing ID
+        #[arg(long)]
+        listing_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Register bot for marketplace trading
     RegisterBot {
         /// Bot ID
@@ -1988,6 +2066,7 @@ enum MarketplaceCommand {
         owner: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Register channel for marketplace trading
     RegisterChannel {
         /// Channel ID
@@ -2007,6 +2086,7 @@ enum MarketplaceCommand {
         member_count: u64,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Get bot ownership info
     BotOwnership {
         /// Bot ID
@@ -2014,6 +2094,7 @@ enum MarketplaceCommand {
         bot_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Get channel ownership info
     ChannelOwnership {
         /// Channel ID
@@ -2021,6 +2102,7 @@ enum MarketplaceCommand {
         channel_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// List bots owned by user
     MyBots {
         /// User ID
@@ -2028,6 +2110,7 @@ enum MarketplaceCommand {
         user_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// List channels owned by user
     MyChannels {
         /// User ID
@@ -2035,6 +2118,7 @@ enum MarketplaceCommand {
         user_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Create emoji pack
     CreateEmojiPack {
         /// Pack name
@@ -2062,6 +2146,7 @@ enum MarketplaceCommand {
         animated: bool,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Register image artwork
     RegisterImage {
         /// Image title
@@ -2097,6 +2182,7 @@ enum MarketplaceCommand {
         license: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Check channel membership
     CheckMembership {
         /// Channel ID
@@ -2108,6 +2194,7 @@ enum MarketplaceCommand {
         user_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// List my memberships
     MyMemberships {
         /// User ID
@@ -2115,6 +2202,7 @@ enum MarketplaceCommand {
         user_id: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// Transfer membership
     TransferMembership {
         /// Membership ID
@@ -2126,6 +2214,7 @@ enum MarketplaceCommand {
         new_holder: String,
     },
 
+    #[cfg(feature = "dev-tools")]
     /// List channel members
     ChannelMembers {
         /// Channel ID
@@ -2739,21 +2828,45 @@ async fn main() -> Result<()> {
             identity,
             username,
             non_interactive,
+            light_client,
+            daemon,
+            profile,
+            channels,
+            data_dir,
             metrics_addr,
             health_addr,
         } => {
             let metrics = metrics_addr.unwrap_or_else(|| cli.metrics_addr.clone());
             let health = health_addr.unwrap_or_else(|| cli.health_addr.clone());
-            run_user_node(
-                config,
-                bootstrap,
-                identity,
-                username,
-                non_interactive,
-                metrics,
-                health,
-            )
-            .await
+
+            // Light client mode
+            if light_client {
+                run_light_client(
+                    config,
+                    bootstrap,
+                    identity,
+                    username,
+                    daemon || non_interactive, // non_interactive implies daemon for compat
+                    profile,
+                    channels,
+                    data_dir,
+                    metrics,
+                    health,
+                )
+                .await
+            } else {
+                // Legacy user node (will be deprecated)
+                run_user_node(
+                    config,
+                    bootstrap,
+                    identity,
+                    username,
+                    non_interactive,
+                    metrics,
+                    health,
+                )
+                .await
+            }
         }
         Commands::Validator {
             key,
@@ -3749,7 +3862,277 @@ async fn run_relay_node(
     Ok(())
 }
 
-/// Run as user node
+// ============================================================================
+// LIGHT CLIENT MODE
+// ============================================================================
+
+/// Run as light client (mobile/desktop friendly)
+async fn run_light_client(
+    config: Config,
+    bootstrap_relays: Vec<String>,
+    identity_path: Option<PathBuf>,
+    username: Option<String>,
+    daemon_mode: bool,
+    profile_str: String,
+    channels_str: String,
+    data_dir: Option<PathBuf>,
+    metrics_addr: String,
+    health_addr: String,
+) -> Result<()> {
+    use dchat::light_client::{ClientProfile, LightClient, LightClientConfig, LightClientEvent};
+
+    info!("╔═══════════════════════════════════════════════════════════╗");
+    info!("║                 dchat Light Client                        ║");
+    info!("╚═══════════════════════════════════════════════════════════╝");
+
+    // Parse profile
+    let profile = match profile_str.to_lowercase().as_str() {
+        "performance" => ClientProfile::Performance,
+        "balanced" => ClientProfile::Balanced,
+        "low-power" | "lowpower" | "low_power" => ClientProfile::LowPower,
+        "relay-only" | "relayonly" | "relay_only" => ClientProfile::RelayOnly,
+        _ => {
+            warn!("Unknown profile '{}', using 'balanced'", profile_str);
+            ClientProfile::Balanced
+        }
+    };
+
+    // Parse channels
+    let default_channels: Vec<String> = channels_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Build config
+    let light_config = LightClientConfig {
+        display_name: username.unwrap_or_else(|| "Anonymous".to_string()),
+        identity_path,
+        data_dir: data_dir.unwrap_or_else(|| config.storage.data_dir.clone()),
+        bootstrap_relays,
+        default_channels,
+        profile,
+        health_addr: Some(health_addr),
+        metrics_addr: Some(metrics_addr),
+        fee_gated: true, // Always use fee-gated for mainnet
+        max_offline_queue: 1000,
+        sync_interval_secs: 30,
+        keepalive_interval_secs: 60,
+    };
+
+    info!("Profile: {:?}", light_config.profile);
+    info!("Channels: {:?}", light_config.default_channels);
+    info!("Data dir: {:?}", light_config.data_dir);
+
+    // Create light client
+    let mut client = LightClient::new(light_config).await?;
+
+    // Take event receiver before connecting
+    let mut event_rx = client
+        .take_event_receiver()
+        .ok_or_else(|| Error::internal("Event receiver already taken"))?;
+
+    // Connect
+    info!("🔗 Connecting to network...");
+    client.connect().await?;
+
+    info!("✓ Light client connected");
+    info!(
+        "  Identity: {} ({})",
+        client.identity().username,
+        client.identity().user_id
+    );
+
+    if daemon_mode {
+        // Daemon mode: run indefinitely, log events
+        info!("🔄 Running in daemon mode (Ctrl+C to stop)");
+
+        loop {
+            tokio::select! {
+                event = event_rx.recv() => {
+                    match event {
+                        Some(LightClientEvent::MessageReceived { channel_id, sender, content, timestamp, verified }) => {
+                            let channel = channel_id.as_deref().unwrap_or("DM");
+                            let status = if verified { "✓" } else { "?" };
+                            info!("[{}] #{} {}: {} {}", timestamp, channel, sender, content, status);
+                        }
+                        Some(LightClientEvent::MessageSent { message_id, channel_id }) => {
+                            let channel = channel_id.as_deref().unwrap_or("DM");
+                            debug!("📤 Sent to #{}: {}", channel, message_id);
+                        }
+                        Some(LightClientEvent::MessageFailed { operation_id, error }) => {
+                            error!("❌ Send failed {}: {}", operation_id, error);
+                        }
+                        Some(LightClientEvent::ConnectionStateChanged(state)) => {
+                            info!("🔄 State: {:?}", state);
+                        }
+                        Some(LightClientEvent::PeerConnected(peer)) => {
+                            debug!("👋 Peer joined: {}", peer);
+                        }
+                        Some(LightClientEvent::PeerDisconnected(peer)) => {
+                            debug!("👋 Peer left: {}", peer);
+                        }
+                        Some(LightClientEvent::SyncProgress { channels_synced, total_channels, messages_fetched }) => {
+                            debug!("🔄 Sync: {}/{} channels, {} msgs", channels_synced, total_channels, messages_fetched);
+                        }
+                        Some(LightClientEvent::Error(e)) => {
+                            error!("❌ Error: {}", e);
+                        }
+                        None => {
+                            info!("Event channel closed");
+                            break;
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!("🛑 Received shutdown signal");
+                    break;
+                }
+            }
+        }
+    } else {
+        // Interactive mode: simple stdin REPL
+        info!("🎉 Light client ready!");
+        info!("Commands:");
+        info!("  /join <channel>  - Join a channel");
+        info!("  /leave <channel> - Leave a channel");
+        info!("  /peers           - Show peer count");
+        info!("  /history         - Show recent messages");
+        info!("  /quit            - Exit");
+        info!("  <text>           - Send to #global");
+        println!();
+
+        use tokio::io::{self, AsyncBufReadExt};
+        let mut stdin_lines = io::BufReader::new(io::stdin()).lines();
+
+        print!("You: ");
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+
+        loop {
+            tokio::select! {
+                event = event_rx.recv() => {
+                    match event {
+                        Some(LightClientEvent::MessageReceived { channel_id, sender, content, .. }) => {
+                            let channel = channel_id.as_deref().unwrap_or("DM");
+                            println!("\n[#{}] {}: {}", channel, sender, content);
+                            print!("You: ");
+                            use std::io::Write;
+                            let _ = std::io::stdout().flush();
+                        }
+                        Some(LightClientEvent::Error(e)) => {
+                            println!("\n❌ Error: {}", e);
+                            print!("You: ");
+                            use std::io::Write;
+                            let _ = std::io::stdout().flush();
+                        }
+                        None => break,
+                        _ => {}
+                    }
+                }
+
+                line = stdin_lines.next_line() => {
+                    match line {
+                        Ok(Some(text)) => {
+                            let text = text.trim();
+                            if text.is_empty() {
+                                print!("You: ");
+                                use std::io::Write;
+                                let _ = std::io::stdout().flush();
+                                continue;
+                            }
+
+                            if text.starts_with('/') {
+                                let parts: Vec<&str> = text.splitn(2, ' ').collect();
+                                match parts[0] {
+                                    "/quit" | "/exit" | "/q" => {
+                                        break;
+                                    }
+                                    "/join" if parts.len() > 1 => {
+                                        match client.subscribe(parts[1]).await {
+                                            Ok(_) => println!("✓ Joined #{}", parts[1]),
+                                            Err(e) => println!("❌ Failed to join: {}", e),
+                                        }
+                                    }
+                                    "/leave" if parts.len() > 1 => {
+                                        match client.unsubscribe(parts[1]).await {
+                                            Ok(_) => println!("✓ Left #{}", parts[1]),
+                                            Err(e) => println!("❌ Failed to leave: {}", e),
+                                        }
+                                    }
+                                    "/peers" => {
+                                        let count = client.peer_count().await;
+                                        println!("Connected peers: {}", count);
+                                    }
+                                    "/history" => {
+                                        match client.get_channel_messages("global", 10).await {
+                                            Ok(msgs) => {
+                                                if msgs.is_empty() {
+                                                    println!("No messages yet.");
+                                                } else {
+                                                    println!("Recent messages:");
+                                                    for msg in msgs {
+                                                        let content = if msg.content.is_empty() {
+                                                            String::from_utf8_lossy(&msg.encrypted_payload).to_string()
+                                                        } else {
+                                                            msg.content
+                                                        };
+                                                        println!("  [{}] {}: {}", msg.timestamp, msg.sender_id, content);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => println!("❌ Failed to get history: {}", e),
+                                        }
+                                    }
+                                    _ => {
+                                        println!("Unknown command. Type /quit to exit.");
+                                    }
+                                }
+                            } else {
+                                // Send message to global
+                                match client.send_channel_message("global", text).await {
+                                    Ok(msg_id) => {
+                                        debug!("📤 Sent: {} ({})", text, msg_id);
+                                    }
+                                    Err(e) => {
+                                        println!("❌ Failed to send: {}", e);
+                                    }
+                                }
+                            }
+
+                            print!("You: ");
+                            use std::io::Write;
+                            let _ = std::io::stdout().flush();
+                        }
+                        Ok(None) => break, // stdin closed
+                        Err(e) => {
+                            return Err(Error::Io(e));
+                        }
+                    }
+                }
+
+                _ = tokio::signal::ctrl_c() => {
+                    println!();
+                    break;
+                }
+            }
+        }
+    }
+
+    // Graceful shutdown
+    info!("Shutting down light client...");
+    client.disconnect().await?;
+
+    info!("╔═══════════════════════════════════════════════════════════╗");
+    info!("║           ✓ Light Client Shutdown Complete                ║");
+    info!("╚═══════════════════════════════════════════════════════════╝");
+
+    Ok(())
+}
+
+/// Run as user node (legacy - will be deprecated in favor of light client)
 async fn run_user_node(
     config: Config,
     bootstrap_peers: Vec<String>,
@@ -8042,28 +8425,109 @@ async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
 
 /// Run marketplace commands
 async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) -> Result<()> {
-    use dchat::marketplace::{DigitalGoodType, MarketplaceManager, PricingModel};
-    use dchat_core::types::UserId;
+    use dchat::marketplace::attestations::{AttestationValidatorSet, MarketplaceAttestation};
+    use dchat::marketplace::persistence::MarketplaceStore;
+    use dchat::marketplace::{DigitalGoodType, OnChainStorageType, PricingModel, Purchase};
+    use std::fs;
 
-    let mut marketplace = MarketplaceManager::new();
+    #[derive(Debug, Deserialize)]
+    struct MarketplaceValidatorSetFile {
+        required_signers: usize,
+        validators: Vec<MarketplaceValidatorEntry>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MarketplaceValidatorEntry {
+        user_id: String,
+        bls_pubkey_hex: String,
+    }
+
+    fn open_store(
+        db_path: Option<PathBuf>,
+    ) -> impl std::future::Future<Output = Result<MarketplaceStore>> {
+        async move {
+            let path = db_path.unwrap_or_else(MarketplaceStore::default_path);
+            MarketplaceStore::open(path).await
+        }
+    }
+
+    fn parse_user_id(value: &str, field: &'static str) -> Result<UserId> {
+        Ok(UserId(uuid::Uuid::parse_str(value).map_err(|_| {
+            Error::validation(format!("Invalid {field}"))
+        })?))
+    }
+
+    fn parse_uuid(value: &str, field: &'static str) -> Result<uuid::Uuid> {
+        uuid::Uuid::parse_str(value).map_err(|_| Error::validation(format!("Invalid {field}")))
+    }
+
+    fn parse_item_type(value: &str) -> Result<(DigitalGoodType, OnChainStorageType)> {
+        Ok(match value {
+            "sticker-pack" => (DigitalGoodType::StickerPack, OnChainStorageType::Ipfs),
+            "emoji-pack" => (DigitalGoodType::EmojiPack, OnChainStorageType::Ipfs),
+            "theme" => (DigitalGoodType::Theme, OnChainStorageType::Ipfs),
+            "bot" => (DigitalGoodType::Bot, OnChainStorageType::Hybrid),
+            "nft" => (DigitalGoodType::Nft, OnChainStorageType::Hybrid),
+            "image" => (DigitalGoodType::Image, OnChainStorageType::Hybrid),
+            "subscription" => (DigitalGoodType::Subscription, OnChainStorageType::ChatChain),
+            "badge" => (DigitalGoodType::Badge, OnChainStorageType::ChatChain),
+            "channel" => (DigitalGoodType::Channel, OnChainStorageType::ChatChain),
+            "membership" => (DigitalGoodType::Membership, OnChainStorageType::ChatChain),
+            _ => return Err(Error::validation("Invalid item type")),
+        })
+    }
+
+    fn load_validator_set(path: &Path) -> Result<AttestationValidatorSet> {
+        let raw = fs::read_to_string(path)?;
+        let file: MarketplaceValidatorSetFile = serde_json::from_str(&raw)?;
+
+        if file.validators.is_empty() {
+            return Err(Error::validation(
+                "validator_set.validators must not be empty",
+            ));
+        }
+
+        let mut validators: HashMap<UserId, Vec<u8>> = HashMap::new();
+        for entry in file.validators {
+            let id = parse_user_id(&entry.user_id, "validator user_id")?;
+            let pk = hex::decode(entry.bls_pubkey_hex.trim_start_matches("0x"))
+                .map_err(|_| Error::validation("Invalid validator bls_pubkey_hex"))?;
+            validators.insert(id, pk);
+        }
+
+        AttestationValidatorSet::new(file.required_signers, validators)
+    }
+
+    fn load_attestation(path: &Path) -> Result<MarketplaceAttestation> {
+        let raw = fs::read_to_string(path)?;
+        serde_json::from_str(&raw).map_err(Error::from)
+    }
+
+    #[cfg(feature = "dev-tools")]
+    let mut marketplace = dchat::marketplace::MarketplaceManager::new();
 
     match action {
-        MarketplaceCommand::List { item_type } => {
+        MarketplaceCommand::List { item_type, db_path } => {
             println!("\n🏪 Marketplace Listings:");
 
-            let _type_filter = item_type.as_ref().map(|t| match t.as_str() {
-                "sticker-pack" => DigitalGoodType::StickerPack,
-                "theme" => DigitalGoodType::Theme,
-                "bot" => DigitalGoodType::Bot,
-                "nft" => DigitalGoodType::Nft,
-                "subscription" => DigitalGoodType::Subscription,
-                "badge" => DigitalGoodType::Badge,
-                _ => DigitalGoodType::Theme,
-            });
+            let store = open_store(db_path).await?;
+            let type_filter = if let Some(t) = item_type.as_deref() {
+                Some(parse_item_type(t)?.0)
+            } else {
+                None
+            };
 
-            // Note: marketplace doesn't have list_items method, would need implementation
-            println!("Marketplace listing API needs to be implemented");
-            println!("(Use get_listing with specific UUID instead)");
+            let listings = store.list_listings(type_filter).await?;
+            if listings.is_empty() {
+                println!("(no listings)");
+                return Ok(());
+            }
+
+            for l in listings {
+                println!("- {} ({})", l.title, l.id);
+                println!("  type: {:?}  price: {:?}", l.good_type, l.pricing);
+                println!("  creator: {}", l.creator);
+            }
 
             Ok(())
         }
@@ -8078,29 +8542,12 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             bot_id,
             channel_id,
             membership_duration,
+            db_path,
         } => {
-            use dchat::marketplace::OnChainStorageType;
-
             info!("📦 Creating marketplace listing: {}", title);
 
-            let creator = UserId(
-                uuid::Uuid::parse_str(&creator_id)
-                    .map_err(|_| Error::validation("Invalid creator ID"))?,
-            );
-
-            let (good_type, storage_type) = match item_type.as_str() {
-                "sticker-pack" => (DigitalGoodType::StickerPack, OnChainStorageType::Ipfs),
-                "theme" => (DigitalGoodType::Theme, OnChainStorageType::Ipfs),
-                "bot" => (DigitalGoodType::Bot, OnChainStorageType::Hybrid),
-                "nft" => (DigitalGoodType::Nft, OnChainStorageType::Hybrid),
-                "subscription" => (DigitalGoodType::Subscription, OnChainStorageType::ChatChain),
-                "badge" => (DigitalGoodType::Badge, OnChainStorageType::ChatChain),
-                "emoji-pack" => (DigitalGoodType::EmojiPack, OnChainStorageType::Ipfs),
-                "image" => (DigitalGoodType::Image, OnChainStorageType::Hybrid),
-                "channel" => (DigitalGoodType::Channel, OnChainStorageType::ChatChain),
-                "membership" => (DigitalGoodType::Membership, OnChainStorageType::ChatChain),
-                _ => return Err(Error::validation("Invalid item type")),
-            };
+            let creator = parse_user_id(&creator_id, "creator ID")?;
+            let (good_type, storage_type) = parse_item_type(item_type.as_str())?;
 
             let pricing = if price == 0 {
                 PricingModel::Free
@@ -8110,34 +8557,34 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
 
             // Parse optional bot_id
             let bot_uuid = if let Some(ref id) = bot_id {
-                Some(uuid::Uuid::parse_str(id).map_err(|_| Error::validation("Invalid bot ID"))?)
+                Some(parse_uuid(id, "bot ID")?)
             } else {
                 None
             };
 
             // Parse optional channel_id
             let channel_uuid = if let Some(ref id) = channel_id {
-                Some(
-                    uuid::Uuid::parse_str(id)
-                        .map_err(|_| Error::validation("Invalid channel ID"))?,
-                )
+                Some(parse_uuid(id, "channel ID")?)
             } else {
                 None
             };
 
-            let listing_id = marketplace.create_listing(
-                creator,
-                title.clone(),
-                description.clone(),
-                good_type,
-                pricing,
-                content_hash.clone(),
-                storage_type,
-                None, // nft_token_id
-                bot_uuid,
-                channel_uuid,
-                membership_duration,
-            )?;
+            let store = open_store(db_path).await?;
+            let listing_id = store
+                .create_listing(
+                    creator,
+                    title.clone(),
+                    description.clone(),
+                    good_type,
+                    pricing,
+                    content_hash.clone(),
+                    storage_type,
+                    None, // nft_token_id
+                    bot_uuid,
+                    channel_uuid,
+                    membership_duration,
+                )
+                .await?;
 
             println!("\n✅ Listing created successfully!");
             println!("Listing ID: {}", listing_id);
@@ -8161,19 +8608,19 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
         MarketplaceCommand::Buy {
             buyer_id,
             listing_id,
+            db_path,
         } => {
             info!("💳 Processing purchase");
 
-            let buyer = UserId(
-                uuid::Uuid::parse_str(&buyer_id)
-                    .map_err(|_| Error::validation("Invalid buyer ID"))?,
-            );
-            let listing_uuid = uuid::Uuid::parse_str(&listing_id)
-                .map_err(|_| Error::validation("Invalid listing ID"))?;
+            let buyer = parse_user_id(&buyer_id, "buyer ID")?;
+            let listing_uuid = parse_uuid(&listing_id, "listing ID")?;
 
-            // PRODUCTION: Verify payment on currency chain before completing purchase
-            let listing = marketplace
+            let store = open_store(db_path).await?;
+
+            // Load listing from persistent store.
+            let listing = store
                 .get_listing(listing_uuid)
+                .await?
                 .ok_or_else(|| Error::NotFound("Listing not found".to_string()))?;
 
             let price = match listing.pricing {
@@ -8257,24 +8704,104 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                 hash.to_string()
             };
 
-            // Complete purchase with verified transaction - use earlier listing variables
-            let purchase_id = marketplace.purchase(buyer, listing_uuid, price, tx_hash.clone())?;
+            // For paid flows, the security-critical completion step requires a threshold-signed
+            // attestation from the currency-chain validator committee.
+            if price == 0 {
+                let purchase = Purchase {
+                    id: Uuid::new_v4(),
+                    buyer,
+                    listing_id: listing_uuid,
+                    amount_paid: 0,
+                    purchased_at: chrono::Utc::now(),
+                    transaction_hash: tx_hash.clone(),
+                };
 
-            println!("\n✅ Purchase successful!");
-            println!("Purchase ID: {}", purchase_id);
+                store.record_purchase(&purchase).await?;
+
+                println!("\n✅ Purchase recorded (free listing)");
+                println!("Purchase ID: {}", purchase.id);
+                println!("Listing: {}", listing_title);
+                println!("Creator: {}", listing_creator);
+                return Ok(());
+            }
+
+            println!("\n✅ Payment submitted and verified");
             println!("Listing: {}", listing_title);
             println!("Creator: {}", listing_creator);
+            println!("Currency-chain tx: {}", tx_hash);
+            println!("\nNext: obtain an EscrowLocked marketplace attestation and run:");
+            println!("  dchat marketplace mint-entitlement --attestation <file.json> --validator-set <validators.json>");
 
             Ok(())
         }
 
-        MarketplaceCommand::CreatorStats { creator_id } => {
+        MarketplaceCommand::MintEntitlement {
+            attestation,
+            validator_set,
+            db_path,
+        } => {
+            let store = open_store(db_path).await?;
+            let set = load_validator_set(&validator_set)?;
+            let att = load_attestation(&attestation)?;
+
+            let entitlement = store.mint_entitlement_from_attestation(&att, &set).await?;
+
+            let purchase = Purchase {
+                id: Uuid::new_v4(),
+                buyer: entitlement.buyer.clone(),
+                listing_id: entitlement.listing_id,
+                amount_paid: entitlement.amount,
+                purchased_at: chrono::Utc::now(),
+                transaction_hash: entitlement.lock_tx_hash.clone(),
+            };
+            store.record_purchase(&purchase).await?;
+
+            println!("\n✅ Entitlement minted and purchase recorded");
+            println!("Escrow ID: {}", entitlement.escrow_id);
+            println!("Listing ID: {}", entitlement.listing_id);
+            println!("Buyer: {}", entitlement.buyer);
+            println!("Seller: {}", entitlement.seller);
+            println!("Amount: {}", entitlement.amount);
+
+            Ok(())
+        }
+
+        MarketplaceCommand::FinalizeSettlement {
+            attestation,
+            validator_set,
+            db_path,
+        } => {
+            let store = open_store(db_path).await?;
+            let set = load_validator_set(&validator_set)?;
+            let att = load_attestation(&attestation)?;
+
+            let settlement = store
+                .finalize_settlement_from_attestation(&att, &set)
+                .await?;
+
+            println!("\n✅ Escrow settlement recorded");
+            println!("Escrow ID: {}", settlement.escrow_id);
+            println!("Outcome: {:?}", settlement.outcome);
+            println!("Settlement tx: {}", settlement.settlement_tx_hash);
+            println!(
+                "Block: {} @ {}",
+                settlement.settlement_block_hash, settlement.settlement_block_number
+            );
+
+            Ok(())
+        }
+
+        MarketplaceCommand::CreatorStats {
+            creator_id,
+            db_path,
+        } => {
             let creator = UserId(
                 uuid::Uuid::parse_str(&creator_id)
                     .map_err(|_| Error::validation("Invalid creator ID"))?,
             );
 
-            let stats = marketplace.get_creator_stats(&creator);
+            let store = open_store(db_path).await?;
+            let stats = store.get_creator_stats(&creator).await?;
 
             println!("\n📊 Creator Statistics:");
             println!("Creator: {}", stats.creator);
@@ -8287,28 +8814,23 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::CreateEscrow {
             buyer,
             seller,
             amount,
+            listing_id,
         } => {
-            let buyer_id = UserId(
-                uuid::Uuid::parse_str(&buyer).map_err(|_| Error::validation("Invalid buyer ID"))?,
-            );
-            let seller_id = UserId(
-                uuid::Uuid::parse_str(&seller)
-                    .map_err(|_| Error::validation("Invalid seller ID"))?,
-            );
-
-            // PRODUCTION: Listing validation would go here if listing_id parameter was added
-            // For now, creating escrow with just buyer, seller, and amount
+            let buyer_id = parse_user_id(&buyer, "buyer ID")?;
+            let seller_id = parse_user_id(&seller, "seller ID")?;
+            let listing_uuid = parse_uuid(&listing_id, "listing ID")?;
 
             let lock_duration_secs = 30 * 24 * 60 * 60; // 30 days in seconds
 
             let escrow_id = marketplace
                 .escrow
                 .create_two_party_escrow(
-                    Uuid::new_v4(), // Generate placeholder listing ID
+                    listing_uuid,
                     &buyer_id,
                     &seller_id,
                     amount,
@@ -8329,6 +8851,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::RegisterBot {
             bot_id,
             username,
@@ -8351,6 +8874,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::RegisterChannel {
             channel_id,
             name,
@@ -8379,6 +8903,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::BotOwnership { bot_id } => {
             let bot_uuid =
                 uuid::Uuid::parse_str(&bot_id).map_err(|_| Error::validation("Invalid bot ID"))?;
@@ -8404,6 +8929,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::ChannelOwnership { channel_id } => {
             let channel_uuid = uuid::Uuid::parse_str(&channel_id)
                 .map_err(|_| Error::validation("Invalid channel ID"))?;
@@ -8430,6 +8956,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::MyBots { user_id } => {
             let user_uuid = UserId(
                 uuid::Uuid::parse_str(&user_id)
@@ -8451,6 +8978,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::MyChannels { user_id } => {
             let user_uuid = UserId(
                 uuid::Uuid::parse_str(&user_id)
@@ -8473,6 +9001,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::CreateEmojiPack {
             name,
             description,
@@ -8492,7 +9021,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                 emoji_count,
                 creator,
                 content_hash,
-                vec![], // Empty preview for now
+                vec![],
                 animated,
             )?;
 
@@ -8505,6 +9034,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::RegisterImage {
             title,
             description,
@@ -8553,6 +9083,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::CheckMembership {
             channel_id,
             user_id,
@@ -8575,6 +9106,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::MyMemberships { user_id } => {
             let user_uuid = UserId(
                 uuid::Uuid::parse_str(&user_id)
@@ -8598,6 +9130,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::TransferMembership {
             membership_id,
             new_holder,
@@ -8617,6 +9150,7 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
             Ok(())
         }
 
+        #[cfg(feature = "dev-tools")]
         MarketplaceCommand::ChannelMembers { channel_id } => {
             let channel_uuid = uuid::Uuid::parse_str(&channel_id)
                 .map_err(|_| Error::validation("Invalid channel ID"))?;
