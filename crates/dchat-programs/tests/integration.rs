@@ -323,8 +323,8 @@ fn test_execution_context_creation() {
     let timestamp = 1234567890;
     let fee_payer = pubkey_n(1);
     let budget = ComputeBudget::default();
-    let program_cache = ProgramCache::new(100);
-    let syscalls = SyscallRegistry::new();
+    let program_cache = Arc::new(ProgramCache::new(100));
+    let syscalls = Arc::new(SyscallRegistry::new());
 
     let ctx = ExecutionContext::new(
         tx_hash,
@@ -332,8 +332,8 @@ fn test_execution_context_creation() {
         timestamp,
         fee_payer,
         budget,
-        &program_cache,
-        &syscalls,
+        program_cache,
+        syscalls,
     );
 
     assert_eq!(ctx.slot, slot);

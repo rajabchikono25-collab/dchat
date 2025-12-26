@@ -586,6 +586,8 @@ fn test_cpi_result_structure() {
         error_code: None,
         return_data: vec![1, 2, 3, 4],
         compute_consumed: 1000,
+        events: vec![],
+        logs: vec![],
     };
 
     assert!(result.success);
@@ -601,6 +603,8 @@ fn test_cpi_result_failure() {
         error_code: Some(42),
         return_data: vec![],
         compute_consumed: 500,
+        events: vec![],
+        logs: vec![],
     };
 
     assert!(!result.success);

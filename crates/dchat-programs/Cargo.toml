@@ -28,6 +28,13 @@ ed25519-dalek = { version = "2", features = [
 ], optional = true }
 curve25519-dalek = { version = "4", optional = true }
 
+# Bulletproofs for confidential token range proofs (Ristretto-based)
+bulletproofs = { version = "4", optional = true }
+merlin = { version = "3", optional = true }
+
+# ChaCha20-Poly1305 for encrypted balance payloads
+chacha20poly1305 = { version = "0.10", optional = true }
+
 # Async runtime - NOT used in WASM
 tokio = { version = "1.44", features = [
   "sync",
@@ -91,6 +98,9 @@ full = [
   "prometheus",
   "ed25519-dalek",
   "curve25519-dalek",
+  "bulletproofs",
+  "merlin",
+  "chacha20poly1305",
   "uuid",
   "chrono",
   "bs58",

@@ -533,6 +533,33 @@ impl VmInstance {
             )
             .map_err(|e| ProgramError::VmError(e.to_string()))?;
 
+        // sol_invoke_signed - CPI from guest (currently unsupported; returns error)
+        linker
+            .func_wrap(
+                "env",
+                "sol_invoke_signed",
+                |mut caller: Caller<'_, VmState>,
+                 _ix_ptr: u32,
+                 _acc_ptr: u32,
+                 _acc_len: u32,
+                 _seeds_ptr: u32,
+                 _seeds_len: u32|
+                 -> u32 {
+                    // Consume nominal cost to prevent free retries
+                    let cost = 1000u64;
+                    if let Ok(current) = caller.get_fuel() {
+                        if current < cost {
+                            return ProgramError::ComputeBudgetExceeded.to_code();
+                        }
+                        let _ = caller.set_fuel(current - cost);
+                    }
+
+                    // Explicitly mark as unsupported; caller will observe non-zero return
+                    ProgramError::SyscallNotFound.to_code()
+                },
+            )
+            .map_err(|e| ProgramError::VmError(e.to_string()))?;
+
         // ── Memory Syscalls ────────────────────────────────────────────────────
 
         // sol_alloc_free_ - Bump allocator
