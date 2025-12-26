@@ -2730,9 +2730,14 @@ name = "dchat-marketplace"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "blst",
  "chrono",
+ "dchat-bridge",
  "dchat-core",
+ "getrandom 0.2.16",
  "serde",
+ "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "uuid",
