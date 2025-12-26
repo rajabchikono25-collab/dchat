@@ -2691,7 +2691,7 @@ impl MessageRouter {
         };
 
         // 3. Send handshake with message payload via request-response protocol
-        let payload = bincode::serialize(&dchat_message)
+        let payload = dchat_network::behavior::encode_wire_message(&dchat_message)
             .map_err(|e| Error::internal(format!("Serialization failed: {}", e)))?;
 
         network
@@ -3479,13 +3479,14 @@ impl MessageRouter {
             let mut network_guard = self.network_manager.write().await;
             if let Some(ref mut network) = *network_guard {
                 // Serialize and send via request-response
-                let message_bytes = match bincode::serialize(&dchat_message) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to serialize callback message: {}", e);
-                        continue;
-                    }
-                };
+                let message_bytes =
+                    match dchat_network::behavior::encode_wire_message(&dchat_message) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize callback message: {}", e);
+                            continue;
+                        }
+                    };
 
                 match network.send_handshake(relay_peer_id, message_bytes) {
                     Ok(_) => {

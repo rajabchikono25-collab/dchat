@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+use thiserror::Error;
 
 /// Compute a stable channel message ID.
 ///
@@ -33,6 +34,64 @@ pub fn compute_channel_message_id(
     hasher.update(encrypted_payload);
     hasher.update(timestamp.to_le_bytes());
     hasher.finalize().into()
+}
+
+const DCHAT_WIRE_MAGIC: [u8; 4] = *b"DCHT";
+const DCHAT_WIRE_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WireEnvelope {
+    magic: [u8; 4],
+    version: u16,
+    message: DchatMessage,
+}
+
+#[derive(Serialize)]
+struct WireEnvelopeRef<'a> {
+    magic: [u8; 4],
+    version: u16,
+    message: &'a DchatMessage,
+}
+
+#[derive(Debug, Error)]
+pub enum WireDecodeError {
+    #[error("unsupported wire version: {version}")]
+    UnsupportedVersion { version: u16 },
+
+    #[error("invalid wire magic")]
+    InvalidMagic,
+
+    #[error("decode failed")]
+    DecodeFailed,
+}
+
+pub fn encode_wire_message(message: &DchatMessage) -> Result<Vec<u8>, bincode::Error> {
+    bincode::serialize(&WireEnvelopeRef {
+        magic: DCHAT_WIRE_MAGIC,
+        version: DCHAT_WIRE_VERSION,
+        message,
+    })
+}
+
+pub fn decode_wire_message(data: &[u8]) -> Result<DchatMessage, WireDecodeError> {
+    if let Ok(env) = bincode::deserialize::<WireEnvelope>(data) {
+        if env.magic != DCHAT_WIRE_MAGIC {
+            return Err(WireDecodeError::InvalidMagic);
+        }
+        if env.version != DCHAT_WIRE_VERSION {
+            return Err(WireDecodeError::UnsupportedVersion {
+                version: env.version,
+            });
+        }
+        return Ok(env.message);
+    }
+
+    // Backward compatibility: accept legacy payloads that are a raw DchatMessage.
+    if let Ok(msg) = bincode::deserialize::<DchatMessage>(data) {
+        return Ok(msg);
+    }
+
+    Err(WireDecodeError::DecodeFailed)
 }
 
 /// Message types for the dchat protocol
@@ -212,7 +271,7 @@ impl DchatBehavior {
         message: &DchatMessage,
     ) -> Result<MessageId, gossipsub::PublishError> {
         let topic = gossipsub::IdentTopic::new(format!("dchat/channel/{}", channel_id));
-        let data = bincode::serialize(message).map_err(|e| {
+        let data = encode_wire_message(message).map_err(|e| {
             gossipsub::PublishError::TransformFailed(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Serialization failed: {}", e),
@@ -233,7 +292,7 @@ impl DchatBehavior {
         message: &DchatMessage,
     ) -> Result<MessageId, gossipsub::PublishError> {
         let topic = gossipsub::IdentTopic::new("dchat/validators/consensus");
-        let data = bincode::serialize(message).map_err(|e| {
+        let data = encode_wire_message(message).map_err(|e| {
             gossipsub::PublishError::TransformFailed(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Serialization failed: {}", e),
@@ -250,7 +309,7 @@ impl DchatBehavior {
 
 /// Custom message ID function for gossipsub
 fn message_id_fn(message: &gossipsub::Message) -> MessageId {
-    if let Ok(dchat_msg) = bincode::deserialize::<DchatMessage>(&message.data) {
+    if let Ok(dchat_msg) = decode_wire_message(&message.data) {
         if let DchatMessage::ChannelMessage { message_id, .. } = dchat_msg {
             return MessageId::from(hex::encode(message_id));
         }
@@ -283,5 +342,67 @@ mod tests {
         let result = behavior.subscribe_channel("test-channel");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), true);
+    }
+
+    #[test]
+    fn wire_roundtrip_envelope() {
+        let sender = UserId::new();
+        let timestamp = 1_735_000_000i64;
+        let encrypted_payload = b"hello".to_vec();
+        let channel_id = "global";
+        let message_id =
+            compute_channel_message_id(&sender, channel_id, &encrypted_payload, timestamp);
+
+        let msg = DchatMessage::ChannelMessage {
+            message_id,
+            sender,
+            channel_id: channel_id.to_string(),
+            encrypted_payload,
+            timestamp,
+        };
+
+        let bytes = encode_wire_message(&msg).expect("encode");
+        let decoded = decode_wire_message(&bytes).expect("decode");
+
+        match decoded {
+            DchatMessage::ChannelMessage {
+                message_id: mid,
+                channel_id: cid,
+                timestamp: ts,
+                ..
+            } => {
+                assert_eq!(mid, message_id);
+                assert_eq!(cid, channel_id);
+                assert_eq!(ts, timestamp);
+            }
+            _ => panic!("unexpected message type"),
+        }
+    }
+
+    #[test]
+    fn wire_decode_legacy_fallback() {
+        let sender = UserId::new();
+        let timestamp = 1_735_000_001i64;
+        let encrypted_payload = b"legacy".to_vec();
+        let channel_id = "global";
+        let message_id =
+            compute_channel_message_id(&sender, channel_id, &encrypted_payload, timestamp);
+
+        let msg = DchatMessage::ChannelMessage {
+            message_id,
+            sender,
+            channel_id: channel_id.to_string(),
+            encrypted_payload,
+            timestamp,
+        };
+
+        let legacy_bytes = bincode::serialize(&msg).expect("legacy encode");
+        let decoded = decode_wire_message(&legacy_bytes).expect("legacy decode");
+        match decoded {
+            DchatMessage::ChannelMessage {
+                message_id: mid, ..
+            } => assert_eq!(mid, message_id),
+            _ => panic!("unexpected message type"),
+        }
     }
 }

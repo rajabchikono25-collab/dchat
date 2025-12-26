@@ -107,8 +107,8 @@ fn test_stun_response_parsing() {
     response.push(0x01);
 
     // XOR'd port: Let's say real port is 12345 (0x3039)
-    // XOR with 0x2112 = 0x1129
-    response.extend_from_slice(&[0x11, 0x29]);
+    // XOR with 0x2112 = 0x112B
+    response.extend_from_slice(&[0x11, 0x2B]);
 
     // XOR'd IP: Let's say real IP is 203.0.113.10 (0xCB00710A)
     // XOR with 0x2112A442 = 0xEA12D548

@@ -82,7 +82,10 @@ impl NetworkManager {
 
     /// Create a new network manager with an optional keypair
     /// If keypair is None, a random one is generated
-    pub async fn with_keypair(config: NetworkConfig, keypair: Option<libp2p::identity::Keypair>) -> Result<Self> {
+    pub async fn with_keypair(
+        config: NetworkConfig,
+        keypair: Option<libp2p::identity::Keypair>,
+    ) -> Result<Self> {
         // Use provided keypair or generate a random one
         let local_key = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
         let local_peer_id = local_key.public().to_peer_id();
@@ -122,12 +125,15 @@ impl NetworkManager {
     pub async fn start(&mut self) -> Result<()> {
         // Check if external address is manually configured (bypasses NAT detection)
         if let Some(ref external_addr) = self.config.external_address {
-            tracing::info!("📡 Using manually configured external address: {}", external_addr);
+            tracing::info!(
+                "📡 Using manually configured external address: {}",
+                external_addr
+            );
             self.swarm.add_external_address(external_addr.clone());
         } else {
             // PRODUCTION: Perform NAT detection and establish connectivity
             tracing::info!("🔍 Detecting NAT type and external address...");
-            
+
             match self.nat.detect().await {
                 Ok((nat_type, external_addr)) => {
                     tracing::info!("✓ NAT detection complete");
@@ -135,7 +141,7 @@ impl NetworkManager {
                     if let Some(addr) = external_addr {
                         tracing::info!("  External Address: {}", addr);
                     }
-                    
+
                     // Establish connectivity using best strategy for detected NAT type
                     let local_port = self.config.listen_addrs[0]
                         .iter()
@@ -147,27 +153,33 @@ impl NetworkManager {
                             }
                         })
                         .unwrap_or(0);
-                    
+
                     match self.nat.establish_connectivity(local_port).await {
                         Ok(connectivity) => {
                             tracing::info!("✅ NAT traversal successful!");
                             tracing::info!("  Method: {:?}", connectivity.method);
                             tracing::info!("  External: {}", connectivity.external_addr);
                             tracing::info!("  Local: {}", connectivity.local_addr);
-                            
+
                             // Add external address to swarm for advertising
-                            let external_multiaddr = format!("/ip4/{}/tcp/{}", 
+                            let external_multiaddr = format!(
+                                "/ip4/{}/tcp/{}",
                                 connectivity.external_addr.ip(),
                                 connectivity.external_addr.port()
-                            ).parse::<Multiaddr>()
-                            .map_err(|e| Error::network(format!("Invalid external address: {}", e)))?;
-                            
+                            )
+                            .parse::<Multiaddr>()
+                            .map_err(|e| {
+                                Error::network(format!("Invalid external address: {}", e))
+                            })?;
+
                             self.swarm.add_external_address(external_multiaddr);
                         }
                         Err(e) => {
                             tracing::warn!("⚠️ NAT traversal failed: {}", e);
                             tracing::warn!("  Continuing with local connectivity only");
-                            tracing::warn!("  This node may not be reachable from outside the local network");
+                            tracing::warn!(
+                                "  This node may not be reachable from outside the local network"
+                            );
                         }
                     }
                 }
@@ -177,7 +189,7 @@ impl NetworkManager {
                 }
             }
         }
-        
+
         // Listen on configured addresses
         for addr in &self.config.listen_addrs {
             self.swarm
@@ -322,7 +334,7 @@ impl NetworkManager {
             .copied()
             .collect()
     }
-    
+
     /// Send a handshake to a peer
     pub fn send_handshake(&mut self, peer_id: PeerId, handshake_data: Vec<u8>) -> Result<()> {
         self.swarm
@@ -333,7 +345,7 @@ impl NetworkManager {
     }
 
     /// Disconnect from a peer
-    /// 
+    ///
     /// Closes all connections to the specified peer.
     pub fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<()> {
         let _ = self.swarm.disconnect_peer_id(*peer_id);
@@ -376,6 +388,7 @@ impl NetworkManager {
         event: crate::behavior::DchatBehaviorEvent,
     ) -> Option<NetworkEvent> {
         use crate::behavior::DchatBehaviorEvent;
+        use crate::behavior::HandshakeData;
 
         match event {
             DchatBehaviorEvent::Mdns(mdns::Event::Discovered(peers)) => {
@@ -398,13 +411,19 @@ impl NetworkManager {
                 None
             }
             DchatBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, .. }) => {
-                if let Ok(dchat_msg) = bincode::deserialize::<DchatMessage>(&message.data) {
-                    Some(NetworkEvent::MessageReceived {
+                match crate::behavior::decode_wire_message(&message.data) {
+                    Ok(dchat_msg) => Some(NetworkEvent::MessageReceived {
                         from: message.source.unwrap_or(PeerId::random()),
                         message: dchat_msg,
-                    })
-                } else {
-                    None
+                    }),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Dropping undecodable gossipsub message ({} bytes): {}",
+                            message.data.len(),
+                            e
+                        );
+                        None
+                    }
                 }
             }
             DchatBehaviorEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic }) => {
@@ -444,6 +463,87 @@ impl NetworkManager {
                 tracing::info!("DHT bootstrap successful");
                 Some(NetworkEvent::DhtQueryComplete)
             }
+            DchatBehaviorEvent::ReqResp(event) => {
+                use libp2p_request_response::{Event as ReqRespEvent, Message as ReqRespMessage};
+
+                match event {
+                    ReqRespEvent::Message { peer, message } => match message {
+                        ReqRespMessage::Request {
+                            request,
+                            channel,
+                            request_id: _,
+                        } => {
+                            // Always respond so the remote peer doesn't time out.
+                            let response = HandshakeData { data: Vec::new() };
+                            if let Err(e) = self
+                                .swarm
+                                .behaviour_mut()
+                                .req_resp
+                                .send_response(channel, response)
+                            {
+                                tracing::warn!(
+                                    "Failed to send req-resp response to {}: {:?}",
+                                    peer,
+                                    e
+                                );
+                            }
+
+                            match crate::behavior::decode_wire_message(&request.data) {
+                                Ok(dchat_msg) => Some(NetworkEvent::MessageReceived {
+                                    from: peer,
+                                    message: dchat_msg,
+                                }),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Dropping undecodable req-resp message from {} ({} bytes): {}",
+                                        peer,
+                                        request.data.len(),
+                                        e
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        ReqRespMessage::Response {
+                            response,
+                            request_id: _,
+                        } => {
+                            // Currently used as an ack channel; log only if response contains data.
+                            if !response.data.is_empty() {
+                                tracing::debug!(
+                                    "Received req-resp response from {} ({} bytes)",
+                                    peer,
+                                    response.data.len()
+                                );
+                            }
+                            None
+                        }
+                    },
+                    ReqRespEvent::OutboundFailure {
+                        peer,
+                        error,
+                        request_id: _,
+                    } => {
+                        tracing::warn!("Req-resp outbound failure to {}: {}", peer, error);
+                        None
+                    }
+                    ReqRespEvent::InboundFailure {
+                        peer,
+                        error,
+                        request_id: _,
+                    } => {
+                        tracing::warn!("Req-resp inbound failure from {}: {}", peer, error);
+                        None
+                    }
+                    ReqRespEvent::ResponseSent {
+                        peer,
+                        request_id: _,
+                    } => {
+                        tracing::trace!("Req-resp response sent to {}", peer);
+                        None
+                    }
+                }
+            }
             _ => None,
         }
     }
@@ -451,14 +551,14 @@ impl NetworkManager {
     /// Shutdown network manager and cleanup resources
     pub async fn shutdown(&mut self) -> Result<()> {
         tracing::info!("🛑 Shutting down network manager...");
-        
+
         // Cleanup NAT traversal resources (UPnP mappings, TURN relays)
         if let Err(e) = self.nat.shutdown().await {
             tracing::warn!("NAT cleanup failed: {}", e);
         } else {
             tracing::info!("✓ NAT resources cleaned up");
         }
-        
+
         // Close all swarm connections
         tracing::info!("✓ Network manager shutdown complete");
         Ok(())
