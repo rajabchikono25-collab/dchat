@@ -4784,6 +4784,7 @@ version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "blake3",
+ "borsh",
  "chrono",
  "dchat-core",
  "dchat-crypto",

@@ -1,9 +1,18 @@
-//! Sandbox Host for Counter Mini-App
+//! Sandbox Host for Counter Mini-App with Program Integration
 //!
-//! This launches the counter mini-app web UI inside the dchat sandbox environment.
-//! It creates a local HTTP server and opens a WebView that connects to the sandbox runtime.
+//! This launches the counter mini-app web UI inside the dchat sandbox environment
+//! and connects it to the on-chain DPL counter program.
+//!
+//! Features:
+//! - Sandbox isolation with resource limits
+//! - WebSocket bridge for mini-app ↔ host communication
+//! - DPL Counter Program simulation/execution
+//! - Transaction building and signing
+//! - Event streaming
 //!
 //! Run with: `cargo run --bin sandbox_host`
+
+mod program_client;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -25,7 +34,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::services::ServeDir;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use dchat_miniapps::{
@@ -33,11 +42,15 @@ use dchat_miniapps::{
     SandboxRuntime,
 };
 
+use program_client::{CounterEvent, CounterProgramClient, ProgramCallResult};
+
 /// Application state shared across handlers
 struct AppState {
     runtime: Arc<SandboxRuntime>,
     web_dir: PathBuf,
     sandboxes: RwLock<HashMap<String, Arc<SandboxInstance>>>,
+    /// Program clients for each sandbox (keyed by sandbox_id)
+    program_clients: RwLock<HashMap<String, CounterProgramClient>>,
 }
 
 /// Query params for sandbox initialization
@@ -109,6 +122,7 @@ async fn main() -> MiniAppResult<()> {
         runtime,
         web_dir: web_dir.clone(),
         sandboxes: RwLock::new(HashMap::new()),
+        program_clients: RwLock::new(HashMap::new()),
     });
 
     // Build router
@@ -134,6 +148,7 @@ async fn main() -> MiniAppResult<()> {
     info!("  ✓ Permission enforcement");
     info!("  ✓ Intent signing simulation");
     info!("  ✓ Sandbox storage API");
+    info!("  ✓ DPL Counter Program integration (on-chain simulation)");
     info!("");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -406,6 +421,15 @@ fn create_sandbox(state: &AppState, app_id: &str) -> String {
         Ok(sandbox) => {
             let id = sandbox.id.to_string();
             sandbox.start().ok();
+
+            // Create program client for this sandbox
+            // Use the user_id as the authority (wallet address)
+            let program_client = CounterProgramClient::new(user_id);
+            state
+                .program_clients
+                .write()
+                .insert(id.clone(), program_client);
+
             state.sandboxes.write().insert(id.clone(), sandbox);
             id
         }
@@ -484,7 +508,7 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>, sandbox_id: S
 }
 
 fn handle_client_message(
-    _state: &AppState,
+    state: &AppState,
     sandbox_id: &str,
     msg: &ClientMessage,
     sandbox: Option<&Arc<SandboxInstance>>,
@@ -515,6 +539,112 @@ fn handle_client_message(
             )
         }
 
+        // ===== NEW: Program call handling =====
+        "program:call" => {
+            info!("Program call request: {:?}", msg.payload);
+
+            let action = msg
+                .payload
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            let mut clients = state.program_clients.write();
+            let client = clients.get_mut(sandbox_id);
+
+            match client {
+                Some(client) => {
+                    let result = handle_program_action(client, action, &msg.payload);
+
+                    let response = match result {
+                        Ok(call_result) => {
+                            serde_json::json!({
+                                "requestId": msg.request_id,
+                                "success": call_result.success,
+                                "signature": call_result.signature,
+                                "slot": call_result.slot,
+                                "computeUnits": call_result.compute_units,
+                                "events": call_result.events.iter().map(|e| event_to_json(e)).collect::<Vec<_>>(),
+                                "account": {
+                                    "value": call_result.account.as_ref().map(|a| a.value),
+                                    "lastUpdated": call_result.account.as_ref().map(|a| a.last_updated),
+                                    "authority": call_result.account.as_ref().map(|a| hex::encode(&a.authority)),
+                                },
+                                "error": call_result.error,
+                            })
+                        }
+                        Err(e) => {
+                            serde_json::json!({
+                                "requestId": msg.request_id,
+                                "success": false,
+                                "error": e,
+                            })
+                        }
+                    };
+
+                    Some(
+                        HostMessage::new("dchat:program:response", response)
+                            .with_request_id(msg.request_id.clone()),
+                    )
+                }
+                None => Some(
+                    HostMessage::new(
+                        "dchat:program:response",
+                        serde_json::json!({
+                            "requestId": msg.request_id,
+                            "success": false,
+                            "error": "Program client not found for sandbox",
+                        }),
+                    )
+                    .with_request_id(msg.request_id.clone()),
+                ),
+            }
+        }
+
+        "program:query" => {
+            // Query current on-chain state
+            info!("Program query: {:?}", msg.payload);
+
+            let clients = state.program_clients.read();
+            let client = clients.get(sandbox_id);
+
+            match client {
+                Some(client) => {
+                    let account = client.get_account();
+                    let response = serde_json::json!({
+                        "requestId": msg.request_id,
+                        "account": account.map(|a| serde_json::json!({
+                            "value": a.value,
+                            "lastUpdated": a.last_updated,
+                            "authority": hex::encode(&a.authority),
+                        })),
+                        "transactions": client.get_transaction_history().iter().map(|tx| {
+                            serde_json::json!({
+                                "signature": &tx.signature,
+                                "slot": tx.slot,
+                                "success": tx.success,
+                            })
+                        }).collect::<Vec<_>>(),
+                    });
+
+                    Some(
+                        HostMessage::new("dchat:program:state", response)
+                            .with_request_id(msg.request_id.clone()),
+                    )
+                }
+                None => Some(
+                    HostMessage::new(
+                        "dchat:program:state",
+                        serde_json::json!({
+                            "requestId": msg.request_id,
+                            "error": "Program client not found",
+                        }),
+                    )
+                    .with_request_id(msg.request_id.clone()),
+                ),
+            }
+        }
+        // ===== END: Program call handling =====
         "wallet:request" => {
             info!("Wallet request: {:?}", msg.payload);
 
@@ -594,6 +724,83 @@ fn handle_client_message(
         _ => {
             info!("Unknown message type: {}", msg.msg_type);
             None
+        }
+    }
+}
+
+/// Handle program actions (increment, decrement, etc.)
+fn handle_program_action(
+    client: &mut CounterProgramClient,
+    action: &str,
+    payload: &serde_json::Value,
+) -> Result<ProgramCallResult, String> {
+    let tx = match action {
+        "initialize" => {
+            let initial_value = payload.get("value").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
+            client.build_initialize(initial_value)
+        }
+        "increment" => client.build_increment(),
+        "decrement" => client.build_decrement(),
+        "set" => {
+            let value = payload
+                .get("value")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "Missing 'value' for set action".to_string())?;
+            client.build_set(value)
+        }
+        "reset" => client.build_reset(),
+        _ => return Err(format!("Unknown program action: {}", action)),
+    };
+
+    // Simulate the transaction
+    let result = client.simulate(&tx);
+    Ok(result)
+}
+
+/// Convert a CounterEvent to JSON
+fn event_to_json(event: &CounterEvent) -> serde_json::Value {
+    match event {
+        CounterEvent::CounterInitialized {
+            initial_value,
+            authority,
+        } => {
+            serde_json::json!({
+                "type": "CounterInitialized",
+                "initialValue": initial_value,
+                "authority": hex::encode(authority),
+            })
+        }
+        CounterEvent::CounterChanged {
+            old_value,
+            new_value,
+            changer,
+        } => {
+            serde_json::json!({
+                "type": "CounterChanged",
+                "oldValue": old_value,
+                "newValue": new_value,
+                "changer": hex::encode(changer),
+            })
+        }
+        CounterEvent::CounterReset {
+            old_value,
+            resetter,
+        } => {
+            serde_json::json!({
+                "type": "CounterReset",
+                "oldValue": old_value,
+                "resetter": hex::encode(resetter),
+            })
+        }
+        CounterEvent::AuthorityTransferred {
+            old_authority,
+            new_authority,
+        } => {
+            serde_json::json!({
+                "type": "AuthorityTransferred",
+                "oldAuthority": hex::encode(old_authority),
+                "newAuthority": hex::encode(new_authority),
+            })
         }
     }
 }
