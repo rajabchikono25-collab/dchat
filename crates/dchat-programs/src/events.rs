@@ -383,6 +383,15 @@ pub struct EventCollector {
     current_log_bytes: usize,
 }
 
+/// Event/log checkpoint used to rollback collector state on CPI failure
+#[derive(Debug, Clone, Copy)]
+pub struct EventCollectorCheckpoint {
+    events_len: usize,
+    logs_len: usize,
+    event_index: u32,
+    current_log_bytes: usize,
+}
+
 impl EventCollector {
     /// Create new collector
     pub fn new(transaction_hash: [u8; 32], slot: u64) -> Self {
@@ -453,6 +462,29 @@ impl EventCollector {
     /// Consume collected events and logs
     pub fn consume(self) -> (Vec<ProgramEvent>, Vec<LogEntry>) {
         (self.events, self.logs)
+    }
+
+    /// Create a checkpoint of current collector state.
+    ///
+    /// Used by CPI to ensure events/logs produced by a failing callee are discarded.
+    pub fn checkpoint(&self) -> EventCollectorCheckpoint {
+        EventCollectorCheckpoint {
+            events_len: self.events.len(),
+            logs_len: self.logs.len(),
+            event_index: self.event_index,
+            current_log_bytes: self.current_log_bytes,
+        }
+    }
+
+    /// Roll back collector state to a previous checkpoint.
+    ///
+    /// This truncates event/log buffers and restores internal counters so subsequent
+    /// emissions remain deterministic.
+    pub fn rollback_to(&mut self, checkpoint: EventCollectorCheckpoint) {
+        self.events.truncate(checkpoint.events_len);
+        self.logs.truncate(checkpoint.logs_len);
+        self.event_index = checkpoint.event_index;
+        self.current_log_bytes = checkpoint.current_log_bytes;
     }
 
     /// Get event count

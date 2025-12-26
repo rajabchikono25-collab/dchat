@@ -611,6 +611,19 @@ impl ProgramRuntime {
         let instruction = request.instruction;
         instruction.validate()?;
 
+        // 2.5 Bind CPI caller to the currently executing program.
+        //
+        // The caller program ID is consensus-critical for PDA derivation semantics.
+        // We treat the active call chain as the source of truth and reject mismatches.
+        let active_caller = ctx
+            .call_chain
+            .last()
+            .copied()
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        if request.caller_program != active_caller {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
         // 3. Reentrancy check - use the active call chain stack
         // If the callee program is already in the call chain, this is reentrancy.
         // Example: A calls B, B calls A => call_chain = [A, B], callee = A => REJECT
@@ -648,7 +661,7 @@ impl ProgramRuntime {
             ctx.meter.consume(CPI_PDA_DERIVATION_COST)?;
 
             let seed_refs: Vec<&[u8]> = seed_set.iter().map(|s| s.as_slice()).collect();
-            let pda = PdaDerivation::find_program_address(&seed_refs, &request.caller_program)?;
+            let pda = PdaDerivation::find_program_address(&seed_refs, &active_caller)?;
             pda_signers.insert(pda.address);
         }
 
@@ -705,9 +718,8 @@ impl ProgramRuntime {
         ctx.call_chain.push(instruction.program_id);
         ctx.cpi_depth = ctx.cpi_depth.saturating_add(1);
 
-        // 11. Collect events and logs from this CPI call
-        let cpi_events_start = ctx.events.event_count();
-        let cpi_logs_start = ctx.events.log_count();
+        // 11. Checkpoint events/logs so failing CPI does not leak side effects
+        let events_checkpoint = ctx.events.checkpoint();
 
         // 12. Execute callee program
         let result = (|| -> ProgramResult<()> {
@@ -786,6 +798,9 @@ impl ProgramRuntime {
                 for (pubkey, original) in touched_originals {
                     ctx.accounts.insert(pubkey, original);
                 }
+
+                // Discard any events/logs emitted during the failing CPI
+                ctx.events.rollback_to(events_checkpoint);
 
                 // IMPORTANT: Do NOT restore compute meter - compute is consumed on failure
                 // This is consensus-critical for DoS prevention
@@ -1780,5 +1795,45 @@ mod tests {
         // C trying to call D is OK
         let program_d = Pubkey::new([4u8; 32]);
         assert!(!ctx.call_chain.contains(&program_d));
+    }
+
+    #[test]
+    fn test_cpi_rejects_forged_caller_program() {
+        let config = RuntimeConfig::default();
+        let runtime = ProgramRuntime::new(config);
+
+        let cache = Arc::new(ProgramCache::new(100));
+        let syscalls = Arc::new(SyscallRegistry::new());
+        let fee_payer = Pubkey::new([9u8; 32]);
+
+        let mut ctx = ExecutionContext::new(
+            [0u8; 32],
+            100,
+            1000000,
+            fee_payer,
+            ComputeBudget::default(),
+            cache,
+            syscalls,
+        );
+
+        let real_caller = Pubkey::new([1u8; 32]);
+        let forged_caller = Pubkey::new([2u8; 32]);
+        let callee = Pubkey::new([3u8; 32]);
+
+        // Simulate that we're currently executing real_caller
+        ctx.call_chain.push(real_caller);
+
+        let request = CpiInvocationRequest {
+            instruction: Instruction {
+                program_id: callee,
+                accounts: vec![],
+                data: vec![],
+            },
+            caller_program: forged_caller,
+            signer_seeds: vec![],
+        };
+
+        let result = runtime.invoke_cpi(&mut ctx, request);
+        assert!(matches!(result, Err(ProgramError::InvalidInstructionData)));
     }
 }
