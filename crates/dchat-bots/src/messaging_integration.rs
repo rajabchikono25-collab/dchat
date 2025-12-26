@@ -2666,11 +2666,24 @@ impl MessageRouter {
                 recipient: *recipient,
                 encrypted_payload: message.encrypted_payload.clone(),
             },
-            MessageType::Channel { sender, channel_id } => DchatMessage::ChannelMessage {
-                sender: *sender,
-                channel_id: channel_id.0.to_string(),
-                encrypted_payload: message.encrypted_payload.clone(),
-            },
+            MessageType::Channel { sender, channel_id } => {
+                let timestamp = chrono::Utc::now().timestamp();
+                let encrypted_payload = message.encrypted_payload.clone();
+                let channel_id_str = channel_id.0.to_string();
+                let message_id = dchat_network::behavior::compute_channel_message_id(
+                    sender,
+                    &channel_id_str,
+                    &encrypted_payload,
+                    timestamp,
+                );
+                DchatMessage::ChannelMessage {
+                    message_id,
+                    sender: *sender,
+                    channel_id: channel_id_str,
+                    encrypted_payload,
+                    timestamp,
+                }
+            }
             MessageType::System { .. } => {
                 // System messages use gossipsub broadcast instead
                 return self.broadcast_system_message(message).await;

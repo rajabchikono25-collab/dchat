@@ -3659,7 +3659,7 @@ async fn run_relay_node(
                             // Message is already a DchatMessage enum, match on it directly
                             // Match on the DchatMessage enum
                             match message {
-                                DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload: _ } => {
+                                DchatMessage::ChannelMessage { sender, channel_id, .. } => {
                                     debug!("📨 Relay forwarding message from {} to channel {}", sender, channel_id);
                                     // Forward message to channel subscribers
                                     // Generate proof-of-delivery for relay incentives
@@ -3951,6 +3951,8 @@ async fn run_user_node(
     let database = Database::new(db_config).await?;
     info!("✓ Database initialized");
 
+    let compute_channel_message_id = dchat_network::behavior::compute_channel_message_id;
+
     // Drive the libp2p swarm from a single task.
     // This prevents deadlocks from holding a mutex across `.await` and ensures
     // the swarm is continuously polled so publish/receive works reliably.
@@ -3990,15 +3992,15 @@ async fn run_user_node(
 
                             // Best-effort local persistence for outbound messages.
                             if publish_res.is_ok() {
-                                if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = &message {
+                                if let DchatMessage::ChannelMessage { message_id, sender, channel_id, encrypted_payload, timestamp: _ } = &message {
                                     let content_hash = format!("{:x}", sha2::Sha256::digest(encrypted_payload));
                                     let _ = db_for_net.insert_message(&MessageRow {
-                                        id: uuid::Uuid::new_v4().to_string(),
+                                        id: hex::encode(message_id),
                                         sender_id: sender.0.to_string(),
                                         recipient_id: None,
                                         channel_id: Some(channel_id.clone()),
                                         content_type: "channel_message".to_string(),
-                                        content: String::from_utf8_lossy(encrypted_payload).to_string(),
+                                        content: String::new(),
                                         encrypted_payload: encrypted_payload.clone(),
                                         timestamp: chrono::Utc::now().timestamp(),
                                         sequence_num: None,
@@ -4031,16 +4033,16 @@ async fn run_user_node(
 
                     // Persist inbound channel messages (best-effort).
                     if let NetworkEvent::MessageReceived { from: _, message } = &event {
-                        if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = message {
+                        if let DchatMessage::ChannelMessage { message_id, sender, channel_id, encrypted_payload, timestamp: _ } = message {
                             if sender != &self_user_id {
                                 let content_hash = format!("{:x}", sha2::Sha256::digest(encrypted_payload));
                                 let _ = db_for_net.insert_message(&MessageRow {
-                                    id: uuid::Uuid::new_v4().to_string(),
+                                    id: hex::encode(message_id),
                                     sender_id: sender.0.to_string(),
                                     recipient_id: None,
                                     channel_id: Some(channel_id.clone()),
                                     content_type: "channel_message".to_string(),
-                                    content: String::from_utf8_lossy(encrypted_payload).to_string(),
+                                    content: String::new(),
                                     encrypted_payload: encrypted_payload.clone(),
                                     timestamp: chrono::Utc::now().timestamp(),
                                     sequence_num: None,
@@ -4100,10 +4102,21 @@ async fn run_user_node(
 
         // Send test messages with retry logic
         for i in 1..=5 {
+            let timestamp = chrono::Utc::now().timestamp();
+            let encrypted_payload =
+                format!("Test message {} from {}", i, display_name).into_bytes();
+            let message_id = compute_channel_message_id(
+                &identity.user_id,
+                "global",
+                &encrypted_payload,
+                timestamp,
+            );
             let message = DchatMessage::ChannelMessage {
+                message_id,
                 sender: identity.user_id.clone(),
                 channel_id: "global".to_string(),
-                encrypted_payload: format!("Test message {} from {}", i, display_name).into_bytes(),
+                encrypted_payload,
+                timestamp,
             };
 
             // Retry up to 3 times if publish fails
@@ -4177,7 +4190,7 @@ async fn run_user_node(
                     };
 
                     if let NetworkEvent::MessageReceived { from, message } = event {
-                        if let DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload } = message {
+                        if let DchatMessage::ChannelMessage { message_id: _, sender, channel_id, encrypted_payload, timestamp: _ } = message {
                             if sender != identity.user_id {
                                 let msg_text = String::from_utf8_lossy(&encrypted_payload);
                                 println!("\n[#{}] {}: {}", channel_id, from, msg_text);
@@ -4193,10 +4206,20 @@ async fn run_user_node(
                     match line {
                         Ok(Some(text)) => {
                             if !text.trim().is_empty() {
+                                let timestamp = chrono::Utc::now().timestamp();
+                                let encrypted_payload = text.as_bytes().to_vec();
+                                let message_id = compute_channel_message_id(
+                                    &identity.user_id,
+                                    "global",
+                                    &encrypted_payload,
+                                    timestamp,
+                                );
                                 let message = DchatMessage::ChannelMessage {
+                                    message_id,
                                     sender: identity.user_id.clone(),
                                     channel_id: "global".to_string(),
-                                    encrypted_payload: text.as_bytes().to_vec(),
+                                    encrypted_payload,
+                                    timestamp,
                                 };
 
                                 let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
@@ -7489,10 +7512,19 @@ async fn run_peer_list_sync(
                     // Use peer_id as the sender identity for peer discovery
                     let sender_id = UserId::new(); // Generate new UserId for peer discovery
 
+                    let timestamp = chrono::Utc::now().timestamp();
+                    let message_id = dchat_network::behavior::compute_channel_message_id(
+                        &sender_id,
+                        PEER_DISCOVERY_CHANNEL,
+                        &ad_bytes,
+                        timestamp,
+                    );
                     let dchat_msg = DchatMessage::ChannelMessage {
+                        message_id,
                         sender: sender_id,
                         channel_id: PEER_DISCOVERY_CHANNEL.to_string(),
                         encrypted_payload: ad_bytes, // Not actually encrypted for peer discovery
+                        timestamp,
                     };
 
                     // Publish to peer discovery channel

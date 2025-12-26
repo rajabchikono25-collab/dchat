@@ -171,10 +171,25 @@ impl Database {
     /// Insert a message
     pub async fn insert_message(&self, message: &MessageRow) -> Result<()> {
         sqlx::query(
-            r#"INSERT INTO messages 
-            (id, sender_id, recipient_id, channel_id, content_type, content, 
+            r#"INSERT INTO messages
+            (id, sender_id, recipient_id, channel_id, content_type, content,
              encrypted_payload, timestamp, sequence_num, status, expires_at, size, content_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                recipient_id = COALESCE(messages.recipient_id, excluded.recipient_id),
+                channel_id = COALESCE(messages.channel_id, excluded.channel_id),
+                sequence_num = COALESCE(messages.sequence_num, excluded.sequence_num),
+                expires_at = COALESCE(messages.expires_at, excluded.expires_at),
+                content_hash = COALESCE(messages.content_hash, excluded.content_hash),
+                timestamp = CASE
+                    WHEN excluded.timestamp > messages.timestamp THEN excluded.timestamp
+                    ELSE messages.timestamp
+                END,
+                status = CASE
+                    WHEN messages.status = 'delivered' THEN messages.status
+                    WHEN excluded.status = 'delivered' THEN excluded.status
+                    ELSE messages.status
+                END"#,
         )
         .bind(&message.id)
         .bind(&message.sender_id)

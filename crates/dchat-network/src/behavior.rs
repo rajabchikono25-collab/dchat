@@ -6,8 +6,7 @@ use dchat_core::types::UserId;
 use libp2p::{
     dcutr,
     gossipsub::{self, MessageId},
-    identify, kad, mdns, ping,
-    relay,
+    identify, kad, mdns, ping, relay,
     request_response::{self, OutboundRequestId, ProtocolSupport},
     swarm::NetworkBehaviour,
     PeerId, StreamProtocol,
@@ -17,6 +16,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+
+/// Compute a stable channel message ID.
+///
+/// The ID is $\mathrm{SHA256}(sender || channel\_id || encrypted\_payload || timestamp\_le)$.
+pub fn compute_channel_message_id(
+    sender: &UserId,
+    channel_id: &str,
+    encrypted_payload: &[u8],
+    timestamp: i64,
+) -> [u8; 32] {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(sender.0.as_bytes());
+    hasher.update(channel_id.as_bytes());
+    hasher.update(encrypted_payload);
+    hasher.update(timestamp.to_le_bytes());
+    hasher.finalize().into()
+}
 
 /// Message types for the dchat protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,9 +46,13 @@ pub enum DchatMessage {
     },
     /// Channel message
     ChannelMessage {
+        /// Stable content identifier (hash over sender/channel/payload/timestamp)
+        message_id: [u8; 32],
         sender: UserId,
         channel_id: String,
         encrypted_payload: Vec<u8>,
+        /// Sender-side creation time (unix seconds)
+        timestamp: i64,
     },
     /// Relay proof-of-delivery
     DeliveryProof {
@@ -81,13 +102,13 @@ pub struct DchatBehavior {
 
     /// Ping for connection liveness
     pub ping: ping::Behaviour,
-    
+
     /// Request-response for peer handshakes
     pub req_resp: cbor::Behaviour<HandshakeData, HandshakeData>,
-    
+
     /// Relay client for NAT traversal (connect through relays)
     pub relay_client: relay::client::Behaviour,
-    
+
     /// DCUtR for direct connection upgrade (hole punching)
     pub dcutr: dcutr::Behaviour,
 }
@@ -137,20 +158,20 @@ impl DchatBehavior {
 
         // Ping protocol
         let ping = ping::Behaviour::new(ping::Config::new());
-        
+
         // Request-response for handshakes
         let protocols = std::iter::once((
             StreamProtocol::new("/dchat/handshake/1.0.0"),
             ProtocolSupport::Full,
         ));
-        let req_resp_config = request_response::Config::default()
-            .with_request_timeout(Duration::from_secs(30));
+        let req_resp_config =
+            request_response::Config::default().with_request_timeout(Duration::from_secs(30));
         let req_resp = cbor::Behaviour::new(protocols, req_resp_config);
-        
+
         // Relay client for NAT traversal (allows connecting through relay nodes)
         // relay::client::new() returns (Transport, Behaviour) tuple
         let (_relay_transport, relay_client) = relay::client::new(local_peer_id);
-        
+
         // DCUtR for direct connection upgrade after relay (hole punching)
         let dcutr = dcutr::Behaviour::new(local_peer_id);
 
@@ -220,7 +241,7 @@ impl DchatBehavior {
         })?;
         self.gossipsub.publish(topic, data)
     }
-    
+
     /// Send a handshake request to a peer
     pub fn send_handshake(&mut self, peer_id: PeerId, data: Vec<u8>) -> OutboundRequestId {
         self.req_resp.send_request(&peer_id, HandshakeData { data })
@@ -229,6 +250,12 @@ impl DchatBehavior {
 
 /// Custom message ID function for gossipsub
 fn message_id_fn(message: &gossipsub::Message) -> MessageId {
+    if let Ok(dchat_msg) = bincode::deserialize::<DchatMessage>(&message.data) {
+        if let DchatMessage::ChannelMessage { message_id, .. } = dchat_msg {
+            return MessageId::from(hex::encode(message_id));
+        }
+    }
+
     let mut hasher = DefaultHasher::new();
     message.data.hash(&mut hasher);
     MessageId::from(hasher.finish().to_string())
