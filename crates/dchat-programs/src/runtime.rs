@@ -1248,6 +1248,8 @@ impl ProgramRuntime {
             || *program_id == crate::native_programs::ATA_PROGRAM_ID
             || *program_id == crate::native_programs::CAPABILITY_PROGRAM_ID
             || *program_id == crate::native_programs::PRIVACY_PROGRAM_ID
+            || *program_id == crate::native_programs::MARKETPLACE_PROGRAM_ID
+            || *program_id == crate::native_programs::BOT_REGISTRY_PROGRAM_ID
     }
 
     /// Execute native program
@@ -1292,6 +1294,40 @@ impl ProgramRuntime {
                 accounts_slice,
                 ctx.meter.as_ref(),
             )
+        } else if instruction.program_id == crate::native_programs::MARKETPLACE_PROGRAM_ID {
+            let events = crate::marketplace::MarketplaceProcessor::process(
+                &instruction.data,
+                accounts_slice,
+                ctx.meter.as_ref(),
+                ctx.slot,
+            )?;
+            // Emit events using the collector
+            for event in events {
+                let _ = ctx.events.emit_event(
+                    event.program_id,
+                    event.discriminator,
+                    event.data,
+                    ctx.cpi_depth as u8,
+                );
+            }
+            Ok(())
+        } else if instruction.program_id == crate::native_programs::BOT_REGISTRY_PROGRAM_ID {
+            let events = crate::bot_registry::BotRegistryProcessor::process(
+                &instruction.data,
+                accounts_slice,
+                ctx.meter.as_ref(),
+                ctx.slot,
+            )?;
+            // Emit events using the collector
+            for event in events {
+                let _ = ctx.events.emit_event(
+                    event.program_id,
+                    event.discriminator,
+                    event.data,
+                    ctx.cpi_depth as u8,
+                );
+            }
+            Ok(())
         } else {
             Err(ProgramError::UnsupportedProgram)
         };

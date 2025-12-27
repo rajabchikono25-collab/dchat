@@ -48,6 +48,7 @@ pub mod host_commit;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub mod account;
+pub mod bot_registry;
 pub mod capability;
 pub mod confidential_token;
 pub mod cpi;
@@ -56,6 +57,7 @@ pub mod events;
 pub mod instruction;
 pub mod loader;
 pub mod manifest;
+pub mod marketplace;
 pub mod metering;
 pub mod pda;
 pub mod privacy;
@@ -81,6 +83,9 @@ pub use account::Lamports; // Deprecated alias for backward compatibility
 pub use account::{
     Account, AccountData, AccountMeta, AccountState, Motes, Pubkey, RentEpoch, MOTES_PER_DCHAT,
 };
+pub use bot_registry::{
+    BotAccount, BotCapabilityGrantAccount, BotRegistryInstruction, BotRegistryProcessor, BotStatus,
+};
 pub use capability::{CapabilityId, CapabilityRegistry, CapabilityScope, CapabilityToken};
 pub use confidential_token::{
     ConfidentialMint, ConfidentialTokenAccount, ConfidentialTokenInstruction,
@@ -91,6 +96,9 @@ pub use error::{ProgramError, ProgramResult};
 pub use events::{EventFilter, ExecutionReceipt, ProgramEvent};
 pub use instruction::{CompiledInstruction, Instruction, InstructionAccount, InstructionData};
 pub use loader::LoaderInstruction;
+pub use marketplace::{
+    EscrowAccount, EscrowState, ListingAccount, MarketplaceInstruction, MarketplaceProcessor,
+};
 pub use metering::{ComputeBudget, ComputeMeter, CryptoOpCosts, MemoryCosts, StorageCosts};
 pub use pda::{PdaDerivation, ProgramDerivedAddress};
 pub use privacy::{EncryptedBalance, PrivacyAccount, PrivacyProgram};
@@ -179,6 +187,18 @@ pub mod native_programs {
     pub const CONF_TOKEN_PROGRAM_ID: Pubkey = Pubkey([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 7,
+    ]);
+
+    /// Marketplace program ID
+    pub const MARKETPLACE_PROGRAM_ID: Pubkey = Pubkey([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 8,
+    ]);
+
+    /// Bot Registry program ID
+    pub const BOT_REGISTRY_PROGRAM_ID: Pubkey = Pubkey([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 9,
     ]);
 
     /// Rent sysvar ID
