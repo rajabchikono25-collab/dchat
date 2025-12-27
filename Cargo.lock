@@ -2981,6 +2981,7 @@ dependencies = [
  "criterion 0.5.1",
  "crossbeam-channel",
  "curve25519-dalek",
+ "curve25519-dalek-ng",
  "dashmap 6.1.0",
  "dchat-core",
  "dchat-crypto",

@@ -464,6 +464,10 @@ pub enum ProgramError {
     /// Invalid balance proof
     #[error("Invalid balance proof")]
     InvalidBalanceProof,
+
+    /// Invalid nonce (anti-replay)
+    #[error("Invalid nonce")]
+    InvalidNonce,
 }
 
 impl From<ValidationError> for ProgramError {
@@ -572,6 +576,7 @@ impl ProgramError {
             ProgramError::ProgramHashMismatch => 92,
             ProgramError::RangeProofInvalid => 93,
             ProgramError::InvalidBalanceProof => 94,
+            ProgramError::InvalidNonce => 95,
         }
     }
 
@@ -672,6 +677,7 @@ impl ProgramError {
             92 => ProgramError::ProgramHashMismatch,
             93 => ProgramError::RangeProofInvalid,
             94 => ProgramError::InvalidBalanceProof,
+            95 => ProgramError::InvalidNonce,
             _ => ProgramError::Custom(code),
         }
     }

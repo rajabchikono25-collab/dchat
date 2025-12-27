@@ -63,11 +63,14 @@ impl EncryptedBalance {
 }
 
 /// Range proof that value is non-negative and within bounds
+///
+/// Uses Bulletproofs for efficient range proofs over Ristretto.
+/// Proves that a committed value v is in the range [0, 2^n - 1].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RangeProof {
-    /// Bulletproof data
+    /// Bulletproof data (serialized R1CSProof or RangeProof)
     pub proof_data: Vec<u8>,
-    /// Upper bound (2^n - 1)
+    /// Upper bound (2^n - 1), typically 64 for u64 values
     pub bit_size: u8,
 }
 
@@ -75,7 +78,13 @@ impl RangeProof {
     /// Maximum bit size for range proofs
     pub const MAX_BIT_SIZE: u8 = 64;
 
-    /// Create new range proof
+    /// Minimum valid proof size (Bulletproof range proof is ~670 bytes for 64-bit)
+    pub const MIN_PROOF_SIZE: usize = 64;
+
+    /// Maximum proof size (safety bound)
+    pub const MAX_PROOF_SIZE: usize = 2048;
+
+    /// Create new range proof wrapper
     pub fn new(proof_data: Vec<u8>, bit_size: u8) -> Self {
         Self {
             proof_data,
@@ -83,24 +92,175 @@ impl RangeProof {
         }
     }
 
-    /// Verify the range proof against a commitment
+    /// Create a range proof for a value and blinding factor
+    ///
+    /// Returns the proof bytes and the commitment
+    #[cfg(feature = "bulletproofs")]
+    pub fn create(value: u64, blinding_bytes: &[u8; 32]) -> ProgramResult<(Self, [u8; 32])> {
+        use bulletproofs::{BulletproofGens, PedersenGens, RangeProof as BPRangeProof};
+        use merlin::Transcript;
+
+        // Convert our blinding bytes to bulletproofs' Scalar type
+        // bulletproofs 4.0 uses curve25519-dalek-ng internally
+        let blinding = curve25519_dalek_ng::scalar::Scalar::from_bytes_mod_order(*blinding_bytes);
+
+        let bp_gens = BulletproofGens::new(64, 1);
+        let pc_gens = PedersenGens::default();
+
+        let mut transcript = Transcript::new(b"dchat-range-proof-v1");
+
+        let (proof, committed_value) = BPRangeProof::prove_single(
+            &bp_gens,
+            &pc_gens,
+            &mut transcript,
+            value,
+            &blinding,
+            64, // 64-bit range
+        )
+        .map_err(|_| ProgramError::RangeProofInvalid)?;
+
+        // Get commitment bytes - committed_value is already CompressedRistretto
+        let commitment = committed_value.to_bytes();
+        let proof_bytes = proof.to_bytes();
+
+        Ok((Self::new(proof_bytes, 64), commitment))
+    }
+
+    /// Verify the range proof against a commitment using Bulletproofs
+    ///
+    /// Verifies that the prover knows v, r such that:
+    /// - C = v*G + r*H (commitment opens correctly)
+    /// - 0 <= v < 2^64 (value is in valid range)
+    #[cfg(feature = "bulletproofs")]
     pub fn verify(&self, commitment: &[u8; 32]) -> ProgramResult<()> {
+        use bulletproofs::{BulletproofGens, PedersenGens, RangeProof as BPRangeProof};
+        use merlin::Transcript;
+
+        // Validate parameters
         if self.bit_size > Self::MAX_BIT_SIZE {
             return Err(ProgramError::RangeProofInvalid);
         }
 
-        if self.proof_data.len() < 64 {
+        if self.proof_data.len() < Self::MIN_PROOF_SIZE
+            || self.proof_data.len() > Self::MAX_PROOF_SIZE
+        {
             return Err(ProgramError::RangeProofInvalid);
         }
 
-        // In production: verify using bulletproofs crate
-        // This is the verification interface
-        // Actual verification delegated to crypto module
+        // Convert our commitment bytes to bulletproofs' CompressedRistretto
+        // bulletproofs 4.0 uses curve25519-dalek-ng types
+        let commitment_compressed =
+            curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(commitment);
 
-        // Verify commitment matches proof
+        // Deserialize the bulletproof
+        let bp_proof = BPRangeProof::from_bytes(&self.proof_data)
+            .map_err(|_| ProgramError::RangeProofInvalid)?;
+
+        // Setup generators
+        let bp_gens = BulletproofGens::new(64, 1);
+        let pc_gens = PedersenGens::default();
+
+        // Create verification transcript (must match prover's transcript)
+        let mut transcript = Transcript::new(b"dchat-range-proof-v1");
+
+        // Verify the proof
+        bp_proof
+            .verify_single(
+                &bp_gens,
+                &pc_gens,
+                &mut transcript,
+                &commitment_compressed,
+                64,
+            )
+            .map_err(|_| ProgramError::RangeProofInvalid)?;
+
+        Ok(())
+    }
+
+    /// Fallback verification when bulletproofs feature is disabled.
+    ///
+    /// # Security Warning
+    ///
+    /// This performs basic structural validation only. It does NOT provide
+    /// cryptographic security guarantees. Only use for testing or when the
+    /// `bulletproofs` feature is intentionally disabled.
+    ///
+    /// Production builds MUST use `--features full` or `--features bulletproofs`.
+    #[cfg(not(feature = "bulletproofs"))]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Non-bulletproofs verification is not cryptographically secure. Use --features bulletproofs for production."
+    )]
+    pub fn verify(&self, commitment: &[u8; 32]) -> ProgramResult<()> {
+        // SECURITY: This code path is NOT cryptographically secure.
+        // It only performs structural validation for testing purposes.
+        // Production MUST use the bulletproofs-enabled verify() function.
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "WARNING: Using non-bulletproofs range proof verification. NOT SECURE FOR PRODUCTION."
+        );
+
+        // Validate parameters
+        if self.bit_size > Self::MAX_BIT_SIZE {
+            return Err(ProgramError::RangeProofInvalid);
+        }
+
+        if self.proof_data.len() < Self::MIN_PROOF_SIZE {
+            return Err(ProgramError::RangeProofInvalid);
+        }
+
+        // Structural validation only - checks proof contains commitment binding
+        if self.proof_data.len() < 32 {
+            return Err(ProgramError::RangeProofInvalid);
+        }
+
+        // Check that the proof data contains the commitment (basic binding)
         let proof_commitment = &self.proof_data[0..32];
         if proof_commitment != commitment {
             return Err(ProgramError::RangeProofInvalid);
+        }
+
+        Ok(())
+    }
+
+    /// Batch verify multiple range proofs for efficiency
+    #[cfg(feature = "bulletproofs")]
+    pub fn verify_batch(proofs: &[Self], commitments: &[[u8; 32]]) -> ProgramResult<()> {
+        use bulletproofs::{BulletproofGens, PedersenGens, RangeProof as BPRangeProof};
+        use merlin::Transcript;
+
+        if proofs.len() != commitments.len() {
+            return Err(ProgramError::InvalidArgument);
+        }
+
+        if proofs.is_empty() {
+            return Ok(());
+        }
+
+        // Deserialize all proofs
+        let bp_proofs: Vec<BPRangeProof> = proofs
+            .iter()
+            .map(|p| BPRangeProof::from_bytes(&p.proof_data))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ProgramError::RangeProofInvalid)?;
+
+        // Convert commitments to bulletproofs' CompressedRistretto
+        let commitment_points: Vec<curve25519_dalek_ng::ristretto::CompressedRistretto> =
+            commitments
+                .iter()
+                .map(|c| curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(c))
+                .collect();
+
+        // Setup generators for batch
+        let bp_gens = BulletproofGens::new(64, proofs.len());
+        let pc_gens = PedersenGens::default();
+
+        // Verify each proof (batch verification not directly supported in bulletproofs 4.0)
+        for (proof, commitment) in bp_proofs.iter().zip(&commitment_points) {
+            let mut transcript = Transcript::new(b"dchat-range-proof-v1");
+            proof
+                .verify_single(&bp_gens, &pc_gens, &mut transcript, commitment, 64)
+                .map_err(|_| ProgramError::RangeProofInvalid)?;
         }
 
         Ok(())

@@ -49,6 +49,7 @@ pub mod host_commit;
 
 pub mod account;
 pub mod capability;
+pub mod confidential_token;
 pub mod cpi;
 pub mod error;
 pub mod events;
@@ -81,6 +82,10 @@ pub use account::{
     Account, AccountData, AccountMeta, AccountState, Motes, Pubkey, RentEpoch, MOTES_PER_DCHAT,
 };
 pub use capability::{CapabilityId, CapabilityRegistry, CapabilityScope, CapabilityToken};
+pub use confidential_token::{
+    ConfidentialMint, ConfidentialTokenAccount, ConfidentialTokenInstruction,
+    ConfidentialTokenProcessor, ConfidentialTokenProgram,
+};
 pub use cpi::{CpiContext, CpiExecutor, CpiGuard, CpiResult, CrossProgramInvocation};
 pub use error::{ProgramError, ProgramResult};
 pub use events::{EventFilter, ExecutionReceipt, ProgramEvent};
@@ -168,6 +173,12 @@ pub mod native_programs {
     pub const PRIVACY_PROGRAM_ID: Pubkey = Pubkey([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 6,
+    ]);
+
+    /// Confidential Token program ID
+    pub const CONF_TOKEN_PROGRAM_ID: Pubkey = Pubkey([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 7,
     ]);
 
     /// Rent sysvar ID
