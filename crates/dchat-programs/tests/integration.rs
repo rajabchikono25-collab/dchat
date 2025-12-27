@@ -77,8 +77,14 @@ fn test_token_program_initialize_mint() {
     let freeze_authority = Some(pubkey_n(3));
     let decimals = 9u8;
 
-    let instruction =
-        TokenProgram::initialize_mint(mint, mint_authority, freeze_authority, decimals);
+    let instruction = TokenProgram::initialize_mint(
+        mint,
+        mint_authority,
+        freeze_authority,
+        decimals,
+        "Test Token".to_string(),
+        "TEST".to_string(),
+    );
 
     assert_eq!(instruction.program_id, native_programs::TOKEN_PROGRAM_ID);
 }

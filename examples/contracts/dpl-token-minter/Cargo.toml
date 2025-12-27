@@ -1,0 +1,47 @@
+[package]
+name = "dpl-token-minter"
+version = "0.1.0"
+edition = "2021"
+description = "Example DPL contract demonstrating minting both regular and confidential tokens via CPI"
+authors = ["dchat contributors"]
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# DPL SDK for contract development
+dchat-dpl = { path = "../../../crates/dchat-dpl", features = ["std"] }
+# Access to native program types and instructions
+dchat-programs = { path = "../../../crates/dchat-programs", features = [
+  "full",
+] }
+
+# Borsh for deterministic serialization
+borsh = "1.5"
+
+# Serde for instruction serialization (bincode)
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+
+[build-dependencies]
+dchat-dpl = { path = "../../../crates/dchat-dpl", features = ["build", "std"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[features]
+default = []
+# Enable for release verification
+release-verify = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build Configuration for wasmi/wasip1 runtime
+# ─────────────────────────────────────────────────────────────────────────────
+
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Link-time optimization
+codegen-units = 1 # Single codegen unit for consistent builds
+panic = "abort"   # No unwinding
+strip = true      # Strip symbols

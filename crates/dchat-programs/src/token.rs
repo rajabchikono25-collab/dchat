@@ -64,6 +64,12 @@ pub const ATA_PROGRAM_ID: Pubkey = crate::native_programs::ATA_PROGRAM_ID;
 /// Maximum decimals for a token
 pub const MAX_DECIMALS: u8 = 18;
 
+/// Maximum length of token name
+pub const MAX_NAME_LEN: usize = 32;
+
+/// Maximum length of token symbol
+pub const MAX_SYMBOL_LEN: usize = 10;
+
 /// Mint account state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mint {
@@ -77,21 +83,62 @@ pub struct Mint {
     pub is_initialized: bool,
     /// Freeze authority (can freeze token accounts)
     pub freeze_authority: Option<Pubkey>,
+    /// Token name (e.g., "dChat Token")
+    pub name: String,
+    /// Token symbol (e.g., "DCHAT")
+    pub symbol: String,
 }
 
 impl Mint {
     /// Size of mint account
-    pub const SIZE: usize = 82;
+    /// 1 + 32 (mint_authority option) + 8 (supply) + 1 (decimals) + 1 (is_initialized)
+    /// + 1 + 32 (freeze_authority option) + 4 + 32 (name) + 4 + 10 (symbol) = 126 bytes
+    pub const SIZE: usize = 126;
 
-    /// Create new mint
-    pub fn new(decimals: u8, mint_authority: Pubkey, freeze_authority: Option<Pubkey>) -> Self {
+    /// Create new mint with name and symbol
+    pub fn new(
+        decimals: u8,
+        mint_authority: Pubkey,
+        freeze_authority: Option<Pubkey>,
+        name: String,
+        symbol: String,
+    ) -> Self {
+        // Truncate name and symbol to max lengths
+        let name = if name.len() > MAX_NAME_LEN {
+            name[..MAX_NAME_LEN].to_string()
+        } else {
+            name
+        };
+        let symbol = if symbol.len() > MAX_SYMBOL_LEN {
+            symbol[..MAX_SYMBOL_LEN].to_string()
+        } else {
+            symbol
+        };
+
         Self {
             mint_authority: Some(mint_authority),
             supply: 0,
             decimals,
             is_initialized: true,
             freeze_authority,
+            name,
+            symbol,
         }
+    }
+
+    /// Create new mint without metadata (for backwards compatibility)
+    pub fn new_without_metadata(
+        decimals: u8,
+        mint_authority: Pubkey,
+        freeze_authority: Option<Pubkey>,
+    ) -> Self {
+        Self::new(
+            decimals,
+            mint_authority,
+            freeze_authority,
+            String::new(),
+            String::new(),
+        )
     }
 
     /// Deserialize from bytes
@@ -184,7 +231,7 @@ pub enum AccountState {
 /// Token instruction types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TokenInstruction {
-    /// Initialize a new mint
+    /// Initialize a new mint (with optional metadata)
     InitializeMint {
         /// Number of decimal places for token
         decimals: u8,
@@ -192,6 +239,10 @@ pub enum TokenInstruction {
         mint_authority: Pubkey,
         /// Optional authority allowed to freeze accounts
         freeze_authority: Option<Pubkey>,
+        /// Token name (max 32 characters)
+        name: String,
+        /// Token symbol (max 10 characters)
+        symbol: String,
     },
 
     /// Initialize a new token account
@@ -306,12 +357,14 @@ pub enum AuthorityType {
 pub struct TokenProgram;
 
 impl TokenProgram {
-    /// Initialize mint instruction
+    /// Initialize mint instruction with name and symbol
     pub fn initialize_mint(
         mint: Pubkey,
         mint_authority: Pubkey,
         freeze_authority: Option<Pubkey>,
         decimals: u8,
+        name: String,
+        symbol: String,
     ) -> Instruction {
         Instruction {
             program_id: TOKEN_PROGRAM_ID,
@@ -323,9 +376,28 @@ impl TokenProgram {
                 decimals,
                 mint_authority,
                 freeze_authority,
+                name,
+                symbol,
             })
             .unwrap_or_default(),
         }
+    }
+
+    /// Initialize mint instruction without metadata (backwards compatible)
+    pub fn initialize_mint_simple(
+        mint: Pubkey,
+        mint_authority: Pubkey,
+        freeze_authority: Option<Pubkey>,
+        decimals: u8,
+    ) -> Instruction {
+        Self::initialize_mint(
+            mint,
+            mint_authority,
+            freeze_authority,
+            decimals,
+            String::new(),
+            String::new(),
+        )
     }
 
     /// Initialize account instruction
@@ -498,11 +570,15 @@ impl TokenProgramProcessor {
                 decimals,
                 mint_authority,
                 freeze_authority,
+                name,
+                symbol,
             } => Self::process_initialize_mint(
                 accounts,
                 decimals,
                 mint_authority,
                 freeze_authority,
+                name,
+                symbol,
                 meter,
             ),
             TokenInstruction::InitializeAccount => {
@@ -534,6 +610,8 @@ impl TokenProgramProcessor {
         decimals: u8,
         mint_authority: Pubkey,
         freeze_authority: Option<Pubkey>,
+        name: String,
+        symbol: String,
         _meter: &ComputeMeter,
     ) -> ProgramResult<()> {
         if accounts.is_empty() {
@@ -542,6 +620,14 @@ impl TokenProgramProcessor {
 
         if decimals > MAX_DECIMALS {
             return Err(ProgramError::InvalidDecimals);
+        }
+
+        // Validate name and symbol lengths
+        if name.len() > MAX_NAME_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if symbol.len() > MAX_SYMBOL_LEN {
+            return Err(ProgramError::InvalidAccountData);
         }
 
         let mint_account = &mut accounts[0];
@@ -555,7 +641,7 @@ impl TokenProgramProcessor {
             }
         }
 
-        let mint = Mint::new(decimals, mint_authority, freeze_authority);
+        let mint = Mint::new(decimals, mint_authority, freeze_authority, name, symbol);
         mint_account.data.set_from_bytes(mint.to_bytes());
 
         Ok(())
@@ -1057,14 +1143,45 @@ mod tests {
 
     #[test]
     fn test_mint_serialization() {
-        let mint = Mint::new(9, Pubkey::new([1u8; 32]), None);
+        let mint = Mint::new(
+            9,
+            Pubkey::new([1u8; 32]),
+            None,
+            "Test Token".to_string(),
+            "TEST".to_string(),
+        );
         let bytes = mint.to_bytes();
         let recovered = Mint::from_bytes(&bytes).unwrap();
 
         assert_eq!(mint.decimals, recovered.decimals);
         assert_eq!(mint.mint_authority, recovered.mint_authority);
         assert_eq!(mint.supply, recovered.supply);
+        assert_eq!(mint.name, recovered.name);
+        assert_eq!(mint.symbol, recovered.symbol);
         assert!(recovered.is_initialized);
+    }
+
+    #[test]
+    fn test_mint_without_metadata() {
+        let mint = Mint::new_without_metadata(9, Pubkey::new([1u8; 32]), None);
+        assert_eq!(mint.name, "");
+        assert_eq!(mint.symbol, "");
+        assert!(mint.is_initialized);
+    }
+
+    #[test]
+    fn test_mint_name_symbol_truncation() {
+        let long_name = "A".repeat(50); // 50 chars, max is 32
+        let long_symbol = "B".repeat(20); // 20 chars, max is 10
+        let mint = Mint::new(
+            9,
+            Pubkey::new([1u8; 32]),
+            None,
+            long_name.clone(),
+            long_symbol.clone(),
+        );
+        assert_eq!(mint.name.len(), MAX_NAME_LEN);
+        assert_eq!(mint.symbol.len(), MAX_SYMBOL_LEN);
     }
 
     #[test]

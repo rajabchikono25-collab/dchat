@@ -87,21 +87,60 @@ pub struct ConfidentialMint {
     pub commitment_params_hash: [u8; 32],
     /// Whether this mint is initialized
     pub is_initialized: bool,
+    /// Token name (max 32 characters)
+    pub name: String,
+    /// Token symbol (max 10 characters)
+    pub symbol: String,
 }
 
 impl ConfidentialMint {
-    /// Account size in bytes
-    pub const SIZE: usize = 150;
+    /// Account size in bytes (increased for name/symbol)
+    pub const SIZE: usize = 200;
 
-    /// Create a new confidential mint
+    /// Maximum length of token name
+    pub const MAX_NAME_LEN: usize = 32;
+
+    /// Maximum length of token symbol
+    pub const MAX_SYMBOL_LEN: usize = 10;
+
+    /// Create a new confidential mint with name and symbol
     pub fn new(
         decimals: u8,
         mint_authority: Pubkey,
         freeze_authority: Option<Pubkey>,
     ) -> ProgramResult<Self> {
+        Self::new_with_metadata(
+            decimals,
+            mint_authority,
+            freeze_authority,
+            String::new(),
+            String::new(),
+        )
+    }
+
+    /// Create a new confidential mint with metadata
+    pub fn new_with_metadata(
+        decimals: u8,
+        mint_authority: Pubkey,
+        freeze_authority: Option<Pubkey>,
+        name: String,
+        symbol: String,
+    ) -> ProgramResult<Self> {
         if decimals > MAX_DECIMALS {
             return Err(ProgramError::InvalidDecimals);
         }
+
+        // Truncate name and symbol to max lengths
+        let name = if name.len() > Self::MAX_NAME_LEN {
+            name[..Self::MAX_NAME_LEN].to_string()
+        } else {
+            name
+        };
+        let symbol = if symbol.len() > Self::MAX_SYMBOL_LEN {
+            symbol[..Self::MAX_SYMBOL_LEN].to_string()
+        } else {
+            symbol
+        };
 
         // Compute commitment params hash for this mint
         let commitment_params_hash = Self::compute_commitment_params_hash();
@@ -114,6 +153,8 @@ impl ConfidentialMint {
             mint_nonce: 0,
             commitment_params_hash,
             is_initialized: true,
+            name,
+            symbol,
         })
     }
 

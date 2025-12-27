@@ -36,6 +36,7 @@ exclude = [
   "examples/contracts/dpl-treasury",
   "examples/contracts/dpl-token-mint",
   "examples/contracts/dpl-escrow-ironclad",
+  "examples/contracts/dpl-token-minter",
 ]
 resolver = "2"
 

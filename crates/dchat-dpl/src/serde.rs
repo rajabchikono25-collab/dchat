@@ -255,3 +255,89 @@ impl DplDeserialize for i32 {
         Ok(i32::from_le_bytes(bytes))
     }
 }
+
+// Implement for fixed-size byte arrays commonly used for names/symbols
+
+impl DplSerialize for [u8; 8] {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(self);
+        Ok(())
+    }
+}
+
+impl DplDeserialize for [u8; 8] {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 8 {
+            return Err(DplError::DeserializationError(
+                "Data too short for [u8; 8]".into(),
+            ));
+        }
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&data[..8]);
+        *data = &data[8..];
+        Ok(bytes)
+    }
+}
+
+impl DplSerialize for [u8; 10] {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(self);
+        Ok(())
+    }
+}
+
+impl DplDeserialize for [u8; 10] {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 10 {
+            return Err(DplError::DeserializationError(
+                "Data too short for [u8; 10]".into(),
+            ));
+        }
+        let mut bytes = [0u8; 10];
+        bytes.copy_from_slice(&data[..10]);
+        *data = &data[10..];
+        Ok(bytes)
+    }
+}
+
+impl DplSerialize for [u8; 32] {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(self);
+        Ok(())
+    }
+}
+
+impl DplDeserialize for [u8; 32] {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 32 {
+            return Err(DplError::DeserializationError(
+                "Data too short for [u8; 32]".into(),
+            ));
+        }
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&data[..32]);
+        *data = &data[32..];
+        Ok(bytes)
+    }
+}
+
+impl DplSerialize for [u8; 64] {
+    fn serialize(&self, output: &mut Vec<u8>) -> Result<(), DplError> {
+        output.extend_from_slice(self);
+        Ok(())
+    }
+}
+
+impl DplDeserialize for [u8; 64] {
+    fn deserialize(data: &mut &[u8]) -> Result<Self, DplError> {
+        if data.len() < 64 {
+            return Err(DplError::DeserializationError(
+                "Data too short for [u8; 64]".into(),
+            ));
+        }
+        let mut bytes = [0u8; 64];
+        bytes.copy_from_slice(&data[..64]);
+        *data = &data[64..];
+        Ok(bytes)
+    }
+}
