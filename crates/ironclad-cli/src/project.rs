@@ -64,16 +64,19 @@ impl Project {
     }
 
     /// Get the Cargo.toml path
+    #[allow(dead_code)]
     pub fn cargo_toml_path(&self) -> PathBuf {
         self.root.join("Cargo.toml")
     }
 
     /// Get the src/lib.rs path
+    #[allow(dead_code)]
     pub fn lib_path(&self) -> PathBuf {
         self.root.join("src").join("lib.rs")
     }
 
     /// Check if this is a valid Ironclad project
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         self.cargo_toml_path().exists() && self.lib_path().exists()
     }

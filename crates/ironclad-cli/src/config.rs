@@ -126,7 +126,7 @@ fn default_version() -> String {
 }
 
 fn default_target() -> String {
-    "wasm32-unknown-unknown".to_string()
+    "wasm32-wasip1".to_string()
 }
 
 fn default_true() -> bool {
@@ -223,6 +223,7 @@ impl IroncladConfig {
     }
 
     /// Get network configuration
+    #[allow(dead_code)]
     pub fn get_network(&self, name: &str) -> Option<&NetworkConfig> {
         self.networks.get(name)
     }

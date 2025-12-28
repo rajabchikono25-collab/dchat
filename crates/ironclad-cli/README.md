@@ -144,7 +144,7 @@ my-program/
 ├── idl/                # Generated IDL files
 │   └── my-program.json
 └── target/
-    └── wasm32-unknown-unknown/
+    └── wasm32-wasip1/
         └── release/
             └── my_program.wasm
 ```
@@ -160,7 +160,7 @@ description = "My awesome smart contract"
 authors = ["Your Name"]
 
 [build]
-target = "wasm32-unknown-unknown"
+target = "wasm32-wasip1"
 generate_idl = true
 verify_schema = false
 

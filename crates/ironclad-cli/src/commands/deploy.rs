@@ -1,6 +1,5 @@
 //! ironclad deploy - Deploy program to network
 
-use crate::config::IroncladConfig;
 use crate::error::{IroncladError, IroncladResult};
 use crate::project::Project;
 use colored::*;
@@ -132,7 +131,7 @@ pub async fn run(
     println!();
     println!("  {}", "Next steps:".cyan());
     println!("    ironclad info --program {}", program_id);
-    println!("    ironclad verify --program target/wasm32-unknown-unknown/release/*.wasm");
+    println!("    ironclad verify --program target/wasm32-wasip1/release/*.wasm");
 
     Ok(())
 }

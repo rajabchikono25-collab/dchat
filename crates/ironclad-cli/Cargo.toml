@@ -2,11 +2,17 @@
 name = "ironclad-cli"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Ironclad - DPL smart contract development framework for dchat"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dchat/dchat"
+homepage = "https://dchat.network"
+documentation = "https://docs.rs/ironclad-cli"
+readme = "README.md"
 keywords = ["dchat", "dpl", "smart-contracts", "blockchain", "wasm"]
 categories = ["command-line-utilities", "development-tools"]
+authors = ["dchat contributors"]
+include = ["src/**/*", "Cargo.toml", "LICENSE-*", "README.md", "CHANGELOG.md"]
 
 [[bin]]
 name = "ironclad"

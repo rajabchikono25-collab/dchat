@@ -1,6 +1,6 @@
 //! ironclad info - Show program information
 
-use crate::error::{IroncladError, IroncladResult};
+use crate::error::IroncladResult;
 use crate::project::Project;
 use colored::*;
 

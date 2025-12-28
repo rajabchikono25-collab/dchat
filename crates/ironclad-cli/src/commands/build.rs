@@ -1,6 +1,5 @@
 //! ironclad build - Build the smart contract
 
-use crate::config::IroncladConfig;
 use crate::error::{IroncladError, IroncladResult};
 use crate::project::Project;
 use colored::*;

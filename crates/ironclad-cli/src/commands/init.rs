@@ -4,7 +4,6 @@ use crate::config::{BuildConfig, IroncladConfig, ProjectConfig};
 use crate::error::{IroncladError, IroncladResult};
 use colored::*;
 use std::fs;
-use std::path::Path;
 
 pub async fn run(name: &str, template: &str, here: bool, verbose: bool) -> IroncladResult<()> {
     println!(
@@ -62,7 +61,7 @@ pub async fn run(name: &str, template: &str, here: bool, verbose: bool) -> Ironc
             description: Some(format!("{} - A dchat smart contract", name)),
         },
         build: BuildConfig {
-            target: "wasm32-unknown-unknown".to_string(),
+            target: "wasm32-wasip1".to_string(),
             generate_idl: true,
             ..Default::default()
         },
@@ -122,12 +121,11 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Note: In production, these would be published crates from crates.io
-# For now, use local path or git dependency
-dchat-dpl = {{ path = "../../dchat/crates/dchat-dpl", features = ["std"] }}
+# dchat DPL SDK - smart contract framework
+dchat-dpl = {{ version = "0.1", features = ["std"] }}
 
 [build-dependencies]
-dchat-dpl = {{ path = "../../dchat/crates/dchat-dpl", features = ["build"] }}
+dchat-dpl = {{ version = "0.1", features = ["build"] }}
 
 [dev-dependencies]
 tokio = {{ version = "1", features = ["full"] }}
