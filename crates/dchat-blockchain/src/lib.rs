@@ -36,6 +36,7 @@ pub mod staking_backend;
 pub mod watchtower;
 
 // Wallet infrastructure (production wallets with Solana compatibility)
+pub mod signed_tx_client;
 pub mod solana;
 pub mod solana_bridge;
 pub mod wallet;
@@ -298,6 +299,9 @@ pub use solana::{
     WithdrawRecord,
     LAMPORTS_PER_SOL,
 };
+
+// Signed transaction client (unified signature format)
+pub use signed_tx_client::{SignedTxClient, SignedTxClientConfig};
 
 // Re-export privacy trait implementations for integration
 // ChatChainClient implements dchat_privacy::zk_proofs::BlockchainClient

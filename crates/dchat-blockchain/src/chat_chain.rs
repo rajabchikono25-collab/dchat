@@ -5,6 +5,9 @@ use crate::client::{ChainRpcClient, HttpRpcClient};
 #[cfg(any(test, feature = "test-mocks"))]
 use crate::client::{ChainRpcClient, HttpRpcClient, MockRpcClient};
 use chrono::Utc;
+use dchat_chain::signed_envelope::{
+    chain_ids, EnvelopeDomain, EnvelopeVerifier, SignedTransactionEnvelope,
+};
 use dchat_chain::{Transaction, TransactionStatus, TransactionType};
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
@@ -44,6 +47,8 @@ impl Default for ChatChainConfig {
 /// Chat Chain client for on-chain operations: identity, messaging, channels, governance
 pub struct ChatChainClient {
     config: ChatChainConfig,
+    /// Chain ID for this client (for envelope verification)
+    chain_id: u32,
     /// Transaction cache with hash mapping
     transactions: Arc<RwLock<HashMap<Uuid, (Transaction, Option<String>)>>>,
     /// RPC client for blockchain queries
@@ -56,6 +61,8 @@ pub struct ChatChainClient {
     identity_registry: Arc<RwLock<HashMap<UserId, [u8; 32]>>>,
     /// Spent nullifiers for ZK proof double-spend prevention
     spent_nullifiers: Arc<RwLock<HashSet<[u8; 32]>>>,
+    /// Envelope verifier for signed transaction validation
+    envelope_verifier: Arc<RwLock<EnvelopeVerifier>>,
 }
 
 /// Channel metadata stored on chat chain
@@ -74,18 +81,30 @@ impl ChatChainClient {
         &self.config
     }
 
-    /// Create new chat chain client with production RPC
+    /// Create new chat chain client with production RPC (mainnet)
     pub fn new(config: ChatChainConfig) -> Result<Self> {
+        Self::new_with_chain_id(config, chain_ids::MAINNET_CHAT)
+    }
+
+    /// Create new chat chain client with testnet chain ID
+    pub fn new_testnet(config: ChatChainConfig) -> Result<Self> {
+        Self::new_with_chain_id(config, chain_ids::TESTNET_CHAT)
+    }
+
+    /// Create new chat chain client with specific chain ID
+    pub fn new_with_chain_id(config: ChatChainConfig, chain_id: u32) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
 
         Ok(Self {
             config,
+            chain_id,
             transactions: Arc::new(RwLock::new(HashMap::new())),
             rpc_client: Arc::new(rpc_client),
             reputation_scores: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
             identity_registry: Arc::new(RwLock::new(HashMap::new())),
             spent_nullifiers: Arc::new(RwLock::new(HashSet::new())),
+            envelope_verifier: Arc::new(RwLock::new(EnvelopeVerifier::new(chain_id))),
         })
     }
 
@@ -98,12 +117,16 @@ impl ChatChainClient {
 
         Self {
             config,
+            chain_id: chain_ids::TESTNET_CHAT,
             transactions: Arc::new(RwLock::new(HashMap::new())),
             rpc_client: Arc::new(rpc_client),
             reputation_scores: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
             identity_registry: Arc::new(RwLock::new(HashMap::new())),
             spent_nullifiers: Arc::new(RwLock::new(HashSet::new())),
+            envelope_verifier: Arc::new(RwLock::new(EnvelopeVerifier::new(
+                chain_ids::TESTNET_CHAT,
+            ))),
         }
     }
 
@@ -290,6 +313,130 @@ impl ChatChainClient {
             .unwrap()
             .insert(tx_id, (tx, Some(tx_hash)));
         Ok(tx_id)
+    }
+
+    // ========================================================================
+    // SIGNED ENVELOPE SUBMISSION
+    // ========================================================================
+
+    /// Submit a signed transaction envelope to the chat chain.
+    ///
+    /// This is the preferred method for submitting transactions as it:
+    /// 1. Verifies the envelope signature and structure
+    /// 2. Validates the sender's UserId matches the public key
+    /// 3. Checks nonce for replay protection
+    /// 4. Submits the serialized envelope to the blockchain
+    ///
+    /// # Arguments
+    ///
+    /// * `envelope` - A signed transaction envelope
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Uuid)` - Transaction ID on successful submission
+    /// * `Err(Error)` - On verification or submission failure
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let envelope = EnvelopeBuilder::new(chain_id, public_key_bytes)
+    ///     .nonce(nonce)
+    ///     .chat_tx(TransactionType::RegisterUser)
+    ///     .payload(payload)
+    ///     .build_and_sign(&signing_key)?;
+    ///
+    /// let tx_id = client.submit_signed_envelope(envelope).await?;
+    /// ```
+    pub async fn submit_signed_envelope(
+        &self,
+        envelope: SignedTransactionEnvelope,
+    ) -> Result<Uuid> {
+        // Verify the envelope
+        {
+            let mut verifier = self.envelope_verifier.write().unwrap();
+
+            // Domain must be Chat
+            if envelope.domain != EnvelopeDomain::Chat {
+                return Err(Error::validation(format!(
+                    "Expected Chat domain, got {:?}",
+                    envelope.domain
+                )));
+            }
+
+            // Verify signature, nonce, and structure
+            verifier
+                .verify_and_accept(&envelope)
+                .map_err(|e| Error::crypto(format!("Envelope verification failed: {}", e)))?;
+        }
+
+        // Extract transaction type from envelope
+        let tx_type = match &envelope.tx_type {
+            dchat_chain::signed_envelope::UnifiedTransactionType::Chat(tx_type) => tx_type.clone(),
+            dchat_chain::signed_envelope::UnifiedTransactionType::Currency(_) => {
+                return Err(Error::validation(
+                    "Currency transaction submitted to chat chain".to_string(),
+                ));
+            }
+        };
+
+        // Serialize envelope for submission
+        let envelope_bytes = bincode::serialize(&envelope)
+            .map_err(|e| Error::chain(format!("Failed to serialize envelope: {}", e)))?;
+
+        let tx_id = Uuid::new_v4();
+
+        // Convert sender [u8; 16] to Uuid
+        let sender_uuid = Uuid::from_bytes(envelope.sender);
+
+        let tx = Transaction {
+            tx_id,
+            tx_type,
+            payload: envelope.payload.clone(),
+            tx_hash: format!("{:x}", Uuid::new_v4()),
+            status: TransactionStatus::Pending,
+            submitted_at: Utc::now(),
+            confirmed_at: None,
+            fee_paid: 0,
+        };
+
+        // Submit to blockchain via RPC
+        let tx_hash = self
+            .rpc_client
+            .submit_transaction(envelope_bytes)
+            .await
+            .map_err(|e| Error::chain(format!("Failed to submit signed envelope: {}", e)))?;
+
+        // Store transaction with hash
+        self.transactions
+            .write()
+            .unwrap()
+            .insert(tx_id, (tx, Some(tx_hash)));
+
+        // Update identity registry if this is a registration
+        if matches!(
+            envelope.tx_type,
+            dchat_chain::signed_envelope::UnifiedTransactionType::Chat(
+                TransactionType::RegisterUser
+            )
+        ) {
+            self.identity_registry
+                .write()
+                .unwrap()
+                .insert(UserId(sender_uuid), envelope.public_key);
+
+            // Initialize reputation score
+            self.reputation_scores
+                .write()
+                .unwrap()
+                .insert(UserId(sender_uuid), 50);
+        }
+
+        Ok(tx_id)
+    }
+
+    /// Get the chain ID this client is configured for
+    pub fn chain_id(&self) -> u32 {
+        self.chain_id
     }
 
     /// Get reputation score

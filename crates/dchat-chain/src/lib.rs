@@ -9,6 +9,7 @@
 //! - Insurance fund for economic security
 //! - Guardian-based account recovery with on-chain timelock verification
 //! - Distributed storage integration (TiKV, CockroachDB, Redis, MinIO)
+//! - Unified signed transaction envelope (single signature format)
 
 pub mod balance_tracker;
 pub mod chain; // Currency chain, slashing, and guardian modules
@@ -19,6 +20,7 @@ pub mod dispute_resolution;
 pub mod insurance_fund;
 pub mod pruning;
 pub mod sharding;
+pub mod signed_envelope;
 pub mod storage_backend;
 pub mod transaction_storage;
 pub mod transactions;
@@ -52,6 +54,10 @@ pub use insurance_fund::{
 };
 pub use pruning::{MerkleCheckpoint, MerkleProof, NodeType, PruningManager, PruningPolicy};
 pub use sharding::{ShardConfig, ShardId, ShardManager};
+pub use signed_envelope::{
+    address_from_public_key, chain_ids, EnvelopeBuilder, EnvelopeDomain, EnvelopeError,
+    EnvelopeVerifier, SignedTransactionEnvelope, UnifiedTransactionType, ENVELOPE_VERSION,
+};
 pub use storage_backend::{
     ChainStorageBackend, ChainStorageConfig, StorageHealthStatus, StorageStatistics,
     StoredTransaction,
