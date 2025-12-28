@@ -1,0 +1,425 @@
+{
+  "accounts": [
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "minter",
+          "pda": ["<pda>"],
+          "type": "Account:MinterState"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        },
+        {
+          "isMut": false,
+          "isSigner": false,
+          "name": "system_program",
+          "pda": null,
+          "type": "Program:System"
+        }
+      ],
+      "name": "Initialize"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "minter",
+          "pda": null,
+          "type": "Account:MinterState"
+        },
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "mint",
+          "pda": null,
+          "type": "Account:MintPlaceholder"
+        },
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "destination",
+          "pda": null,
+          "type": "Account:TokenAccountPlaceholder"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        },
+        {
+          "isMut": false,
+          "isSigner": false,
+          "name": "token_program",
+          "pda": null,
+          "type": "Program:TokenProgramMarker"
+        }
+      ],
+      "name": "MintRegular"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "minter",
+          "pda": null,
+          "type": "Account:MinterState"
+        },
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "mint",
+          "pda": null,
+          "type": "Account:MintPlaceholder"
+        },
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "destination",
+          "pda": null,
+          "type": "Account:TokenAccountPlaceholder"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        },
+        {
+          "isMut": false,
+          "isSigner": false,
+          "name": "conf_token_program",
+          "pda": null,
+          "type": "Program:ConfTokenProgramMarker"
+        }
+      ],
+      "name": "MintConfidential"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "minter",
+          "pda": null,
+          "type": "Account:MinterState"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        }
+      ],
+      "name": "AdminOnly"
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "msg": "Unauthorized: only the admin can perform this operation",
+      "name": "Unauthorized"
+    },
+    {
+      "code": 6001,
+      "msg": "Minter is inactive and cannot mint tokens",
+      "name": "MinterInactive"
+    },
+    {
+      "code": 6002,
+      "msg": "Mint amount must be greater than zero",
+      "name": "ZeroAmount"
+    },
+    {
+      "code": 6003,
+      "msg": "Mint amount exceeds maximum allowed",
+      "name": "AmountTooLarge"
+    },
+    {
+      "code": 6004,
+      "msg": "Arithmetic overflow in total minted calculation",
+      "name": "Overflow"
+    },
+    {
+      "code": 6005,
+      "msg": "Cross-program invocation to token program failed",
+      "name": "CpiFailure"
+    },
+    {
+      "code": 6006,
+      "msg": "Invalid decimals: must be between 0 and 18",
+      "name": "InvalidDecimals"
+    }
+  ],
+  "events": [
+    {
+      "discriminator": "923650b73343e043",
+      "fields": [
+        {
+          "name": "minter",
+          "type": "pubkey"
+        },
+        {
+          "name": "admin",
+          "type": "pubkey"
+        },
+        {
+          "name": "name",
+          "type": "array<u8, 32>"
+        },
+        {
+          "name": "symbol",
+          "type": "array<u8, 10>"
+        },
+        {
+          "name": "decimals",
+          "type": "u8"
+        }
+      ],
+      "name": "MinterInitialized"
+    },
+    {
+      "discriminator": "74dcac47106acbbc",
+      "fields": [
+        {
+          "name": "mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "destination",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        },
+        {
+          "name": "instruction_data_len",
+          "type": "u32"
+        }
+      ],
+      "name": "RegularMintExecuted"
+    },
+    {
+      "discriminator": "60fd82cbb4a686a9",
+      "fields": [
+        {
+          "name": "mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "destination",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "commitment_hash",
+          "type": "array<u8, 8>"
+        },
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        },
+        {
+          "name": "instruction_data_len",
+          "type": "u32"
+        }
+      ],
+      "name": "ConfidentialMintExecuted"
+    },
+    {
+      "discriminator": "e264e77e7b86080c",
+      "fields": [
+        {
+          "name": "minter",
+          "type": "pubkey"
+        },
+        {
+          "name": "admin",
+          "type": "pubkey"
+        }
+      ],
+      "name": "MinterDeactivated"
+    },
+    {
+      "discriminator": "1c740e6e19b65e8b",
+      "fields": [
+        {
+          "name": "minter",
+          "type": "pubkey"
+        },
+        {
+          "name": "old_admin",
+          "type": "pubkey"
+        },
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ],
+      "name": "AdminTransferred"
+    }
+  ],
+  "instructions": [
+    {
+      "accounts": "Initialize",
+      "args": [
+        {
+          "name": "name",
+          "type": "array<u8, 32>"
+        },
+        {
+          "name": "symbol",
+          "type": "array<u8, 10>"
+        },
+        {
+          "name": "decimals",
+          "type": "u8"
+        }
+      ],
+      "discriminator": "b2f4a20652815a1b",
+      "name": "initialize"
+    },
+    {
+      "accounts": "MintRegular",
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "discriminator": "9381eff3bf1ba34b",
+      "name": "mint_regular"
+    },
+    {
+      "accounts": "MintConfidential",
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "commitment_hash",
+          "type": "u64"
+        },
+        {
+          "name": "proof_data_len",
+          "type": "u32"
+        }
+      ],
+      "discriminator": "9bdee7b78b31b931",
+      "name": "mint_confidential"
+    },
+    {
+      "accounts": "AdminOnly",
+      "args": [],
+      "discriminator": "42b6b2fb4d66a017",
+      "name": "deactivate"
+    },
+    {
+      "accounts": "AdminOnly",
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ],
+      "discriminator": "a78f2321bf0e354f",
+      "name": "transfer_admin"
+    }
+  ],
+  "metadata": {
+    "sdk": "dchat-dpl",
+    "sdk_version": "0.1.0"
+  },
+  "name": "token_minter",
+  "types": [
+    {
+      "discriminator": "72c62b78364d3efe",
+      "name": "MinterState",
+      "type": {
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "total_regular_minted",
+            "type": "u64"
+          },
+          {
+            "name": "total_confidential_minted",
+            "type": "u64"
+          },
+          {
+            "name": "token_name",
+            "type": "array<u8, 32>"
+          },
+          {
+            "name": "token_symbol",
+            "type": "array<u8, 10>"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "discriminator": "035190c978a17e9f",
+      "name": "MintPlaceholder",
+      "type": {
+        "fields": [
+          {
+            "name": "_placeholder",
+            "type": "u8"
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "discriminator": "a77fb1344a5ebf18",
+      "name": "TokenAccountPlaceholder",
+      "type": {
+        "fields": [
+          {
+            "name": "_placeholder",
+            "type": "u8"
+          }
+        ],
+        "kind": "struct"
+      }
+    }
+  ],
+  "version": "0.1.0"
+}

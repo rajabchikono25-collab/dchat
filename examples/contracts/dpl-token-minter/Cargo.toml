@@ -12,10 +12,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # DPL SDK for contract development
 dchat-dpl = { path = "../../../crates/dchat-dpl", features = ["std"] }
-# Access to native program types and instructions
-dchat-programs = { path = "../../../crates/dchat-programs", features = [
-  "full",
-] }
 
 # Borsh for deterministic serialization
 borsh = "1.5"

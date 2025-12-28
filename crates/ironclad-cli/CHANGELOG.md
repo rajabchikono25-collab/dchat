@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-01-03
+
+### Fixed
+
+- **IDL Generation**: Complete rewrite of IDL extraction to parse Rust source files instead of attempting to extract from WASM manifest
+  - Now properly extracts instructions, accounts, types, events, and errors from `src/lib.rs`
+  - Parses `#[program]` module to extract instruction functions and their arguments
+  - Parses `#[derive(Accounts)]` structs to extract account context definitions
+  - Parses `#[account]` structs to extract state type definitions with discriminators
+  - Parses `#[event]` structs to extract event definitions with fields and discriminators
+  - Parses `#[error_code]` enums to extract error codes and messages
+  - Parses borsh-serializable enums as type definitions
+  - Computes FNV-1a discriminators matching the DPL macro implementation
+
+### Added
+
+- Dependencies: `syn`, `quote`, `proc-macro2` for Rust source parsing
+
 ## [0.1.0] - 2025-12-28
 
 ### Added

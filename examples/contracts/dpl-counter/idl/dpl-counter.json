@@ -1,0 +1,278 @@
+{
+  "accounts": [
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "counter",
+          "pda": ["<pda>"],
+          "type": "Account:Counter"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        },
+        {
+          "isMut": false,
+          "isSigner": false,
+          "name": "system_program",
+          "pda": null,
+          "type": "Program:System"
+        }
+      ],
+      "name": "Initialize"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "counter",
+          "pda": null,
+          "type": "Account:Counter"
+        }
+      ],
+      "name": "Modify"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "counter",
+          "pda": null,
+          "type": "Account:Counter"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        }
+      ],
+      "name": "AuthorityModify"
+    },
+    {
+      "fields": [
+        {
+          "isMut": true,
+          "isSigner": false,
+          "name": "counter",
+          "pda": null,
+          "type": "Account:Counter"
+        },
+        {
+          "isMut": false,
+          "isSigner": true,
+          "name": "authority",
+          "pda": null,
+          "type": "Signer"
+        }
+      ],
+      "name": "TransferAuthority"
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "msg": "Counter overflow: value would exceed maximum",
+      "name": "Overflow"
+    },
+    {
+      "code": 6001,
+      "msg": "Counter underflow: value cannot go below zero",
+      "name": "Underflow"
+    },
+    {
+      "code": 6002,
+      "msg": "Unauthorized: only the authority can perform this operation",
+      "name": "Unauthorized"
+    }
+  ],
+  "events": [
+    {
+      "discriminator": "099c00c8d12276ac",
+      "fields": [
+        {
+          "name": "counter",
+          "type": "pubkey"
+        },
+        {
+          "name": "authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "initial_value",
+          "type": "u64"
+        }
+      ],
+      "name": "CounterInitialized"
+    },
+    {
+      "discriminator": "0f7224e4e326c526",
+      "fields": [
+        {
+          "name": "counter",
+          "type": "pubkey"
+        },
+        {
+          "name": "old_value",
+          "type": "u64"
+        },
+        {
+          "name": "new_value",
+          "type": "u64"
+        },
+        {
+          "name": "operation",
+          "type": "OperationType"
+        }
+      ],
+      "name": "CounterChanged"
+    },
+    {
+      "discriminator": "1c7b115c020a5d3c",
+      "fields": [
+        {
+          "name": "counter",
+          "type": "pubkey"
+        },
+        {
+          "name": "authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "old_value",
+          "type": "u64"
+        }
+      ],
+      "name": "CounterReset"
+    },
+    {
+      "discriminator": "0679cbff9cb35466",
+      "fields": [
+        {
+          "name": "counter",
+          "type": "pubkey"
+        },
+        {
+          "name": "old_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ],
+      "name": "AuthorityTransferred"
+    }
+  ],
+  "instructions": [
+    {
+      "accounts": "Initialize",
+      "args": [
+        {
+          "name": "initial_value",
+          "type": "u64"
+        }
+      ],
+      "discriminator": "b2f4a20652815a1b",
+      "name": "initialize"
+    },
+    {
+      "accounts": "Modify",
+      "args": [],
+      "discriminator": "211026f3160e5781",
+      "name": "increment"
+    },
+    {
+      "accounts": "Modify",
+      "args": [],
+      "discriminator": "a5e5e43d84298ae8",
+      "name": "decrement"
+    },
+    {
+      "accounts": "AuthorityModify",
+      "args": [
+        {
+          "name": "new_value",
+          "type": "u64"
+        }
+      ],
+      "discriminator": "14e30b7cc72b754a",
+      "name": "set"
+    },
+    {
+      "accounts": "AuthorityModify",
+      "args": [],
+      "discriminator": "ab81e0baf0dd6d97",
+      "name": "reset"
+    },
+    {
+      "accounts": "TransferAuthority",
+      "args": [
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ],
+      "discriminator": "f555eb39daad8cc3",
+      "name": "transfer_authority"
+    }
+  ],
+  "metadata": {
+    "sdk": "dchat-dpl",
+    "sdk_version": "0.1.0"
+  },
+  "name": "counter",
+  "types": [
+    {
+      "discriminator": "32214bcd6dacf9f4",
+      "name": "Counter",
+      "type": {
+        "fields": [
+          {
+            "name": "value",
+            "type": "u64"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "total_operations",
+            "type": "u64"
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "name": "OperationType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Increment"
+          },
+          {
+            "name": "Decrement"
+          },
+          {
+            "name": "Set"
+          }
+        ]
+      }
+    }
+  ],
+  "version": "0.1.0"
+}
