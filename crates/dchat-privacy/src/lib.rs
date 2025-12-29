@@ -5,6 +5,7 @@
 
 pub mod blind_tokens;
 pub mod ceremony_gen;
+pub mod membership_proof;
 pub mod stealth;
 pub mod zk_proofs;
 
@@ -13,6 +14,10 @@ pub use ceremony_gen::{
     generate_ceremony_artifacts, get_field_modulus, validate_ceremony_keys,
     verify_ceremony_artifacts, verify_ceremony_binding, verify_ceremony_reproducibility,
     CeremonyArtifacts, CeremonyMetadata, CeremonySeedConfig, ValidatedCeremonyKeys,
+};
+pub use membership_proof::{
+    build_merkle_tree, compute_merkle_root, get_merkle_path, MembershipKeys, MembershipProver,
+    MembershipVerifier, NullifierSet, ZkMembershipProof, MAX_MERKLE_DEPTH, MIN_MERKLE_DEPTH,
 };
 pub use stealth::{StealthAddress, StealthPayload};
 pub use zk_proofs::{

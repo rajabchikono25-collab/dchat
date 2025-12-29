@@ -2601,6 +2601,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "async-trait",
  "aws-config",
  "aws-sdk-kms",
  "aws-smithy-runtime-api",

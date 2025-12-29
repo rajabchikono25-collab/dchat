@@ -3,6 +3,7 @@ pub mod epoch_token;
 pub mod frost_signing;
 pub mod proof;
 pub mod reputation;
+pub mod revocation;
 pub mod staking;
 
 pub use epoch_token::{
@@ -23,4 +24,9 @@ pub use proof::{
     ProofBatch, BATCH_SIZE, BATCH_TIMEOUT,
 };
 pub use reputation::{RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier};
+pub use revocation::{
+    RevocationAuthority, RevocationCheckResult, RevocationChecker, RevocationEntry, RevocationId,
+    RevocationReason, RevocationStats, RevocationStore, RevocationType, MAX_ACTIVE_REVOCATIONS,
+    REVOCATION_ARCHIVE_AGE_SECS, REVOCATION_ENTRY_VERSION, REVOCATION_PROPAGATION_GRACE_SECS,
+};
 pub use staking::{RelayStakeInfo, RelayStakingValidator};

@@ -9,6 +9,7 @@
 //! - BIP-39 mnemonic seed phrases
 
 pub mod crypto; // Additional crypto modules (handshake, versioning)
+pub mod device_key; // Hardware DeviceKey for secure enclave integration
 mod encryption;
 pub mod handshake;
 pub mod kdf;
@@ -17,6 +18,7 @@ pub mod kms; // AWS KMS integration for secure key management
 pub mod mnemonic; // BIP-39 mnemonic seed phrases
 pub mod noise;
 pub mod post_quantum;
+pub mod qge; // Quorum-Gated Encryption: Complete message encryption flow
 pub mod ratchet; // Double Ratchet protocol for E2E encryption
 pub mod rotation;
 pub mod signatures;
@@ -27,6 +29,11 @@ pub mod typed_handshake; // Typed state machine handshake with identity binding
 pub use crypto::handshake as crypto_handshake;
 pub use crypto::versioning as crypto_versioning;
 
+pub use device_key::{
+    generate_attestation_challenge, verify_attestation, DeviceAttestation, DeviceKeyId,
+    DeviceKeyManager, DeviceKeyMetadata, DeviceKeyProvider, HardwareBackend, ProtectionLevel,
+    SoftwareDeviceKeyProvider, ATTESTATION_MAX_AGE_SECS,
+}; // Hardware DeviceKey exports
 pub use encryption::{
     decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
     generate_encryption_key, EncryptedData, KEY_SIZE, NONCE_SIZE,
@@ -35,6 +42,10 @@ pub use keys::{Address, KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
 pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
 pub use mnemonic::{Mnemonic, MnemonicLength, Seed}; // BIP-39 mnemonic exports
 pub use noise::{NoiseHandshake, NoiseSession};
+pub use qge::{
+    QgeEnvelope, QgeSession, QgeSessionManager, SerializableHeader, StoredSessionState,
+    MAX_CIPHERTEXT_SIZE, MAX_PLAINTEXT_SIZE, QGE_VERSION,
+}; // QGE Complete Encryption Flow exports
 pub use rotation::{KeyRotationManager, RotationPolicy};
 pub use signatures::{
     sign, sign_with_private_key, verify, verify_with_public_key, SigningKey, VerifyingKey,
