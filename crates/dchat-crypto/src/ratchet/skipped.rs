@@ -66,10 +66,13 @@ impl SkippedMessageKeys {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        self.keys.insert(id, SkippedKeyEntry {
-            key: *message_key.encryption_key(),
-            created_at: now,
-        });
+        self.keys.insert(
+            id,
+            SkippedKeyEntry {
+                key: *message_key.encryption_key(),
+                created_at: now,
+            },
+        );
 
         Ok(())
     }
@@ -85,9 +88,9 @@ impl SkippedMessageKeys {
     /// Try to retrieve a skipped message key
     pub fn take(&mut self, ratchet_key: &[u8; 32], message_index: u32) -> Option<MessageKey> {
         let id = (*ratchet_key, message_index);
-        self.keys.remove(&id).map(|entry| {
-            MessageKey::new(entry.key, message_index)
-        })
+        self.keys
+            .remove(&id)
+            .map(|entry| MessageKey::new(entry.key, message_index))
     }
 
     /// Check if we have a key for this message
@@ -102,7 +105,8 @@ impl SkippedMessageKeys {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let expired: Vec<_> = self.keys
+        let expired: Vec<_> = self
+            .keys
             .iter()
             .filter(|(_, entry)| now.saturating_sub(entry.created_at) > self.max_age_secs)
             .map(|(id, _)| *id)
@@ -119,7 +123,8 @@ impl SkippedMessageKeys {
 
     /// Remove keys for a specific ratchet public key
     pub fn remove_for_ratchet(&mut self, ratchet_key: &[u8; 32]) -> usize {
-        let to_remove: Vec<_> = self.keys
+        let to_remove: Vec<_> = self
+            .keys
             .keys()
             .filter(|(rk, _)| rk == ratchet_key)
             .cloned()
@@ -146,7 +151,9 @@ impl SkippedMessageKeys {
 
     /// Evict the oldest entries
     fn evict_oldest(&mut self, count: usize) {
-        let mut entries: Vec<_> = self.keys.iter()
+        let mut entries: Vec<_> = self
+            .keys
+            .iter()
             .map(|(id, entry)| (*id, entry.created_at))
             .collect();
 
@@ -168,11 +175,12 @@ impl SkippedMessageKeys {
 
     /// Serialize for persistence (keys are encrypted externally)
     pub fn to_bytes(&self) -> Vec<u8> {
-        let serializable: Vec<([u8; 32], u32, [u8; 32], u64)> = self.keys
+        let serializable: Vec<([u8; 32], u32, [u8; 32], u64)> = self
+            .keys
             .iter()
             .map(|((rk, idx), entry)| (*rk, *idx, entry.key, entry.created_at))
             .collect();
-        
+
         bincode::serialize(&serializable).unwrap_or_default()
     }
 
@@ -182,9 +190,11 @@ impl SkippedMessageKeys {
             .map_err(|e| Error::crypto(format!("Failed to deserialize skipped keys: {}", e)))?;
 
         let mut store = Self::new(max_age_secs);
-        
+
         for (rk, idx, key, created_at) in entries {
-            store.keys.insert((rk, idx), SkippedKeyEntry { key, created_at });
+            store
+                .keys
+                .insert((rk, idx), SkippedKeyEntry { key, created_at });
         }
 
         // Cleanup any expired entries
@@ -226,10 +236,10 @@ mod tests {
         let message_key = MessageKey::new([2u8; 32], 0);
 
         store.store(ratchet_key, message_key).unwrap();
-        
+
         // First take should succeed
         assert!(store.take(&ratchet_key, 0).is_some());
-        
+
         // Second take should fail (key consumed)
         assert!(store.take(&ratchet_key, 0).is_none());
     }
@@ -238,10 +248,8 @@ mod tests {
     fn test_store_many() {
         let mut store = SkippedMessageKeys::new(3600);
         let ratchet_key = [1u8; 32];
-        
-        let keys: Vec<_> = (0..5)
-            .map(|i| MessageKey::new([i as u8; 32], i))
-            .collect();
+
+        let keys: Vec<_> = (0..5).map(|i| MessageKey::new([i as u8; 32], i)).collect();
 
         store.store_many(ratchet_key, keys).unwrap();
         assert_eq!(store.len(), 5);
@@ -274,8 +282,12 @@ mod tests {
         let mut store = SkippedMessageKeys::new(3600);
         let ratchet_key = [1u8; 32];
 
-        store.store(ratchet_key, MessageKey::new([2u8; 32], 0)).unwrap();
-        store.store(ratchet_key, MessageKey::new([3u8; 32], 1)).unwrap();
+        store
+            .store(ratchet_key, MessageKey::new([2u8; 32], 0))
+            .unwrap();
+        store
+            .store(ratchet_key, MessageKey::new([3u8; 32], 1))
+            .unwrap();
 
         let bytes = store.to_bytes();
         let restored = SkippedMessageKeys::from_bytes(&bytes, 3600).unwrap();

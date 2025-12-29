@@ -1,7 +1,7 @@
 //! Transport layer configuration for libp2p
-//! 
+//!
 //! Supports QUIC (preferred) with TCP fallback for maximum compatibility.
-//! 
+//!
 //! QUIC benefits:
 //! - 0-RTT connection establishment (vs 3-RTT for TCP+Noise)
 //! - Built-in multiplexing (no Yamux overhead)
@@ -12,8 +12,7 @@
 use dchat_core::error::{Error, Result};
 use libp2p::{
     core::{muxing::StreamMuxerBox, transport::Boxed, upgrade},
-    dns, identity, noise, tcp, yamux, PeerId, Transport,
-    quic,
+    dns, identity, noise, quic, tcp, yamux, PeerId, Transport,
 };
 use std::time::Duration;
 
@@ -59,32 +58,32 @@ pub fn build_transport_with_config(
     let tcp_transport = if config.enable_tcp {
         let tcp_config = tcp::Config::default().nodelay(config.tcp_nodelay);
         let tcp = tcp::tokio::Transport::new(tcp_config);
-        
+
         let dns_transport = dns::tokio::Transport::system(tcp)
             .map_err(|e| Error::network(format!("DNS transport error: {}", e)))?;
-        
+
         let noise_config = noise::Config::new(keypair)
             .map_err(|e| Error::crypto(format!("Noise config error: {}", e)))?;
-        
+
         let yamux_config = yamux::Config::default();
-        
+
         Some(
             dns_transport
                 .upgrade(upgrade::Version::V1)
                 .authenticate(noise_config)
                 .multiplex(yamux_config)
-                .timeout(Duration::from_secs(config.connection_timeout_secs))
+                .timeout(Duration::from_secs(config.connection_timeout_secs)),
         )
     } else {
         None
     };
 
-    // Build QUIC transport (preferred) 
+    // Build QUIC transport (preferred)
     let quic_transport = if config.enable_quic {
         let quic_config = quic::Config::new(keypair);
         Some(
             quic::tokio::Transport::new(quic_config)
-                .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
+                .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer))),
         )
     } else {
         None
@@ -120,20 +119,28 @@ pub fn build_transport_with_config(
 
 /// Build TCP-only transport (for testing or restricted environments)
 pub fn build_tcp_transport(keypair: &identity::Keypair) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
-    build_transport_with_config(keypair, &TransportConfig {
-        enable_quic: false,
-        enable_tcp: true,
-        ..Default::default()
-    })
+    build_transport_with_config(
+        keypair,
+        &TransportConfig {
+            enable_quic: false,
+            enable_tcp: true,
+            ..Default::default()
+        },
+    )
 }
 
 /// Build QUIC-only transport (for maximum performance)
-pub fn build_quic_transport(keypair: &identity::Keypair) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
-    build_transport_with_config(keypair, &TransportConfig {
-        enable_quic: true,
-        enable_tcp: false,
-        ..Default::default()
-    })
+pub fn build_quic_transport(
+    keypair: &identity::Keypair,
+) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
+    build_transport_with_config(
+        keypair,
+        &TransportConfig {
+            enable_quic: true,
+            enable_tcp: false,
+            ..Default::default()
+        },
+    )
 }
 
 #[cfg(test)]
@@ -147,21 +154,21 @@ mod tests {
         let transport = build_transport(&keypair);
         assert!(transport.is_ok());
     }
-    
+
     #[test]
     fn test_build_tcp_transport() {
         let keypair = Keypair::generate_ed25519();
         let transport = build_tcp_transport(&keypair);
         assert!(transport.is_ok());
     }
-    
+
     #[test]
     fn test_build_quic_transport() {
         let keypair = Keypair::generate_ed25519();
         let transport = build_quic_transport(&keypair);
         assert!(transport.is_ok());
     }
-    
+
     #[test]
     fn test_transport_config_default() {
         let config = TransportConfig::default();

@@ -207,19 +207,19 @@ impl Dht {
 
         // If no peer ID in multiaddr, derive deterministically from address
         // This ensures consistent peer IDs for the same address across restarts
-        
+
         // Create input: address + index for deterministic but unique IDs
         let mut input = addr.to_string().into_bytes();
         input.extend_from_slice(&index.to_le_bytes());
-        
+
         // Hash the input to create a deterministic byte sequence
         let hash = blake3::hash(&input);
-        
+
         // Use the hash bytes directly as the peer ID
         // PeerId::from_bytes expects the full multihash encoding
         // For a deterministic approach, we create it from the hash
         let hash_bytes = hash.as_bytes();
-        
+
         // Try to create PeerId from the hash bytes
         // If that fails (due to multihash format requirements), fall back to random
         // but log a warning since this indicates the peer ID format needs adjustment

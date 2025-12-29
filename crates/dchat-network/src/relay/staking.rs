@@ -97,7 +97,10 @@ impl RelayStakingValidator {
     }
 
     /// Query relay stake from currency chain
-    async fn query_relay_stake_from_chain(&self, relay_key: &VerifyingKey) -> Result<RelayStakeInfo> {
+    async fn query_relay_stake_from_chain(
+        &self,
+        relay_key: &VerifyingKey,
+    ) -> Result<RelayStakeInfo> {
         use reqwest::Client as HttpClient;
         use serde_json::json;
 

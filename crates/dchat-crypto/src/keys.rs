@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Generate cryptographically secure random bytes
-/// 
+///
 /// # Arguments
 /// * `len` - Number of random bytes to generate
-/// 
+///
 /// # Returns
 /// * `Ok(Vec<u8>)` - Vector of cryptographically secure random bytes
 /// * `Err(KeyGenerationError)` - If the system CSPRNG fails
-/// 
+///
 /// # Security Note
 /// This function uses the system's cryptographic random number generator
 /// (e.g., /dev/urandom on Unix, CryptGenRandom on Windows). It will fail
@@ -25,10 +25,10 @@ pub fn generate_random_bytes(len: usize) -> std::result::Result<Vec<u8>, KeyGene
 }
 
 /// Generate random bytes into an existing buffer
-/// 
+///
 /// # Arguments
 /// * `buffer` - Mutable slice to fill with random bytes
-/// 
+///
 /// # Returns
 /// * `Ok(())` - Buffer filled with cryptographically secure random bytes
 /// * `Err(KeyGenerationError)` - If the system CSPRNG fails
@@ -53,7 +53,7 @@ pub struct PrivateKey {
 
 impl PrivateKey {
     /// Generate a new random private key
-    /// 
+    ///
     /// # Errors
     /// Returns `KeyGenerationError::RandomGenerationFailed` if the system's
     /// cryptographic random number generator fails or is unavailable.
@@ -61,7 +61,7 @@ impl PrivateKey {
     /// - Early boot before entropy is available
     /// - Virtualized environments without proper RNG passthrough
     /// - Systems with broken CSPRNG
-    /// 
+    ///
     /// # Security Note
     /// This method returns a Result instead of panicking to allow graceful
     /// error handling in production systems. Callers MUST handle this error
@@ -71,17 +71,20 @@ impl PrivateKey {
         getrandom::getrandom(&mut bytes)?;
         Ok(Self { bytes })
     }
-    
+
     /// Generate a new random private key (panics on RNG failure)
-    /// 
+    ///
     /// # Panics
     /// Panics if the system's CSPRNG fails. Use `try_generate()` for
     /// production code that needs to handle RNG failures gracefully.
-    /// 
+    ///
     /// # Deprecated
     /// This method is provided for backward compatibility. New code should
     /// use `try_generate()` instead.
-    #[deprecated(since = "0.2.0", note = "Use try_generate() instead for proper error handling")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use try_generate() instead for proper error handling"
+    )]
     pub fn generate() -> Self {
         Self::try_generate().expect("CSPRNG failure - system entropy unavailable")
     }
@@ -140,8 +143,8 @@ impl Address {
     /// Parse from hex string (with or without 0x prefix)
     pub fn from_hex(s: &str) -> Result<Self> {
         let s = s.strip_prefix("0x").unwrap_or(s);
-        let bytes = hex::decode(s)
-            .map_err(|e| Error::crypto(format!("Invalid hex address: {}", e)))?;
+        let bytes =
+            hex::decode(s).map_err(|e| Error::crypto(format!("Invalid hex address: {}", e)))?;
         if bytes.len() != 20 {
             return Err(Error::crypto(format!(
                 "Invalid address length: expected 20, got {}",
@@ -236,7 +239,7 @@ pub struct KeyPair {
 
 impl KeyPair {
     /// Generate a new random keypair
-    /// 
+    ///
     /// # Errors
     /// Returns `KeyGenerationError` if the system CSPRNG fails.
     pub fn try_generate() -> std::result::Result<Self, KeyGenerationError> {
@@ -248,16 +251,19 @@ impl KeyPair {
             public_key,
         })
     }
-    
+
     /// Generate a new random keypair (panics on RNG failure)
-    /// 
+    ///
     /// # Panics
     /// Panics if the system's CSPRNG fails.
-    /// 
+    ///
     /// # Deprecated
     /// This method is provided for backward compatibility. New code should
     /// use `try_generate()` instead.
-    #[deprecated(since = "0.2.0", note = "Use try_generate() instead for proper error handling")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use try_generate() instead for proper error handling"
+    )]
     #[allow(deprecated)]
     pub fn generate() -> Self {
         let private_key = PrivateKey::generate();
@@ -305,7 +311,7 @@ impl KeyPair {
 }
 
 /// Derive keys using HKDF-based hierarchical deterministic key derivation
-/// 
+///
 /// # Security
 /// This implementation uses HKDF (RFC 5869) instead of simple hashing for proper
 /// key derivation with domain separation. This provides:
@@ -319,7 +325,7 @@ const KEY_DERIVATION_SALT: &[u8] = b"dchat-key-derivation-v1";
 
 impl KeyDerivation {
     /// Derive a child private key from a parent key and index using HKDF
-    /// 
+    ///
     /// # Security
     /// Uses HKDF-SHA256 with domain separation to derive child keys safely.
     /// The salt provides domain separation, and the index is included in
@@ -327,19 +333,16 @@ impl KeyDerivation {
     pub fn derive_private_key(parent_key: &PrivateKey, index: u32) -> Result<PrivateKey> {
         use hkdf::Hkdf;
         use sha2::Sha256;
-        
+
         // Create HKDF instance with domain-separated salt
-        let hkdf = Hkdf::<Sha256>::new(
-            Some(KEY_DERIVATION_SALT),
-            parent_key.as_bytes(),
-        );
-        
+        let hkdf = Hkdf::<Sha256>::new(Some(KEY_DERIVATION_SALT), parent_key.as_bytes());
+
         // Derive key with index in info parameter for uniqueness
         let info = format!("dchat-child-key-{}", index);
         let mut okm = [0u8; 32];
         hkdf.expand(info.as_bytes(), &mut okm)
             .map_err(|e| dchat_core::Error::crypto(format!("HKDF expansion failed: {}", e)))?;
-        
+
         Ok(PrivateKey::from_bytes(okm))
     }
 

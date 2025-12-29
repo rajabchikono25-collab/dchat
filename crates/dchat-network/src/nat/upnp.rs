@@ -276,7 +276,7 @@ impl UpnpClient {
         if let Some(control_url) = &self.control_url {
             // Construct proper control URL for WANIPConnection service
             let wan_control_url = Self::derive_wan_control_url(control_url);
-            
+
             let soap_request = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" 
             s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -288,15 +288,17 @@ impl UpnpClient {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
-                .map_err(|e| dchat_core::Error::network(format!("HTTP client creation failed: {}", e)))?;
-            
+                .map_err(|e| {
+                    dchat_core::Error::network(format!("HTTP client creation failed: {}", e))
+                })?;
+
             // Try WANIPConnection first, then WANPPPConnection (for DSL routers)
             for service in &["WANIPConnection", "WANPPPConnection"] {
                 let soap_action = format!(
                     "\"urn:schemas-upnp-org:service:{}:1#GetExternalIPAddress\"",
                     service
                 );
-                
+
                 if let Ok(response) = client
                     .post(&wan_control_url)
                     .header("Content-Type", "text/xml; charset=\"utf-8\"")
@@ -327,7 +329,7 @@ impl UpnpClient {
             "https://api.ip.sb/ip",
             "https://ipinfo.io/ip",
         ];
-        
+
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -348,7 +350,7 @@ impl UpnpClient {
         }
 
         Err(dchat_core::Error::network(
-            "Failed to determine external IP address - all methods failed"
+            "Failed to determine external IP address - all methods failed",
         ))
     }
 
@@ -358,7 +360,7 @@ impl UpnpClient {
         if root_url.contains("/ctl/") || root_url.contains("/upnp/control/") {
             return root_url.to_string();
         }
-        
+
         // Extract base URL and append common control paths
         if let Some(base_end) = root_url.rfind('/') {
             let base = &root_url[..base_end];
@@ -368,15 +370,16 @@ impl UpnpClient {
             root_url.to_string()
         }
     }
-    
+
     /// Check if an IP address is in private/reserved range
     fn is_private_ip(ip: &IpAddr) -> bool {
         match ip {
             IpAddr::V4(ipv4) => {
-                ipv4.is_private() 
-                    || ipv4.is_loopback() 
+                ipv4.is_private()
+                    || ipv4.is_loopback()
                     || ipv4.is_link_local()
-                    || ipv4.octets()[0] == 100 && (ipv4.octets()[1] >= 64 && ipv4.octets()[1] <= 127) // CGNAT
+                    || ipv4.octets()[0] == 100
+                        && (ipv4.octets()[1] >= 64 && ipv4.octets()[1] <= 127) // CGNAT
             }
             IpAddr::V6(ipv6) => {
                 ipv6.is_loopback() 
@@ -399,7 +402,7 @@ impl UpnpClient {
             // Some routers use different casing
             r"(?i)<newexternalipaddress>([^<]+)</newexternalipaddress>",
         ];
-        
+
         for pattern in patterns {
             if let Ok(re) = regex::Regex::new(pattern) {
                 if let Some(captures) = re.captures(xml) {
@@ -413,15 +416,15 @@ impl UpnpClient {
                 }
             }
         }
-        
+
         // Fallback: Simple string search
         for line in xml.lines() {
             let trimmed = line.trim();
             if trimmed.to_lowercase().contains("newexternalipaddress") {
                 // Extract content between > and <
                 if let Some(start) = trimmed.find('>') {
-                    if let Some(end) = trimmed[start+1..].find('<') {
-                        let ip_str = trimmed[start+1..start+1+end].trim();
+                    if let Some(end) = trimmed[start + 1..].find('<') {
+                        let ip_str = trimmed[start + 1..start + 1 + end].trim();
                         if ip_str.parse::<IpAddr>().is_ok() {
                             return Some(ip_str.to_string());
                         }
@@ -429,7 +432,7 @@ impl UpnpClient {
                 }
             }
         }
-        
+
         None
     }
 

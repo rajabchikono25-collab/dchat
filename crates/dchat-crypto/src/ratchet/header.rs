@@ -44,12 +44,8 @@ impl MessageHeader {
         let mut dh_public = [0u8; 32];
         dh_public.copy_from_slice(&data[0..32]);
 
-        let previous_chain_length = u32::from_le_bytes(
-            data[32..36].try_into().ok()?
-        );
-        let message_index = u32::from_le_bytes(
-            data[36..40].try_into().ok()?
-        );
+        let previous_chain_length = u32::from_le_bytes(data[32..36].try_into().ok()?);
+        let message_index = u32::from_le_bytes(data[36..40].try_into().ok()?);
 
         Some(Self {
             dh_public,

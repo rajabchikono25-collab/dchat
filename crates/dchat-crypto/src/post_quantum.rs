@@ -78,7 +78,7 @@ pub mod falcon {
 }
 
 /// Hybrid cryptosystem combining classical X25519 and post-quantum ML-KEM-768
-/// 
+///
 /// This provides defense-in-depth: security holds if either algorithm is secure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridPublicKey {
@@ -156,7 +156,7 @@ impl HybridKem {
         // Classical X25519 key agreement with ephemeral key
         let ephemeral_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
         let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
-        
+
         let recipient_classical = X25519PublicKey::from(public_key.classical);
         let classical_shared = ephemeral_secret.diffie_hellman(&recipient_classical);
 
@@ -182,7 +182,10 @@ impl HybridKem {
     }
 
     /// Decapsulate: Recover the shared secret from the ciphertext
-    pub fn decapsulate(ciphertext: &HybridCiphertext, secret_key: &HybridSecretKey) -> Result<Vec<u8>> {
+    pub fn decapsulate(
+        ciphertext: &HybridCiphertext,
+        secret_key: &HybridSecretKey,
+    ) -> Result<Vec<u8>> {
         // Classical X25519 key agreement
         let classical_secret = StaticSecret::from(secret_key.classical);
         let ephemeral_public = X25519PublicKey::from(ciphertext.classical_ephemeral);
@@ -207,7 +210,7 @@ impl HybridKem {
     }
 
     /// Combine classical and PQ shared secrets using HKDF
-    /// 
+    ///
     /// Uses the ciphertext components as additional context to bind the
     /// derived key to the specific encapsulation.
     fn combine_shared_secrets(
@@ -231,7 +234,7 @@ impl HybridKem {
 
         let hkdf = Hkdf::<Sha256>::new(Some(&salt), &ikm);
         let mut output = vec![0u8; 32];
-        
+
         hkdf.expand(b"dchat-hybrid-kem-v1", &mut output)
             .map_err(|_| Error::crypto("HKDF expansion failed"))?;
 
@@ -257,7 +260,7 @@ impl HybridKem {
         classical_ephemeral.copy_from_slice(&data[0..32]);
 
         let pq_len = u32::from_le_bytes([data[32], data[33], data[34], data[35]]) as usize;
-        
+
         if data.len() != 36 + pq_len {
             return Err(Error::crypto("Invalid ciphertext length"));
         }
@@ -380,13 +383,13 @@ mod tests {
         // Two different keypairs should produce different shared secrets
         let (public_key1, _secret_key1) = HybridKem::keypair().unwrap();
         let (public_key2, secret_key2) = HybridKem::keypair().unwrap();
-        
+
         let (shared1, _ciphertext1) = HybridKem::encapsulate(&public_key1).unwrap();
         let (shared2, _ciphertext2) = HybridKem::encapsulate(&public_key2).unwrap();
-        
+
         // Different encapsulations should produce different shared secrets
         assert_ne!(shared1, shared2);
-        
+
         // Decapsulating with wrong key should produce different result
         let (shared_correct, ciphertext) = HybridKem::encapsulate(&public_key2).unwrap();
         let shared_decapped = HybridKem::decapsulate(&ciphertext, &secret_key2).unwrap();
@@ -397,11 +400,11 @@ mod tests {
     fn test_hybrid_kem_serialization() {
         let (public_key, secret_key) = HybridKem::keypair().unwrap();
         let (shared_secret1, ciphertext) = HybridKem::encapsulate(&public_key).unwrap();
-        
+
         // Serialize and deserialize
         let serialized = HybridKem::serialize_ciphertext(&ciphertext);
         let deserialized = HybridKem::deserialize_ciphertext(&serialized).unwrap();
-        
+
         // Should be able to decapsulate the deserialized ciphertext
         let shared_secret2 = HybridKem::decapsulate(&deserialized, &secret_key).unwrap();
         assert_eq!(shared_secret1, shared_secret2);
@@ -411,10 +414,10 @@ mod tests {
     fn test_hybrid_kem_ciphertext_tampering() {
         let (public_key, secret_key) = HybridKem::keypair().unwrap();
         let (shared_secret1, mut ciphertext) = HybridKem::encapsulate(&public_key).unwrap();
-        
+
         // Tamper with the classical ephemeral key
         ciphertext.classical_ephemeral[0] ^= 0xFF;
-        
+
         // Decapsulation should produce different shared secret
         let shared_secret2 = HybridKem::decapsulate(&ciphertext, &secret_key).unwrap();
         assert_ne!(shared_secret1, shared_secret2);
@@ -441,7 +444,8 @@ mod tests {
         let signature = signer.sign(message);
         let (classical_public, pq_public) = signer.public_keys();
 
-        let result = verify_hybrid_signature(&signature, wrong_message, &classical_public, &pq_public);
+        let result =
+            verify_hybrid_signature(&signature, wrong_message, &classical_public, &pq_public);
         assert!(result.is_err());
     }
 
@@ -449,7 +453,7 @@ mod tests {
     fn test_secret_key_debug_redacted() {
         let (_public_key, secret_key) = HybridKem::keypair().unwrap();
         let debug_output = format!("{:?}", secret_key);
-        
+
         // Ensure secret material is not leaked in debug output
         assert!(debug_output.contains("REDACTED"));
         assert!(!debug_output.contains(&hex::encode(&secret_key.classical)));

@@ -13,7 +13,6 @@ use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime};
 use thiserror::Error;
 
-
 /// Reputation scoring constants
 pub const UPTIME_WEIGHT: f64 = 0.30;
 pub const LATENCY_WEIGHT: f64 = 0.25;

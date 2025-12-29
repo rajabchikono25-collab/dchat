@@ -32,10 +32,10 @@ impl MessageId {
     }
 
     /// Creates a message ID from a slice.
-    /// 
+    ///
     /// # Errors
     /// Returns `None` if the slice is not exactly 32 bytes.
-    /// 
+    ///
     /// # Security
     /// Always validate input length to prevent buffer overflows and ensure
     /// message ID integrity.
@@ -423,7 +423,7 @@ mod tests {
 
         assert_eq!(msg_id.as_bytes(), &bytes);
         assert_eq!(Some(msg_id), MessageId::from_slice(&bytes));
-        
+
         // Test invalid length returns None
         assert_eq!(None, MessageId::from_slice(&[0u8; 31]));
         assert_eq!(None, MessageId::from_slice(&[0u8; 33]));

@@ -199,7 +199,10 @@ impl AwsKmsClient {
         match result {
             Ok(Ok(output)) => {
                 if let Some(signature) = output.signature() {
-                    debug!("✓ Successfully signed message ({} bytes)", signature.as_ref().len());
+                    debug!(
+                        "✓ Successfully signed message ({} bytes)",
+                        signature.as_ref().len()
+                    );
                     Ok(signature.clone().into_inner())
                 } else {
                     error!("KMS returned empty signature");
@@ -236,7 +239,10 @@ impl AwsKmsClient {
         match result {
             Ok(Ok(output)) => {
                 if let Some(public_key) = output.public_key() {
-                    info!("✓ Retrieved public key from KMS ({} bytes)", public_key.as_ref().len());
+                    info!(
+                        "✓ Retrieved public key from KMS ({} bytes)",
+                        public_key.as_ref().len()
+                    );
                     Ok(public_key.clone().into_inner())
                 } else {
                     error!("KMS returned empty public key");
@@ -320,7 +326,11 @@ impl AwsKmsClient {
     ///
     /// # Returns
     /// Encrypted ciphertext blob
-    pub async fn encrypt_data_key(&self, key_id: &str, plaintext: &[u8]) -> Result<Vec<u8>, KmsError> {
+    pub async fn encrypt_data_key(
+        &self,
+        key_id: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, KmsError> {
         debug!("Encrypting data with KMS key: {}", key_id);
 
         if plaintext.len() > 4096 {

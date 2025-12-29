@@ -40,11 +40,11 @@ impl MnemonicLength {
     /// Get the entropy size in bytes for this mnemonic length
     pub fn entropy_bytes(&self) -> usize {
         match self {
-            MnemonicLength::Words12 => 16,  // 128 bits
-            MnemonicLength::Words15 => 20,  // 160 bits
-            MnemonicLength::Words18 => 24,  // 192 bits
-            MnemonicLength::Words21 => 28,  // 224 bits
-            MnemonicLength::Words24 => 32,  // 256 bits
+            MnemonicLength::Words12 => 16, // 128 bits
+            MnemonicLength::Words15 => 20, // 160 bits
+            MnemonicLength::Words18 => 24, // 192 bits
+            MnemonicLength::Words21 => 28, // 224 bits
+            MnemonicLength::Words24 => 32, // 256 bits
         }
     }
 
@@ -114,7 +114,7 @@ impl Mnemonic {
     pub fn generate(length: MnemonicLength) -> Result<Self> {
         let entropy_bytes = length.entropy_bytes();
         let mut entropy = vec![0u8; entropy_bytes];
-        
+
         getrandom::getrandom(&mut entropy)
             .map_err(|e| Error::crypto(format!("Failed to generate random entropy: {}", e)))?;
 
@@ -133,10 +133,12 @@ impl Mnemonic {
             24 => MnemonicLength::Words18,
             28 => MnemonicLength::Words21,
             32 => MnemonicLength::Words24,
-            _ => return Err(Error::crypto(format!(
-                "Invalid entropy length: {} bytes. Must be 16, 20, 24, 28, or 32",
-                entropy.len()
-            ))),
+            _ => {
+                return Err(Error::crypto(format!(
+                    "Invalid entropy length: {} bytes. Must be 16, 20, 24, 28, or 32",
+                    entropy.len()
+                )))
+            }
         };
 
         // Calculate checksum (first ENT/32 bits of SHA256(entropy))
@@ -145,14 +147,14 @@ impl Mnemonic {
 
         // Convert entropy + checksum to 11-bit indices
         let mut bits = Vec::with_capacity(entropy.len() * 8 + checksum_bits);
-        
+
         // Add entropy bits
         for byte in entropy {
             for i in (0..8).rev() {
                 bits.push((byte >> i) & 1);
             }
         }
-        
+
         // Add checksum bits
         for i in (0..checksum_bits).rev() {
             let byte_idx = (checksum_bits - 1 - i) / 8;
@@ -176,11 +178,11 @@ impl Mnemonic {
             for (i, &bit) in chunk.iter().enumerate() {
                 index |= (bit as u16) << (10 - i);
             }
-            
+
             if (index as usize) >= wordlist.len() {
                 return Err(Error::crypto(format!("Word index {} out of range", index)));
             }
-            
+
             words.push(wordlist[index as usize].to_string());
         }
 
@@ -249,7 +251,7 @@ impl Mnemonic {
             // Use bitwise AND to avoid short-circuit evaluation
             checksum_valid &= expected_bit == actual_bit;
         }
-        
+
         if !checksum_valid {
             // Zeroize entropy before returning error
             entropy.zeroize();
@@ -300,21 +302,26 @@ impl Mnemonic {
         use unicode_normalization::UnicodeNormalization;
         let phrase = self.phrase();
         let mut normalized_phrase: String = phrase.nfkd().collect();
-        
+
         // Salt is "mnemonic" + passphrase (also NFKD normalized)
         let passphrase_str = passphrase.unwrap_or("");
         let mut normalized_passphrase: String = passphrase_str.nfkd().collect();
         let mut salt = format!("mnemonic{}", normalized_passphrase);
-        
+
         // BIP-39 uses PBKDF2-HMAC-SHA512 with 2048 iterations
         let mut seed = [0u8; 64];
-        pbkdf2_hmac_sha512(normalized_phrase.as_bytes(), salt.as_bytes(), 2048, &mut seed);
-        
+        pbkdf2_hmac_sha512(
+            normalized_phrase.as_bytes(),
+            salt.as_bytes(),
+            2048,
+            &mut seed,
+        );
+
         // Zeroize intermediate sensitive values
         normalized_phrase.zeroize();
         normalized_passphrase.zeroize();
         salt.zeroize();
-        
+
         Ok(seed)
     }
 
@@ -373,12 +380,12 @@ impl Mnemonic {
     }
 
     /// Constant-time word lookup to prevent timing side-channel attacks
-    /// 
+    ///
     /// This searches the entire wordlist regardless of match position,
     /// preventing attackers from inferring word positions based on lookup time.
     fn constant_time_word_lookup(wordlist: &[&str], target: &str) -> Option<usize> {
         let mut found_index: Option<usize> = None;
-        
+
         // Always iterate through entire wordlist
         for (i, word) in wordlist.iter().enumerate() {
             // Use constant-time comparison
@@ -387,7 +394,7 @@ impl Mnemonic {
                 // Don't break - continue to ensure constant time
             }
         }
-        
+
         found_index
     }
 
@@ -408,7 +415,7 @@ impl std::fmt::Debug for Mnemonic {
 }
 
 /// PBKDF2-HMAC-SHA512 implementation for BIP-39 seed derivation
-/// 
+///
 /// # Security
 /// - All intermediate values are zeroized after use
 /// - Uses constant iteration count (no timing side-channel)
@@ -417,33 +424,31 @@ fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iterations: u32, output: &mu
     type HmacSha512 = Hmac<Sha512>;
 
     // For BIP-39, we only need one block (64 bytes output, 64 bytes per block)
-    let mut mac = HmacSha512::new_from_slice(password)
-        .expect("HMAC can take key of any size");
-    
+    let mut mac = HmacSha512::new_from_slice(password).expect("HMAC can take key of any size");
+
     // U_1 = PRF(Password, Salt || INT(1))
     mac.update(salt);
     mac.update(&1u32.to_be_bytes());
     let mut u = mac.finalize().into_bytes();
-    
+
     output.copy_from_slice(&u);
 
     // U_i = PRF(Password, U_{i-1})
     for _ in 1..iterations {
-        let mut mac = HmacSha512::new_from_slice(password)
-            .expect("HMAC can take key of any size");
+        let mut mac = HmacSha512::new_from_slice(password).expect("HMAC can take key of any size");
         mac.update(&u);
         let new_u = mac.finalize().into_bytes();
-        
+
         // XOR into output
         for (out, u_byte) in output.iter_mut().zip(new_u.iter()) {
             *out ^= u_byte;
         }
-        
+
         // Zeroize previous u before overwriting
         u.as_mut_slice().zeroize();
         u = new_u;
     }
-    
+
     // Zeroize final u value
     u.as_mut_slice().zeroize();
 }
@@ -501,7 +506,7 @@ mod tests {
         ] {
             let mnemonic = Mnemonic::generate(length).unwrap();
             assert_eq!(mnemonic.word_count(), length as usize);
-            
+
             // Verify we can parse it back
             let parsed = Mnemonic::from_phrase(&mnemonic.phrase()).unwrap();
             assert_eq!(parsed.phrase(), mnemonic.phrase());
@@ -532,14 +537,14 @@ mod tests {
         // BIP-39 test vector
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
-        
+
         // Without passphrase
         let seed1 = mnemonic.to_seed(None).unwrap();
-        
+
         // With passphrase - should be different
         let seed2 = mnemonic.to_seed(Some("TREZOR")).unwrap();
         assert_ne!(seed1, seed2);
-        
+
         // Same passphrase should give same seed
         let seed3 = mnemonic.to_seed(Some("TREZOR")).unwrap();
         assert_eq!(seed2, seed3);
@@ -548,11 +553,11 @@ mod tests {
     #[test]
     fn test_master_key_derivation() {
         let (mnemonic, key1) = Mnemonic::generate_with_key(MnemonicLength::Words24, None).unwrap();
-        
+
         // Restore should give same key
         let key2 = Mnemonic::restore_master_key(&mnemonic.phrase(), None).unwrap();
         assert_eq!(key1.as_bytes(), key2.as_bytes());
-        
+
         // Different passphrase should give different key
         let key3 = Mnemonic::restore_master_key(&mnemonic.phrase(), Some("secret")).unwrap();
         assert_ne!(key1.as_bytes(), key3.as_bytes());
@@ -562,7 +567,7 @@ mod tests {
     fn test_entropy_roundtrip() {
         let mnemonic = Mnemonic::generate(MnemonicLength::Words24).unwrap();
         let entropy = mnemonic.entropy().to_vec();
-        
+
         // Recreate from entropy
         let restored = Mnemonic::from_entropy(&entropy).unwrap();
         assert_eq!(mnemonic.phrase(), restored.phrase());
@@ -572,10 +577,10 @@ mod tests {
     fn test_seed_wrapper() {
         let mnemonic = Mnemonic::generate(MnemonicLength::Words24).unwrap();
         let seed = Seed::from_mnemonic(&mnemonic, None).unwrap();
-        
+
         assert_eq!(seed.as_bytes().len(), 64);
         assert_eq!(seed.chain_code().len(), 32);
-        
+
         let key = seed.to_master_key().unwrap();
         assert_eq!(key.as_bytes().len(), 32);
     }
@@ -585,18 +590,18 @@ mod tests {
         // Official BIP-39 test vector
         let entropy = hex::decode("00000000000000000000000000000000").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
-        
+
         assert_eq!(
             mnemonic.phrase(),
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         );
-        
+
         // Test seed with "TREZOR" passphrase
         let seed = mnemonic.to_seed(Some("TREZOR")).unwrap();
         let expected_seed = hex::decode(
             "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
         ).unwrap();
-        
+
         assert_eq!(seed.to_vec(), expected_seed);
     }
 
@@ -604,7 +609,7 @@ mod tests {
     fn test_debug_redaction() {
         let mnemonic = Mnemonic::generate(MnemonicLength::Words12).unwrap();
         let debug_str = format!("{:?}", mnemonic);
-        
+
         assert!(debug_str.contains("REDACTED"));
         assert!(!debug_str.contains(&mnemonic.words()[0]));
     }

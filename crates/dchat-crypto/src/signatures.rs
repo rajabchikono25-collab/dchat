@@ -4,8 +4,7 @@ use crate::keys::{PrivateKey, PublicKey};
 use dchat_core::error::{Error, Result};
 pub use ed25519_dalek::Signature as Ed25519Signature;
 use ed25519_dalek::{
-    Signer, SigningKey as Ed25519SigningKey, Verifier,
-    VerifyingKey as Ed25519VerifyingKey,
+    Signer, SigningKey as Ed25519SigningKey, Verifier, VerifyingKey as Ed25519VerifyingKey,
 };
 
 /// A signing key for creating digital signatures
@@ -20,13 +19,13 @@ impl SigningKey {
         let inner = Ed25519SigningKey::from_bytes(private_key.as_bytes());
         Self { inner }
     }
-    
+
     /// Generate a new random signing key
     pub fn generate<R: rand::CryptoRng + rand::RngCore>(csprng: &mut R) -> Self {
         let inner = Ed25519SigningKey::generate(csprng);
         Self { inner }
     }
-    
+
     /// Create from raw bytes
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let inner = Ed25519SigningKey::from_bytes(bytes);
@@ -63,7 +62,7 @@ impl VerifyingKey {
 
         Ok(Self { inner })
     }
-    
+
     /// Create from raw bytes
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
         let inner = Ed25519VerifyingKey::from_bytes(bytes)
@@ -83,7 +82,7 @@ impl VerifyingKey {
     pub fn to_bytes(&self) -> [u8; 32] {
         self.inner.to_bytes()
     }
-    
+
     /// Get a reference to the raw bytes
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.inner.as_bytes()
@@ -139,14 +138,23 @@ pub fn sign(message: &[u8], signing_key: &SigningKey) -> Ed25519Signature {
 }
 
 /// Verify a signature using an ed25519 signature and verifying key
-pub fn verify(message: &[u8], signature: &Ed25519Signature, verifying_key: &VerifyingKey) -> Result<()> {
-    verifying_key.inner
+pub fn verify(
+    message: &[u8],
+    signature: &Ed25519Signature,
+    verifying_key: &VerifyingKey,
+) -> Result<()> {
+    verifying_key
+        .inner
         .verify(message, signature)
         .map_err(|e| Error::crypto(format!("Signature verification failed: {}", e)))
 }
 
 /// Verify a signature using a public key (convenience wrapper)
-pub fn verify_with_public_key(public_key: &PublicKey, message: &[u8], signature: &Signature) -> Result<()> {
+pub fn verify_with_public_key(
+    public_key: &PublicKey,
+    message: &[u8],
+    signature: &Signature,
+) -> Result<()> {
     let verifying_key = VerifyingKey::from_public_key(public_key)?;
     verifying_key.verify(message, signature)
 }

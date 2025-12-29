@@ -59,11 +59,11 @@
 //!    }
 //!    ```
 
+use async_trait::async_trait;
 use blake3::Hasher;
 use dchat_core::error::{Error, Result};
-use libp2p::{PeerId, StreamProtocol};
 use libp2p::request_response;
-use async_trait::async_trait;
+use libp2p::{PeerId, StreamProtocol};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -184,10 +184,7 @@ pub enum RelayResult {
     },
     /// Message should be forwarded to next hop
     /// Contains the peer to forward to and the cell to send
-    Forward {
-        next_hop: PeerId,
-        cell: OnionCell,
-    },
+    Forward { next_hop: PeerId, cell: OnionCell },
 }
 
 /// Request-response codec for OnionCell protocol
@@ -203,17 +200,21 @@ impl request_response::Codec for OnionCellCodec {
     type Request = OnionCell;
     type Response = OnionCell;
 
-    async fn read_request<T>(&mut self, _protocol: &Self::Protocol, io: &mut T) -> std::io::Result<Self::Request>
+    async fn read_request<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Request>
     where
         T: futures::AsyncRead + Unpin + Send,
     {
         use futures::AsyncReadExt;
-        
+
         // Read length prefix (4 bytes)
         let mut len_bytes = [0u8; 4];
         io.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
-        
+
         if len > 1024 * 1024 {
             // 1MB limit
             return Err(std::io::Error::new(
@@ -221,75 +222,85 @@ impl request_response::Codec for OnionCellCodec {
                 "Cell too large",
             ));
         }
-        
+
         // Read cell data
         let mut data = vec![0u8; len];
         io.read_exact(&mut data).await?;
-        
+
         // Deserialize
-        bincode::deserialize(&data).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })
+        bincode::deserialize(&data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn read_response<T>(&mut self, _protocol: &Self::Protocol, io: &mut T) -> std::io::Result<Self::Response>
+    async fn read_response<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+    ) -> std::io::Result<Self::Response>
     where
         T: futures::AsyncRead + Unpin + Send,
     {
         use futures::AsyncReadExt;
-        
+
         let mut len_bytes = [0u8; 4];
         io.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
-        
+
         if len > 1024 * 1024 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Cell too large",
             ));
         }
-        
+
         let mut data = vec![0u8; len];
         io.read_exact(&mut data).await?;
-        
-        bincode::deserialize(&data).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })
+
+        bincode::deserialize(&data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn write_request<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, req: Self::Request) -> std::io::Result<()>
+    async fn write_request<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> std::io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
         use futures::AsyncWriteExt;
-        
-        let data = bincode::serialize(&req).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
-        
+
+        let data = bincode::serialize(&req)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
         let len = data.len() as u32;
         io.write_all(&len.to_be_bytes()).await?;
         io.write_all(&data).await?;
         io.flush().await?;
-        
+
         Ok(())
     }
 
-    async fn write_response<T>(&mut self, _protocol: &Self::Protocol, io: &mut T, res: Self::Response) -> std::io::Result<()>
+    async fn write_response<T>(
+        &mut self,
+        _protocol: &Self::Protocol,
+        io: &mut T,
+        res: Self::Response,
+    ) -> std::io::Result<()>
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
         use futures::AsyncWriteExt;
-        
-        let data = bincode::serialize(&res).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
-        
+
+        let data = bincode::serialize(&res)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
         let len = data.len() as u32;
         io.write_all(&len.to_be_bytes()).await?;
         io.write_all(&data).await?;
         io.flush().await?;
-        
+
         Ok(())
     }
 }
@@ -403,7 +414,7 @@ impl OnionRoutingManager {
     }
 
     /// Create request-response behavior for onion routing
-    /// 
+    ///
     /// Returns a configured libp2p request-response behavior for handling OnionCell protocol messages.
     pub fn create_request_response_behavior() -> request_response::Behaviour<OnionCellCodec> {
         request_response::Behaviour::new(
@@ -434,7 +445,7 @@ impl OnionRoutingManager {
         // 1. Score all relays based on multiple factors
         // 2. Use weighted random selection to avoid predictable circuits
         // 3. Ensure diversity constraints are met
-        
+
         let mut selected = Vec::new();
         let mut used_asns = Vec::new();
         let mut used_regions: Vec<String> = Vec::new();
@@ -522,7 +533,8 @@ impl OnionRoutingManager {
             }
 
             // Sort by score (highest first)
-            scored_relays.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored_relays
+                .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
             tracing::debug!(
                 "Hop {}: {} viable relays, top score: {:.2}",
@@ -538,7 +550,7 @@ impl OnionRoutingManager {
 
             // Calculate total weight
             let total_weight: f64 = candidates.iter().map(|(score, _)| score).sum();
-            
+
             if total_weight <= 0.0 {
                 // Fallback to first relay if weights are all zero
                 selected.push(candidates[0].1.clone());
@@ -656,11 +668,17 @@ impl OnionRoutingManager {
 
             // Send CREATE cell via libp2p request-response
             let peer_id = hop.peer_id.as_ref().ok_or_else(|| {
-                tracing::error!("Relay node {} missing PeerId - node configuration error", hop.node_id);
+                tracing::error!(
+                    "Relay node {} missing PeerId - node configuration error",
+                    hop.node_id
+                );
                 Error::network(format!("Relay node {} missing PeerId", hop.node_id))
             })?;
 
-            match self.send_create_cell(peer_id, &circuit_id, _our_public.as_bytes()).await {
+            match self
+                .send_create_cell(peer_id, &circuit_id, _our_public.as_bytes())
+                .await
+            {
                 Ok(relay_public_key) => {
                     // Successfully established this hop
                     tracing::info!(
@@ -711,12 +729,16 @@ impl OnionRoutingManager {
         };
 
         self.circuits.insert(circuit_id.clone(), circuit);
-        
+
         tracing::info!(
             "Successfully built onion circuit {} with {} hops through relays: {}",
             circuit_id.0,
             path.len(),
-            path.iter().map(|h| &h.node_id).cloned().collect::<Vec<_>>().join(" -> ")
+            path.iter()
+                .map(|h| &h.node_id)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" -> ")
         );
 
         Ok(circuit_id)
@@ -794,7 +816,7 @@ impl OnionRoutingManager {
     }
 
     /// Encrypt a single layer using ChaCha20Poly1305 AEAD
-    /// 
+    ///
     /// Returns encrypted data as nonce || ciphertext, or panics on cryptographic failure.
     /// Panics are acceptable here because:
     /// 1. Key length is guaranteed by our circuit construction (shared secrets are always 32 bytes)
@@ -808,7 +830,10 @@ impl OnionRoutingManager {
 
         // Derive encryption key from shared secret
         // SECURITY: Key length validated - shared secrets from ECDH are always 32 bytes
-        assert!(key.len() >= 32, "SECURITY: shared secret must be at least 32 bytes");
+        assert!(
+            key.len() >= 32,
+            "SECURITY: shared secret must be at least 32 bytes"
+        );
         let key_bytes: [u8; 32] = key[..32]
             .try_into()
             .expect("SECURITY INVARIANT: key slice is 32 bytes after length check");
@@ -823,9 +848,9 @@ impl OnionRoutingManager {
         // Encrypt with AEAD
         // SECURITY: ChaCha20Poly1305 encrypt only fails if key/nonce are wrong size,
         // which we guarantee above. Panic is appropriate for invariant violation.
-        let ciphertext = cipher
-            .encrypt(&nonce, data)
-            .expect("SECURITY INVARIANT: ChaCha20Poly1305 encryption with valid key/nonce cannot fail");
+        let ciphertext = cipher.encrypt(&nonce, data).expect(
+            "SECURITY INVARIANT: ChaCha20Poly1305 encryption with valid key/nonce cannot fail",
+        );
 
         // Return nonce || ciphertext for decryption
         let mut result = nonce_bytes.to_vec();
@@ -941,11 +966,20 @@ impl OnionRoutingManager {
         // Final (exit) hop decrypts last layer and delivers payload
         tokio::time::timeout(
             Duration::from_secs(60), // Longer timeout for multi-hop routing
-            response_rx
-        ).await.map_err(|_| {
-            tracing::error!("Timeout waiting for RELAY cell acknowledgment from {:?}", entry_peer_id);
-            Error::network(format!("RELAY cell timeout for entry node {:?}", entry_peer_id))
-        })?.map_err(|_| {
+            response_rx,
+        )
+        .await
+        .map_err(|_| {
+            tracing::error!(
+                "Timeout waiting for RELAY cell acknowledgment from {:?}",
+                entry_peer_id
+            );
+            Error::network(format!(
+                "RELAY cell timeout for entry node {:?}",
+                entry_peer_id
+            ))
+        })?
+        .map_err(|_| {
             tracing::error!("Response channel closed for RELAY cell");
             Error::network("Response channel closed")
         })??;
@@ -1110,7 +1144,12 @@ impl OnionRoutingManager {
     ///
     /// Production implementation that uses the network channel to communicate with the swarm.
     /// The network layer will handle sending the cell and returning the response.
-    async fn send_create_cell(&self, relay_peer_id: &PeerId, circuit_id: &CircuitId, public_key: &[u8]) -> Result<Vec<u8>> {
+    async fn send_create_cell(
+        &self,
+        relay_peer_id: &PeerId,
+        circuit_id: &CircuitId,
+        public_key: &[u8],
+    ) -> Result<Vec<u8>> {
         // Create CREATE cell
         let create_cell = OnionCell::Create {
             circuit_id: circuit_id.0.as_bytes().to_vec(),
@@ -1118,7 +1157,7 @@ impl OnionRoutingManager {
         };
 
         tracing::debug!("Sending CREATE cell to relay peer: {:?}", relay_peer_id);
-        
+
         // Check if network channel is available
         let network_tx = self.network_tx.as_ref().ok_or_else(|| {
             tracing::error!("Network channel not configured - call set_network_channel() first");
@@ -1141,26 +1180,45 @@ impl OnionRoutingManager {
         })?;
 
         // Wait for response with timeout
-        let response = tokio::time::timeout(
-            Duration::from_secs(30),
-            response_rx
-        ).await.map_err(|_| {
-            tracing::error!("Timeout waiting for CREATE response from {:?}", relay_peer_id);
-            Error::network(format!("CREATE cell timeout for peer {:?}", relay_peer_id))
-        })?.map_err(|_| {
-            tracing::error!("Response channel closed for CREATE cell to {:?}", relay_peer_id);
-            Error::network("Response channel closed")
-        })??;
+        let response = tokio::time::timeout(Duration::from_secs(30), response_rx)
+            .await
+            .map_err(|_| {
+                tracing::error!(
+                    "Timeout waiting for CREATE response from {:?}",
+                    relay_peer_id
+                );
+                Error::network(format!("CREATE cell timeout for peer {:?}", relay_peer_id))
+            })?
+            .map_err(|_| {
+                tracing::error!(
+                    "Response channel closed for CREATE cell to {:?}",
+                    relay_peer_id
+                );
+                Error::network("Response channel closed")
+            })??;
 
         // Extract public key from CREATED response
         match response {
-            OnionCell::Created { public_key, status, .. } => {
+            OnionCell::Created {
+                public_key, status, ..
+            } => {
                 if status == 0 {
-                    tracing::info!("Received CREATED response from {:?} with {} byte public key", relay_peer_id, public_key.len());
+                    tracing::info!(
+                        "Received CREATED response from {:?} with {} byte public key",
+                        relay_peer_id,
+                        public_key.len()
+                    );
                     Ok(public_key)
                 } else {
-                    tracing::error!("CREATE cell rejected by {:?} with status {}", relay_peer_id, status);
-                    Err(Error::network(format!("CREATE rejected with status {}", status)))
+                    tracing::error!(
+                        "CREATE cell rejected by {:?} with status {}",
+                        relay_peer_id,
+                        status
+                    );
+                    Err(Error::network(format!(
+                        "CREATE rejected with status {}",
+                        status
+                    )))
                 }
             }
             other => {
@@ -1177,11 +1235,15 @@ impl OnionRoutingManager {
     /// 2. Derive shared secret using HKDF
     /// 3. Store circuit state for relay forwarding
     /// 4. Return CREATED cell with relay's public key
-    pub fn handle_create_cell(&mut self, circuit_id: Vec<u8>, client_public_key: Vec<u8>) -> OnionCell {
-        use rand::rngs::OsRng;
-        use x25519_dalek::{EphemeralSecret, PublicKey};
-        use sha2::Sha256;
+    pub fn handle_create_cell(
+        &mut self,
+        circuit_id: Vec<u8>,
+        client_public_key: Vec<u8>,
+    ) -> OnionCell {
         use hkdf::Hkdf;
+        use rand::rngs::OsRng;
+        use sha2::Sha256;
+        use x25519_dalek::{EphemeralSecret, PublicKey};
 
         tracing::debug!(
             "Handling CREATE cell for circuit: {}",
@@ -1273,7 +1335,11 @@ impl OnionRoutingManager {
     ///     }
     /// }
     /// ```
-    pub fn handle_relay_cell(&mut self, circuit_id: Vec<u8>, encrypted_payload: Vec<u8>) -> Result<RelayResult> {
+    pub fn handle_relay_cell(
+        &mut self,
+        circuit_id: Vec<u8>,
+        encrypted_payload: Vec<u8>,
+    ) -> Result<RelayResult> {
         tracing::debug!(
             "Handling RELAY cell for circuit {}: {} bytes",
             hex::encode(&circuit_id),
@@ -1281,16 +1347,16 @@ impl OnionRoutingManager {
         );
 
         // Production: Lookup circuit state
-        let circuit_state = self.relay_circuit_state.get_mut(&circuit_id).ok_or_else(|| {
-            tracing::error!(
+        let circuit_state = self
+            .relay_circuit_state
+            .get_mut(&circuit_id)
+            .ok_or_else(|| {
+                tracing::error!(
                 "Circuit {} not found in relay state - circuit may have expired or never existed",
                 hex::encode(&circuit_id)
             );
-            Error::network(format!(
-                "Unknown circuit: {}",
-                hex::encode(&circuit_id)
-            ))
-        })?;
+                Error::network(format!("Unknown circuit: {}", hex::encode(&circuit_id)))
+            })?;
 
         // Update activity timestamp
         circuit_state.update_activity();
@@ -1304,10 +1370,10 @@ impl OnionRoutingManager {
         // Clone the shared secret to avoid borrow checker issues
         let shared_secret = circuit_state.shared_secret.clone();
         let next_hop = circuit_state.next_hop.clone();
-        
+
         // Drop the mutable borrow before calling decrypt_relay_layer
         let _ = circuit_state;
-        
+
         let decrypted_payload = self.decrypt_relay_layer(&encrypted_payload, &shared_secret)?;
 
         tracing::debug!(
@@ -1350,7 +1416,11 @@ impl OnionRoutingManager {
     /// Decrypt one layer of onion encryption for relay forwarding
     ///
     /// Extracts nonce from the payload and decrypts using ChaCha20Poly1305 AEAD
-    fn decrypt_relay_layer(&self, encrypted_payload: &[u8], shared_secret: &[u8]) -> Result<Vec<u8>> {
+    fn decrypt_relay_layer(
+        &self,
+        encrypted_payload: &[u8],
+        shared_secret: &[u8],
+    ) -> Result<Vec<u8>> {
         use chacha20poly1305::{
             aead::{Aead, KeyInit},
             ChaCha20Poly1305, Nonce,
@@ -1405,7 +1475,7 @@ impl OnionRoutingManager {
         tracing::info!("Received DESTROY for circuit {}", hex::encode(&circuit_id));
 
         // Production: Cleanup stored keys and forwarding tables
-        
+
         // 1. Remove from relay circuit state (if acting as relay)
         if let Some(mut state) = self.relay_circuit_state.remove(&circuit_id) {
             tracing::debug!(
@@ -1413,10 +1483,10 @@ impl OnionRoutingManager {
                 hex::encode(&circuit_id),
                 Instant::now().duration_since(state.created_at)
             );
-            
+
             // Zero out shared secret for security
             state.shared_secret.iter_mut().for_each(|b| *b = 0);
-            
+
             tracing::info!(
                 "Circuit {} relay state cleaned up and keys zeroed",
                 hex::encode(&circuit_id)
@@ -1426,7 +1496,7 @@ impl OnionRoutingManager {
         // 2. Remove from client circuits (if we initiated it)
         let circuit_id_str = String::from_utf8_lossy(&circuit_id).to_string();
         let cid = CircuitId(circuit_id_str);
-        
+
         if let Some(mut circuit) = self.circuits.remove(&cid) {
             tracing::debug!(
                 "Removed client circuit {}: {} hops, age = {:?}",
@@ -1434,12 +1504,12 @@ impl OnionRoutingManager {
                 circuit.hops.len(),
                 Instant::now().duration_since(circuit.created_at)
             );
-            
+
             // Zero out all shared secrets
             for secret in &mut circuit.shared_secrets {
                 secret.iter_mut().for_each(|b| *b = 0);
             }
-            
+
             tracing::info!(
                 "Circuit {} client state cleaned up and {} shared secrets zeroed",
                 cid.0,
@@ -1475,7 +1545,7 @@ impl OnionRoutingManager {
             if let Some(mut state) = self.relay_circuit_state.remove(&circuit_id) {
                 // Zero out shared secret
                 state.shared_secret.iter_mut().for_each(|b| *b = 0);
-                
+
                 tracing::info!(
                     "Removed expired relay circuit {}: age = {:?}",
                     hex::encode(&circuit_id),
@@ -1516,7 +1586,12 @@ mod tests {
 
     /// Create a mock network channel that simulates successful circuit handshakes
     /// Returns (manager_with_channel, receiver_for_requests)
-    fn setup_mock_network_channel(mut manager: OnionRoutingManager) -> (OnionRoutingManager, mpsc::UnboundedReceiver<OnionRoutingRequest>) {
+    fn setup_mock_network_channel(
+        mut manager: OnionRoutingManager,
+    ) -> (
+        OnionRoutingManager,
+        mpsc::UnboundedReceiver<OnionRoutingRequest>,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel();
         manager.set_network_channel(tx);
         (manager, rx)
@@ -1527,13 +1602,15 @@ mod tests {
         tokio::spawn(async move {
             while let Some(request) = rx.recv().await {
                 match request {
-                    OnionRoutingRequest::SendCell { cell, response_tx, .. } => {
+                    OnionRoutingRequest::SendCell {
+                        cell, response_tx, ..
+                    } => {
                         // Simulate successful CREATE -> CREATED response
                         if let OnionCell::Create { circuit_id, .. } = cell {
                             let response = OnionCell::Created {
                                 circuit_id,
                                 public_key: vec![0u8; 32], // Mock public key
-                                status: 0, // Success
+                                status: 0,                 // Success
                             };
                             let _ = response_tx.send(Ok(response));
                         }

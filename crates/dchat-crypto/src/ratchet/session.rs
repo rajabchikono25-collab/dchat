@@ -47,28 +47,28 @@ pub enum RatchetState {
 pub struct DoubleRatchet {
     /// Session configuration
     config: SessionConfig,
-    
+
     /// Root key (evolves with each DH ratchet step)
     root_key: [u8; 32],
-    
+
     /// Our current DH key pair
     dh_self: DhKeyPair,
-    
+
     /// Peer's current DH public key
     dh_peer: Option<PublicKey>,
-    
+
     /// Sending chain key
     chain_sending: Option<ChainKey>,
-    
+
     /// Receiving chain key
     chain_receiving: Option<ChainKey>,
-    
+
     /// Number of messages sent in the previous sending chain
     previous_chain_length: u32,
-    
+
     /// Skipped message keys for out-of-order messages
     skipped_keys: SkippedMessageKeys,
-    
+
     /// Current state
     state: RatchetState,
 }
@@ -89,7 +89,7 @@ impl DhKeyPair {
         rand::thread_rng().fill_bytes(&mut secret_bytes);
         let secret = StaticSecret::from(secret_bytes);
         let public = PublicKey::from(&secret);
-        
+
         Self {
             public,
             secret: secret_bytes,
@@ -114,7 +114,7 @@ impl Clone for DhKeyPair {
 
 impl DoubleRatchet {
     /// Initialize as the sender (Alice) after X3DH
-    /// 
+    ///
     /// Alice has computed the shared secret and knows Bob's signed pre-key
     pub fn init_sender(
         shared_secret: [u8; 32],
@@ -123,13 +123,13 @@ impl DoubleRatchet {
     ) -> Result<Self> {
         // Generate our first DH key pair
         let dh_self = DhKeyPair::generate();
-        
+
         // Perform initial DH
         let dh_output = dh_self.dh(&peer_public_key);
-        
+
         // Derive initial root key and sending chain
         let (chain_sending, root_key) = ChainKey::from_root_key(&shared_secret, &dh_output)?;
-        
+
         Ok(Self {
             skipped_keys: SkippedMessageKeys::new(config.max_skipped_key_age_secs),
             config,
@@ -179,37 +179,40 @@ impl DoubleRatchet {
         }
 
         let chain = self.chain_sending.as_mut().unwrap();
-        
+
         // Derive message key
         let message_key = chain.derive_message_key()?;
-        
+
         // Create header
         let header = MessageHeader::new(
             *self.dh_self.public.as_bytes(),
             self.previous_chain_length,
             message_key.index(),
         );
-        
+
         // Encrypt with header as AAD
         let aad = header.encode();
         let ciphertext = message_key.encrypt(plaintext, &aad)?;
-        
+
         self.state = RatchetState::Active;
-        
+
         Ok((header, ciphertext))
     }
 
     /// Decrypt a message
     pub fn decrypt(&mut self, header: &MessageHeader, ciphertext: &[u8]) -> Result<Vec<u8>> {
         let aad = header.encode();
-        
+
         // Check if this is a skipped message
-        if let Some(mk) = self.skipped_keys.take(&header.dh_public, header.message_index) {
+        if let Some(mk) = self
+            .skipped_keys
+            .take(&header.dh_public, header.message_index)
+        {
             return mk.decrypt(ciphertext, &aad);
         }
 
         let peer_public = header.dh_public_key();
-        
+
         // Check if we need to perform a DH ratchet step
         let need_dh_ratchet = match &self.dh_peer {
             None => true,
@@ -221,12 +224,15 @@ impl DoubleRatchet {
         }
 
         // Skip ahead if needed
-        let chain = self.chain_receiving.as_mut()
+        let chain = self
+            .chain_receiving
+            .as_mut()
             .ok_or_else(|| Error::crypto("No receiving chain".to_string()))?;
 
         if header.message_index > chain.index() {
             let skipped = chain.skip_to(header.message_index, self.config.max_skip)?;
-            self.skipped_keys.store_many(*self.dh_peer.as_ref().unwrap().as_bytes(), skipped)?;
+            self.skipped_keys
+                .store_many(*self.dh_peer.as_ref().unwrap().as_bytes(), skipped)?;
         }
 
         // Derive message key for this message
@@ -254,8 +260,10 @@ impl DoubleRatchet {
                 // Skip any remaining keys in the old chain
                 let current_index = chain.index();
                 if header.previous_chain_length > current_index {
-                    let skipped = chain.skip_to(header.previous_chain_length, self.config.max_skip)?;
-                    self.skipped_keys.store_many(*current_peer.as_bytes(), skipped)?;
+                    let skipped =
+                        chain.skip_to(header.previous_chain_length, self.config.max_skip)?;
+                    self.skipped_keys
+                        .store_many(*current_peer.as_bytes(), skipped)?;
                 }
             }
         }
@@ -272,10 +280,7 @@ impl DoubleRatchet {
         self.chain_receiving = Some(chain_receiving);
 
         // Save previous sending chain length
-        self.previous_chain_length = self.chain_sending
-            .as_ref()
-            .map(|c| c.index())
-            .unwrap_or(0);
+        self.previous_chain_length = self.chain_sending.as_ref().map(|c| c.index()).unwrap_or(0);
 
         // Generate new DH key pair
         self.dh_self = DhKeyPair::generate();
@@ -348,19 +353,12 @@ mod tests {
         let config = SessionConfig::default();
 
         // Alice initializes as sender
-        let alice = DoubleRatchet::init_sender(
-            shared_secret,
-            bob_dh.public,
-            config.clone(),
-        ).unwrap();
+        let alice =
+            DoubleRatchet::init_sender(shared_secret, bob_dh.public, config.clone()).unwrap();
 
         // Bob initializes as receiver
-        let bob = DoubleRatchet::init_receiver(
-            shared_secret,
-            bob_dh.secret,
-            bob_dh.public,
-            config,
-        ).unwrap();
+        let bob = DoubleRatchet::init_receiver(shared_secret, bob_dh.secret, bob_dh.public, config)
+            .unwrap();
 
         (alice, bob)
     }

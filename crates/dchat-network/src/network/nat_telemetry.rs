@@ -22,10 +22,10 @@ pub enum NatTelemetryError {
 }
 
 /// Trait for exporting NAT telemetry metrics to external systems (e.g., Prometheus)
-/// 
+///
 /// This trait provides a dependency-injection pattern that allows NAT telemetry
 /// to export metrics without creating circular dependencies on dchat-observability.
-/// 
+///
 /// To integrate with Prometheus:
 /// 1. Implement this trait for PrometheusExporter in dchat-observability
 /// 2. Call `set_metrics_exporter()` with your implementation at application startup

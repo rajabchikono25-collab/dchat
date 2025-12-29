@@ -113,20 +113,40 @@ pub enum FrostSigningError {
 impl std::fmt::Display for FrostSigningError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InsufficientSigners { required, available } => {
-                write!(f, "Insufficient signers: need {}, have {}", required, available)
+            Self::InsufficientSigners {
+                required,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Insufficient signers: need {}, have {}",
+                    required, available
+                )
             }
             Self::InvalidSignatureShare { relay_id, reason } => {
-                write!(f, "Invalid signature share from {}: {}", hex::encode(&relay_id[..8]), reason)
+                write!(
+                    f,
+                    "Invalid signature share from {}: {}",
+                    hex::encode(&relay_id[..8]),
+                    reason
+                )
             }
             Self::KeyShareNotFound { relay_id } => {
-                write!(f, "Key share not found for relay {}", hex::encode(&relay_id[..8]))
+                write!(
+                    f,
+                    "Key share not found for relay {}",
+                    hex::encode(&relay_id[..8])
+                )
             }
             Self::SessionNotFound { session_id } => {
                 write!(f, "Session not found: {}", session_id)
             }
             Self::InvalidSessionState { expected, actual } => {
-                write!(f, "Invalid session state: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "Invalid session state: expected {}, got {}",
+                    expected, actual
+                )
             }
             Self::AggregationFailed { reason } => {
                 write!(f, "Signature aggregation failed: {}", reason)
@@ -404,10 +424,8 @@ impl RelayFrostSigner {
         })?;
 
         // Reconstruct signing share
-        let signing_share =
-            frost::keys::SigningShare::deserialize(&key_share.signing_share).map_err(|e| {
-                Error::crypto(format!("Failed to deserialize signing share: {:?}", e))
-            })?;
+        let signing_share = frost::keys::SigningShare::deserialize(&key_share.signing_share)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize signing share: {:?}", e)))?;
 
         // Generate nonces and commitments
         let mut rng = OsRng;
@@ -464,9 +482,9 @@ impl RelayFrostSigner {
         // We need to extract the nonces before borrowing mutably
         let (nonces, message) = {
             let mut states = self.round1_states.write().await;
-            let state = states
-                .remove(session_id)
-                .ok_or_else(|| Error::crypto(format!("No round 1 state for session {}", session_id)))?;
+            let state = states.remove(session_id).ok_or_else(|| {
+                Error::crypto(format!("No round 1 state for session {}", session_id))
+            })?;
             (state.nonces, state.message)
         };
 
@@ -474,10 +492,8 @@ impl RelayFrostSigner {
         let identifier = frost::Identifier::try_from(key_share.participant_index)
             .map_err(|e| Error::crypto(format!("Invalid identifier: {:?}", e)))?;
 
-        let signing_share =
-            frost::keys::SigningShare::deserialize(&key_share.signing_share).map_err(|e| {
-                Error::crypto(format!("Failed to deserialize signing share: {:?}", e))
-            })?;
+        let signing_share = frost::keys::SigningShare::deserialize(&key_share.signing_share)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize signing share: {:?}", e)))?;
 
         let verifying_share = frost::keys::VerifyingShare::deserialize(&key_share.verifying_share)
             .map_err(|e| {
@@ -588,11 +604,9 @@ impl FrostSignatureAggregator {
                 }
             })?;
 
-            let commitment =
-                frost::round1::SigningCommitments::deserialize(commitment_bytes).map_err(|e| {
-                    FrostSigningError::SerializationError {
-                        reason: format!("Failed to deserialize commitment: {:?}", e),
-                    }
+            let commitment = frost::round1::SigningCommitments::deserialize(commitment_bytes)
+                .map_err(|e| FrostSigningError::SerializationError {
+                    reason: format!("Failed to deserialize commitment: {:?}", e),
                 })?;
 
             commitments_map.insert(id, commitment);
@@ -656,17 +670,20 @@ impl FrostSignatureAggregator {
             frost::keys::PublicKeyPackage::new(verifying_shares_map, verifying_key);
 
         // Aggregate
-        let signature = frost::aggregate(&signing_package, &shares_map, &pubkey_package)
-            .map_err(|e| FrostSigningError::AggregationFailed {
-                reason: format!("{:?}", e),
+        let signature =
+            frost::aggregate(&signing_package, &shares_map, &pubkey_package).map_err(|e| {
+                FrostSigningError::AggregationFailed {
+                    reason: format!("{:?}", e),
+                }
             })?;
 
         // Serialize signature
-        let signature_bytes = signature.serialize().map_err(|e| {
-            FrostSigningError::SerializationError {
-                reason: format!("Failed to serialize signature: {:?}", e),
-            }
-        })?;
+        let signature_bytes =
+            signature
+                .serialize()
+                .map_err(|e| FrostSigningError::SerializationError {
+                    reason: format!("Failed to serialize signature: {:?}", e),
+                })?;
 
         let mut sig_array = [0u8; 64];
         sig_array.copy_from_slice(&signature_bytes);
@@ -754,27 +771,24 @@ pub fn generate_committee_keys(
     // Build verifying shares map
     let mut all_verifying_shares: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
     for (id, _) in &shares {
-        let participant_index = id
-            .serialize()
-            .first()
-            .copied()
-            .ok_or_else(|| FrostSigningError::SerializationError {
-                reason: "Empty identifier".to_string(),
-            })? as u16;
-
-        let verifying_share =
-            pubkey_package
-                .verifying_shares()
-                .get(id)
-                .ok_or_else(|| FrostSigningError::KeyGenerationFailed {
-                    reason: "Missing verifying share".to_string(),
-                })?;
-
-        let serialized = verifying_share.serialize().map_err(|e| {
+        let participant_index = id.serialize().first().copied().ok_or_else(|| {
             FrostSigningError::SerializationError {
-                reason: format!("Failed to serialize verifying share: {:?}", e),
+                reason: "Empty identifier".to_string(),
+            }
+        })? as u16;
+
+        let verifying_share = pubkey_package.verifying_shares().get(id).ok_or_else(|| {
+            FrostSigningError::KeyGenerationFailed {
+                reason: "Missing verifying share".to_string(),
             }
         })?;
+
+        let serialized =
+            verifying_share
+                .serialize()
+                .map_err(|e| FrostSigningError::SerializationError {
+                    reason: format!("Failed to serialize verifying share: {:?}", e),
+                })?;
 
         all_verifying_shares.insert(participant_index, serialized);
     }
@@ -783,13 +797,11 @@ pub fn generate_committee_keys(
     let mut key_shares = Vec::with_capacity(committee_size);
 
     for (idx, (frost_id, secret_share)) in shares.into_iter().enumerate() {
-        let participant_index = frost_id
-            .serialize()
-            .first()
-            .copied()
-            .ok_or_else(|| FrostSigningError::SerializationError {
+        let participant_index = frost_id.serialize().first().copied().ok_or_else(|| {
+            FrostSigningError::SerializationError {
                 reason: "Empty identifier".to_string(),
-            })? as u16;
+            }
+        })? as u16;
 
         // Convert to key package to get signing share
         let key_package = frost::keys::KeyPackage::try_from(secret_share).map_err(|e| {
@@ -971,8 +983,11 @@ mod tests {
 
         // Aggregate
         let verifying_shares = key_shares[0].all_verifying_shares.clone();
-        let aggregator =
-            FrostSignatureAggregator::new(CommitteeFrostConfig::for_direct(), verifying_shares, group_pk);
+        let aggregator = FrostSignatureAggregator::new(
+            CommitteeFrostConfig::for_direct(),
+            verifying_shares,
+            group_pk,
+        );
 
         let aggregated = aggregator
             .aggregate(&message, &commitments, &signature_shares, &session_id)
@@ -997,12 +1012,16 @@ mod tests {
         let (key_shares, group_pk) = generate_committee_keys(&relay_ids, 4).unwrap();
 
         let verifying_shares = key_shares[0].all_verifying_shares.clone();
-        let aggregator =
-            FrostSignatureAggregator::new(CommitteeFrostConfig::for_direct(), verifying_shares, group_pk);
+        let aggregator = FrostSignatureAggregator::new(
+            CommitteeFrostConfig::for_direct(),
+            verifying_shares,
+            group_pk,
+        );
 
         // Only 3 shares (below threshold of 4)
         let commitments: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
-        let signature_shares: BTreeMap<u16, Vec<u8>> = (1..=3).map(|i| (i as u16, vec![0u8; 32])).collect();
+        let signature_shares: BTreeMap<u16, Vec<u8>> =
+            (1..=3).map(|i| (i as u16, vec![0u8; 32])).collect();
 
         let result = aggregator.aggregate(b"test", &commitments, &signature_shares, "session");
 

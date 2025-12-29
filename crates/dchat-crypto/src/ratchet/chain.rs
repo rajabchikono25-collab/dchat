@@ -162,10 +162,13 @@ impl MessageKey {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         cipher
-            .encrypt(nonce, Payload {
-                msg: plaintext,
-                aad: associated_data,
-            })
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: plaintext,
+                    aad: associated_data,
+                },
+            )
             .map_err(|e| Error::crypto(format!("Message encryption failed: {}", e)))
     }
 
@@ -181,10 +184,13 @@ impl MessageKey {
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         cipher
-            .decrypt(nonce, Payload {
-                msg: ciphertext,
-                aad: associated_data,
-            })
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: associated_data,
+                },
+            )
             .map_err(|e| Error::crypto(format!("Message decryption failed: {}", e)))
     }
 }
