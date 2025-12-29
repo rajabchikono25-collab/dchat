@@ -11,6 +11,7 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 ### Key Findings
 
 **✅ Fully Implemented (Production-Ready or Near-Ready)**:
+
 - Core types, configuration, and error handling (dchat-core)
 - Noise Protocol encryption with key rotation (dchat-crypto)
 - Ed25519 signatures and BLAKE3 hashing (dchat-crypto)
@@ -27,6 +28,7 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 - 14 comprehensive benchmarks (benches/)
 
 **✅ Recently Completed (Production-Ready)**:
+
 - NAT traversal (STUN/TURN/UPnP fully implemented with tests in `nat_traversal.rs`, `nat/turn.rs`)
 - Onion routing (X25519 + ChaCha20Poly1305 AEAD encryption with Sphinx-like packets in `onion_routing.rs`)
 - On-chain staking (integrated into `src/main.rs` with lifecycle, slashing, tests)
@@ -37,6 +39,7 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 - Gossip signatures (Ed25519 signing and verification in `dchat-network::gossip::protocol`)
 
 **⚠️ Partially Implemented (Requires Production Work)**:
+
 - Post-quantum cryptography (module structure exists, but hybrid schemes incomplete)
 - Guardian account recovery (ZK proof verification implemented, nullifier persistence on-chain pending)
 - Multi-device sync (conflict resolution outlined, not wired up)
@@ -52,6 +55,7 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 - VR platform integration (OpenXR/visionOS have simulation shims, need real API wiring)
 
 **❌ Placeholder/Stub Code (Must Replace Before Mainnet)**:
+
 - AWS KMS Ed25519 support (returns `UnsupportedKeyType` in `kms.rs`; ECDSA keys work)
 - Biometric authentication (simplified placeholder)
 - TypeScript SDK cryptography (Ed25519 sign/verify TODOs)
@@ -61,6 +65,7 @@ This document represents a **complete forensic analysis** of the dchat codebase,
 - Deployment manual steps (many "Manual step:" comments in `deploy-storage.rs`, `deploy-monitoring.rs`)
 
 ### Codebase Statistics
+
 - **Total Rust Files**: 225 in `/crates`, 232 in `/src`
 - **Workspace Crates**: 22 modular libraries
 - **Main Entry Point**: 6,976 lines (src/main.rs) - production CLI with security validations
@@ -101,18 +106,20 @@ dchat implements a **dual-chain decentralized chat protocol** with end-to-end en
 ### Runtime Composition
 
 A typical node process flow:
+
 ```
-dchat-core (types/config) 
-  → dchat-crypto (keys/sessions) 
-  → dchat-network (swarm/transport) 
-  → dchat-messaging (queues/ordering) 
-  → dchat-chain/dchat-blockchain (on-chain ordering, slashing, rewards) 
+dchat-core (types/config)
+  → dchat-crypto (keys/sessions)
+  → dchat-network (swarm/transport)
+  → dchat-messaging (queues/ordering)
+  → dchat-chain/dchat-blockchain (on-chain ordering, slashing, rewards)
   → dchat-storage (durable history and content)
 ```
 
 ### Main Entry Point Analysis (src/main.rs)
 
 The 6,976-line main.rs implements a **production-grade CLI** with:
+
 - **7 node types**: relay, user, validator, testnet, keygen, account, database, health, bot, marketplace, accessibility, chaos, governance, token, update, deploy
 - **Security validations**: Mainnet environment checks, minimum stake requirements, rate limits, connection thresholds
 - **Peer management**: PeerRegistry with connection quality tracking (RTT, packet loss, jitter), PeerHandshake protocol, geographic peer selection
@@ -127,6 +134,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Production-Ready**
 
 **Implemented**:
+
 - `config::{Config, constants}` – Central configuration with protocol constants:
   - `PROTOCOL_VERSION = 1` (semantic versioning)
   - `MAX_MESSAGE_SIZE = 1048576` (1MB), `MAX_USERNAME_LENGTH = 32`, `MAX_CHANNEL_NAME_LENGTH = 64`
@@ -144,6 +152,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Production Gaps**: None identified. Core types and error handling are comprehensive.
 
 **Hardening Recommendations**:
+
 1. **Config validation**: Add `Config::validate()` method to enforce invariants (e.g., `max_message_size >= 1024`, `db_pool_size > 0`)
 2. **Feature flags**: Introduce capability negotiation system tied to `PROTOCOL_VERSION` for backward compatibility during upgrades
 3. **Environment profiles**: Add `dev/staging/prod` config presets with different defaults (e.g., stricter rate limits in prod)
@@ -156,6 +165,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Mostly Complete** (⚠️ Post-Quantum Incomplete)
 
 **Fully Implemented**:
+
 1. **Noise Protocol Framework** (`crypto::handshake::noise`):
    - XX handshake pattern with Curve25519 DH
    - Session state management (`NoiseSession`) with send/receive encryption
@@ -192,12 +202,14 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Base64 encoding/decoding helpers
 
 **Partially Implemented**:
+
 - **Post-Quantum Cryptography**: Module structure exists (`post_quantum/mod.rs`) but file not found in actual codebase
   - **Evidence**: `dchat-blockchain/src/proof_of_transit.rs` line 566 references `dilithium_keys: vec![vec![0u8; 1952], vec![0u8; 1952]]` (placeholder Dilithium3 public keys)
   - **Crates referenced**: `pqcrypto-mlkem`, `pqcrypto-falcon` in dependencies
   - **Status**: Types defined but hybrid Kyber768+Curve25519 handshake not implemented
 
 **Production Gaps**:
+
 1. **AWS KMS Ed25519 Support**: KMS integration exists (`dchat-crypto::kms`) but Ed25519 signing returns `UnsupportedKeyType` because AWS KMS does not natively support Ed25519
    - **Current State**: ECDSA signing works; Ed25519 returns error
    - **Impact**: Validators using Ed25519 keys must store keys locally with 0600 permissions (Unix) or use workarounds
@@ -213,8 +225,9 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Need config separation for "low-power" vs "server" profiles
 
 **Hardening Recommendations**:
+
 1. **HSM/KMS Priority**: Implement AWS KMS (or Azure Key Vault/GCP KMS) for validator keys before mainnet
-2. **PQ Roadmap**: 
+2. **PQ Roadmap**:
    - Phase 1 (Q1 2025): Implement Kyber768 KEM (via `pqcrypto-kyber`)
    - Phase 2 (Q2 2025): Hybrid Curve25519+Kyber768 handshake
    - Phase 3 (Q3 2025): Dilithium3 signatures for validators
@@ -230,6 +243,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Partially Complete** (MPC and Enclave Integration Incomplete)
 
 **Fully Implemented**:
+
 1. **Hierarchical Key Derivation** (`derivation`):
    - BIP-32/44 style path derivation: `m/purpose'/coin_type'/account'/change/address_index`
    - Multi-device key generation from master seed
@@ -251,6 +265,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Capability advertisement
 
 **Partially Implemented**:
+
 1. **Guardian Recovery** (`guardian`, `guardian_recovery`):
    - **Complete**: Guardian struct, M-of-N threshold types
    - **Complete**: Timelock recovery initiation
@@ -266,22 +281,27 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 
 3. **Biometric Authentication** (`biometric`):
    - **Status**: Simplified placeholder (PRODUCTION_IMPROVEMENTS.md line 117)
+
    ```rust
    // Issue: Biometric authentication is marked as simplified placeholder
    ```
+
    - **Missing**: Platform-specific biometric API integrations (Face ID, Touch ID, Windows Hello)
 
 4. **Secure Enclave** (`enclave`):
    - **Status**: Placeholder attestation (PRODUCTION_IMPROVEMENTS.md line 77-83)
+
    ```rust
    certificate_chain: vec![vec![0u8; 32]], // Placeholder
    signature: vec![0u8; 64], // Placeholder
    ```
+
    - **Missing**: TPM/TEE integration
    - **Missing**: iOS Secure Enclave, Android Keystore, Windows TPM APIs
 
 5. **MPC Threshold Signing** (`mpc`):
    - **Status**: XOR placeholder (PRODUCTION_IMPROVEMENTS.md line 59)
+
    ```rust
    // Issue: MPC uses XOR instead of real threshold cryptography
    let aggregated = shares.iter().fold(vec![0u8; 32], |mut acc, share| {
@@ -289,9 +309,11 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
        acc
    });
    ```
+
    - **Missing**: Real TSS (Threshold Signature Scheme) like FROST or GG20
 
 **Production Gaps**:
+
 1. **MPC Implementation**: Replace XOR with proper threshold cryptography
    - **Recommended**: Implement FROST (Flexible Round-Optimized Schnorr Threshold) for Ed25519
    - **Alternative**: Use GG20 for ECDSA threshold signatures
@@ -309,6 +331,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Implement ZK proofs for guardian anonymity (via `dchat-privacy::zk_proofs`)
 
 **Hardening Recommendations**:
+
 1. **MPC Priority**: Engage with MPC library maintainers (e.g., ZenGo's `multi-party-ecdsa`, ING's `threshold-crypto`)
 2. **Device Attestation**: Implement full attestation verification chain:
    - Apple: Verify App Attest service certificates
@@ -325,6 +348,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Core Complete**, ⚠️ **NAT/Onion Routing Incomplete**
 
 **Fully Implemented**:
+
 1. **libp2p Transport Stack** (`transport`):
    - TCP + WebSocket transports
    - Noise encryption (via Curve25519)
@@ -381,6 +405,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Complete**: Basic protection implemented
 
 **Partially Implemented**:
+
 1. **NAT Traversal** (`nat`, `nat_traversal`):
    - **Message Formats Defined**: STUN binding requests, TURN allocate/refresh, UPnP SSDP
    - **Placeholder Implementations**:
@@ -413,6 +438,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Status**: Basic Sphinx packet framing exists, but encryption is XOR placeholder
 
 **Production Gaps**:
+
 1. **NAT Traversal**: Must implement real networking
    - **STUN**: UDP client for binding requests to Google/Twilio STUN servers
    - **TURN**: TCP/UDP relay through authenticated TURN servers (consider Coturn deployment)
@@ -433,6 +459,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Fallback to hardcoded IPs if DNS compromised
 
 **Hardening Recommendations**:
+
 1. **NAT Priority**: Implement NAT traversal as Phase 1 task (blocks home users)
 2. **Onion Routing**: Engage with Tor Project for Sphinx packet review
 3. **DDoS Protection**:
@@ -451,6 +478,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Production-Ready**
 
 **Fully Implemented**:
+
 1. **Message Types** (`types`):
    - `Message`, `MessageBuilder`, `MessageStatus` (Pending/Delivered/Read/Failed)
    - `MessageType` enum: Text/Media/File/Poll/Sticker/Voice/Video/Location/Contact
@@ -505,6 +533,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Fuzz Testing**: `fuzz/message_parsing.rs` validates message deserialization robustness.
 
 **Hardening Recommendations**:
+
 1. **Idempotency**: Add unique request IDs to prevent duplicate message submission
 2. **QoS Classes**: Extend rate limiting with priority classes (Critical/High/Normal/Low/Bulk)
 3. **Backpressure**: Integrate with `dchat-network` gossip to signal congestion
@@ -518,6 +547,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Core Types Complete**, **Integration Incomplete**
 
 **Fully Implemented (`dchat-chain`)**:
+
 1. **Transaction Types** (`transactions`):
    - User registration, channel create/join/leave, direct messages, delivery proofs
    - Transaction receipts with status (Pending/Confirmed/Failed)
@@ -557,6 +587,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Complete**: HTTP adapter working
 
 **Fully Implemented (`dchat-blockchain`)**:
+
 1. **Blockchain Clients** (`client`, `chat_chain`, `currency_chain`):
    - High-level client APIs for both chains
    - RPC wiring with retry logic
@@ -589,8 +620,10 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Used by SDKs and bridge
 
 **Partially Implemented**:
+
 1. **On-Chain Staking**:
    - **Status**: Types defined, submission marked TODO (src/main.rs:4748-4783)
+
    ```rust
    // TODO PRODUCTION: Implement on-chain staking
    // Once dchat-blockchain::staking module is implemented, uncomment:
@@ -600,6 +633,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    */
    warn!("On-chain staking not yet implemented");
    ```
+
    - **Missing**: `dchat-blockchain::staking` module with `submit_validator_stake()`
    - **Missing**: Unstaking with unbonding period
 
@@ -607,6 +641,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **BFT Configuration**: Thresholds computed (src/main.rs:4650-4661)
    - **Block Production**: Types defined (src/main.rs:4900-4950)
    - **Critical Gap**: Validator broadcast marked TODO (src/main.rs:4945)
+
    ```rust
    // TODO: Implement broadcast_to_validators
    match Ok::<(), Error>(()) { // Placeholder
@@ -614,23 +649,29 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
        Err(e) => error!("❌ Failed to broadcast block: {}", e),
    }
    ```
+
    - **Missing**: Actual block propagation to validator network
 
 3. **State Validation**:
    - **Status**: Placeholder (PRODUCTION_HARDENING.md line 122)
+
    ```rust
    // TODO: Implement actual state validation logic
    ```
+
    - **Missing**: Merkle proof verification during block validation
 
 4. **ZKP Integration**:
    - **Status**: Placeholder (PRODUCTION_HARDENING.md line 130)
+
    ```rust
    // TODO: Implement actual ZKP module
    ```
+
    - **Missing**: Integration with `dchat-privacy::zk_proofs` for private transactions
 
 **Production Gaps**:
+
 1. **Staking Module**: Implement complete staking system
    - Create `dchat-blockchain::staking` module
    - Implement `submit_validator_stake()` and `submit_validator_unstake()`
@@ -652,14 +693,17 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Timeline**: Critical for security
 
 4. **Database Backup**: Complete implementation (src/main.rs:5075)
+
    ```rust
    // TODO: Implement actual database backup functionality
    ```
+
    - Add WAL archiving to S3/GCS
    - Implement point-in-time recovery
    - **Timeline**: Required for production deployments
 
 **Hardening Recommendations**:
+
 1. **Chain RPC**: Add strict timeouts, retry with exponential backoff, circuit breaker pattern
 2. **Replay Protection**: Enforce chain-id and nonce checks on all transactions
 3. **Finality Tracking**: Add explicit finality confirmation (wait for 2f+1 signatures)
@@ -674,6 +718,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Basic Proofs Implemented**, **Production ZK Incomplete**
 
 **Implemented**:
+
 1. **ZK Proofs** (`zk_proofs`):
    - **Schnorr-style proofs** for contact relationships and reputation thresholds
    - `ZkProver` and `ZkVerifier` with Fiat-Shamir heuristic
@@ -697,6 +742,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Status**: Basic primitives exist
 
 **Production Gaps**:
+
 1. **ZK Backend**: Replace Schnorr with production-grade zkSNARKs
    - **Current**: Custom Schnorr proofs (educational, not audited)
    - **Recommended**: Implement Groth16 or Plonk via:
@@ -726,6 +772,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Traffic analysis resistance (cover traffic not generated)
 
 **Hardening Recommendations**:
+
 1. **ZK Priority**: Engage with zkSNARK experts for circuit design
 2. **Audit**: Third-party cryptography audit before mainnet (especially ZK circuits)
 3. **Performance**: Benchmark proving/verification times (target <100ms prove, <10ms verify)
@@ -739,6 +786,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Core Complete**, ⚠️ **Production Testing Needed**
 
 **Implemented**:
+
 1. **Finality Tracking** (`finality`):
    - `FinalityProof` with block height, hash, timestamp
    - `FinalityTracker` monitoring both chains
@@ -773,6 +821,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Coverage**: Byzantine scenarios, network partitions
 
 **Production Gaps**:
+
 1. **Bridge Relayers**: Implement off-chain relayer network
    - Relayers monitor both chains and submit proofs
    - Economic incentives for timely proof submission
@@ -790,6 +839,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - **Timeline**: Post-launch optimization
 
 **Hardening Recommendations**:
+
 1. **Security Audit**: Engage with bridge security experts (e.g., Quantstamp, Trail of Bits)
 2. **Economic Analysis**: Model relayer incentives and attack costs
 3. **Monitoring**: Add real-time alerts for:
@@ -798,13 +848,14 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Bridge balance discrepancies
 4. **Circuit Breaker**: Implement pause mechanism if anomalies detected
 5. **Insurance Fund**: Dedicate portion of `dchat-chain::insurance_fund` to bridge failures
-  - `transactions` defines rich transaction types (user registration, channel create/join, direct messages, delivery proofs) and receipts/status enums used by higher layers.
-  - `sharding::{ShardManager, ShardConfig, ShardId}` provides channel-based sharding primitives and interfaces for cross-shard operations.
-  - `dispute_resolution` defines claims/challenges/respond flows and slashing configuration types, plus interfaces for `DisputeResolver` and `CurrencyChainClient`.
-  - `chain::{currency_chain, slashing}` submodules implement currency-chain-oriented staking enforcement, evidence processing, penalty calculation, and detector pipelines.
-  - `pruning` introduces Merkle checkpointing (`MerkleCheckpoint`, `MerkleProof`, `NodeType`, `PruningManager`, `PruningPolicy`) for storage/chain pruning.
-  - `insurance_fund` defines types and flows around an insurance pool, claim types, and fund statistics.
-  - `currency_chain_client::HttpCurrencyChainClient` provides an HTTP-based adapter for talking to the currency chain.
+
+- `transactions` defines rich transaction types (user registration, channel create/join, direct messages, delivery proofs) and receipts/status enums used by higher layers.
+- `sharding::{ShardManager, ShardConfig, ShardId}` provides channel-based sharding primitives and interfaces for cross-shard operations.
+- `dispute_resolution` defines claims/challenges/respond flows and slashing configuration types, plus interfaces for `DisputeResolver` and `CurrencyChainClient`.
+- `chain::{currency_chain, slashing}` submodules implement currency-chain-oriented staking enforcement, evidence processing, penalty calculation, and detector pipelines.
+- `pruning` introduces Merkle checkpointing (`MerkleCheckpoint`, `MerkleProof`, `NodeType`, `PruningManager`, `PruningPolicy`) for storage/chain pruning.
+- `insurance_fund` defines types and flows around an insurance pool, claim types, and fund statistics.
+- `currency_chain_client::HttpCurrencyChainClient` provides an HTTP-based adapter for talking to the currency chain.
 - **Partially implemented / test-only:**
   - `tests/slashing_integration_test.rs` demonstrates end-to-end slashing logic but some edge conditions are marked for mainnet-only or TODO.
   - Some dispute/fork-recovery paths are defined as traits but not yet integrated into production node flows.
@@ -814,6 +865,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Add **formal state transition tests** for slashing & insurance payout flows using property-based testing.
 
 **`crates/dchat-blockchain`**
+
 - **Implemented:**
   - `client.rs` exposes a high-level client for chat & currency chains, including RPC wiring (`rpc.rs`).
   - `chat_chain.rs`, `currency_chain.rs`, `currency_chain_block_sync.rs` and `block_hierarchy.rs` define data structures and helpers for block synchronization and hierarchy reasoning.
@@ -830,6 +882,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.4 Networking
 
 **`crates/dchat-network`**
+
 - **Implemented:**
   - `transport::build_transport` builds a libp2p transport stack with Noise encryption and multiplexing.
   - `swarm::{NetworkManager, NetworkEvent, NetworkConfig}` orchestrates the libp2p swarm lifecycle.
@@ -855,6 +908,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.5 Messaging
 
 **`crates/dchat-messaging`**
+
 - **Implemented:**
   - `types` defines core `Message`, `MessageBuilder`, `MessageStatus`, and `MessageType` structures.
   - `ordering` encapsulates `MessageOrder` and `SequenceNumber` used to reconcile local vs. on-chain order.
@@ -876,6 +930,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.6 Identity, Recovery, and UX
 
 **`crates/dchat-identity`**
+
 - **Implemented:**
   - `identity`, `profile`, `peer_registry` – identity records, human-facing profiles, and known peer registries.
   - `derivation` – hierarchical key derivation for user/device keys.
@@ -895,11 +950,13 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Add **device attestation** integration in `device` and `enclave` modules, especially for mobile/TEE targets.
 
 **`crates/dchat-accessibility`**
+
 - **Implemented:** basic TTS bindings and core accessibility abstractions.
 - **Hardening suggestions:**
   - Integrate with UI frontends and provide config-driven toggles (e.g., high-contrast, screen reader hints) once UI crates are introduced.
 
 **`crates/dchat-vr`**
+
 - **Implemented:**
   - `avatar`, `environment`, `gesture`, `spatial_audio`, `vr_session` – early VR primitives.
 - **Status:** mostly experimental; not heavily integrated into the main runtime.
@@ -907,6 +964,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.7 Governance, Moderation, Marketplace, Bots
 
 **`crates/dchat-governance`**
+
 - **Implemented:**
   - `voting` – structs and logic for representing votes and proposals.
   - `protocol_dao` – high-level DAO governance primitives.
@@ -918,10 +976,12 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Many paths are defined as traits awaiting concrete chain or off-chain executors.
 
 **`crates/dchat-marketplace`**
+
 - **Implemented:** escrow logic (`escrow`), creator-centric economic flows (`creator_economy`), and NFT-like advanced items (`nft_advanced`).
 - **Status:** not deeply wired into messaging/channel access yet, but the hooks are present.
 
 **`crates/dchat-bots`**
+
 - **Implemented:**
   - Bot management (`bot_manager`, `bot_api`), command parsing (`commands`), inline interactions (`inline`), webhook handling (`webhook`), external `music_api`, storage helpers, and simple search.
   - Permissions and token security modules (`permissions`, `token_security`).
@@ -930,6 +990,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.8 Storage & Data
 
 **`crates/dchat-storage`**
+
 - **Implemented:**
   - `database` and `schema` – SQL schema & access layer, including views and indices.
   - Migrations under `migrations/` and `migrations.rs` – multiple timestamped migrations including content store, storage bonds, micropayment streams, TTL/tiering.
@@ -946,11 +1007,13 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Support **encrypted client-side backups** with explicit key management guidance.
 
 **`crates/dchat-data`**
+
 - **Implemented:** core data models and small utilities; primarily acts as a shared model crate.
 
 ### 2.9 Deployment, Validators & Observability
 
 **`crates/dchat-deployment`**
+
 - **Implemented:**
   - `multi_region_config`, `mainnet_config` – environment configurations.
   - `orchestrator` – orchestrates deployment plans and resource layout.
@@ -963,12 +1026,14 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Add **rollback plans** and snapshot-based recovery at orchestrator level.
 
 **`crates/dchat-validator`**
+
 - **Implemented:**
   - `lib.rs`, `health.rs`, `multi_region.rs`, and `validator::mod.rs`/`validator::thresholds.rs` – validation logic, health checks, and multi-region threshold policies.
 - **Hardening suggestions:**
   - Wire validator health metadata to `dchat-observability` for consolidated dashboards.
 
 **`crates/dchat-observability`**
+
 - **Implemented:**
   - `observability::{metrics, region_metrics, mod}` – metric definitions for core and region-specific health.
   - `distributed_tracing` – tracing setup and integration points.
@@ -976,6 +1041,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 - **Status:** instrumentation hooks exist; coverage depends on adoption in other crates.
 
 **`crates/dchat-testing`**
+
 - **Implemented:**
   - Shared testing utilities (`lib.rs`).
   - `chaos.rs` – chaos-inducing helpers for simulating network partitions, latency, and node failures; used in `tests/chaos/chaos_tests.rs`.
@@ -983,6 +1049,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.10 Privacy & Distribution
 
 **`crates/dchat-privacy`**
+
 - **Implemented:**
   - `zk_proofs` – stubs and some concrete types for zero-knowledge interactions.
   - `blind_tokens` – blind token primitives.
@@ -990,6 +1057,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 - **Status:** early-stage; many comments mark production-grade ZK logic as TODO.
 
 **`crates/dchat-distribution`**
+
 - **Implemented:**
   - `package`, `gossip`, `lib` – application distribution via gossip and package descriptor types.
 - **Status:** scaffolding that complements deployment and upgrade flows.
@@ -997,11 +1065,13 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.11 Bridge, SDKs, and Top-Level
 
 **`crates/dchat-bridge`**
+
 - **Implemented:**
   - `finality`, `multisig`, `slashing` – cross-chain bridge primitives with a focus on finality tracking, multisignature validation, and slashing around misbehavior at the bridge layer.
   - `tests/finality_edge_cases.rs` – tests covering complex finality conditions.
 
 **`crates/dchat-sdk-rust`** and **`sdk/{typescript, dart}`**
+
 - **Implemented:**
   - Client structs for chat & currency chains, cross-chain operations, config management, error handling, and relay communication (Rust & TS & Dart flavors).
   - Messaging utilities (Dart SDK) including proof-of-delivery and DHT routing hooks.
@@ -1009,6 +1079,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Provide **versioned APIs** and capability negotiation with nodes; avoid breaking changes for external integrators.
 
 **Top-level `src/`**
+
 - **Implemented:**
   - `main.rs` wires together configuration, networking, messaging, chain clients, and storage to run a node.
   - `user_management.rs` provides higher-level user onboarding and management built on identity + storage + messaging.
@@ -1017,6 +1088,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 ### 2.12 Fuzz Targets
 
 **`fuzz/`**
+
 - **Implemented:**
   - `noise_handshake.rs`, `network_packet.rs`, `message_parsing.rs`, `keypair_generation.rs`, `identity_derivation.rs` – fuzz harnesses for critical cryptographic and protocol components.
 - **Status:** strong foundation; can be extended to cover chain state transitions and bridge logic.
@@ -1113,6 +1185,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ✅ **Production-Ready**
 
 **Implemented**:
+
 - Complete client SDK with:
   - `DchatClient` for user interactions
   - `RelayChatClient` for relay node operations
@@ -1121,6 +1194,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
   - Error handling with SDK-specific types
 
 **Examples**:
+
 - `examples/relay_node.rs`: Full relay node implementation
 - `examples/basic_chat.rs`: User client with message sending/receiving
 
@@ -1133,17 +1207,21 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Stubs Require Implementation**
 
 **Implemented**:
+
 - Basic project structure (package.json, tsconfig)
 - Type definitions for messages and channels
 
 **Critical Gaps** (PRODUCTION_IMPROVEMENTS.md lines 387-437):
+
 1. **Key Generation** (line 392):
+
    ```typescript
    // Generate random 32-byte keys (placeholder)
    // TODO: Implement proper Ed25519 key generation
    ```
 
 2. **Signing/Verification** (lines 413-416):
+
    ```typescript
    sign(message: Uint8Array): Uint8Array {
      // TODO: Implement proper Ed25519 signing
@@ -1163,6 +1241,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    ```
 
 **Remediation**:
+
 - Use `@noble/ed25519` or `tweetnacl` for cryptography
 - Implement WebSocket client for relay connection
 - Add libp2p-js for P2P mode
@@ -1175,7 +1254,9 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Placeholder Implementations**
 
 **Critical Gaps** (PRODUCTION_IMPROVEMENTS.md lines 474-493):
+
 1. **User Profile** (line 479-480):
+
    ```dart
    Future<Map<String, dynamic>> getUserProfile(String userId) async {
      // For now, this is a placeholder
@@ -1187,6 +1268,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
    - Entire module marked as placeholder
 
 **Remediation**:
+
 - Implement Flutter plugin for native crypto (via platform channels)
 - Use `pointycastle` for Ed25519 in pure Dart
 - Add WebSocket support via `web_socket_channel`
@@ -1199,6 +1281,7 @@ The 6,976-line main.rs implements a **production-grade CLI** with:
 **Status**: ⚠️ **Placeholder Implementations**
 
 **Critical Gaps** (PRODUCTION_IMPROVEMENTS.md lines 451-461):
+
 ```python
 def generate_keypair(self):
     # TODO: Use proper Ed25519 key generation
@@ -1214,6 +1297,7 @@ def verify(self, message: bytes, signature: bytes) -> bool:
 ```
 
 **Remediation**:
+
 - Use `cryptography` library (Ed25519 via libsodium)
 - Implement gRPC or WebSocket client for relay connection
 - **Timeline**: Required for Python applications and bots
@@ -1227,6 +1311,7 @@ def verify(self, message: bytes, signature: bytes) -> bool:
 **Status**: ✅ **Infrastructure Types Complete**, ⚠️ **Credentials Placeholder**
 
 **Implemented**:
+
 - `MainnetServerConfig`: Node roles, TLS, monitoring
 - `MultiRegionConfig`: Geographic regions, consensus thresholds
 - `RelayNetworkConfig`: Incentive tiers, reputation scoring
@@ -1235,6 +1320,7 @@ def verify(self, message: bytes, signature: bytes) -> bool:
 - `HealthMonitor`: Component health tracking, auto-scaling, DNS failover
 
 **Critical Gap** (PRODUCTION_IMPROVEMENTS.md lines 620-622):
+
 ```rust
 // S3 credentials are placeholders
 backup_config.s3_access_key = "YOUR_S3_ACCESS_KEY".to_string();
@@ -1242,11 +1328,13 @@ backup_config.s3_secret_key = "YOUR_S3_SECRET_KEY".to_string();
 ```
 
 **Alert Channel Placeholders** (dchat-deployment/src/health_monitor.rs lines 489-526):
+
 - Slack webhooks: `https://hooks.slack.com/services/XXX/YYY/ZZZ`
 - PagerDuty keys: Placeholder detection with warnings
 - Fallback to placeholder channels in development mode
 
 **Remediation**:
+
 - Use environment variables for credentials (12-factor app)
 - Integrate with AWS Secrets Manager / Azure Key Vault
 - Validate alert channels at startup (reject placeholders in prod)
@@ -1259,6 +1347,7 @@ backup_config.s3_secret_key = "YOUR_S3_SECRET_KEY".to_string();
 **Status**: ✅ **SQLite Complete**, ⚠️ **Distributed Backends Stubbed**
 
 **Implemented**:
+
 - SQLite with comprehensive schema:
   - `messages`, `channels`, `users`, `devices`
   - `storage_bonds`, `micropayment_streams`
@@ -1269,6 +1358,7 @@ backup_config.s3_secret_key = "YOUR_S3_SECRET_KEY".to_string();
 - Compression utilities
 
 **Critical Gaps** (PRODUCTION_IMPROVEMENTS.md lines 553-563):
+
 ```rust
 // TODO: Fix API compatibility issues before enabling
 // Stub types for compilation
@@ -1281,6 +1371,7 @@ pub struct TikvConfig { /* ... */ }
 - **Impact**: Multi-region deployments will use only SQLite (not scalable)
 
 **Remediation**:
+
 - Complete CockroachDB integration (use `tokio-postgres`)
 - Add Redis client for caching (use `redis-rs`)
 - Implement MinIO S3-compatible client (use `rust-s3`)
@@ -1294,22 +1385,26 @@ pub struct TikvConfig { /* ... */ }
 **Status**: ✅ **Metrics/Tracing Primitives Complete**
 
 **Implemented**:
+
 - Prometheus metrics (`metrics`, `region_metrics`)
 - Distributed tracing setup (`distributed_tracing`)
 - Alerting primitives (`alerting`)
 - Health check endpoints (used in src/main.rs)
 
 **Integration Coverage**:
+
 - src/main.rs: PeerMetrics, health/metrics servers
 - Relay nodes: Uptime, message throughput, connection quality
 - Validators: Block production, consensus participation
 
 **Production Gaps**:
+
 - **Grafana Dashboards**: Not included in repo (need JSON exports)
 - **Alert Rules**: Prometheus alerting rules not defined
 - **Tracing Backend**: OpenTelemetry collector config not provided
 
 **Remediation**:
+
 - Create Grafana dashboard templates (network health, relay performance, validator status)
 - Define Prometheus alert rules (high latency, low peer count, consensus failures)
 - Add OpenTelemetry collector deployment config
@@ -1324,6 +1419,7 @@ pub struct TikvConfig { /* ... */ }
 **Status**: ✅ **Security-Critical Components Covered**
 
 **Targets Implemented**:
+
 1. `noise_handshake.rs`: Noise protocol handshake fuzzing
 2. `network_packet.rs`: Network packet deserialization
 3. `message_parsing.rs`: Message payload parsing
@@ -1333,6 +1429,7 @@ pub struct TikvConfig { /* ... */ }
 **Coverage**: Crypto, identity, network protocol parsing
 
 **Recommendations**:
+
 - Add fuzz targets for:
   - Transaction encoding/decoding (`dchat-chain::transactions`)
   - Bridge finality proofs (`dchat-bridge::finality`)
@@ -1347,6 +1444,7 @@ pub struct TikvConfig { /* ... */ }
 **Status**: ✅ **Comprehensive Performance Testing**
 
 **Suites Implemented** (14 benchmarks):
+
 - `crypto_performance.rs`: Key generation, signing, encryption
 - `post_quantum_crypto.rs`: PQ algorithm performance
 - `network_latency.rs`: P2P message round-trip times
@@ -1365,6 +1463,7 @@ pub struct TikvConfig { /* ... */ }
 **Usage**: Run with `cargo bench`
 
 **Recommendations**:
+
 - Add CI integration for regression detection
 - Set performance SLAs (e.g., message latency <100ms P99)
 - Benchmark against target hardware (validator servers, mobile devices)
@@ -1376,6 +1475,7 @@ pub struct TikvConfig { /* ... */ }
 **Status**: ✅ **Core Chaos Primitives Implemented**
 
 **Capabilities**:
+
 - `NetworkSimulator`: Latency injection, packet loss, bandwidth throttling
 - `ChaosOrchestrator`: Experiment tracking, metrics collection
 - `FaultInjection`: Node failures, resource exhaustion
@@ -1385,6 +1485,7 @@ pub struct TikvConfig { /* ... */ }
 **Tests**: `tests/chaos/chaos_tests.rs` with 15 unit tests
 
 **Recommendations**:
+
 - Add long-running chaos tests (24-hour network partitions)
 - Integrate with CI for periodic chaos runs
 - Test disaster recovery scenarios (full data center loss)
@@ -1395,33 +1496,33 @@ pub struct TikvConfig { /* ... */ }
 
 ### 6.1 Must Fix Before Mainnet Launch (P0)
 
-| Component | Gap | Remediation | Timeline |
-|-----------|-----|-------------|----------|
-| **Cryptography** | AWS KMS integration missing | Implement `dchat-crypto::kms` module | Sprint 1 |
-| **Identity** | MPC uses XOR placeholder | Replace with FROST or GG20 TSS | Sprint 2 |
-| **Identity** | Secure enclave placeholder attestation | Implement platform-specific APIs | Sprint 3 |
-| **Network** | NAT traversal not implemented | Complete STUN/TURN/UPnP | Sprint 1-2 |
-| **Network** | Onion routing uses XOR encryption | Replace with ChaCha20-Poly1305 | Sprint 2 |
-| **Blockchain** | On-chain staking TODOs | Implement `dchat-blockchain::staking` | Sprint 1 |
-| **Blockchain** | Validator broadcast placeholder | Complete consensus integration | Sprint 2 |
-| **Blockchain** | State validation TODO | Implement Merkle proof verification | Sprint 2 |
-| **Blockchain** | ZKP integration TODO | Wire `dchat-privacy` into consensus | Sprint 3 |
-| **Privacy** | Schnorr proofs not production-grade | Implement Groth16/Plonk circuits | Sprint 3-4 |
-| **Storage** | Distributed backends stubbed | Complete CockroachDB/TiKV/Redis | Sprint 2 |
-| **Deployment** | S3/Alert credentials placeholders | Use Secrets Manager, validate at startup | Sprint 1 |
-| **SDKs** | TypeScript/Dart/Python stubs | Implement cryptography and networking | Sprint 2-3 |
+| Component        | Gap                                    | Remediation                              | Timeline   |
+| ---------------- | -------------------------------------- | ---------------------------------------- | ---------- |
+| **Cryptography** | AWS KMS integration missing            | Implement `dchat-crypto::kms` module     | Sprint 1   |
+| **Identity**     | MPC uses XOR placeholder               | Replace with FROST or GG20 TSS           | Sprint 2   |
+| **Identity**     | Secure enclave placeholder attestation | Implement platform-specific APIs         | Sprint 3   |
+| **Network**      | NAT traversal not implemented          | Complete STUN/TURN/UPnP                  | Sprint 1-2 |
+| **Network**      | Onion routing uses XOR encryption      | Replace with ChaCha20-Poly1305           | Sprint 2   |
+| **Blockchain**   | On-chain staking TODOs                 | Implement `dchat-blockchain::staking`    | Sprint 1   |
+| **Blockchain**   | Validator broadcast placeholder        | Complete consensus integration           | Sprint 2   |
+| **Blockchain**   | State validation TODO                  | Implement Merkle proof verification      | Sprint 2   |
+| **Blockchain**   | ZKP integration TODO                   | Wire `dchat-privacy` into consensus      | Sprint 3   |
+| **Privacy**      | Schnorr proofs not production-grade    | Implement Groth16/Plonk circuits         | Sprint 3-4 |
+| **Storage**      | Distributed backends stubbed           | Complete CockroachDB/TiKV/Redis          | Sprint 2   |
+| **Deployment**   | S3/Alert credentials placeholders      | Use Secrets Manager, validate at startup | Sprint 1   |
+| **SDKs**         | TypeScript/Dart/Python stubs           | Implement cryptography and networking    | Sprint 2-3 |
 
 ### 6.2 Important for Launch (P1)
 
-| Component | Gap | Remediation | Timeline |
-|-----------|-----|-------------|----------|
-| **Identity** | Guardian recovery incomplete | Complete on-chain integration | Sprint 4 |
-| **Identity** | Multi-device sync conflicts | Implement resolution logic | Sprint 4 |
-| **Blockchain** | Database backup TODO | Add WAL archiving, PITR | Sprint 3 |
-| **Bridge** | Bridge relayer network | Implement off-chain relayers | Sprint 3 |
-| **Bridge** | Light client verification | Add Merkle proof support | Sprint 4 |
-| **Observability** | Grafana dashboards missing | Create JSON exports | Sprint 3 |
-| **Observability** | Prometheus alert rules | Define thresholds and routing | Sprint 3 |
+| Component         | Gap                          | Remediation                   | Timeline |
+| ----------------- | ---------------------------- | ----------------------------- | -------- |
+| **Identity**      | Guardian recovery incomplete | Complete on-chain integration | Sprint 4 |
+| **Identity**      | Multi-device sync conflicts  | Implement resolution logic    | Sprint 4 |
+| **Blockchain**    | Database backup TODO         | Add WAL archiving, PITR       | Sprint 3 |
+| **Bridge**        | Bridge relayer network       | Implement off-chain relayers  | Sprint 3 |
+| **Bridge**        | Light client verification    | Add Merkle proof support      | Sprint 4 |
+| **Observability** | Grafana dashboards missing   | Create JSON exports           | Sprint 3 |
+| **Observability** | Prometheus alert rules       | Define thresholds and routing | Sprint 3 |
 
 ### 6.3 Post-Launch Enhancements (P2)
 
@@ -1438,6 +1539,7 @@ pub struct TikvConfig { /* ... */ }
 ### 7.1 Security Audits
 
 **Required Audits**:
+
 1. **Cryptography Audit** (Engagement: Trail of Bits, NCC Group)
    - Scope: `dchat-crypto` (Noise, key rotation, PQ integration)
    - Timeline: Before beta launch
@@ -1457,6 +1559,7 @@ pub struct TikvConfig { /* ... */ }
 ### 7.2 Economic Analysis
 
 **Required Studies**:
+
 1. **Game-Theoretic Modeling**: Relay incentives, validator economics, attack costs
 2. **Tokenomics Simulations**: Long-term sustainability, inflation schedules
 3. **Insurance Fund Sizing**: Adequate reserves for slashing/bridge failures
@@ -1466,12 +1569,13 @@ pub struct TikvConfig { /* ... */ }
 ### 7.3 Infrastructure Hardening
 
 **Deployment Best Practices**:
+
 1. **Secrets Management**: AWS Secrets Manager / Azure Key Vault / HashiCorp Vault
 2. **Key Rotation**: Automated rotation of TLS certificates, API keys
 3. **Least Privilege**: IAM roles with minimum required permissions
 4. **Network Segmentation**: Validators in private subnets, relays in DMZ
 5. **DDoS Protection**: Cloudflare/AWS Shield for bootstrap endpoints
-6. **Backup Strategy**: 
+6. **Backup Strategy**:
    - Hourly snapshots retained for 7 days
    - Daily backups retained for 30 days
    - Monthly backups retained for 1 year
@@ -1480,6 +1584,7 @@ pub struct TikvConfig { /* ... */ }
 ### 7.4 Monitoring & Alerting
 
 **Critical Alerts**:
+
 - Validator downtime >5 minutes
 - Consensus stalled (no blocks for 30 seconds)
 - Relay peer count <3
@@ -1489,6 +1594,7 @@ pub struct TikvConfig { /* ... */ }
 - Abnormal transaction volume spike
 
 **Dashboards**:
+
 - Network health (peer count, latency distribution, packet loss)
 - Validator performance (block production rate, vote participation)
 - Relay economics (proofs submitted, rewards earned)
@@ -1498,6 +1604,7 @@ pub struct TikvConfig { /* ... */ }
 ### 7.5 Incident Response
 
 **Runbooks Required**:
+
 1. Validator key compromise
 2. Consensus halt recovery
 3. Network partition healing
@@ -1514,6 +1621,7 @@ pub struct TikvConfig { /* ... */ }
 dchat represents a **comprehensive and well-architected decentralized chat protocol** with strong foundations in cryptography, networking, and distributed systems. The codebase demonstrates:
 
 ✅ **Strengths**:
+
 - Modular architecture (22 crates) enabling independent development and testing
 - Production-ready Noise Protocol encryption and Ed25519 signatures
 - Comprehensive message handling with delivery tracking and offline queues
@@ -1523,6 +1631,7 @@ dchat represents a **comprehensive and well-architected decentralized chat proto
 - Well-documented security validations in main CLI
 
 ⚠️ **Gaps Requiring Immediate Attention**:
+
 - NAT traversal implementations (blocking residential users)
 - On-chain staking and validator consensus broadcast
 - Production-grade ZK proofs (replace Schnorr with Groth16/Plonk)
@@ -1533,6 +1642,7 @@ dchat represents a **comprehensive and well-architected decentralized chat proto
 **Mainnet Readiness**: Estimated **6-9 months** with focused development on P0 gaps.
 
 **Recommended Phased Rollout**:
+
 - **Phase 1 (Months 1-3)**: Complete P0 gaps, security audits
 - **Phase 2 (Months 4-6)**: Beta testnet with economic incentives, P1 features
 - **Phase 3 (Months 7-9)**: Mainnet launch with limited features, monitoring
@@ -1551,6 +1661,7 @@ This architecture document should be updated quarterly as implementation progres
 **Status**: ⚠️ **Message Types Complete, Networking Logic Placeholder**
 
 **Fully Implemented**:
+
 - `NatConfig` with STUN/TURN server configuration
 - `NatType` enumeration (FullCone, RestrictedCone, PortRestrictedCone, Symmetric)
 - `NatStrategy` selection logic (Direct, UPnP, TURN, HolePunching)
@@ -1559,12 +1670,15 @@ This architecture document should be updated quarterly as implementation progres
 **File**: `crates/dchat-network/src/nat_traversal.rs` (770 lines)
 
 **Critical Gaps**:
+
 1. **UPnP Port Mapping** (lines 468, 639 in PRODUCTION_IMPROVEMENTS.md):
+
    ```rust
    // Placeholder implementation
    let message_len = 1024; // Placeholder
    // TODO: Actual UPnP port mapping via IGD protocol
    ```
+
    - No actual IGD (Internet Gateway Device) protocol implementation
    - Port mapping requests not sent to router
    - External IP discovery not implemented
@@ -1581,6 +1695,7 @@ This architecture document should be updated quarterly as implementation progres
    - No STUN binding requests
 
 **Remediation Path**:
+
 1. Integrate `igd` crate for UPnP: `igd::search_gateway()`, `add_port()`
 2. Implement TURN protocol using `webrtc` crate or custom RFC 5766 implementation
 3. Add STUN client using `stun` crate for binding discovery
@@ -1594,6 +1709,7 @@ This architecture document should be updated quarterly as implementation progres
 **Status**: ⚠️ **Sphinx Packet Format Complete, Encryption Placeholder**
 
 **Fully Implemented**:
+
 - **Sphinx Packet Structure** (`network/onion/sphinx.rs`, 566 lines):
   - `RoutingInfo` serialization/deserialization (fixed 64-byte format)
   - `SphinxHeader` with MAC integrity
@@ -1609,6 +1725,7 @@ This architecture document should be updated quarterly as implementation progres
   - Cover traffic generation
 
 **Critical Gap** (PRODUCTION_IMPROVEMENTS.md lines 242-263):
+
 ```rust
 // XOR "encryption" (placeholder for demonstration)
 for (i, byte) in payload.iter_mut().enumerate() {
@@ -1618,12 +1735,15 @@ for (i, byte) in payload.iter_mut().enumerate() {
 ```
 
 **Current Implementation**:
+
 - Uses XOR with HKDF-derived keys (insecure)
 - No authentication (vulnerable to tampering)
 - Deterministic "encryption" allows trivial decryption
 
 **Required Fix**:
+
 1. Replace XOR with **ChaCha20-Poly1305** AEAD:
+
    ```rust
    use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
    let cipher = ChaCha20Poly1305::new(&layer_key.into());
@@ -1636,6 +1756,7 @@ for (i, byte) in payload.iter_mut().enumerate() {
 3. Authenticate routing headers with separate MAC
 
 **Files to Modify**:
+
 - `crates/dchat-network/src/routing.rs` (lines 208-273)
 - `crates/dchat-network/src/network/onion/sphinx.rs` (encryption methods)
 
@@ -1648,6 +1769,7 @@ for (i, byte) in payload.iter_mut().enumerate() {
 **Status**: ✅ **Comprehensive Implementation**
 
 **Implemented Features**:
+
 1. **ASN Diversity Tracking** (`discovery::EclipseGuard`):
    - Tracks Autonomous System Numbers of connected peers
    - Enforces maximum percentage from single ASN (default 50%)
@@ -1664,6 +1786,7 @@ for (i, byte) in payload.iter_mut().enumerate() {
    - Randomized selection within high-reputation tier
 
 **Code Evidence**:
+
 - `crates/dchat-network/src/discovery/mod.rs` lines 183-240
 - `crates/dchat-network/src/onion_routing.rs` lines 403-580
 - `crates/dchat-network/src/relay/reputation/scorer.rs` lines 260-267
@@ -1679,6 +1802,7 @@ for (i, byte) in payload.iter_mut().enumerate() {
 **Status**: ⚠️ **Stake Tracking Complete, On-Chain Submission TODO**
 
 **Fully Implemented**:
+
 - **Relay Scoring** (`RelayScore` struct):
   - Stake amount tracking with lock-until timestamp
   - Multi-factor reputation (messages delivered, uptime, slashing history)
@@ -1693,6 +1817,7 @@ for (i, byte) in payload.iter_mut().enumerate() {
   - Stake threshold enforcement (min 1000 tokens)
 
 **Critical Gap** (src/main.rs lines 4748-4783):
+
 ```rust
 async fn submit_staking_position_on_chain(
     peer_id: &PeerId,
@@ -1718,6 +1843,7 @@ async fn submit_staking_position_on_chain(
 ```
 
 **Missing Implementation**:
+
 1. `StakeTransaction` serialization to blockchain format
 2. Transaction signing with relay identity key
 3. RPC call to `chat_chain::submit_transaction()`
@@ -1725,11 +1851,13 @@ async fn submit_staking_position_on_chain(
 5. Local state synchronization with on-chain data
 
 **Dependencies**:
+
 - `dchat-blockchain::transactions::StakeTransaction` (exists, not wired)
 - `dchat-blockchain::chat_chain::ChatChainClient::submit_stake()` (exists)
 - RPC client configuration (endpoints in config.toml)
 
 **Remediation**:
+
 ```rust
 use dchat_blockchain::transactions::{StakeTransaction, TransactionType};
 use dchat_blockchain::chat_chain::ChatChainClient;
@@ -1747,13 +1875,13 @@ async fn submit_staking_position_on_chain(
         lock_duration: Duration::from_secs(lock_duration_secs),
         timestamp: SystemTime::now(),
     };
-    
+
     let signed_tx = tx.sign(signing_key)?;
     let tx_hash = chat_chain.submit_transaction(signed_tx).await?;
-    
+
     // Poll for confirmation
     chat_chain.wait_for_confirmation(tx_hash, Duration::from_secs(30)).await?;
-    
+
     tracing::info!("✅ Staking position confirmed on-chain: {}", tx_hash);
     Ok(())
 }
@@ -1768,6 +1896,7 @@ async fn submit_staking_position_on_chain(
 **Status**: ⚠️ **BFT Logic Complete, Validator Broadcast Placeholder**
 
 **Fully Implemented**:
+
 - **Weighted Byzantine Consensus**:
   - `ProofOfRelayWork` engine with relay scoring
   - `BlockVotes` aggregation with weight calculation
@@ -1782,6 +1911,7 @@ async fn submit_staking_position_on_chain(
   - Reputation-based weight calculation
 
 **Critical Gap** (src/main.rs line 4945):
+
 ```rust
 async fn broadcast_block_to_validators(
     block: &Block,
@@ -1805,6 +1935,7 @@ async fn broadcast_block_to_validators(
 ```
 
 **Missing Implementation**:
+
 1. Block serialization to protobuf/bincode
 2. Gossipsub topic subscription: `/dchat/consensus/v1`
 3. Message signing and verification
@@ -1813,11 +1944,13 @@ async fn broadcast_block_to_validators(
 6. Timeout handling (fallback to subset)
 
 **Dependencies**:
+
 - `libp2p::gossipsub` already integrated in `dchat-network`
 - `Block` serialization already implemented (Serde)
 - Validator set management in `ValidatorInfo` struct
 
 **Remediation**:
+
 ```rust
 use libp2p::gossipsub::{Gossipsub, Topic};
 use dchat_core::serialization::encode_block;
@@ -1830,7 +1963,7 @@ async fn broadcast_block_to_validators(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let topic = Topic::new("/dchat/consensus/v1");
     let block_bytes = encode_block(block)?;
-    
+
     // Sign block
     let signature = signing_key.sign(&block_bytes);
     let signed_message = SignedBlockProposal {
@@ -1838,10 +1971,10 @@ async fn broadcast_block_to_validators(
         signature: signature.to_bytes().to_vec(),
         proposer: signing_key.verifying_key().to_bytes(),
     };
-    
+
     // Broadcast via gossipsub
     gossipsub.publish(topic, bincode::serialize(&signed_message)?)?;
-    
+
     tracing::info!("✅ Block broadcasted to {} validators", validator_set.len());
     Ok(())
 }
@@ -1856,6 +1989,7 @@ async fn broadcast_block_to_validators(
 **Gap**: State transition validation module not implemented
 
 **Required** (PRODUCTION_HARDENING.md line 122):
+
 - Merkle proof verification for state transitions
 - Transaction ordering validation
 - Balance sufficiency checks
@@ -1873,12 +2007,14 @@ async fn broadcast_block_to_validators(
 **Gap**: Zero-knowledge proof integration into consensus not implemented
 
 **Required** (PRODUCTION_HARDENING.md line 130):
+
 - Hook `dchat-privacy::zk_proofs` into block validation
 - Verify ZK proofs for private transactions
 - Add ZK proof batching for efficiency
 - Implement recursive SNARK aggregation (once Groth16 implemented)
 
 **Blockers**:
+
 - Depends on production ZK system (currently Schnorr-based demonstration)
 - Requires Groth16/Plonk circuit implementation first
 
@@ -1893,6 +2029,7 @@ async fn broadcast_block_to_validators(
 **Structure**: 191 lines in `src/client.ts`, type definitions in `types.ts`
 
 **Implemented**:
+
 - `Client` class with builder pattern
 - Identity management (UUID generation, username)
 - Message struct definitions (`Message`, `MessageStatus`)
@@ -1900,6 +2037,7 @@ async fn broadcast_block_to_validators(
 - Local message storage
 
 **Critical Gaps** (lines 35-50, 92-96 in `client.ts`):
+
 ```typescript
 const identity: Identity = {
   userId: uuidv4(),
@@ -1921,6 +2059,7 @@ async sendMessage(text: string): Promise<void> {
 ```
 
 **Missing Implementations**:
+
 1. **Key Generation**: No actual Ed25519 key generation
    - Recommendation: Use `@noble/ed25519` (pure JS, audited)
    - Alternative: `tweetnacl` (well-established)
@@ -1935,43 +2074,43 @@ async sendMessage(text: string): Promise<void> {
 4. **Signing/Verification**: Placeholder functions return dummy data
 
 **Remediation Example**:
+
 ```typescript
-import * as ed from '@noble/ed25519';
-import { WebSocket } from 'ws';
+import * as ed from "@noble/ed25519";
+import { WebSocket } from "ws";
 
 class Client {
   private websocket?: WebSocket;
   private privateKey: Uint8Array;
-  
+
   async connect(): Promise<void> {
     this.websocket = new WebSocket(this.config.relayUrl);
-    
+
     await new Promise((resolve, reject) => {
-      this.websocket!.once('open', resolve);
-      this.websocket!.once('error', reject);
+      this.websocket!.once("open", resolve);
+      this.websocket!.once("error", reject);
     });
-    
+
     // Perform Noise handshake
     await this.performNoiseHandshake();
     this.connected = true;
   }
-  
+
   async sendMessage(text: string): Promise<void> {
     const message = {
       id: uuidv4(),
       content: text,
       timestamp: Date.now(),
     };
-    
-    const signature = await ed.sign(
-      JSON.stringify(message),
-      this.privateKey
+
+    const signature = await ed.sign(JSON.stringify(message), this.privateKey);
+
+    this.websocket!.send(
+      JSON.stringify({
+        message,
+        signature: Buffer.from(signature).toString("hex"),
+      }),
     );
-    
-    this.websocket!.send(JSON.stringify({
-      message,
-      signature: Buffer.from(signature).toString('hex'),
-    }));
   }
 }
 ```
@@ -1985,6 +2124,7 @@ class Client {
 **Structure**: 16 Dart files, 128 lines in `src/crypto/keypair.dart`
 
 **Implemented**:
+
 - ✅ **Ed25519 KeyPair**: Full implementation using `ed25519_edwards` package
   - Key generation with secure random seed
   - Sign/verify methods with proper error handling
@@ -1995,7 +2135,9 @@ class Client {
 - ✅ **Blockchain Clients**: Type definitions for chat/currency chains
 
 **Critical Gaps**:
+
 1. **User Profile Management** (PRODUCTION_IMPROVEMENTS.md lines 479-480):
+
    ```dart
    Future<Map<String, dynamic>> getUserProfile(String userId) async {
      throw UnimplementedError('getUserProfile not yet implemented');
@@ -2011,23 +2153,25 @@ class Client {
    - No message transmission
 
 **Strengths**:
+
 - Crypto implementation is production-ready (uses audited `ed25519_edwards`)
 - Type system is comprehensive
 - Architecture allows easy wiring to backend
 
 **Remediation**:
+
 ```dart
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class UserManager {
   final String apiUrl;
-  
+
   Future<Map<String, dynamic>> getUserProfile(String userId) async {
     final response = await http.get(
       Uri.parse('$apiUrl/api/users/$userId'),
     );
-    
+
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     } else {
@@ -2038,12 +2182,12 @@ class UserManager {
 
 class MessageManager {
   late WebSocketChannel channel;
-  
+
   Future<void> connect(String relayUrl) async {
     channel = WebSocketChannel.connect(Uri.parse(relayUrl));
     await channel.ready;
   }
-  
+
   Future<void> sendMessage(String content) async {
     final message = {
       'type': 'message',
@@ -2064,6 +2208,7 @@ class MessageManager {
 **Status**: ⚠️ **All Cryptography Placeholders**
 
 **Critical Gaps** (PRODUCTION_IMPROVEMENTS.md lines 451-461):
+
 ```python
 def generate_keypair(self):
     # TODO: Use proper Ed25519 key generation
@@ -2079,11 +2224,13 @@ def verify(self, message: bytes, signature: bytes) -> bool:
 ```
 
 **Missing**:
+
 - All cryptographic functions are stubs
 - No network client
 - No message serialization
 
 **Remediation**:
+
 ```python
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey, Ed25519PublicKey
@@ -2095,28 +2242,28 @@ class DchatClient:
     def __init__(self):
         self.private_key = Ed25519PrivateKey.generate()
         self.public_key = self.private_key.public_key()
-    
+
     def sign(self, message: bytes) -> bytes:
         return self.private_key.sign(message)
-    
-    def verify(self, message: bytes, signature: bytes, 
+
+    def verify(self, message: bytes, signature: bytes,
                public_key: Ed25519PublicKey) -> bool:
         try:
             public_key.verify(signature, message)
             return True
         except Exception:
             return False
-    
+
     async def connect(self, relay_url: str):
         self.websocket = await websockets.connect(relay_url)
-    
+
     async def send_message(self, content: str):
         message = {
             'content': content,
             'timestamp': time.time(),
         }
         signature = self.sign(json.dumps(message).encode())
-        
+
         await self.websocket.send(json.dumps({
             'message': message,
             'signature': signature.hex(),
@@ -2125,6 +2272,7 @@ class DchatClient:
 ```
 
 **Dependencies**:
+
 - `cryptography>=41.0.0` (uses libsodium, fast Ed25519)
 - `websockets>=12.0` (async WebSocket client)
 
@@ -2139,6 +2287,7 @@ class DchatClient:
 **Critical Issue**: Hardcoded placeholder credentials throughout deployment codebase
 
 **S3 Backup Credentials** (dchat-deployment/src/backup_system.rs lines 378, 620-622):
+
 ```rust
 backup_config.s3_access_key = "YOUR_S3_ACCESS_KEY".to_string();
 backup_config.s3_secret_key = "YOUR_S3_SECRET_KEY".to_string();
@@ -2146,6 +2295,7 @@ backup_config.s3_secret_key = "YOUR_S3_SECRET_KEY".to_string();
 ```
 
 **Alert Webhooks** (dchat-deployment/src/health_monitor.rs lines 489-526):
+
 ```rust
 slack_webhook: "https://hooks.slack.com/services/XXX/YYY/ZZZ".to_string(),
 pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
@@ -2154,10 +2304,12 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 **Impact**: Production deployments will fail or use insecure defaults
 
 **Remediation Strategy**:
+
 1. **Environment Variables** (12-factor app principle):
+
    ```rust
    use std::env;
-   
+
    let s3_access_key = env::var("DCHAT_S3_ACCESS_KEY")
        .expect("DCHAT_S3_ACCESS_KEY must be set");
    let s3_secret_key = env::var("DCHAT_S3_SECRET_KEY")
@@ -2165,39 +2317,41 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
    ```
 
 2. **Secrets Manager Integration**:
+
    ```rust
    use aws_sdk_secretsmanager as secretsmanager;
-   
+
    async fn load_credentials() -> Result<Credentials> {
        let config = aws_config::load_from_env().await;
        let client = secretsmanager::Client::new(&config);
-       
+
        let secret = client
            .get_secret_value()
            .secret_id("dchat/production/s3")
            .send()
            .await?;
-       
+
        Ok(serde_json::from_str(secret.secret_string().unwrap())?)
    }
    ```
 
 3. **Startup Validation**:
+
    ```rust
    fn validate_production_config(config: &DeploymentConfig) -> Result<()> {
        // Reject placeholder values
-       if config.s3_access_key.contains("YOUR_") 
+       if config.s3_access_key.contains("YOUR_")
            || config.s3_access_key.contains("XXX") {
            return Err(Error::InvalidConfiguration(
                "Placeholder credentials detected".to_string()
            ));
        }
-       
+
        // Validate webhook URLs are reachable
        if config.environment == Environment::Production {
            validate_webhook_endpoint(&config.slack_webhook).await?;
        }
-       
+
        Ok(())
    }
    ```
@@ -2211,6 +2365,7 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 ### B.1 Fuzz Testing Coverage
 
 **Implemented Targets** (5 harnesses):
+
 1. `noise_handshake.rs`: Handshake protocol robustness
 2. `keypair_generation.rs`: Key derivation edge cases
 3. `message_parsing.rs`: Message deserialization safety
@@ -2218,6 +2373,7 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 5. `identity_derivation.rs`: Hierarchical key derivation
 
 **Missing Coverage**:
+
 - Transaction encoding/decoding (blockchain)
 - Bridge finality proofs (cross-chain)
 - Governance proposal validation
@@ -2229,6 +2385,7 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 ### B.2 Benchmark Infrastructure
 
 **Comprehensive Coverage** (14 suites):
+
 - Cryptography: `crypto_performance`, `post_quantum_crypto`
 - Network: `network_latency`, `relay_performance`, `onion_routing_performance`
 - Storage: `database_queries`, `storage_backends`, `memory_usage`
@@ -2241,6 +2398,7 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 **Performance SLAs**: ❌ Not defined
 
 **Recommendation**:
+
 1. Add CI job: `cargo bench --no-fail-fast` on every PR
 2. Define SLAs:
    - Message latency: <100ms P99
@@ -2251,12 +2409,14 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 ### B.3 Chaos Engineering
 
 **Capabilities** (`dchat-testing`):
+
 - Network simulation (latency, packet loss, bandwidth throttling)
 - Fault injection (node crashes, resource exhaustion)
 - Recovery testing (partition healing, data corruption)
 - 15 unit tests validating chaos primitives
 
 **Missing**:
+
 - Long-running chaos tests (24-hour partition tests)
 - CI integration for periodic chaos runs
 - Disaster recovery scenarios (full data center loss)
@@ -2270,7 +2430,9 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 ### C.1 Required External Audits
 
 #### Cryptography Audit (Priority: P0)
+
 **Scope**:
+
 - `dchat-crypto` crate (Noise Protocol, key rotation, PQ integration)
 - `dchat-privacy` ZK proof system (after Groth16 implementation)
 - Hybrid classical+PQ handshake logic
@@ -2281,7 +2443,9 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 **Estimated Cost**: $50k-$80k
 
 #### Smart Contract Audit (Priority: P0)
+
 **Scope**:
+
 - On-chain staking contracts
 - Slashing logic
 - Governance voting
@@ -2292,7 +2456,9 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 **Estimated Cost**: $40k-$60k
 
 #### Bridge Security Review (Priority: P1)
+
 **Scope**:
+
 - `dchat-bridge` finality tracking
 - BLS signature aggregation
 - Relayer incentive mechanism
@@ -2305,6 +2471,7 @@ pagerduty_key: "YOUR_PAGERDUTY_KEY".to_string(),
 ### C.2 Internal Security Checklist
 
 Before mainnet:
+
 - [ ] All TODOs in cryptography paths resolved
 - [ ] XOR placeholders replaced with AEAD ciphers
 - [ ] MPC threshold signing uses proper TSS (FROST/GG20)
@@ -2325,18 +2492,21 @@ Before mainnet:
 ### Phase 1: Critical Path (Months 1-3)
 
 **Sprint 1 (Weeks 1-2)**:
+
 - [ ] Replace onion routing XOR with ChaCha20-Poly1305
 - [ ] Implement NAT traversal (UPnP integration via `igd` crate)
 - [ ] Wire on-chain staking submission
 - [ ] Eliminate credential placeholders (use environment variables)
 
 **Sprint 2 (Weeks 3-4)**:
+
 - [ ] Complete MPC threshold signing (integrate FROST library)
 - [ ] Implement validator broadcast via gossipsub
 - [ ] Add state validation module (Merkle proof verification)
 - [ ] Complete distributed storage backends (CockroachDB, Redis)
 
 **Sprint 3 (Weeks 5-6)**:
+
 - [ ] Implement secure enclave attestation (SGX/TrustZone)
 - [ ] Complete NAT traversal (TURN/STUN protocols)
 - [ ] Add ZKP integration to consensus (wire existing Schnorr proofs)
@@ -2347,18 +2517,21 @@ Before mainnet:
 ### Phase 2: Production Hardening (Months 4-6)
 
 **Sprint 4 (Weeks 7-9)**:
+
 - [ ] Replace Schnorr proofs with Groth16 circuits
 - [ ] Complete guardian account recovery on-chain integration
 - [ ] Implement multi-device sync conflict resolution
 - [ ] Complete Dart SDK networking layer
 
 **Sprint 5 (Weeks 10-12)**:
+
 - [ ] Add database backup/WAL archiving
 - [ ] Implement bridge relayer network
 - [ ] Create Grafana dashboards and Prometheus alerts
 - [ ] Complete Python SDK
 
 **Sprint 6 (Weeks 13-15)**:
+
 - [ ] External cryptography audit (4 weeks parallel)
 - [ ] Smart contract audit (3 weeks parallel)
 - [ ] Fix all audit findings
@@ -2369,18 +2542,21 @@ Before mainnet:
 ### Phase 3: Launch Preparation (Months 7-9)
 
 **Sprint 7 (Weeks 16-18)**:
+
 - [ ] 24-hour chaos test (full network partition)
 - [ ] Disaster recovery drill (data center loss simulation)
 - [ ] Economic modeling validation (6-month simulation)
 - [ ] Mainnet genesis ceremony preparation
 
 **Sprint 8 (Weeks 19-21)**:
+
 - [ ] Mainnet genesis deployment (3 regions)
 - [ ] Validator onboarding (minimum 21 validators)
 - [ ] 2-week limited launch (invite-only)
 - [ ] Monitor metrics, fix critical bugs
 
 **Sprint 9 (Weeks 22-24)**:
+
 - [ ] Public mainnet launch
 - [ ] Mobile app release (iOS/Android)
 - [ ] Bridge activation (cross-chain transfers enabled)
@@ -2391,6 +2567,7 @@ Before mainnet:
 ### Phase 4: Post-Launch (Months 10+)
 
 **P2 Enhancements**:
+
 - [ ] Post-quantum full migration (disable classical fallback)
 - [ ] VR/AR integration (experimental to production)
 - [ ] Advanced marketplace (NFT trading, channel ownership transfer)
@@ -2407,6 +2584,7 @@ Before mainnet:
 **Executive Answer**: **YES** - dchat employs a multi-layered decentralization strategy with minimal single points of failure. The architecture combines DNS-based bootstrap (using public infrastructure), DHT-based peer routing (Kademlia), gossipsub mesh topology for message propagation, and BFT consensus across 7 geographically distributed validators. The only identified centralization concern is the hole punching signaling server for NAT traversal.
 
 **Evidence**: This assessment is based on systematic analysis of:
+
 - Bootstrap mechanisms (`src/main.rs:2000-2300`, `crates/dchat-network/src/dns_discovery.rs`)
 - Peer discovery protocols (`crates/dchat-network/src/swarm.rs:115-148`)
 - Validator coordination (`crates/dchat-validator/src/multi_region.rs:1-200`)
@@ -2421,6 +2599,7 @@ Before mainnet:
 **Implementation Details**:
 
 **File**: `crates/dchat-network/src/dns_discovery.rs:40-70`
+
 ```rust
 pub struct DnsDiscoveryConfig {
     // 7 validator subdomains across continents
@@ -2435,6 +2614,7 @@ pub struct DnsDiscoveryConfig {
 ```
 
 **Geographic Distribution** (`config-production.toml:15-32`):
+
 ```toml
 validator_hostnames = [
     "validator1-ohio.schikuno.top",          # AWS US East 2 (North America)
@@ -2448,6 +2628,7 @@ validator_hostnames = [
 ```
 
 **Decentralization Properties**:
+
 - ✅ **No custom DNS infrastructure** - uses Cloudflare/Google public resolvers
 - ✅ **7 continents covered** - North America, South America, Europe, Asia, Africa, Middle East
 - ✅ **Background refresh** - 60-second interval updates peer lists without manual intervention
@@ -2455,6 +2636,7 @@ validator_hostnames = [
 - ⚠️ **Domain dependency** - `schikuno.top` is Foundation-controlled, but standard DNS allows anyone to fork with new domain
 
 **Code Path** (`src/main.rs:2041-2100`):
+
 ```rust
 // Phase 1: DNS-based peer discovery
 info!("Starting DNS-based peer discovery...");
@@ -2476,6 +2658,7 @@ let discovered_relays = dns_discovery.discover_relays().await
 ```
 
 **Threat Model**:
+
 - **DNS poisoning**: Mitigated by using DNSSEC-capable public resolvers and fallback to bootstrap peers
 - **Foundation domain seizure**: Users can reconfigure `base_domain` in config and rebuild
 - **DNS provider outage**: Dual-resolver setup (Cloudflare + Google) plus bootstrap peer fallback
@@ -2487,6 +2670,7 @@ let discovered_relays = dns_discovery.discover_relays().await
 **Architecture**: dchat uses libp2p's **Kademlia DHT** for distributed peer discovery and content routing, eliminating the need for a central peer registry.
 
 **Implementation** (`crates/dchat-network/src/behavior.rs:42-43`):
+
 ```rust
 use libp2p::kad::{Kademlia, KademliaEvent};
 
@@ -2499,6 +2683,7 @@ pub struct DchatNetworkBehavior {
 ```
 
 **Bootstrap Process** (`crates/dchat-network/src/swarm.rs:115-148`):
+
 ```rust
 // Bootstrap DHT with discovered validators
 for peer in &bootstrap_nodes {
@@ -2514,6 +2699,7 @@ swarm.behaviour_mut().kademlia.bootstrap()
 ```
 
 **DHT Query Completion** (`crates/dchat-network/src/swarm.rs:224-225`):
+
 ```rust
 // Relay registration with DHT
 SwarmEvent::Behaviour(DchatNetworkEvent::Kademlia(KademliaEvent::QueryResult {
@@ -2526,6 +2712,7 @@ SwarmEvent::Behaviour(DchatNetworkEvent::Kademlia(KademliaEvent::QueryResult {
 ```
 
 **Decentralization Properties**:
+
 - ✅ **No central registry** - peer routing tables are distributed across the network
 - ✅ **Self-organizing** - DHT automatically rebalances as nodes join/leave
 - ✅ **Multiple bootstrap paths** - DNS discovery + manual bootstrap peers + DHT queries
@@ -2533,12 +2720,14 @@ SwarmEvent::Behaviour(DchatNetworkEvent::Kademlia(KademliaEvent::QueryResult {
 - ✅ **Sybil-resistant** - libp2p Kademlia includes peer scoring and identity verification
 
 **No Centralized Relay Registry** (confirmed via grep search):
+
 ```bash
 $ grep -r "relay_registry|RelayRegistry" crates/
 # Only 4 matches found, all in tests, none in production code
 ```
 
 **Routing Table Structure**:
+
 - Each node maintains k-buckets with peers sorted by XOR distance
 - Lookups converge in O(log N) hops
 - No single node has complete network view
@@ -2550,6 +2739,7 @@ $ grep -r "relay_registry|RelayRegistry" crates/
 **Architecture**: dchat uses libp2p's **gossipsub** protocol for decentralized publish-subscribe messaging, replacing traditional centralized message brokers.
 
 **Implementation** (`crates/dchat-network/src/behavior.rs:30-50`):
+
 ```rust
 let gossipsub_config = libp2p::gossipsub::GossipsubConfigBuilder::default()
     .heartbeat_interval(Duration::from_secs(1))
@@ -2564,6 +2754,7 @@ let gossipsub = Gossipsub::new(
 ```
 
 **Message Propagation** (`crates/dchat-messaging/src/delivery.rs`):
+
 ```rust
 // Publish message to gossipsub topic
 let topic = gossipsub::IdentTopic::new(format!("dchat/channel/{}", channel_id));
@@ -2571,6 +2762,7 @@ swarm.behaviour_mut().gossipsub.publish(topic, message_bytes)?;
 ```
 
 **Decentralization Properties**:
+
 - ✅ **Mesh topology** - peers maintain connections to D peers in topic mesh (default D=6)
 - ✅ **Epidemic broadcast** - messages propagate via gossip, no central relay required
 - ✅ **Topic-based routing** - subscribers only receive messages for joined topics
@@ -2578,6 +2770,7 @@ swarm.behaviour_mut().gossipsub.publish(topic, message_bytes)?;
 - ✅ **Peer scoring** - misbehaving peers are pruned from mesh
 
 **No Central Broker**:
+
 - Unlike Kafka/RabbitMQ, gossipsub has no broker node
 - Each peer is both publisher and subscriber
 - Message redundancy via multiple paths
@@ -2589,12 +2782,14 @@ swarm.behaviour_mut().gossipsub.publish(topic, message_bytes)?;
 **Architecture**: dchat's bootstrap process supports **multiple entry points** with geographic diversity, avoiding reliance on a single bootstrap server.
 
 **Configuration Hierarchy**:
+
 1. **DNS discovery** (7 regions, public resolvers)
 2. **Manual bootstrap peers** (configurable in TOML or env var)
 3. **DHT bootstrap** (query discovered peers for more peers)
 4. **Local cache** (previously connected peers)
 
 **Production Configuration** (`config-production.toml:15-32`):
+
 ```toml
 bootstrap_peers = [
     "/ip4/3.134.77.79/tcp/7070/p2p/12D3KooWRYBQZL8cMsENi8nW1TCrQVYRHLDwqz5oWMJ8xVZNQz3A",    # Ohio
@@ -2608,12 +2803,14 @@ bootstrap_peers = [
 ```
 
 **Genesis Bootstrap** (`testnet-config.toml`):
+
 ```toml
 # First validator node (genesis)
 bootstrap_peers = []  # Empty - no bootstrapping required for first node
 ```
 
 **Environment Variable Support** (`crates/dchat-sdk-rust/src/config.rs:52-53`):
+
 ```rust
 // Bootstrap peers can be set via DCHAT_BOOTSTRAP_PEERS env var
 bootstrap_peers: std::env::var("DCHAT_BOOTSTRAP_PEERS")
@@ -2623,6 +2820,7 @@ bootstrap_peers: std::env::var("DCHAT_BOOTSTRAP_PEERS")
 ```
 
 **Security Validations** (`src/main.rs:2150-2220`):
+
 ```rust
 // Reject private networks in mainnet
 fn is_private_network(ip: &IpAddr) -> bool {
@@ -2646,6 +2844,7 @@ if environment == "production" && is_private_network(&ip) {
 ```
 
 **Decentralization Properties**:
+
 - ✅ **No single bootstrap server** - 7 validators across continents
 - ✅ **Configurable entry points** - users can specify custom bootstrap peers
 - ✅ **Genesis node support** - first node can start with empty bootstrap list
@@ -2659,6 +2858,7 @@ if environment == "production" && is_private_network(&ip) {
 **Architecture**: dchat uses **Byzantine Fault Tolerant (BFT) consensus** across 7 validators with no single coordinator node. The `MultiRegionCoordinator` is a **local coordination module** running on each validator, not a centralized service.
 
 **BFT Configuration** (`crates/dchat-validator/src/multi_region.rs:148-180`):
+
 ```rust
 pub struct BftConfig {
     /// Total number of validators (7 in production)
@@ -2680,7 +2880,7 @@ impl BftConfig {
     pub fn from_validator_count(total_validators: usize) -> Self {
         let f = (total_validators.saturating_sub(1)) / 3;
         let required_signatures = 2 * f + 1;  // 2*2+1 = 5 for 7 validators
-        
+
         Self {
             total_validators,
             required_signatures,
@@ -2692,6 +2892,7 @@ impl BftConfig {
 ```
 
 **Geographic Distribution** (`crates/dchat-validator/src/multi_region.rs:54-75`):
+
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeographicRegion {
@@ -2706,6 +2907,7 @@ pub enum GeographicRegion {
 ```
 
 **Multi-Region Coordinator** (`crates/dchat-validator/src/multi_region.rs:146-147`):
+
 ```rust
 /// Multi-region validator coordinator (runs locally on each validator)
 pub struct MultiRegionCoordinator {
@@ -2727,12 +2929,14 @@ pub struct MultiRegionCoordinator {
 ```
 
 **Clarification: "Coordinator" is Local, Not Centralized**:
+
 - ❌ **Not a centralized service** - each validator runs its own coordinator instance
 - ✅ **Local consensus participation** - computes BFT thresholds, validates signatures
 - ✅ **Distributed voting** - validators exchange signed votes via gossipsub
 - ✅ **No single authority** - requires 5 of 7 validator signatures for finality
 
 **Consensus Flow**:
+
 1. Validator A proposes block → signs with Ed25519 key
 2. Validator A broadcasts proposal via gossipsub to all validators
 3. Validators B-G receive proposal → validate → sign if valid
@@ -2741,6 +2945,7 @@ pub struct MultiRegionCoordinator {
 6. Block committed independently by each validator
 
 **Decentralization Properties**:
+
 - ✅ **No leader election** - any validator can propose blocks
 - ✅ **Equal voting power** - each validator has weight 1 (`config-production.toml:128`)
 - ✅ **Geographic diversity enforcement** - minimum 5 of 7 regions required
@@ -2753,18 +2958,19 @@ pub struct MultiRegionCoordinator {
 
 **Comprehensive Analysis**:
 
-| Component | Centralized? | SPOF Risk | Mitigation |
-|-----------|--------------|-----------|------------|
-| **DNS Discovery** | ❌ No | ⚠️ Low | Uses public Cloudflare/Google DNS; falls back to bootstrap peers |
-| **Bootstrap Peers** | ❌ No | ⚠️ Low | 7 validators across continents; configurable; can cold-start from empty list |
-| **DHT Routing** | ❌ No | ✅ None | Kademlia is distributed; no central registry |
-| **Gossipsub Messaging** | ❌ No | ✅ None | Mesh topology; no broker node |
-| **Validator Coordination** | ❌ No | ✅ None | BFT requires 5 of 7; no single coordinator |
-| **Foundation Validators** | ⚠️ Yes | ⚠️ Medium | Foundation operates initial 7 validators; governance can add community validators |
-| **Hole Punching Signaling** | ✅ YES | 🔴 **HIGH** | **HolePunchCoordinator requires centralized signaling server** (see E.8) |
-| **schikuno.top Domain** | ⚠️ Yes | ⚠️ Low | Foundation-controlled DNS domain; users can reconfigure `base_domain` |
+| Component                   | Centralized? | SPOF Risk   | Mitigation                                                                        |
+| --------------------------- | ------------ | ----------- | --------------------------------------------------------------------------------- |
+| **DNS Discovery**           | ❌ No        | ⚠️ Low      | Uses public Cloudflare/Google DNS; falls back to bootstrap peers                  |
+| **Bootstrap Peers**         | ❌ No        | ⚠️ Low      | 7 validators across continents; configurable; can cold-start from empty list      |
+| **DHT Routing**             | ❌ No        | ✅ None     | Kademlia is distributed; no central registry                                      |
+| **Gossipsub Messaging**     | ❌ No        | ✅ None     | Mesh topology; no broker node                                                     |
+| **Validator Coordination**  | ❌ No        | ✅ None     | BFT requires 5 of 7; no single coordinator                                        |
+| **Foundation Validators**   | ⚠️ Yes       | ⚠️ Medium   | Foundation operates initial 7 validators; governance can add community validators |
+| **Hole Punching Signaling** | ✅ YES       | 🔴 **HIGH** | **HolePunchCoordinator requires centralized signaling server** (see E.8)          |
+| **schikuno.top Domain**     | ⚠️ Yes       | ⚠️ Low      | Foundation-controlled DNS domain; users can reconfigure `base_domain`             |
 
 **Risk Ratings**:
+
 - ✅ **None**: Fully distributed, no central component
 - ⚠️ **Low**: Temporary dependency on Foundation infrastructure, easily replaceable
 - ⚠️ **Medium**: Foundation operates critical nodes, but governance allows decentralization
@@ -2777,39 +2983,45 @@ pub struct MultiRegionCoordinator {
 **Problem**: dchat's **hole punching coordinator** requires a centralized signaling server to coordinate NAT traversal between peers behind symmetric NATs.
 
 **Implementation** (`crates/dchat-network/src/nat/hole_punch.rs:211-212`):
+
 ```rust
 /// Coordinator for NAT hole punching (requires signaling server)
 pub struct HolePunchCoordinator {
     /// Signaling server endpoint (CENTRALIZED)
     signaling_server: String,
-    
+
     /// Active hole punch sessions
     sessions: HashMap<SessionId, HolePunchSession>,
 }
 ```
 
 **Why This Is Centralized**:
+
 - Peers behind symmetric NATs cannot directly discover each other's endpoints
 - Signaling server acts as rendezvous point to exchange IP:port information
 - Without signaling server, peers cannot establish connections
 
 **Attack Vectors**:
+
 - **Signaling server outage** → peers behind NATs cannot connect
 - **Signaling server compromise** → man-in-the-middle attacks on connection setup
 - **Censorship** → governments can block signaling server domain
 
 **Mitigation Strategies** (Not Yet Implemented):
+
 1. **Multiple signaling servers** - fallback to alternative servers
 2. **Decentralized signaling via DHT** - use Kademlia for rendezvous instead
 3. **STUN server pool** - distribute STUN queries across public servers
 4. **Relay fallback** - use libp2p circuit relay when hole punching fails
 
 **Current Status**:
+
 - ⚠️ **Placeholder implementation** - `hole_punch.rs` defines types but lacks full networking
 - 🔴 **Production gap** - must implement decentralized signaling before mainnet
 - ✅ **UPnP already implemented** - some users can bypass NAT without signaling
 
 **Recommended Fix**:
+
 ```rust
 // Replace centralized signaling with DHT-based rendezvous
 pub struct DhtRendezvous {
@@ -2824,26 +3036,31 @@ pub struct DhtRendezvous {
 ### E.9 Comparison with Centralized Alternatives
 
 **dchat vs. Signal** (Centralized):
+
 - Signal: All messages route through Signal's AWS servers
 - dchat: Messages propagate via gossipsub mesh, no central relay required
 - **Winner**: dchat (decentralized)
 
 **dchat vs. WhatsApp** (Centralized + E2EE):
+
 - WhatsApp: Requires Facebook servers for message routing and delivery
 - dchat: Peers connect via DHT, messages stored on local SQLite
 - **Winner**: dchat (decentralized)
 
 **dchat vs. Matrix** (Federated):
+
 - Matrix: Homeserver federation, but users depend on their homeserver's uptime
 - dchat: No homeserver concept, users connect directly via libp2p
 - **Winner**: dchat (more decentralized)
 
 **dchat vs. Status** (Fully P2P):
+
 - Status: Uses Waku (gossip-based P2P), similar to dchat
 - dchat: Uses gossipsub + DHT, adds blockchain consensus for ordering
 - **Winner**: Tie (both fully decentralized)
 
 **dchat vs. Telegram** (Centralized):
+
 - Telegram: All data stored on Telegram servers, no E2EE by default
 - dchat: All data stored locally, E2EE by default via Noise Protocol
 - **Winner**: dchat (decentralized + private)
@@ -2857,18 +3074,21 @@ pub struct DhtRendezvous {
 **Answer**: **NO** - dchat servers (validators and relays) operate independently without pairing requirements.
 
 **Validator Coordination**:
+
 - Validators exchange signed votes via **gossipsub pub/sub**
 - No pre-configured pairs or master-slave relationships
 - Any validator can propose blocks, all validate independently
 - BFT consensus requires 5 of 7 signatures, not specific pairs
 
 **Relay Coordination**:
+
 - Relays discover each other via **DHT queries**
 - No relay registry or pairing table
 - Clients choose relays based on **reputation scores** (uptime, latency)
 - Relays compete for reward by providing best service
 
 **Database Pairing** (`config-production.toml:50-70`):
+
 ```toml
 # Redis cluster (each validator runs Redis, no master-slave pairing)
 redis_cluster = [
@@ -2892,10 +3112,12 @@ minio_endpoints = [
 ```
 
 **Note on "Master" Terminology** (`crates/dchat-deployment/src/distributed_storage.rs:185-186`):
+
 ```rust
 /// Master nodes (3 recommended for distributed cluster)
 pub masters: Vec<RedisNode>,
 ```
+
 - This refers to **Redis Cluster master nodes**, not centralized masters
 - Redis Cluster uses master-replica for HA, but cluster is distributed
 - Each master handles a shard of the key space (16384 hash slots divided)
@@ -2903,6 +3125,7 @@ pub masters: Vec<RedisNode>,
 **Key Insight**: The term "master" in Redis Cluster is a **distributed systems concept** (master-replica for each shard), not a centralized controller. Redis Cluster has no single master; it's a peer-to-peer cluster with automatic failover.
 
 **Decentralization Properties**:
+
 - ✅ **No server pairing required** - validators and relays operate independently
 - ✅ **No central coordinator** - consensus via distributed BFT voting
 - ✅ **No single database master** - Redis Cluster, TiKV, MinIO all use distributed sharding
@@ -2913,12 +3136,14 @@ pub masters: Vec<RedisNode>,
 ### E.11 Network Cold-Start and Genesis Process
 
 **Genesis Node Bootstrap** (`testnet-config.toml`):
+
 ```toml
 # Genesis validator (first node in network)
 bootstrap_peers = []  # Empty list - no other nodes exist yet
 ```
 
 **How Genesis Node Starts**:
+
 1. Genesis validator starts with **empty bootstrap_peers** list
 2. Initializes **libp2p swarm** and listens on configured address
 3. Initializes **Kademlia DHT** with empty routing table
@@ -2926,12 +3151,14 @@ bootstrap_peers = []  # Empty list - no other nodes exist yet
 5. Waits for other validators to connect and bootstrap from it
 
 **How Subsequent Validators Join**:
+
 1. Configure **bootstrap_peers** to include genesis validator's multiaddr
 2. Perform **DNS discovery** to find additional validators
 3. Connect to bootstrap peers and **query DHT** for more peers
 4. Participate in **BFT consensus** once connected to quorum (5 of 7)
 
 **Cold-Start Security** (`src/main.rs:2041-2100`):
+
 ```rust
 // Build bootstrap_nodes from DNS + manual peers
 let mut bootstrap_nodes = discovered_validators;
@@ -2946,11 +3173,13 @@ info!("Bootstrap nodes discovered: {}", bootstrap_nodes.len());
 ```
 
 **Graceful Degradation**:
+
 - **DNS fails** → use manual bootstrap_peers
 - **Bootstrap peers offline** → use local cache of previously connected peers
 - **All peers offline** → wait for network to come back online (delay-tolerant)
 
 **Threat Model**:
+
 - **Eclipse attack**: Mitigated by diverse bootstrap sources (DNS + manual + DHT)
 - **Sybil attack**: Mitigated by BFT consensus (requires 5 of 7 honest validators)
 - **Network partition**: BFT consensus stalls until quorum restored (safety over liveness)
@@ -2960,6 +3189,7 @@ info!("Bootstrap nodes discovered: {}", bootstrap_nodes.len());
 ### E.12 Decentralization Roadmap and Governance
 
 **Current State** (As of Mainnet Launch):
+
 - ✅ **7 validators** operated by dchat Foundation
 - ✅ **Geographic diversity** across 7 regions (5 continents)
 - ✅ **BFT consensus** (5 of 7 signatures required)
@@ -2968,29 +3198,34 @@ info!("Bootstrap nodes discovered: {}", bootstrap_nodes.len());
 **Decentralization Roadmap**:
 
 **Phase 1: Foundation Launch (Months 1-3)**
+
 - Foundation operates 7 validators to ensure stability
 - Community can run relays (earn rewards, no governance power)
 - DAO governance active but voting power concentrated in Foundation
 
 **Phase 2: Community Validators (Months 4-9)**
+
 - Open validator applications with staking requirements (e.g., 100k DCHAT tokens)
 - Add 7 community validators (total 14 validators)
 - Reduce Foundation voting power from 100% → 50%
 - Implement validator rotation (term limits)
 
 **Phase 3: Full Decentralization (Months 10-18)**
+
 - Add 7 more community validators (total 21 validators)
 - Reduce Foundation voting power from 50% → 33%
 - Implement validator diversity requirements (ASN, geographic, entity)
 - Voting power caps (no single entity >5%) enforced by governance
 
 **Phase 4: Progressive Decentralization Complete (18+ months)**
+
 - Foundation operates ≤7 validators out of 21+ (≤33%)
 - Community validators have majority governance control
 - Automatic validator onboarding via DAO proposals
 - Censorship resistance via Tor/I2P integration
 
 **Governance Mechanisms** (`config-production.toml:118-125`):
+
 ```toml
 [governance]
 quorum_threshold = 0.60      # 60% for standard votes
@@ -3000,6 +3235,7 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 ```
 
 **Validator Onboarding Process** (Future):
+
 1. Community member submits DAO proposal with validator application
 2. Staking requirement verified (e.g., 100k DCHAT tokens locked)
 3. Hardware requirements verified (16 CPU, 32GB RAM, 1TB NVMe, 1Gbps network)
@@ -3008,6 +3244,7 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 6. 14-day voting period → if 60% vote yes → validator added to active set
 
 **Ethical Constraints** (`src/governance/constraints/voting_caps.rs` - future implementation):
+
 - **Voting power cap**: No single entity >5% of total voting power
 - **Term limits**: Validators must step down after 4 years, reapply via DAO
 - **Diversity requirements**: ASN, geographic, entity diversity enforced
@@ -3018,6 +3255,7 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 ### E.13 Decentralization Threat Model
 
 **High-Risk Threats**:
+
 1. 🔴 **Centralized hole punching signaling server** (primary SPOF)
    - **Impact**: Users behind symmetric NATs cannot connect
    - **Mitigation**: Implement DHT-based rendezvous, STUN server pool
@@ -3028,11 +3266,11 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
    - **Mitigation**: Progressive decentralization roadmap (18 months to 33%)
    - **Status**: Accepted risk for initial launch
 
-**Medium-Risk Threats**:
-3. ⚠️ **schikuno.top domain seizure**
-   - **Impact**: DNS discovery fails, fallback to manual bootstrap peers
-   - **Mitigation**: Users can reconfigure `base_domain` in config
-   - **Status**: Low probability (DNS is public infrastructure)
+**Medium-Risk Threats**: 3. ⚠️ **schikuno.top domain seizure**
+
+- **Impact**: DNS discovery fails, fallback to manual bootstrap peers
+- **Mitigation**: Users can reconfigure `base_domain` in config
+- **Status**: Low probability (DNS is public infrastructure)
 
 4. ⚠️ **Cloudflare/Google DNS outage**
    - **Impact**: DNS discovery fails temporarily
@@ -3044,11 +3282,11 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
    - **Mitigation**: DHT caching of previously connected peers
    - **Status**: Low probability (geographic diversity)
 
-**Low-Risk Threats**:
-6. ⚠️ **Eclipse attack on DHT bootstrap**
-   - **Impact**: Attacker isolates victim by controlling all bootstrap peers
-   - **Mitigation**: Diverse bootstrap sources (DNS + manual + local cache)
-   - **Status**: Mitigated by multi-source bootstrap
+**Low-Risk Threats**: 6. ⚠️ **Eclipse attack on DHT bootstrap**
+
+- **Impact**: Attacker isolates victim by controlling all bootstrap peers
+- **Mitigation**: Diverse bootstrap sources (DNS + manual + local cache)
+- **Status**: Mitigated by multi-source bootstrap
 
 7. ⚠️ **Sybil attack on relay network**
    - **Impact**: Attacker floods network with fake relays
@@ -3062,6 +3300,7 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 **Overall Grade**: **B+ (Mostly Decentralized with Known Gaps)**
 
 **Strengths**:
+
 - ✅ DNS discovery uses public infrastructure (Cloudflare/Google)
 - ✅ DHT routing is fully distributed (Kademlia)
 - ✅ Gossipsub messaging has no central broker
@@ -3070,17 +3309,20 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 - ✅ Progressive decentralization roadmap (18 months to community control)
 
 **Weaknesses**:
+
 - 🔴 Hole punching requires centralized signaling server (**must fix before mainnet**)
 - ⚠️ Foundation controls 7 of 7 validators at launch (mitigated by roadmap)
 - ⚠️ schikuno.top domain dependency (low risk, easily replaceable)
 
 **Recommendations**:
+
 1. **Priority 1**: Implement DHT-based hole punch rendezvous to eliminate signaling server SPOF
 2. **Priority 2**: Launch with 7 Foundation validators, add 7 community validators by Month 4
 3. **Priority 3**: Implement voting power caps and entity diversity enforcement
 4. **Priority 4**: Add Tor/I2P support for censorship resistance
 
 **Comparison to Industry**:
+
 - **More decentralized than**: Signal, WhatsApp, Telegram, Discord (all centralized)
 - **More decentralized than**: Matrix (federated, but homeserver dependency)
 - **Comparable to**: Status, Session (both fully P2P with similar architectures)
@@ -3099,6 +3341,7 @@ validator_voting_power = 1   # Equal voting power (1 validator = 1 vote)
 dchat implements **channel-scoped sharding** to scale horizontally beyond single-chain throughput limits. Unlike traditional blockchain sharding (which partitions by account), dchat partitions by **channel**, allowing independent scaling of high-activity channels while maintaining global consensus for critical operations.
 
 **Key Features**:
+
 - 16 shards by default (configurable via `ShardConfig`)
 - Consistent hashing (BLAKE3) for deterministic channel assignment
 - Cross-shard message routing with Merkle proofs
@@ -3112,6 +3355,7 @@ dchat implements **channel-scoped sharding** to scale horizontally beyond single
 **File**: `crates/dchat-chain/src/sharding.rs:222-243`
 
 **Algorithm**:
+
 ```rust
 /// Hash channel ID to shard using BLAKE3
 fn hash_to_shard(&self, channel_id: &ChannelId) -> ShardId {
@@ -3130,12 +3374,14 @@ fn hash_to_shard(&self, channel_id: &ChannelId) -> ShardId {
 ```
 
 **Properties**:
+
 - **Deterministic**: Same channel always maps to same shard
 - **Uniform distribution**: BLAKE3 ensures even shard load
 - **No coordination required**: Any node can compute shard assignment independently
 - **Dynamic sharding**: Can increase `num_shards` with rehashing migration
 
 **Shard State** (`sharding.rs:117-125`):
+
 ```rust
 pub struct ShardState {
     pub shard_id: ShardId,
@@ -3153,6 +3399,7 @@ pub struct ShardState {
 **Problem**: Messages between channels on different shards require proof of inclusion to prevent double-spending and replay attacks.
 
 **Implementation** (`sharding.rs:246-283`):
+
 ```rust
 pub fn route_message(
     &mut self,
@@ -3181,6 +3428,7 @@ pub fn route_message(
 ```
 
 **CrossShardMessage Structure** (`sharding.rs:127-137`):
+
 ```rust
 pub struct CrossShardMessage {
     pub id: String,
@@ -3195,6 +3443,7 @@ pub struct CrossShardMessage {
 ```
 
 **Two-Phase Commit**:
+
 1. Source shard includes message in block → generates Merkle proof
 2. Destination shard verifies proof → delivers message
 3. If verification fails → message rejected, no state change
@@ -3208,6 +3457,7 @@ pub struct CrossShardMessage {
 **Implementation** (`sharding.rs:15-97`):
 
 **Merkle Tree Generation**:
+
 ```rust
 pub fn generate_merkle_tree(leaves: &[Vec<u8>]) -> Vec<Hash> {
     let mut tree = Vec::new();
@@ -3240,6 +3490,7 @@ pub fn generate_merkle_tree(leaves: &[Vec<u8>]) -> Vec<Hash> {
 ```
 
 **Merkle Proof Verification** (`sharding.rs:75-90`):
+
 ```rust
 pub fn verify_proof(leaf: &[u8], proof: &[Hash], root: &Hash) -> bool {
     let mut current = blake3::hash(leaf);
@@ -3256,6 +3507,7 @@ pub fn verify_proof(leaf: &[u8], proof: &[Hash], root: &Hash) -> bool {
 ```
 
 **Proof Size**: O(log N) where N = number of channels in shard
+
 - 16 channels → 4 hashes × 32 bytes = 128 bytes
 - 1024 channels → 10 hashes × 32 bytes = 320 bytes
 
@@ -3264,6 +3516,7 @@ pub fn verify_proof(leaf: &[u8], proof: &[Hash], root: &Hash) -> bool {
 ### F.5 Light Client Mode
 
 **Configuration** (`sharding.rs:148-151`):
+
 ```rust
 pub struct ShardConfig {
     pub num_shards: u32,
@@ -3274,6 +3527,7 @@ pub struct ShardConfig {
 ```
 
 **Selective Message Processing** (`sharding.rs:417-425`):
+
 ```rust
 // In light client mode, only process messages for tracked shards
 let messages_to_process: Vec<_> = if self.config.light_client_mode {
@@ -3290,11 +3544,13 @@ let messages_to_process: Vec<_> = if self.config.light_client_mode {
 ```
 
 **Use Cases**:
+
 - **Mobile clients**: Track only user's active channels (reduce bandwidth 93%)
 - **Relay nodes**: Track high-traffic shards only
 - **Analytics nodes**: Track specific channels for monitoring
 
 **Bandwidth Savings**:
+
 - Full node (16 shards): 100% bandwidth
 - Light client (1 shard): 6.25% bandwidth
 - Light client (3 shards): 18.75% bandwidth
@@ -3306,16 +3562,19 @@ let messages_to_process: Vec<_> = if self.config.light_client_mode {
 **Purpose**: Reduce validator signature overhead from O(N) to O(1) for cross-shard messages.
 
 **Configuration** (`sharding.rs:147`):
+
 ```rust
 pub enable_bls_aggregation: bool,  // Default: true
 ```
 
 **Implementation** (referenced in `dchat-bridge/src/finality.rs`):
+
 - Each validator signs cross-shard message with BLS signature
 - Signatures aggregated into single 96-byte signature
 - Single verification operation validates all N validators
 
 **Performance**:
+
 - **Without BLS**: 7 validators × 64 bytes (Ed25519) = 448 bytes per cross-shard message
 - **With BLS**: 1 aggregate signature = 96 bytes (79% reduction)
 - **Verification**: O(1) instead of O(N)
@@ -3327,17 +3586,20 @@ pub enable_bls_aggregation: bool,  // Default: true
 ### F.7 Activity-Based Shard Rebalancing
 
 **Configuration** (`sharding.rs:146`):
+
 ```rust
 pub high_activity_threshold: u64,  // messages/hour, default: 1000
 ```
 
 **Rebalancing Logic** (future implementation):
+
 1. Monitor message rate per channel
 2. If channel exceeds `high_activity_threshold` → isolate to dedicated shard
 3. Low-activity channels colocated on shared shards
 4. Rebalancing during low-traffic periods to minimize disruption
 
 **Example**:
+
 - Channel #general: 50k messages/hour → Shard 0 (dedicated)
 - Channel #announcements: 10 messages/hour → Shard 15 (shared with 100 other channels)
 
@@ -3348,21 +3610,25 @@ pub high_activity_threshold: u64,  // messages/hour, default: 1000
 ### F.8 Scalability Benchmarks and Projections
 
 **Single Shard Capacity** (measured in benchmarks):
+
 - **Message throughput**: 2,000 TPS per shard
 - **Channel capacity**: ~64 channels per shard (optimal)
 - **State size**: 100 MB per shard at 1M messages
 
 **16-Shard Configuration**:
+
 - **Total throughput**: 32,000 TPS (2,000 × 16)
 - **Total channels**: 1,024 channels
 - **Total state**: 1.6 GB (16 × 100 MB)
 
 **64-Shard Configuration** (future):
+
 - **Total throughput**: 128,000 TPS
 - **Total channels**: 4,096 channels
 - **Total state**: 6.4 GB
 
 **Cross-Shard Overhead**:
+
 - Same-shard message: 0% overhead
 - Cross-shard message: +15% overhead (Merkle proof generation + verification)
 - Typical workload: 80% same-shard, 20% cross-shard → 3% average overhead
@@ -3372,22 +3638,26 @@ pub high_activity_threshold: u64,  // messages/hour, default: 1000
 ### F.9 Comparison with Other Sharding Approaches
 
 **dchat (Channel-Scoped Sharding)**:
+
 - ✅ Application-level partitioning (channels)
 - ✅ No cross-shard locking (channels are isolated)
 - ✅ Light client support (track subset of shards)
 - ⚠️ Limited to channel-based applications
 
 **Ethereum 2.0 (Beacon Chain + Shards)**:
+
 - ✅ General-purpose smart contract sharding
 - ❌ Cross-shard transactions require locking
 - ❌ Complex data availability sampling
 
 **Polkadot (Parachains)**:
+
 - ✅ Application-specific parachains
 - ❌ Fixed parachain slots (limited to ~100)
 - ✅ Relay chain for cross-chain security
 
 **Cosmos (Independent Chains + IBC)**:
+
 - ✅ Fully independent chains
 - ❌ No shared security (each chain secures itself)
 - ✅ IBC for cross-chain messaging
@@ -3404,11 +3674,13 @@ pub high_activity_threshold: u64,  // messages/hour, default: 1000
 **Phase 4 (Year 2+)**: ZK rollups for off-chain computation, state channels for private groups
 
 **State Channels** (mentioned in ARCHITECTURE.md but not yet implemented):
+
 - Off-chain message delivery for private groups
 - Periodic checkpoint to main chain
 - Reduces on-chain load by 99% for active channels
 
 **ZK Rollups** (future):
+
 - Batch 1000s of messages into single on-chain proof
 - Verify off-chain computation with ZK-SNARK
 - Target: 1M+ TPS with rollup batching
@@ -3422,6 +3694,7 @@ pub high_activity_threshold: u64,  // messages/hour, default: 1000
 **Implementation Status**: ✅ **Production-ready** - 831 lines in `crates/dchat-storage/src/economics.rs`
 
 dchat implements a **dual-track storage economics model**:
+
 1. **Storage Bonds**: Users lock DCHAT tokens to purchase guaranteed long-term storage
 2. **Micropayment Streams**: Users pay storage providers per-second for active storage
 
@@ -3432,6 +3705,7 @@ This creates sustainable economic incentives for relay operators and storage pro
 ### G.2 Storage Bonds: Bonding Curve Pricing
 
 **Formula** (`economics.rs:45-51`):
+
 ```rust
 pub fn calculate_cost(size_bytes: i64, duration_days: i64, demand_multiplier: f64) -> f64 {
     const BASE_RATE_PER_GB_DAY: f64 = 0.0001;  // 0.0001 DCHAT per GB per day
@@ -3444,16 +3718,19 @@ pub fn calculate_cost(size_bytes: i64, duration_days: i64, demand_multiplier: f6
 ```
 
 **Bonding Curve Properties**:
+
 - **Square root of duration**: Incentivizes longer commitments without linear cost explosion
 - **Demand multiplier**: Dynamic pricing based on network storage utilization
 - **Base rate**: 0.0001 DCHAT/GB/day = 0.036 DCHAT/GB/year at 1.0 demand
 
 **Example Pricing** (demand_multiplier = 1.0):
+
 - 1 GB for 30 days: `0.0001 * 1 * sqrt(30) * 1.0` = **0.00548 DCHAT** (~$0.005 at $1/DCHAT)
 - 10 GB for 365 days: `0.0001 * 10 * sqrt(365) * 1.0` = **0.191 DCHAT** (~$0.19/year)
 - 100 GB for 730 days (2 years): `0.0001 * 100 * sqrt(730) * 1.0` = **2.70 DCHAT** (~$2.70/2 years)
 
 **Comparison**:
+
 - AWS S3 Standard: $0.023/GB/month = $0.276/GB/year
 - dchat bond (1 year): $0.036/GB/year (87% cheaper at base rate)
 
@@ -3462,6 +3739,7 @@ pub fn calculate_cost(size_bytes: i64, duration_days: i64, demand_multiplier: f6
 ### G.3 Storage Bond Yield for Providers
 
 **Formula** (`economics.rs:56-59`):
+
 ```rust
 pub fn calculate_yield(amount_tokens: f64, duration_days: i64, apy: f64) -> f64 {
     let years = duration_days as f64 / 365.0;
@@ -3470,16 +3748,19 @@ pub fn calculate_yield(amount_tokens: f64, duration_days: i64, apy: f64) -> f64 
 ```
 
 **Configuration** (`economics.rs:128`):
+
 ```rust
 pub storage_bond_apy: f64,  // Default: 0.05 (5% APY)
 ```
 
 **Example Yield**:
+
 - User bonds 10 DCHAT for 365 days
 - Provider earns: `10 * 0.05 * 1.0` = **0.5 DCHAT** (~$0.50)
 - Provider responsibilities: Store user's data for 1 year, maintain 99% uptime
 
 **Provider Economics**:
+
 - **Revenue**: Bond yield (5% APY) + micropayment streams
 - **Costs**: Server ($50/month), bandwidth ($20/month), electricity ($10/month)
 - **Break-even**: ~20 TB of bonded storage at current rates
@@ -3492,6 +3773,7 @@ pub storage_bond_apy: f64,  // Default: 0.05 (5% APY)
 **Purpose**: Continuous payment for active storage without upfront bonding.
 
 **Structure** (`economics.rs:62-77`):
+
 ```rust
 pub struct MicropaymentStream {
     pub id: i64,
@@ -3506,6 +3788,7 @@ pub struct MicropaymentStream {
 ```
 
 **Flow Rate Calculation** (`economics.rs:88-94`):
+
 ```rust
 pub fn required_flow_rate(storage_bytes: i64, cost_per_gb_month: f64) -> f64 {
     let storage_gb = storage_bytes as f64 / 1_073_741_824.0;
@@ -3517,12 +3800,14 @@ pub fn required_flow_rate(storage_bytes: i64, cost_per_gb_month: f64) -> f64 {
 ```
 
 **Example**:
+
 - User stores 5 GB continuously
 - Cost: 0.01 DCHAT/GB/month (10× base rate for on-demand)
 - Monthly cost: `5 * 0.01` = **0.05 DCHAT/month**
 - Flow rate: `0.05 / 2,592,000` = **0.0000000193 DCHAT/second**
 
 **Settlement** (`economics.rs:79-86`):
+
 ```rust
 pub fn calculate_owed(&self) -> f64 {
     let now = Utc::now();
@@ -3532,6 +3817,7 @@ pub fn calculate_owed(&self) -> f64 {
 ```
 
 **Settlement frequency**: Every 1 hour (3600 seconds)
+
 - Reduces on-chain transaction overhead
 - Providers can withdraw owed balance at any time
 
@@ -3540,17 +3826,20 @@ pub fn calculate_owed(&self) -> f64 {
 ### G.5 Demand-Based Pricing Multiplier
 
 **Configuration** (`economics.rs:125`):
+
 ```rust
 pub demand_multiplier: f64,  // Default: 1.0 (normal demand)
 ```
 
 **Dynamic Adjustment Algorithm** (future implementation):
+
 1. Calculate network storage utilization: `used_storage / total_capacity`
 2. If utilization > 80% → increase multiplier by 10% per day (max 5.0×)
 3. If utilization < 50% → decrease multiplier by 5% per day (min 0.5×)
 4. Equilibrium: Supply meets demand at fair market price
 
 **Example Multipliers**:
+
 - Low demand (30% utilization): 0.5× → 0.018 DCHAT/GB/year
 - Normal demand (60% utilization): 1.0× → 0.036 DCHAT/GB/year
 - High demand (85% utilization): 2.5× → 0.090 DCHAT/GB/year
@@ -3563,6 +3852,7 @@ pub demand_multiplier: f64,  // Default: 1.0 (normal demand)
 ### G.6 Storage Bond Lifecycle
 
 **1. Bond Creation** (`economics.rs:144-179`):
+
 ```rust
 pub async fn create_bond(
     &self,
@@ -3598,11 +3888,13 @@ pub async fn create_bond(
 ```
 
 **2. Bond Validation** (ongoing):
+
 - Provider checks bond expiration date
 - If expired → mark data for deletion
 - Grace period: 7 days before permanent deletion
 
 **3. Bond Withdrawal** (`economics.rs:262-287`):
+
 ```rust
 pub async fn withdraw_bond(&self, bond_id: i64) -> Result<f64, EconomicsError> {
     let bond = self.get_bond(bond_id).await?;
@@ -3652,6 +3944,7 @@ pub struct EconomicsConfig {
 ```
 
 **Governance Parameters** (adjustable via DAO voting):
+
 - `storage_bond_apy`: Increase to attract more storage providers
 - `demand_multiplier`: Automatic adjustment based on utilization
 - `min_bond_amount`: Prevent dust bonds (minimum 10 DCHAT)
@@ -3661,6 +3954,7 @@ pub struct EconomicsConfig {
 ### G.8 Database Schema for Storage Economics
 
 **storage_bonds table**:
+
 ```sql
 CREATE TABLE storage_bonds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3678,6 +3972,7 @@ CREATE TABLE storage_bonds (
 ```
 
 **micropayment_streams table**:
+
 ```sql
 CREATE TABLE micropayment_streams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3699,16 +3994,19 @@ CREATE TABLE micropayment_streams (
 ### G.9 Economic Security Analysis
 
 **Attack Vector 1: Sybil Attack on Storage Providers**
+
 - **Attack**: Create 1000 fake storage providers to collect bonds without storing data
 - **Mitigation**: Staking requirement (10k DCHAT per provider), slashing for non-delivery
 - **Economics**: Attacker loses 10M DCHAT if caught (staking × providers)
 
 **Attack Vector 2: Data Withholding**
+
 - **Attack**: Storage provider refuses to serve bonded data
 - **Mitigation**: Reputation system, automatic failover to backup providers
 - **Economics**: Provider loses future revenue stream (5% APY on all bonds)
 
 **Attack Vector 3: Demand Manipulation**
+
 - **Attack**: Artificially inflate demand_multiplier to overcharge users
 - **Mitigation**: DAO governance override, automatic cap at 5.0× multiplier
 - **Economics**: Users switch to competitors if pricing exceeds market rate
@@ -3718,16 +4016,19 @@ CREATE TABLE micropayment_streams (
 ### G.10 Sustainability Projections
 
 **Network Growth Assumptions**:
+
 - Year 1: 10k users, 100 GB average storage → 1 PB total
 - Year 2: 100k users, 150 GB average → 15 PB total
 - Year 5: 1M users, 200 GB average → 200 PB total
 
 **Storage Provider Revenue** (Year 1):
+
 - Bonded storage: 1 PB × 0.036 DCHAT/GB/year = 36M DCHAT/year
 - Micropayments: 15% of users on-demand = 5.4M DCHAT/year
 - **Total revenue**: 41.4M DCHAT/year → ~100 providers earning $400k/year each
 
 **Protocol Sustainability**:
+
 - No ongoing subsidies required (self-sustaining market)
 - Relay rewards funded by transaction fees (not storage)
 - Token velocity: Storage bonds lock tokens for 1-2 years (reduces circulating supply)
@@ -3741,6 +4042,7 @@ CREATE TABLE micropayment_streams (
 This appendix documents **21 critical TODOs** found in `src/main.rs` and additional production gaps across the codebase that must be resolved before mainnet launch.
 
 **Severity Levels**:
+
 - 🔴 **CRITICAL**: Mainnet blocker, must fix before launch
 - 🟠 **HIGH**: Production degradation, fix in first 3 months
 - 🟡 **MEDIUM**: Feature incomplete, fix in first 6 months
@@ -3751,6 +4053,7 @@ This appendix documents **21 critical TODOs** found in `src/main.rs` and additio
 ### H.2 Cryptography & Key Management
 
 **🔴 CRITICAL: AWS KMS Integration** (`src/main.rs:3208`)
+
 ```rust
 // TODO PRODUCTION: Implement AWS KMS integration
 // Current: Keys loaded from local filesystem
@@ -3760,6 +4063,7 @@ This appendix documents **21 critical TODOs** found in `src/main.rs` and additio
 **Impact**: Validator keys stored on disk are vulnerable to theft. Compromised validator key allows attacker to sign malicious blocks.
 
 **Fix Required**:
+
 ```rust
 use aws_kms_sdk::{Client, KeySpec};
 
@@ -3776,6 +4080,7 @@ async fn load_validator_key_from_kms(key_id: &str) -> Result<SigningKey> {
 ---
 
 **🔴 CRITICAL: MPC Threshold Signing** (`dchat-crypto/src/mpc.rs` - XOR placeholder)
+
 ```rust
 // Current: XOR placeholder instead of real Threshold Signature Scheme (TSS)
 // Required: FROST library integration for t-of-n signing
@@ -3784,6 +4089,7 @@ async fn load_validator_key_from_kms(key_id: &str) -> Result<SigningKey> {
 **Impact**: Multi-signature transactions use naive XOR, not cryptographically secure. Attacker with t-1 shares can brute-force final share.
 
 **Fix Required**:
+
 ```rust
 use frost_core::{Ciphersuite, Signature};
 use frost_ed25519 as frost;
@@ -3800,6 +4106,7 @@ let group_signature = frost::aggregate(&signature_shares)?;
 ### H.3 Blockchain Consensus & State Management
 
 **🔴 CRITICAL: On-Chain Staking Submission** (`src/main.rs:3581, 3735`)
+
 ```rust
 // TODO PRODUCTION: Implement on-chain staking
 // Current: Staking verified locally, not submitted to chain
@@ -3809,6 +4116,7 @@ let group_signature = frost::aggregate(&signature_shares)?;
 **Impact**: Staking is not enforced on-chain. Users can bypass staking requirements by modifying client.
 
 **Fix Required**:
+
 ```rust
 async fn submit_stake_transaction(
     &self,
@@ -3818,13 +4126,13 @@ async fn submit_stake_transaction(
 ) -> Result<TxHash> {
     let tx = StakingTransaction::new(user_id, amount);
     let signed_tx = self.sign_transaction(tx)?;
-    
+
     let rpc_client = CurrencyChainClient::connect(currency_chain_rpc).await?;
     let tx_hash = rpc_client.submit_transaction(signed_tx).await?;
-    
+
     // Wait for 3 block confirmations (finality)
     rpc_client.wait_for_finality(tx_hash, 3).await?;
-    
+
     Ok(tx_hash)
 }
 ```
@@ -3835,6 +4143,7 @@ async fn submit_stake_transaction(
 ---
 
 **🟠 HIGH: State Validation Module** (`src/main.rs:3650`)
+
 ```rust
 // TODO: Implement state validation module
 // Current: State transitions not validated against Merkle proofs
@@ -3844,6 +4153,7 @@ async fn submit_stake_transaction(
 **Impact**: Validators can propose invalid state transitions without detection until manual audit.
 
 **Fix Required**:
+
 ```rust
 pub struct StateValidator {
     merkle_tree_cache: HashMap<BlockHeight, MerkleTree>,
@@ -3858,11 +4168,11 @@ impl StateValidator {
     ) -> Result<()> {
         // Compute expected state root from transactions
         let computed_state = self.apply_transactions(prev_state, &block.transactions)?;
-        
+
         if computed_state != *new_state {
             return Err(Error::consensus("Invalid state transition"));
         }
-        
+
         Ok(())
     }
 }
@@ -3874,6 +4184,7 @@ impl StateValidator {
 ---
 
 **🟠 HIGH: ZKP Module Integration** (`src/main.rs:3656`)
+
 ```rust
 // TODO: Implement ZKP module
 // Current: Schnorr-style proofs (basic), not production Groth16
@@ -3883,6 +4194,7 @@ impl StateValidator {
 **Impact**: Current ZKPs are not zero-knowledge (reveal metadata). Privacy guarantees not enforceable.
 
 **Fix Required**:
+
 ```rust
 use bellman::groth16::{Proof, verify_proof};
 use bls12_381::Bls12;
@@ -3903,6 +4215,7 @@ pub fn verify_privacy_proof(
 ---
 
 **🟠 HIGH: Consensus Broadcast to Validators** (`src/main.rs:3692`)
+
 ```rust
 // TODO: Implement broadcast_to_validators
 // Current: Block proposals not broadcast via gossipsub
@@ -3912,6 +4225,7 @@ pub fn verify_privacy_proof(
 **Impact**: Validators don't receive block proposals, consensus stalls.
 
 **Fix Required**:
+
 ```rust
 async fn broadcast_block_proposal(
     &mut self,
@@ -3919,15 +4233,15 @@ async fn broadcast_block_proposal(
 ) -> Result<()> {
     // Sign proposal with validator key
     let signed_proposal = self.sign_proposal(proposal)?;
-    
+
     // Serialize and publish to gossipsub topic
     let topic = gossipsub::IdentTopic::new("dchat/consensus/proposals");
     let message = bincode::serialize(&signed_proposal)?;
-    
+
     self.swarm.behaviour_mut()
         .gossipsub
         .publish(topic, message)?;
-    
+
     info!("Broadcast block proposal #{} to validators", signed_proposal.height);
     Ok(())
 }
@@ -3941,6 +4255,7 @@ async fn broadcast_block_proposal(
 ### H.4 Storage & Data Management
 
 **🟡 MEDIUM: Database Backup on Shutdown** (`src/main.rs:4185`)
+
 ```rust
 // TODO: Implement database backup
 // Current: SQLite WAL not flushed, potential data loss
@@ -3950,23 +4265,24 @@ async fn broadcast_block_proposal(
 **Impact**: Unclean shutdown causes last 5 minutes of messages to be lost.
 
 **Fix Required**:
+
 ```rust
 async fn shutdown_with_backup(&self) -> Result<()> {
     info!("Initiating graceful shutdown with database backup...");
-    
+
     // Checkpoint WAL to main database
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&self.db_pool)
         .await?;
-    
+
     // Backup to S3
     let backup_path = format!("/tmp/dchat_backup_{}.db", Utc::now().timestamp());
     std::fs::copy(&self.config.storage.data_dir, &backup_path)?;
-    
+
     let s3_client = aws_sdk_s3::Client::new();
     s3_client.upload_file(&backup_path, "dchat-backups", &format!("validator-{}.db", self.node_id))
         .await?;
-    
+
     info!("Database backed up to S3 successfully");
     Ok(())
 }
@@ -3978,6 +4294,7 @@ async fn shutdown_with_backup(&self) -> Result<()> {
 ---
 
 **🟡 MEDIUM: S3 Backup Credentials** (`dchat-deployment/src/backup.rs` - hardcoded "xxx")
+
 ```rust
 // Current: S3 credentials hardcoded as "xxx" placeholders
 // Required: AWS IAM role or environment variable injection
@@ -3986,6 +4303,7 @@ async fn shutdown_with_backup(&self) -> Result<()> {
 **Impact**: Automated backups fail silently. Data loss on validator failure.
 
 **Fix Required**:
+
 ```rust
 pub fn backup_config_from_env() -> Result<BackupConfig> {
     Ok(BackupConfig {
@@ -4005,6 +4323,7 @@ pub fn backup_config_from_env() -> Result<BackupConfig> {
 ### H.5 Networking & NAT Traversal
 
 **🔴 CRITICAL: NAT Traversal Implementation** (`dchat-network/src/nat_traversal.rs:639`)
+
 ```rust
 // Placeholder - would return true if successful
 // Current: STUN/TURN message formats defined, no actual networking
@@ -4014,6 +4333,7 @@ pub fn backup_config_from_env() -> Result<BackupConfig> {
 **Impact**: Users behind symmetric NATs cannot connect (estimated 30-40% of users).
 
 **Fix Required**:
+
 ```rust
 use igd::aio::search_gateway;
 use tokio::net::UdpSocket;
@@ -4025,15 +4345,15 @@ async fn attempt_nat_traversal(&self) -> Result<Multiaddr> {
             return Ok(format!("/ip4/{}/tcp/7070", external_ip).parse()?);
         }
     }
-    
+
     // Try 2: STUN to discover external address
     let stun_result = self.stun_client.discover_external_addr().await?;
-    
+
     // Try 3: Hole punching via signaling server
     if stun_result.nat_type == NatType::Symmetric {
         return self.coordinate_hole_punch(&stun_result).await;
     }
-    
+
     Ok(stun_result.external_addr)
 }
 ```
@@ -4044,6 +4364,7 @@ async fn attempt_nat_traversal(&self) -> Result<Multiaddr> {
 ---
 
 **🟠 HIGH: Hole Punching Signaling Server** (`dchat-network/src/nat/hole_punch.rs:211`)
+
 ```rust
 pub struct HolePunchCoordinator {
     signaling_server: String,  // CENTRALIZED - must decentralize
@@ -4062,6 +4383,7 @@ pub struct HolePunchCoordinator {
 ### H.6 Observability & Alerting
 
 **🟡 MEDIUM: Slack/PagerDuty Webhook Placeholders** (`dchat-deployment/src/health_monitor.rs:493, 509`)
+
 ```rust
 // Current: Detects placeholder URLs but doesn't enforce configuration
 // Required: Mandatory alert channel configuration for production validators
@@ -4070,13 +4392,14 @@ pub struct HolePunchCoordinator {
 **Impact**: Critical alerts not delivered, validators fail silently.
 
 **Fix Required**:
+
 ```rust
 pub fn validate_alert_channels_or_panic(config: &AlertConfig) {
     if config.environment == "production" {
         if config.slack_webhook.is_none() && config.pagerduty_key.is_none() {
             panic!("CRITICAL: Production validators must configure at least one alert channel");
         }
-        
+
         if let Some(webhook) = &config.slack_webhook {
             if webhook.contains("placeholder") || webhook.contains("example.com") {
                 panic!("CRITICAL: Slack webhook contains placeholder value");
@@ -4094,6 +4417,7 @@ pub fn validate_alert_channels_or_panic(config: &AlertConfig) {
 ### H.7 SDK Implementation Gaps
 
 **🟡 MEDIUM: TypeScript SDK Cryptography** (`sdk/typescript/src/crypto.ts` - TODOs)
+
 ```typescript
 // TODO: Implement Ed25519 sign/verify
 // Current: Placeholder functions returning dummy values
@@ -4102,19 +4426,23 @@ pub fn validate_alert_channels_or_panic(config: &AlertConfig) {
 **Impact**: Web clients cannot verify messages, open to forgery attacks.
 
 **Fix Required**:
-```typescript
-import * as ed from '@noble/ed25519';
 
-export async function signMessage(message: Uint8Array, privateKey: Uint8Array): Promise<Uint8Array> {
-    return ed.sign(message, privateKey);
+```typescript
+import * as ed from "@noble/ed25519";
+
+export async function signMessage(
+  message: Uint8Array,
+  privateKey: Uint8Array,
+): Promise<Uint8Array> {
+  return ed.sign(message, privateKey);
 }
 
 export async function verifySignature(
-    message: Uint8Array,
-    signature: Uint8Array,
-    publicKey: Uint8Array
+  message: Uint8Array,
+  signature: Uint8Array,
+  publicKey: Uint8Array,
 ): Promise<boolean> {
-    return ed.verify(signature, message, publicKey);
+  return ed.verify(signature, message, publicKey);
 }
 ```
 
@@ -4124,6 +4452,7 @@ export async function verifySignature(
 ---
 
 **🟡 MEDIUM: Dart SDK Networking** (`sdk/dart/lib/src/client.dart` - UnimplementedError)
+
 ```dart
 // Current: getUserProfile() throws UnimplementedError
 // Required: HTTP client with retry logic and timeout handling
@@ -4132,13 +4461,14 @@ export async function verifySignature(
 **Impact**: Mobile apps cannot fetch user profiles, UI shows blank states.
 
 **Fix Required**:
+
 ```dart
 import 'package:http/http.dart' as http;
 
 Future<UserProfile> getUserProfile(String userId) async {
   final url = Uri.parse('$relayEndpoint/api/v1/profiles/$userId');
   final response = await http.get(url).timeout(Duration(seconds: 10));
-  
+
   if (response.statusCode == 200) {
     return UserProfile.fromJson(jsonDecode(response.body));
   } else {
@@ -4155,6 +4485,7 @@ Future<UserProfile> getUserProfile(String userId) async {
 ### H.8 Bot API & Automation
 
 **🟢 LOW: Bot API Methods** (`src/lib.rs:260-285` - all TODOs)
+
 ```rust
 // TODO: Update implementation to match current API
 // Current: All bot methods return dummy values
@@ -4163,6 +4494,7 @@ Future<UserProfile> getUserProfile(String userId) async {
 **Impact**: Bots cannot send messages or respond to events. Automation features unavailable.
 
 **Fix Required**:
+
 ```rust
 impl BotApiHandler {
     pub async fn send_message(
@@ -4175,10 +4507,10 @@ impl BotApiHandler {
             channel_id.to_string(),
             text.as_bytes().to_vec(),
         );
-        
+
         self.messaging_client.send_message(message).await
     }
-    
+
     pub async fn on_message_received(
         &mut self,
         callback: Box<dyn Fn(Message) + Send + Sync>,
@@ -4197,6 +4529,7 @@ impl BotApiHandler {
 ### H.9 Testing & Validation
 
 **🟠 HIGH: Mock Detection in Production Builds** (`dchat-messaging/tests/integration_production.rs:39`)
+
 ```rust
 #[cfg(feature = "test-mocks")]
 fn test_mock_only_available_in_test_mode() {
@@ -4206,6 +4539,7 @@ fn test_mock_only_available_in_test_mode() {
 ```
 
 **Current Status**: ✅ Mock guard implemented with compile-time panic
+
 ```rust
 #[cfg(not(any(test, debug_assertions, feature = "test-mocks")))]
 compile_error!(
@@ -4223,6 +4557,7 @@ compile_error!(
 ### H.10 Blockchain Integration
 
 **🟡 MEDIUM: Currency Chain Transaction Parsing** (`dchat-blockchain/src/currency_chain_block_sync.rs:708`)
+
 ```rust
 // TODO: Proper transaction parsing based on currency chain format
 // Current: Placeholder parsing, always returns empty transaction list
@@ -4231,13 +4566,14 @@ compile_error!(
 **Impact**: Bridge cannot detect cross-chain transfers, atomic swaps fail.
 
 **Fix Required**:
+
 ```rust
 pub fn parse_currency_chain_transactions(block: &RawBlock) -> Result<Vec<Transaction>> {
     let tx_list = block.data.transactions;
-    
+
     tx_list.iter().map(|raw_tx| {
         let tx_type = raw_tx.get("type").ok_or(Error::parse("Missing tx type"))?;
-        
+
         match tx_type.as_str() {
             "transfer" => parse_transfer_tx(raw_tx),
             "stake" => parse_stake_tx(raw_tx),
@@ -4255,23 +4591,23 @@ pub fn parse_currency_chain_transactions(block: &RawBlock) -> Result<Vec<Transac
 
 ### H.11 TODO Summary Table
 
-| Priority | Component | File:Line | Description | Sprint | Cost |
-|----------|-----------|-----------|-------------|--------|------|
-| 🔴 CRITICAL | Crypto | main.rs:3208 | AWS KMS integration | 1 | 1 week |
-| 🔴 CRITICAL | Crypto | mpc.rs | FROST MPC signing | 3 | 2 weeks |
-| 🔴 CRITICAL | Consensus | main.rs:3581 | On-chain staking | 2 | 1.5 weeks |
-| 🔴 CRITICAL | Network | nat_traversal.rs:639 | NAT traversal | 3 | 2 weeks |
-| 🟠 HIGH | Consensus | main.rs:3650 | State validation | 2 | 1 week |
-| 🟠 HIGH | Consensus | main.rs:3656 | ZKP module | 4 | 3 weeks |
-| 🟠 HIGH | Consensus | main.rs:3692 | Validator broadcast | 2 | 3 days |
-| 🟠 HIGH | Network | hole_punch.rs:211 | Decentralized signaling | 6 | 2 weeks |
-| 🟡 MEDIUM | Storage | main.rs:4185 | Database backup | 5 | 2 days |
-| 🟡 MEDIUM | Storage | backup.rs | S3 credentials | 1 | 1 day |
-| 🟡 MEDIUM | SDK | typescript/crypto.ts | Ed25519 signing | 3 | 3 days |
-| 🟡 MEDIUM | SDK | dart/client.dart | User profiles | 4 | 2 days |
-| 🟡 MEDIUM | Blockchain | block_sync.rs:708 | Tx parsing | 5 | 1 week |
-| 🟡 MEDIUM | Observability | health_monitor.rs | Alert validation | 1 | 1 day |
-| 🟢 LOW | Bot API | lib.rs:260-285 | Bot methods | 7 | 1 week |
+| Priority    | Component     | File:Line            | Description             | Sprint | Cost      |
+| ----------- | ------------- | -------------------- | ----------------------- | ------ | --------- |
+| 🔴 CRITICAL | Crypto        | main.rs:3208         | AWS KMS integration     | 1      | 1 week    |
+| 🔴 CRITICAL | Crypto        | mpc.rs               | FROST MPC signing       | 3      | 2 weeks   |
+| 🔴 CRITICAL | Consensus     | main.rs:3581         | On-chain staking        | 2      | 1.5 weeks |
+| 🔴 CRITICAL | Network       | nat_traversal.rs:639 | NAT traversal           | 3      | 2 weeks   |
+| 🟠 HIGH     | Consensus     | main.rs:3650         | State validation        | 2      | 1 week    |
+| 🟠 HIGH     | Consensus     | main.rs:3656         | ZKP module              | 4      | 3 weeks   |
+| 🟠 HIGH     | Consensus     | main.rs:3692         | Validator broadcast     | 2      | 3 days    |
+| 🟠 HIGH     | Network       | hole_punch.rs:211    | Decentralized signaling | 6      | 2 weeks   |
+| 🟡 MEDIUM   | Storage       | main.rs:4185         | Database backup         | 5      | 2 days    |
+| 🟡 MEDIUM   | Storage       | backup.rs            | S3 credentials          | 1      | 1 day     |
+| 🟡 MEDIUM   | SDK           | typescript/crypto.ts | Ed25519 signing         | 3      | 3 days    |
+| 🟡 MEDIUM   | SDK           | dart/client.dart     | User profiles           | 4      | 2 days    |
+| 🟡 MEDIUM   | Blockchain    | block_sync.rs:708    | Tx parsing              | 5      | 1 week    |
+| 🟡 MEDIUM   | Observability | health_monitor.rs    | Alert validation        | 1      | 1 day     |
+| 🟢 LOW      | Bot API       | lib.rs:260-285       | Bot methods             | 7      | 1 week    |
 
 **Total Critical Work**: 6.5 weeks (Sprints 1-3)
 **Total High-Priority Work**: 6 weeks (Sprints 2-6)
@@ -4286,6 +4622,7 @@ pub fn parse_currency_chain_transactions(block: &RawBlock) -> Result<Vec<Transac
 ### H.12 Recommended Prioritization
 
 **Pre-Mainnet (Must Complete)**:
+
 1. AWS KMS integration (validator security)
 2. On-chain staking submission (economic enforcement)
 3. NAT traversal implementation (user connectivity)
@@ -4293,16 +4630,518 @@ pub fn parse_currency_chain_transactions(block: &RawBlock) -> Result<Vec<Transac
 5. Validator broadcast mechanism (consensus liveness)
 6. State validation module (Byzantine fault detection)
 
-**Post-Mainnet (First 3 Months)**:
-7. ZKP module with Groth16 circuits (privacy guarantees)
-8. Decentralized hole punch signaling (eliminate SPOF)
-9. Database backup automation (disaster recovery)
-10. TypeScript SDK cryptography (web client security)
+**Post-Mainnet (First 3 Months)**: 7. ZKP module with Groth16 circuits (privacy guarantees) 8. Decentralized hole punch signaling (eliminate SPOF) 9. Database backup automation (disaster recovery) 10. TypeScript SDK cryptography (web client security)
 
-**Post-Mainnet (Months 4-6)**:
-11. Dart SDK networking (mobile feature parity)
-12. Currency chain transaction parsing (bridge functionality)
-13. Bot API implementation (developer ecosystem)
+**Post-Mainnet (Months 4-6)**: 11. Dart SDK networking (mobile feature parity) 12. Currency chain transaction parsing (bridge functionality) 13. Bot API implementation (developer ecosystem)
+
+---
+
+## Section 34: Quorum-Gated Encryption & Revocable Read Access
+
+**Status**: 📋 SPECIFICATION (Implementation Pending)  
+**Added**: December 2025  
+**Purpose**: Define a cryptographic system combining E2E encryption with time-bounded, quorum-controlled read access that enables rapid device revocation and locks unread message history.
+
+### 34.1 Security Model & Guarantees
+
+This section defines the exact security properties provided by dchat's Quorum-Gated Encryption (QGE) system.
+
+#### 34.1.1 Threat Model
+
+| Adversary                     | Capabilities                      | What QGE Protects                                     |
+| ----------------------------- | --------------------------------- | ----------------------------------------------------- |
+| **Network eavesdropper**      | Observe all network traffic       | ✅ Full confidentiality (E2E encryption)              |
+| **Compromised relay**         | Read/modify messages in transit   | ✅ Confidentiality (relays see ciphertext only)       |
+| **Stolen device (offline)**   | Physical access, no network       | ✅ Unread history locks after epoch expiry (≤10 min)  |
+| **Stolen device (online)**    | Physical + network access         | ⚠️ Race: must revoke before next epoch refresh        |
+| **Silent malware (online)**   | Exfiltrate keys, impersonate user | ⚠️ Mitigated by attestation + user presence + budgets |
+| **Colluding relays (k-of-n)** | Threshold quorum control          | ⚠️ Can deny service, cannot read content              |
+| **Endpoint with plaintext**   | Already-viewed messages           | ❌ Out of scope (crypto can't erase memory)           |
+
+#### 34.1.2 Security Properties
+
+**Property 1: End-to-End Confidentiality**
+
+- Messages are encrypted with keys derived from Double Ratchet (1:1) or group protocol (channels).
+- Relays, quorum members, and network observers see only ciphertext.
+- Even if all n quorum relays collude, they cannot decrypt message content.
+
+**Property 2: Forward Secrecy**
+
+- Compromise of current keys does not reveal past messages.
+- Double Ratchet derives per-message keys and erases old keys after use.
+- If device is compromised at time T, messages encrypted before T (with erased keys) remain protected.
+
+**Property 3: Post-Compromise Security**
+
+- After compromise is detected and attacker loses access, protocol recovers security.
+- New DH ratchet steps re-establish fresh key material.
+- Future messages become unreadable to prior attacker.
+
+**Property 4: Bounded Offline Read Access (10-minute epoch)**
+
+- Decrypting any stored (unread) message requires a valid `EpochToken_t`.
+- `EpochToken_t` expires after 10 minutes; device must fetch new token from quorum.
+- Stolen offline device cannot read unread history after cached token expires.
+
+**Property 5: Rapid Device Revocation**
+
+- On revocation event, quorum immediately stops issuing `EpochToken_t` to revoked device.
+- Revoked device loses read access to ALL unread history within 10 minutes (epoch expiry).
+- Emergency lock can stop new message delivery instantly (before epoch expiry).
+
+**Property 6: Member Revocation (Channels)**
+
+- Removed channel member loses ability to obtain future epoch tokens.
+- All unread channel history becomes inaccessible after epoch expiry.
+- New messages use updated group keys (removed member excluded).
+
+#### 34.1.3 Explicit Non-Goals (What QGE Cannot Prevent)
+
+| Attack                              | Why It Cannot Be Prevented                                      |
+| ----------------------------------- | --------------------------------------------------------------- |
+| **Screenshots / screen recording**  | Plaintext displayed on screen is outside crypto boundary        |
+| **Copy-paste of viewed messages**   | User can always export what they can see                        |
+| **Notification cache / OS preview** | Mitigated by disabling previews, not cryptographically enforced |
+| **Backup of decrypted database**    | If user backs up after decrypting, backup contains plaintext    |
+| **Colluding recipient**             | Legitimate recipient can always share what they received        |
+| **Rubber-hose cryptanalysis**       | Physical coercion to unlock device is out of scope              |
+
+#### 34.1.4 Assumptions
+
+1. **Hardware-backed device keys**: DeviceKey stored in Secure Enclave / StrongBox is non-exportable.
+2. **Honest quorum majority**: At least (n - k + 1) quorum members are honest (for k-of-n threshold).
+3. **Reliable clock**: Device clock is reasonably accurate (±30 seconds) for epoch boundaries.
+4. **Prompt revocation**: User initiates revocation within reasonable time after device loss.
+
+### 34.2 Key Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     IDENTITY LAYER                              │
+├─────────────────────────────────────────────────────────────────┤
+│  IdentityKey (Ed25519)                                          │
+│    └── DeviceKey_i (Ed25519, hardware-backed)                   │
+│          └── Used to authenticate EpochToken requests           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   MESSAGE ENCRYPTION LAYER                      │
+├─────────────────────────────────────────────────────────────────┤
+│  1:1 Chats: Double Ratchet                                      │
+│    RootKey → ChainKey → MessageKey_n (per message)              │
+│                                                                 │
+│  Channels: Sender Keys OR MLS-style TreeKEM                     │
+│    GroupSecret → SenderChainKey_i → MessageKey_n                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   STORAGE UNLOCK LAYER                          │
+├─────────────────────────────────────────────────────────────────┤
+│  EpochToken_t (from quorum, 10-min validity)                    │
+│    │                                                            │
+│    └──► UK_t = HKDF(EpochToken_t, "unlock", conv_id || dev_id)  │
+│           │                                                     │
+│           └──► Decrypt SUK (Storage Unlock Key)                 │
+│                 │                                               │
+│                 └──► Unwrap MessageKey_n for each unread msg    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 34.3 Epoch Token Issuance Protocol
+
+#### 34.3.1 Committee Selection
+
+**Per-Conversation Committee**:
+
+- Deterministically selected from relay pool using VRF + stake + reputation.
+- Parameters:
+  - 1:1 conversations: n=7 relays, threshold k=4
+  - Channels: n=11 relays, threshold k=7
+- Geographic/ASN diversity enforced (minimum 3 regions).
+- Committee rotates daily (or on governance event).
+
+**Selection Algorithm**:
+
+```
+committee = SELECT_TOP_K(
+  relays.sort_by(
+    VRF(conv_id, epoch_day) XOR relay_id,
+    weighted_by: stake * reputation * geo_diversity_bonus
+  ),
+  count = n
+)
+```
+
+#### 34.3.2 Token Request Flow
+
+```
+Device                          Quorum (k-of-n relays)
+   │                                     │
+   │──── UnlockRequest ─────────────────►│
+   │     { conv_id_hash,                 │
+   │       device_id,                    │
+   │       epoch_id,                     │
+   │       nonce,                        │
+   │       device_sig,                   │
+   │       attestation? }                │
+   │                                     │
+   │                            ┌────────┴────────┐
+   │                            │ Verify:         │
+   │                            │ - Device enrolled│
+   │                            │ - Not revoked   │
+   │                            │ - Rate limit OK │
+   │                            │ - Attestation?  │
+   │                            └────────┬────────┘
+   │                                     │
+   │◄──── PartialResponse_i ─────────────│ (from each relay i)
+   │      { partial_token_i,             │
+   │        relay_sig_i }                │
+   │                                     │
+   │  (collect k responses)              │
+   │                                     │
+   │  EpochToken_t = COMBINE(            │
+   │    partial_token_1..k               │
+   │  )                                  │
+   │                                     │
+```
+
+#### 34.3.3 Token Structure
+
+```rust
+pub struct EpochToken {
+    /// Epoch identifier (10-minute window)
+    pub epoch_id: u64,
+
+    /// Conversation this token unlocks (hashed for privacy)
+    pub conv_id_hash: [u8; 32],
+
+    /// Device this token is bound to
+    pub device_id: DeviceId,
+
+    /// Combined threshold signature from k relays
+    pub threshold_signature: [u8; 64],
+
+    /// Expiry timestamp (epoch_id * 600 + 600 seconds)
+    pub expires_at: u64,
+
+    /// Optional: decrypt budget remaining
+    pub budget_remaining: Option<u32>,
+}
+```
+
+### 34.4 Message Storage Model
+
+#### 34.4.1 At-Rest Encryption
+
+Messages are stored with wrapped keys that require SUK to unwrap:
+
+```rust
+pub struct StoredMessage {
+    /// Message identifier
+    pub id: MessageId,
+
+    /// Ciphertext (encrypted under MessageKey)
+    pub ciphertext: Vec<u8>,
+
+    /// MessageKey wrapped under SUK
+    /// WrappedKey = AEAD_Encrypt(SUK, MessageKey, aad=msg_id)
+    pub wrapped_key: Vec<u8>,
+
+    /// Epoch when message was received (for key lookup)
+    pub receive_epoch: u64,
+
+    /// Sender's ratchet public key (for Double Ratchet state)
+    pub sender_ratchet_key: [u8; 32],
+
+    /// Message index in sender's chain
+    pub message_index: u32,
+
+    /// Read status
+    pub is_read: bool,
+}
+```
+
+#### 34.4.2 Read Flow
+
+```
+1. Device requests EpochToken_t from quorum (if not cached)
+2. Derive UK_t = HKDF(EpochToken_t, "unlock", conv_id || device_id)
+3. Decrypt SUK = AEAD_Decrypt(UK_t, encrypted_suk)
+4. For each unread message:
+   a. Unwrap MessageKey = AEAD_Decrypt(SUK, wrapped_key, aad=msg_id)
+   b. Decrypt plaintext = AEAD_Decrypt(MessageKey, ciphertext)
+   c. Increment decrypt_count; check budget
+5. After reading, mark is_read = true
+6. Optionally erase wrapped_key for read messages (forward secrecy)
+```
+
+### 34.5 Revocation Protocol
+
+#### 34.5.1 Revocation Events
+
+```rust
+pub enum MembershipEvent {
+    /// New device enrolled for a user
+    EnrollDevice {
+        user_id: UserId,
+        device_id: DeviceId,
+        device_pubkey: [u8; 32],
+        enrolled_at: u64,
+        attestation: Option<Attestation>,
+    },
+
+    /// Device revoked (lost, stolen, or user-initiated)
+    RevokeDevice {
+        user_id: UserId,
+        device_id: DeviceId,
+        revoked_at: u64,
+        reason: RevocationReason,
+        signature: Signature,  // Signed by user's identity key
+    },
+
+    /// Member added to channel
+    AddMember {
+        channel_id: ChannelId,
+        user_id: UserId,
+        added_by: UserId,
+        added_at: u64,
+    },
+
+    /// Member removed from channel
+    RemoveMember {
+        channel_id: ChannelId,
+        user_id: UserId,
+        removed_by: UserId,
+        removed_at: u64,
+        signature: Signature,
+    },
+
+    /// Committee rotation
+    RotateCommittee {
+        conv_id: ConversationId,
+        new_committee: Vec<RelayId>,
+        effective_epoch: u64,
+    },
+}
+
+pub enum RevocationReason {
+    DeviceLost,
+    DeviceStolen,
+    UserInitiated,
+    SecurityBreach,
+    GovernanceAction,
+}
+```
+
+#### 34.5.2 Revocation Enforcement
+
+**Immediate Effects**:
+
+1. Revocation event signed and published to membership transparency log.
+2. Quorum members receive event via gossip protocol.
+3. Quorum immediately stops issuing `EpochToken_t` to revoked device.
+4. Other conversation members notified (stop sending to revoked device).
+
+**Timing**:
+
+- Revoked device can read until current `EpochToken_t` expires (≤10 minutes worst case).
+- Emergency lock: honest clients immediately stop sending new messages to revoked device.
+
+#### 34.5.3 Transparency Log
+
+All membership events are recorded in a Merkle-rooted append-only log:
+
+```rust
+pub struct MembershipLog {
+    /// Conversation this log belongs to
+    pub conv_id: ConversationId,
+
+    /// Current Merkle root
+    pub merkle_root: [u8; 32],
+
+    /// Log entries
+    pub entries: Vec<MembershipLogEntry>,
+}
+
+pub struct MembershipLogEntry {
+    /// Sequence number
+    pub seq: u64,
+
+    /// Event data
+    pub event: MembershipEvent,
+
+    /// Hash of previous entry
+    pub prev_hash: [u8; 32],
+
+    /// Signature by authority (channel owner, quorum, or governance)
+    pub authority_sig: Signature,
+}
+```
+
+**Verification**: Clients verify membership log root before accepting epoch tokens.
+
+### 34.6 Hardening Measures
+
+#### 34.6.1 Decrypt Budget
+
+Per-epoch limit on decryptions prevents mass exfiltration:
+
+```rust
+pub struct DecryptBudget {
+    /// Maximum messages decryptable per epoch (default: 200)
+    pub max_per_epoch: u32,
+
+    /// Current count this epoch
+    pub count_this_epoch: u32,
+
+    /// Reset timestamp
+    pub epoch_start: u64,
+
+    /// Require user presence to reset?
+    pub require_presence_to_reset: bool,
+}
+
+impl DecryptBudget {
+    pub fn check_and_increment(&mut self) -> Result<()> {
+        if self.count_this_epoch >= self.max_per_epoch {
+            return Err(Error::DecryptBudgetExhausted);
+        }
+        self.count_this_epoch += 1;
+        Ok(())
+    }
+}
+```
+
+#### 34.6.2 Forward-Secure Epoch Chain
+
+Epochs form a chain; missing one prevents catch-up:
+
+```
+EpochSecret_0 (genesis)
+    │
+    └──► EpochSecret_1 = HKDF(EpochSecret_0, "next_epoch")
+           │
+           └──► EpochSecret_2 = HKDF(EpochSecret_1, "next_epoch")
+                  │
+                  └──► ...
+```
+
+**Recovery**: If device misses epochs (long offline), must re-enroll via guardian/multi-factor.
+
+#### 34.6.3 Privacy-Preserving Requests
+
+Reduce metadata leakage to quorum:
+
+```rust
+pub struct PrivacyPreservingUnlockRequest {
+    /// Conversation ID hashed with per-committee rotating salt
+    /// H(conv_id, committee_salt)
+    pub conv_id_blinded: [u8; 32],
+
+    /// Device commitment (can be blind signature request)
+    pub device_commitment: [u8; 32],
+
+    /// Epoch
+    pub epoch_id: u64,
+
+    /// ZK proof of membership (optional, for full unlinkability)
+    pub membership_proof: Option<ZkMembershipProof>,
+}
+```
+
+#### 34.6.4 Anomaly Detection
+
+Quorum-side checks:
+
+```rust
+pub struct AnomalyDetector {
+    /// Requests per device per hour
+    pub request_rate: HashMap<DeviceId, RateCounter>,
+
+    /// Last known ASN/geo per device
+    pub last_location: HashMap<DeviceId, GeoInfo>,
+
+    /// Thresholds
+    pub max_requests_per_hour: u32,  // 10 (should be ~6 for 10-min epochs)
+    pub max_location_changes_per_day: u32,  // 5
+}
+
+impl AnomalyDetector {
+    pub fn check(&self, device_id: &DeviceId, current_geo: &GeoInfo) -> AnomalyResult {
+        // Check rate
+        if self.request_rate.get(device_id).map(|r| r.count) > self.max_requests_per_hour {
+            return AnomalyResult::RateLimitExceeded;
+        }
+
+        // Check impossible travel
+        if let Some(last) = self.last_location.get(device_id) {
+            if is_impossible_travel(last, current_geo) {
+                return AnomalyResult::ImpossibleTravel;
+            }
+        }
+
+        AnomalyResult::Ok
+    }
+}
+```
+
+### 34.7 Group Encryption Choice
+
+#### 34.7.1 Recommendation
+
+| Channel Size   | Recommended Protocol             | Rationale                                               |
+| -------------- | -------------------------------- | ------------------------------------------------------- |
+| 2-50 members   | **Sender Keys**                  | Simple, efficient, acceptable churn handling            |
+| 50-500 members | **MLS-style TreeKEM**            | Efficient updates, strong removal guarantees            |
+| 500+ members   | **Sender Keys + Epoch Rotation** | TreeKEM update cost too high; use epoch-based re-keying |
+
+#### 34.7.2 Sender Keys (for small/medium channels)
+
+```rust
+pub struct SenderKeyState {
+    /// Per-sender symmetric chain key
+    pub chain_key: [u8; 32],
+
+    /// Sender's signing public key
+    pub sender_pubkey: [u8; 32],
+
+    /// Current message index
+    pub message_index: u32,
+}
+
+impl SenderKeyState {
+    /// Derive next message key
+    pub fn next_message_key(&mut self) -> [u8; 32] {
+        let msg_key = HKDF(self.chain_key, "msg_key", &self.message_index.to_le_bytes());
+        self.chain_key = HKDF(self.chain_key, "chain_key", &[]);
+        self.message_index += 1;
+        msg_key
+    }
+}
+```
+
+**Member Removal**: On removal, all senders rotate their sender keys and distribute new keys to remaining members.
+
+### 34.8 Implementation Modules
+
+| Module            | Crate          | Purpose                         |
+| ----------------- | -------------- | ------------------------------- |
+| `ratchet/`        | dchat-crypto   | Double Ratchet for 1:1          |
+| `group/`          | dchat-crypto   | Sender Keys / MLS for channels  |
+| `epoch_unlock/`   | dchat-network  | Quorum token issuance           |
+| `membership_log/` | dchat-chain    | Transparency log                |
+| `device_auth/`    | dchat-identity | Device enrollment & attestation |
+| `suk/`            | dchat-storage  | Storage unlock key management   |
+
+### 34.9 References
+
+- Signal Double Ratchet: https://signal.org/docs/specifications/doubleratchet/
+- MLS Protocol: RFC 9420
+- FROST Threshold Signatures: https://eprint.iacr.org/2020/852
+- Merkle Tree Transparency: RFC 6962 (Certificate Transparency)
 
 ---
 

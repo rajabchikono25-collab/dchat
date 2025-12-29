@@ -7,6 +7,7 @@
 ---
 
 ## Table of Contents
+
 1. [Overview](#overview)
 2. [HTTP API](#http-api)
 3. [P2P/libp2p API](#p2plibp2p-api)
@@ -23,18 +24,19 @@
 
 dchat exposes multiple API surfaces for different use cases:
 
-| API Type | Protocol | Purpose | Stability |
-|----------|----------|---------|-----------|
-| **HTTP** | REST | Health, metrics, status | ✅ Stable |
-| **P2P** | libp2p protocols | Peer communication | ✅ Stable |
-| **gRPC** | Protocol Buffers | High-performance clients | ✅ Stable |
-| **WebSocket** | WS/WSS | Real-time browser clients | ⚠️ Beta |
+| API Type      | Protocol         | Purpose                   | Stability |
+| ------------- | ---------------- | ------------------------- | --------- |
+| **HTTP**      | REST             | Health, metrics, status   | ✅ Stable |
+| **P2P**       | libp2p protocols | Peer communication        | ✅ Stable |
+| **gRPC**      | Protocol Buffers | High-performance clients  | ✅ Stable |
+| **WebSocket** | WS/WSS           | Real-time browser clients | ⚠️ Beta   |
 
 ---
 
 ## HTTP API
 
 ### Base URL
+
 ```
 http://localhost:8080/api/v1
 ```
@@ -42,9 +44,11 @@ http://localhost:8080/api/v1
 ### Health & Status Endpoints
 
 #### `GET /health`
+
 **Purpose**: Liveness probe (is the service running?)
 
 **Response (200 OK)**:
+
 ```json
 {
   "status": "ok",
@@ -55,15 +59,18 @@ http://localhost:8080/api/v1
 ```
 
 **Codes**:
+
 - `200 OK` - Service is alive
 - `503 Service Unavailable` - Service degraded
 
 ---
 
 #### `GET /ready`
+
 **Purpose**: Readiness probe (is it ready to serve traffic?)
 
 **Response (200 OK)**:
+
 ```json
 {
   "ready": true,
@@ -74,15 +81,18 @@ http://localhost:8080/api/v1
 ```
 
 **Codes**:
+
 - `200 OK` - Ready to handle requests
 - `503 Service Unavailable` - Not ready (syncing, low peer count, etc.)
 
 ---
 
 #### `GET /status`
+
 **Purpose**: Detailed node status
 
 **Response (200 OK)**:
+
 ```json
 {
   "node_type": "relay",
@@ -114,9 +124,11 @@ http://localhost:8080/api/v1
 ### Message API
 
 #### `POST /messages`
+
 **Purpose**: Send a message
 
 **Request**:
+
 ```json
 {
   "recipient_id": "12D3KooWXYZ...",
@@ -128,6 +140,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "message_id": "msg-abc123def456",
@@ -138,6 +151,7 @@ http://localhost:8080/api/v1
 ```
 
 **Error Responses**:
+
 - `400 Bad Request` - Invalid message format
 - `401 Unauthorized` - Authentication failed
 - `429 Too Many Requests` - Rate limit exceeded
@@ -145,10 +159,193 @@ http://localhost:8080/api/v1
 
 ---
 
+### Secure Message Envelope (QGE v1)
+
+**Version**: 1.0 (Quorum-Gated Encryption)  
+**Status**: Specification (Implementation Q1 2026)
+
+The secure message envelope provides end-to-end encryption with quorum-gated read access. Messages are encrypted under per-message keys derived from Double Ratchet (1:1) or group protocol (channels), and the message keys are wrapped under a Storage Unlock Key (SUK) that requires periodic quorum authorization to unlock.
+
+#### Wire Format
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SECURE MESSAGE ENVELOPE v1                   │
+├─────────────────────────────────────────────────────────────────┤
+│ version          : u8          (0x01 for QGE v1)                │
+│ envelope_type    : u8          (0x01=1:1, 0x02=channel)         │
+│ flags            : u16         (see flag definitions)           │
+├─────────────────────────────────────────────────────────────────┤
+│ message_id       : [u8; 32]    (unique message identifier)      │
+│ conversation_id  : [u8; 32]    (channel_id or 1:1 conv hash)    │
+│ sender_device_id : [u8; 32]    (sender's device identifier)     │
+│ timestamp_ms     : u64         (send timestamp)                 │
+├─────────────────────────────────────────────────────────────────┤
+│ RATCHET HEADER (for Double Ratchet / Sender Keys)               │
+│ sender_ratchet_key : [u8; 32]  (sender's current DH public key) │
+│ previous_chain_len : u32       (# of messages in prev chain)    │
+│ message_index      : u32       (index in current chain)         │
+├─────────────────────────────────────────────────────────────────┤
+│ CIPHERTEXT                                                      │
+│ ciphertext_len   : u32         (length of encrypted payload)    │
+│ ciphertext       : [u8; *]     (AEAD encrypted message content) │
+├─────────────────────────────────────────────────────────────────┤
+│ KEY WRAPPING (for at-rest storage)                              │
+│ wrapped_key_len  : u16         (length of wrapped key blob)     │
+│ wrapped_key      : [u8; *]     (message key wrapped under SUK)  │
+│ unlock_epoch     : u64         (epoch when message was stored)  │
+├─────────────────────────────────────────────────────────────────┤
+│ AUTHENTICATION                                                  │
+│ sender_signature : [u8; 64]    (Ed25519 signature over envelope)│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Flag Definitions
+
+| Bit  | Name                  | Description                                |
+| ---- | --------------------- | ------------------------------------------ |
+| 0    | `EPHEMERAL`           | Message should be deleted after read       |
+| 1    | `HIGH_SECURITY`       | Requires user presence to decrypt          |
+| 2    | `FORWARD_LOCKED`      | Cannot be forwarded to other conversations |
+| 3    | `EMERGENCY_REVOCABLE` | Honor emergency lock immediately           |
+| 4-7  | Reserved              | Must be zero                               |
+| 8-15 | `TTL_HOURS`           | Time-to-live in hours (0 = no expiry)      |
+
+#### JSON Representation (API)
+
+**Sending a Secure Message**:
+
+```json
+POST /api/v2/messages/secure
+
+{
+  "version": 1,
+  "envelope_type": "direct",
+  "recipient_id": "12D3KooWXYZ...",
+  "conversation_id": "conv-abc123...",
+  "sender_device_id": "dev-xyz789...",
+
+  "ratchet_header": {
+    "sender_ratchet_key": "7d8f9b6c1234567890abcdef...",
+    "previous_chain_length": 5,
+    "message_index": 42
+  },
+
+  "ciphertext": "base64_encoded_aead_ciphertext...",
+
+  "key_wrapping": {
+    "wrapped_key": "base64_encoded_wrapped_message_key...",
+    "unlock_epoch": 1735500000
+  },
+
+  "flags": {
+    "ephemeral": false,
+    "high_security": false,
+    "forward_locked": true,
+    "ttl_hours": 0
+  },
+
+  "sender_signature": "base64_ed25519_signature..."
+}
+```
+
+**Response (201 Created)**:
+
+```json
+{
+  "message_id": "msg-abc123def456...",
+  "status": "forwarded",
+  "delivery_epoch": 1735500000,
+  "relay_count": 3
+}
+```
+
+#### Stored Message Format
+
+Messages are stored with the following schema (see dchat-storage migrations):
+
+```sql
+-- New columns for secure envelope support
+ALTER TABLE messages ADD COLUMN envelope_version INTEGER DEFAULT 0;
+ALTER TABLE messages ADD COLUMN ciphertext BLOB;
+ALTER TABLE messages ADD COLUMN wrapped_msg_key BLOB;
+ALTER TABLE messages ADD COLUMN unlock_epoch INTEGER;
+ALTER TABLE messages ADD COLUMN sender_ratchet_key BLOB;
+ALTER TABLE messages ADD COLUMN message_index INTEGER;
+ALTER TABLE messages ADD COLUMN flags INTEGER DEFAULT 0;
+
+-- Epoch tokens table
+CREATE TABLE epoch_tokens (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    epoch_id INTEGER NOT NULL,
+    token_blob BLOB NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(device_id, conversation_id, epoch_id)
+);
+
+-- Membership log table
+CREATE TABLE membership_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    prev_hash BLOB NOT NULL,
+    merkle_root BLOB NOT NULL,
+    authority_signature BLOB NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_membership_log_conv ON membership_log(conversation_id);
+CREATE INDEX idx_epoch_tokens_expires ON epoch_tokens(expires_at);
+```
+
+#### Backward Compatibility
+
+Messages with `envelope_version = 0` use the legacy format (plaintext content field). Clients MUST support both formats during transition:
+
+```rust
+match message.envelope_version {
+    0 => {
+        // Legacy: content is plaintext (or Noise-encrypted at transport)
+        let plaintext = message.content;
+    }
+    1 => {
+        // QGE v1: decrypt via SUK + epoch token
+        let msg_key = unwrap_message_key(&message.wrapped_msg_key, &suk)?;
+        let plaintext = aead_decrypt(&message.ciphertext, &msg_key)?;
+    }
+    _ => {
+        return Err(Error::UnsupportedEnvelopeVersion);
+    }
+}
+```
+
+#### Decryption Flow
+
+```
+1. Check envelope_version == 1
+2. Verify sender_signature over envelope
+3. Obtain EpochToken for current epoch from quorum (if not cached)
+4. Derive UK_t = HKDF(EpochToken, "unlock", conversation_id || device_id)
+5. Decrypt SUK = AEAD_Decrypt(UK_t, encrypted_suk_blob)
+6. Unwrap MessageKey = AEAD_Decrypt(SUK, wrapped_key, aad=message_id)
+7. Decrypt plaintext = AEAD_Decrypt(MessageKey, ciphertext, aad=ratchet_header)
+8. Advance ratchet state based on sender_ratchet_key and message_index
+9. Increment decrypt budget counter
+10. Mark message as read (optionally erase wrapped_key for forward secrecy)
+```
+
+---
+
 #### `GET /messages`
+
 **Purpose**: Retrieve messages for authenticated user
 
 **Query Parameters**:
+
 ```
 ?channel_id=general
 &limit=50
@@ -158,6 +355,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "messages": [
@@ -180,11 +378,13 @@ http://localhost:8080/api/v1
 ---
 
 #### `DELETE /messages/{message_id}`
+
 **Purpose**: Delete message (if owner/admin)
 
 **Response (204 No Content)**
 
 **Error Responses**:
+
 - `403 Forbidden` - Not owner/admin
 - `404 Not Found` - Message doesn't exist
 
@@ -193,9 +393,11 @@ http://localhost:8080/api/v1
 ### Channel API
 
 #### `POST /channels`
+
 **Purpose**: Create a new channel
 
 **Request**:
+
 ```json
 {
   "name": "announcements",
@@ -207,6 +409,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "channel_id": "chan-abc123",
@@ -220,9 +423,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `GET /channels`
+
 **Purpose**: List channels (paginated)
 
 **Query Parameters**:
+
 ```
 ?limit=20
 &offset=0
@@ -230,6 +435,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "channels": [
@@ -250,9 +456,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `GET /channels/{channel_id}/members`
+
 **Purpose**: List channel members
 
 **Response (200 OK)**:
+
 ```json
 {
   "members": [
@@ -273,9 +481,11 @@ http://localhost:8080/api/v1
 ### Identity API
 
 #### `POST /identities`
+
 **Purpose**: Register a new identity
 
 **Request**:
+
 ```json
 {
   "public_key": "7d8f9b6c...",
@@ -286,6 +496,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "peer_id": "12D3KooWXYZ...",
@@ -299,9 +510,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `GET /identities/{peer_id}`
+
 **Purpose**: Get identity info
 
 **Response (200 OK)**:
+
 ```json
 {
   "peer_id": "12D3KooWABC...",
@@ -317,9 +530,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `POST /identities/{peer_id}/verify`
+
 **Purpose**: Verify identity (get verified badge)
 
 **Request**:
+
 ```json
 {
   "proof_type": "device_attestation",
@@ -328,6 +543,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "verified": true,
@@ -341,9 +557,11 @@ http://localhost:8080/api/v1
 ### Reputation API
 
 #### `GET /reputation/{peer_id}`
+
 **Purpose**: Get reputation score
 
 **Response (200 OK)**:
+
 ```json
 {
   "peer_id": "12D3KooWABC...",
@@ -362,9 +580,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `POST /reputation/{peer_id}/challenge`
+
 **Purpose**: Challenge reputation score (dispute resolution)
 
 **Request**:
+
 ```json
 {
   "claim": "Peer did not deliver message",
@@ -374,6 +594,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "dispute_id": "disp-abc123",
@@ -388,9 +609,11 @@ http://localhost:8080/api/v1
 ### Governance API
 
 #### `POST /governance/proposals`
+
 **Purpose**: Submit governance proposal
 
 **Request**:
+
 ```json
 {
   "title": "Increase relay rewards",
@@ -405,6 +628,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "proposal_id": "prop-abc123",
@@ -419,9 +643,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `GET /governance/proposals`
+
 **Purpose**: List proposals (paginated)
 
 **Query Parameters**:
+
 ```
 ?status=open
 &sort=votes_desc
@@ -429,6 +655,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "proposals": [
@@ -450,9 +677,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `POST /governance/votes`
+
 **Purpose**: Cast vote on proposal
 
 **Request**:
+
 ```json
 {
   "proposal_id": "prop-abc123",
@@ -462,6 +691,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "vote_id": "vote-abc123",
@@ -477,9 +707,11 @@ http://localhost:8080/api/v1
 ### Marketplace API
 
 #### `POST /marketplace/listings`
+
 **Purpose**: Create digital good listing
 
 **Request**:
+
 ```json
 {
   "title": "Custom Emoji Pack",
@@ -494,6 +726,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "listing_id": "list-abc123",
@@ -507,9 +740,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `GET /marketplace/listings`
+
 **Purpose**: Browse marketplace
 
 **Query Parameters**:
+
 ```
 ?type=sticker_pack
 &sort=popularity
@@ -517,6 +752,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (200 OK)**:
+
 ```json
 {
   "listings": [
@@ -537,9 +773,11 @@ http://localhost:8080/api/v1
 ---
 
 #### `POST /marketplace/purchases`
+
 **Purpose**: Purchase digital good (creates escrow)
 
 **Request**:
+
 ```json
 {
   "listing_id": "list-abc123",
@@ -548,6 +786,7 @@ http://localhost:8080/api/v1
 ```
 
 **Response (201 Created)**:
+
 ```json
 {
   "purchase_id": "purch-abc123",
@@ -567,9 +806,11 @@ http://localhost:8080/api/v1
 dchat uses libp2p with custom protocols:
 
 #### Message Protocol (`/dchat/msg/1.0.0`)
+
 **Purpose**: Send messages between peers
 
 **Message Format**:
+
 ```protobuf
 message PeerMessage {
   string id = 1;
@@ -582,6 +823,7 @@ message PeerMessage {
 ```
 
 **Handlers**:
+
 ```rust
 // Handler must respond with delivery confirmation
 async fn handle_message(msg: PeerMessage) -> Result<DeliveryConfirmation> {
@@ -597,9 +839,11 @@ async fn handle_message(msg: PeerMessage) -> Result<DeliveryConfirmation> {
 ---
 
 #### Gossip Protocol (`/dchat/gossip/1.0.0`)
+
 **Purpose**: Epidemic message propagation with bloom filter dedup
 
 **Configuration**:
+
 ```rust
 let config = GossipConfig {
     fanout: 6,
@@ -612,9 +856,11 @@ let config = GossipConfig {
 ---
 
 #### DHT Discovery (`/dchat/dht/1.0.0`)
+
 **Purpose**: Kademlia peer discovery
 
 **Operations**:
+
 - `FindPeer(peer_id)` - Locate peer in DHT
 - `FindProviders(content_hash)` - Find peers with content
 - `GetClosestPeers(key)` - Get K closest peers to key
@@ -622,9 +868,11 @@ let config = GossipConfig {
 ---
 
 #### Connection Management Protocol
+
 **Purpose**: Manage peer connections, health checks
 
 **Heartbeat** (every 30 seconds):
+
 ```json
 {
   "type": "heartbeat",
@@ -646,23 +894,23 @@ service DchatService {
   // Messages
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc ReceiveMessages(ReceiveMessagesRequest) returns (stream Message);
-  
+
   // Channels
   rpc CreateChannel(CreateChannelRequest) returns (ChannelInfo);
   rpc ListChannels(ListChannelsRequest) returns (ChannelList);
   rpc JoinChannel(JoinChannelRequest) returns (ChannelMembership);
   rpc LeaveChannel(LeaveChannelRequest) returns (Empty);
-  
+
   // Identity
   rpc RegisterIdentity(RegisterIdentityRequest) returns (IdentityInfo);
   rpc GetIdentity(GetIdentityRequest) returns (IdentityInfo);
   rpc UpdateProfile(UpdateProfileRequest) returns (IdentityInfo);
-  
+
   // Governance
   rpc CreateProposal(CreateProposalRequest) returns (ProposalInfo);
   rpc ListProposals(ListProposalsRequest) returns (ProposalList);
   rpc CastVote(CastVoteRequest) returns (VoteInfo);
-  
+
   // Marketplace
   rpc ListMarketplaceItems(ListItemsRequest) returns (ItemList);
   rpc CreateListing(CreateListingRequest) returns (ListingInfo);
@@ -678,17 +926,17 @@ use dchat_grpc::DchatServiceClient;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut client = DchatServiceClient::connect("http://[::1]:50051").await?;
-    
+
     // Send message
     let request = SendMessageRequest {
         recipient_id: "12D3KooWXYZ...".to_string(),
         content: "Hello!".to_string(),
         channel_id: "general".to_string(),
     };
-    
+
     let response = client.send_message(request).await?;
     println!("Message sent: {:?}", response);
-    
+
     Ok(())
 }
 ```
@@ -720,52 +968,63 @@ async def send_message():
 
 ```javascript
 // Connect to WebSocket endpoint
-const ws = new WebSocket('wss://localhost:8080/ws');
+const ws = new WebSocket("wss://localhost:8080/ws");
 
 ws.onopen = () => {
-    console.log('Connected');
-    
-    // Authenticate
-    ws.send(JSON.stringify({
-        type: 'auth',
-        token: 'bearer_token_here'
-    }));
+  console.log("Connected");
+
+  // Authenticate
+  ws.send(
+    JSON.stringify({
+      type: "auth",
+      token: "bearer_token_here",
+    }),
+  );
 };
 ```
 
 ### Message Events
 
 #### Subscribe to Messages
+
 ```javascript
-ws.send(JSON.stringify({
-    type: 'subscribe',
-    channel: 'general'
-}));
+ws.send(
+  JSON.stringify({
+    type: "subscribe",
+    channel: "general",
+  }),
+);
 
 ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === 'message') {
-        console.log(`${msg.sender}: ${msg.content}`);
-    }
+  const msg = JSON.parse(event.data);
+  if (msg.type === "message") {
+    console.log(`${msg.sender}: ${msg.content}`);
+  }
 };
 ```
 
 #### Send Message
+
 ```javascript
-ws.send(JSON.stringify({
-    type: 'message',
-    recipient_id: '12D3KooWXYZ...',
-    content: 'Hello!',
-    channel_id: 'general'
-}));
+ws.send(
+  JSON.stringify({
+    type: "message",
+    recipient_id: "12D3KooWXYZ...",
+    content: "Hello!",
+    channel_id: "general",
+  }),
+);
 ```
 
 #### Subscribe to Events
+
 ```javascript
-ws.send(JSON.stringify({
-    type: 'subscribe',
-    events: ['reputation_changed', 'proposal_created', 'governance_vote']
-}));
+ws.send(
+  JSON.stringify({
+    type: "subscribe",
+    events: ["reputation_changed", "proposal_created", "governance_vote"],
+  }),
+);
 ```
 
 ---
@@ -786,23 +1045,24 @@ ws.send(JSON.stringify({
 
 ### Error Codes
 
-| Code | Status | Meaning |
-|------|--------|---------|
-| `100` | 400 | INVALID_REQUEST |
-| `101` | 400 | INVALID_MESSAGE |
-| `102` | 400 | INVALID_IDENTITY |
-| `200` | 401 | UNAUTHORIZED |
-| `201` | 403 | FORBIDDEN |
-| `300` | 404 | NOT_FOUND |
-| `301` | 404 | CHANNEL_NOT_FOUND |
-| `302` | 404 | MESSAGE_NOT_FOUND |
-| `400` | 429 | RATE_LIMITED |
-| `500` | 500 | INTERNAL_ERROR |
-| `501` | 503 | SERVICE_UNAVAILABLE |
+| Code  | Status | Meaning             |
+| ----- | ------ | ------------------- |
+| `100` | 400    | INVALID_REQUEST     |
+| `101` | 400    | INVALID_MESSAGE     |
+| `102` | 400    | INVALID_IDENTITY    |
+| `200` | 401    | UNAUTHORIZED        |
+| `201` | 403    | FORBIDDEN           |
+| `300` | 404    | NOT_FOUND           |
+| `301` | 404    | CHANNEL_NOT_FOUND   |
+| `302` | 404    | MESSAGE_NOT_FOUND   |
+| `400` | 429    | RATE_LIMITED        |
+| `500` | 500    | INTERNAL_ERROR      |
+| `501` | 503    | SERVICE_UNAVAILABLE |
 
 ### Error Examples
 
 #### Invalid Message
+
 ```json
 {
   "error": "INVALID_MESSAGE",
@@ -812,6 +1072,7 @@ ws.send(JSON.stringify({
 ```
 
 #### Rate Limited
+
 ```json
 {
   "error": "RATE_LIMITED",
@@ -822,6 +1083,7 @@ ws.send(JSON.stringify({
 ```
 
 #### Service Unavailable
+
 ```json
 {
   "error": "SERVICE_UNAVAILABLE",
@@ -839,11 +1101,11 @@ ws.send(JSON.stringify({
 Rate limits depend on peer reputation score (0-100):
 
 | Reputation | Messages/Min | Channels/Hour | Proposals/Month |
-|------------|-------------|---------------|-----------------|
-| 0-20 | 5 | 1 | 0 (blocked) |
-| 21-50 | 20 | 5 | 1 |
-| 51-80 | 100 | 20 | 5 |
-| 81-100 | 500 | 100 | 20 |
+| ---------- | ------------ | ------------- | --------------- |
+| 0-20       | 5            | 1             | 0 (blocked)     |
+| 21-50      | 20           | 5             | 1               |
+| 51-80      | 100          | 20            | 5               |
+| 81-100     | 500          | 100           | 20              |
 
 ### Rate Limit Headers
 
@@ -922,11 +1184,13 @@ curl -H "Accept: application/json; version=v1" \
 ### Breaking Changes
 
 Breaking changes increment major version (v1 → v2):
+
 - Changes to request/response format
 - Removal of endpoints
 - Behavior changes
 
 Non-breaking changes (v1.1, v1.2) include:
+
 - New endpoints
 - New optional parameters
 - New response fields
@@ -967,15 +1231,15 @@ async fn main() -> Result<()> {
         ])
         .build()
         .await?;
-    
+
     // Send message
     let msg = client.send_message(
         "12D3KooWXYZ...",
         "Hello, world!"
     ).await?;
-    
+
     println!("Message sent: {}", msg.id);
-    
+
     Ok(())
 }
 ```
@@ -983,24 +1247,24 @@ async fn main() -> Result<()> {
 ### TypeScript SDK
 
 ```typescript
-import { DchatClient } from '@dchat/sdk';
+import { DchatClient } from "@dchat/sdk";
 
 const client = new DchatClient({
-  identity: './identity.json',
-  bootstrapPeers: ['/ip4/seed1.dchat.org/tcp/7070/p2p/12D3KooWABC...']
+  identity: "./identity.json",
+  bootstrapPeers: ["/ip4/seed1.dchat.org/tcp/7070/p2p/12D3KooWABC..."],
 });
 
 // Send message
 const msg = await client.sendMessage({
-  recipientId: '12D3KooWXYZ...',
-  content: 'Hello, world!',
-  channelId: 'general'
+  recipientId: "12D3KooWXYZ...",
+  content: "Hello, world!",
+  channelId: "general",
 });
 
 console.log(`Message sent: ${msg.id}`);
 
 // Subscribe to messages
-client.on('message', (msg) => {
+client.on("message", (msg) => {
   console.log(`${msg.sender}: ${msg.content}`);
 });
 ```
@@ -1035,12 +1299,12 @@ for msg in client.receive_messages():
 
 ### Default Ports
 
-| Service | Port | Protocol |
-|---------|------|----------|
-| P2P | 7070 | TCP |
-| HTTP API | 8080 | HTTP |
-| gRPC | 50051 | gRPC |
-| Prometheus Metrics | 9090 | HTTP |
+| Service            | Port  | Protocol |
+| ------------------ | ----- | -------- |
+| P2P                | 7070  | TCP      |
+| HTTP API           | 8080  | HTTP     |
+| gRPC               | 50051 | gRPC     |
+| Prometheus Metrics | 9090  | HTTP     |
 
 ### Content Type Headers
 
@@ -1066,11 +1330,13 @@ Content-Type: application/grpc+proto
 **End of API Specification**
 
 For SDKs and client libraries, see:
+
 - Rust: https://github.com/dchat/sdk-rust
 - TypeScript: https://github.com/dchat/sdk-typescript
 - Python: https://github.com/dchat/sdk-python
 
 For gRPC definitions:
+
 - https://github.com/dchat/protos
 
 Version: 1.0 | Last Updated: October 28, 2025

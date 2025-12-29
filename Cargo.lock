@@ -2459,6 +2459,7 @@ dependencies = [
  "futures-util",
  "hex",
  "maxminddb",
+ "merlin",
  "once_cell",
  "parking_lot 0.12.5",
  "pqcrypto-dilithium",
@@ -2468,6 +2469,7 @@ dependencies = [
  "rayon",
  "reed-solomon-erasure",
  "reqwest 0.11.27",
+ "schnorrkel",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -2564,9 +2566,11 @@ dependencies = [
  "once_cell",
  "rand 0.8.5",
  "reqwest 0.11.27",
+ "schnorrkel",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2883,6 +2887,7 @@ dependencies = [
  "dchat-crypto",
  "dchat-identity",
  "ed25519-dalek",
+ "frost-ed25519",
  "futures",
  "hex",
  "hkdf",
@@ -3948,6 +3953,16 @@ dependencies = [
  "r-efi",
  "wasip2",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "getrandom_or_panic"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea1015b5a70616b688dc230cfe50c8af89d972cb132d5a622814d29773b10b9"
+dependencies = [
+ "rand 0.8.5",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -8189,6 +8204,25 @@ dependencies = [
  "ref-cast",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "schnorrkel"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9fcb6c2e176e86ec703e22560d99d65a5ee9056ae45a08e13e84ebf796296f"
+dependencies = [
+ "aead",
+ "arrayref",
+ "arrayvec",
+ "curve25519-dalek",
+ "getrandom_or_panic",
+ "merlin",
+ "rand_core 0.6.4",
+ "serde_bytes",
+ "sha2",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

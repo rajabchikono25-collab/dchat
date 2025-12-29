@@ -35,6 +35,7 @@ pub use network::nat_telemetry;
 pub use network::onion;
 
 // Re-export relay submodules
+pub use relay::epoch_token;
 pub use relay::proof;
 pub use relay::reputation;
 
@@ -66,6 +67,14 @@ pub use relay::proof::{
 };
 pub use relay::reputation::{
     RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier,
+};
+pub use relay::epoch_token::{
+    ConversationType, EpochToken, EpochTokenIssuer, EpochTokenManager, EpochTokenRequest,
+    EpochTokenResponse, EpochTokenShare, MembershipProof, TokenAggregationSession,
+    TokenRejectionReason, current_epoch_id, epoch_end, epoch_id_for_timestamp, epoch_start,
+    is_in_epoch_with_grace, EPOCH_DURATION_SECS, EPOCH_GRACE_PERIOD_SECS, MAX_CACHED_EPOCHS,
+    MAX_TOKENS_PER_DEVICE_PER_EPOCH, QUORUM_SIZE_1TO1, QUORUM_SIZE_CHANNEL_LARGE,
+    QUORUM_SIZE_CHANNEL_SMALL, THRESHOLD_1TO1, THRESHOLD_CHANNEL_LARGE, THRESHOLD_CHANNEL_SMALL,
 };
 // Note: RelayClient, RelayConfig, RelayNode were in old relay.rs (removed in Phase 3 migration)
 pub use relay_network::{

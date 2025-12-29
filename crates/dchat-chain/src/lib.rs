@@ -10,9 +10,11 @@
 //! - Guardian-based account recovery with on-chain timelock verification
 //! - Distributed storage integration (TiKV, CockroachDB, Redis, MinIO)
 //! - Unified signed transaction envelope (single signature format)
+//! - VRF-based committee selection for epoch token quorums (QGE)
 
 pub mod balance_tracker;
 pub mod chain; // Currency chain, slashing, and guardian modules
+pub mod committee_selection;
 pub mod currency_chain_client;
 pub mod currency_transaction_parser;
 pub mod currency_transactions;
@@ -72,4 +74,11 @@ pub use transactions::{
 };
 pub use validator_registry::{
     InMemoryValidatorRegistry, OnChainValidatorRegistry, ValidatorInfo, ValidatorRegistry,
+};
+
+// QGE Committee selection for epoch token quorums (standalone implementation)
+pub use committee_selection::{
+    verify_committee_selection, CommitteeSelector, ConversationType, GeoRegion, RelayCandidate,
+    SelectedCommittee, VrfOutput, GEO_DIVERSITY_BONUS, MAX_RELAYS_PER_REGION, MAX_RELAY_WEIGHT_BPS,
+    MIN_RELAY_STAKE, MIN_REPUTATION_SCORE, MIN_REQUIRED_REGIONS, SECONDS_PER_DAY,
 };

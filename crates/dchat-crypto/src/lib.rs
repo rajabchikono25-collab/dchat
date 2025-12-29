@@ -17,8 +17,10 @@ pub mod kms; // AWS KMS integration for secure key management
 pub mod mnemonic; // BIP-39 mnemonic seed phrases
 pub mod noise;
 pub mod post_quantum;
+pub mod ratchet; // Double Ratchet protocol for E2E encryption
 pub mod rotation;
 pub mod signatures;
+pub mod suk; // Storage Unlock Key for Quorum-Gated Encryption
 pub mod typed_handshake; // Typed state machine handshake with identity binding
 
 // Re-export crypto submodule contents
@@ -34,7 +36,13 @@ pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-expo
 pub use mnemonic::{Mnemonic, MnemonicLength, Seed}; // BIP-39 mnemonic exports
 pub use noise::{NoiseHandshake, NoiseSession};
 pub use rotation::{KeyRotationManager, RotationPolicy};
-pub use signatures::{sign, sign_with_private_key, verify, verify_with_public_key, SigningKey, VerifyingKey};
+pub use signatures::{
+    sign, sign_with_private_key, verify, verify_with_public_key, SigningKey, VerifyingKey,
+};
+pub use suk::{
+    EncryptedSuk, EpochToken, StorageUnlockKey, SukManager, UnlockKey, WrappedMessageKey,
+    EPOCH_TOKEN_TTL_SECONDS, SUK_SIZE,
+}; // Quorum-Gated Encryption exports
 pub use typed_handshake::{
     HandshakeFailure, HandshakeMessage, HandshakePhase, HandshakeRejectReason, HandshakeRole,
     IdentityClaim, ProtocolVersion, TimeoutAwareHandshake, TypedHandshake, VerifiedPeerIdentity,

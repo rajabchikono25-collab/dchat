@@ -16,6 +16,12 @@ bincode = "1.3"
 blake3 = "1.5"
 ed25519-dalek = { version = "2.1", features = ["serde"] }
 thiserror = "1.0"
+
+# VRF (Verifiable Random Function) for cryptographically secure committee selection
+schnorrkel = "0.11"
+
+# Constant-time comparison for cryptographic operations
+subtle = "2.5"
 chrono = "0.4"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 rand = "0.8"

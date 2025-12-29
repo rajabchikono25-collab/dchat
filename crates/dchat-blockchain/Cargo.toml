@@ -22,6 +22,17 @@ dchat-network = { path = "../dchat-network" }
 dchat-privacy = { path = "../dchat-privacy" }
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
 hex = "0.4"
+
+# VRF (Verifiable Random Function) for cryptographically secure committee selection
+# Uses Schnorrkel/Ristretto which provides:
+# - Unpredictable randomness (cannot predict output without secret key)
+# - Verifiable proofs (anyone can verify the output is correct)
+# - Non-malleable (cannot modify output without detection)
+schnorrkel = "0.11"
+
+# Merlin transcripts for VRF domain separation (required by schnorrkel)
+merlin = "3"
+
 once_cell = "1.19"
 prometheus = "0.13"
 reed-solomon-erasure = "6"
