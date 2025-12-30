@@ -348,11 +348,7 @@ impl EpochTokenCache {
     }
 
     /// Create with custom configuration
-    pub fn with_config(
-        device_id: [u8; 32],
-        user_id: [u8; 32],
-        config: TokenCacheConfig,
-    ) -> Self {
+    pub fn with_config(device_id: [u8; 32], user_id: [u8; 32], config: TokenCacheConfig) -> Self {
         Self {
             device_id,
             user_id,
@@ -403,13 +399,8 @@ impl EpochTokenCache {
         }
 
         // Fetch from relays
-        let (token, expires_at) = fetch_fn(
-            conversation_id_hash,
-            epoch_id,
-            self.device_id,
-            self.user_id,
-        )
-        .await?;
+        let (token, expires_at) =
+            fetch_fn(conversation_id_hash, epoch_id, self.device_id, self.user_id).await?;
 
         // Cache the result
         self.store(conversation_id_hash, epoch_id, token.clone(), expires_at)
@@ -487,11 +478,7 @@ impl EpochTokenCache {
     }
 
     /// Mark a token as being refreshed
-    pub async fn mark_refresh_in_progress(
-        &self,
-        conversation_id_hash: &[u8; 32],
-        epoch_id: u64,
-    ) {
+    pub async fn mark_refresh_in_progress(&self, conversation_id_hash: &[u8; 32], epoch_id: u64) {
         let mut caches = self.caches.write().await;
         if let Some(cache) = caches.get_mut(conversation_id_hash) {
             if let Some(token) = cache.get_mut(epoch_id) {
@@ -501,11 +488,7 @@ impl EpochTokenCache {
     }
 
     /// Record refresh result
-    pub async fn record_refresh_result(
-        &self,
-        conversation_id_hash: &[u8; 32],
-        success: bool,
-    ) {
+    pub async fn record_refresh_result(&self, conversation_id_hash: &[u8; 32], success: bool) {
         let mut caches = self.caches.write().await;
         let mut stats = self.stats.write().await;
 

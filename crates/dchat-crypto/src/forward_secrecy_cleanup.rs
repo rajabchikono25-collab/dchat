@@ -70,13 +70,9 @@ pub enum CleanupEventType {
         message_number: u32,
     },
     /// SUK was wiped
-    SukWiped {
-        conversation_id_hash: [u8; 32],
-    },
+    SukWiped { conversation_id_hash: [u8; 32] },
     /// Full conversation state wiped
-    ConversationWiped {
-        conversation_id_hash: [u8; 32],
-    },
+    ConversationWiped { conversation_id_hash: [u8; 32] },
     /// Bulk cleanup performed
     BulkCleanup {
         items_cleaned: usize,
@@ -707,9 +703,7 @@ mod tests {
         let cleanup = ForwardSecrecyCleanup::new([1u8; 32]);
         let conversation = [0xAB; 32];
 
-        cleanup
-            .track_epoch_key(conversation, 100, [0xCD; 32])
-            .await;
+        cleanup.track_epoch_key(conversation, 100, [0xCD; 32]).await;
         cleanup.wipe_conversation(conversation).await;
 
         let convos = cleanup.conversations.read().await;
@@ -761,12 +755,8 @@ mod tests {
     async fn test_wipe_all() {
         let cleanup = ForwardSecrecyCleanup::new([1u8; 32]);
 
-        cleanup
-            .track_epoch_key([1u8; 32], 100, [0xCD; 32])
-            .await;
-        cleanup
-            .track_epoch_key([2u8; 32], 100, [0xCD; 32])
-            .await;
+        cleanup.track_epoch_key([1u8; 32], 100, [0xCD; 32]).await;
+        cleanup.track_epoch_key([2u8; 32], 100, [0xCD; 32]).await;
 
         cleanup.wipe_all().await;
 

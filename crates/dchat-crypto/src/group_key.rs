@@ -217,10 +217,7 @@ impl GroupKeyDistribution {
     }
 
     /// Initialize or get sender key for a channel
-    pub async fn get_or_create_sender_key(
-        &self,
-        channel_id: [u8; 32],
-    ) -> Result<SenderKeyState> {
+    pub async fn get_or_create_sender_key(&self, channel_id: [u8; 32]) -> Result<SenderKeyState> {
         let mut keys = self.sender_keys.write().await;
 
         if let Some(state) = keys.get(&channel_id) {
@@ -275,10 +272,7 @@ impl GroupKeyDistribution {
     }
 
     /// Decrypt a message from a group channel
-    pub async fn decrypt_group_message(
-        &self,
-        message: &GroupEncryptedMessage,
-    ) -> Result<Vec<u8>> {
+    pub async fn decrypt_group_message(&self, message: &GroupEncryptedMessage) -> Result<Vec<u8>> {
         let mut received = self.received_keys.write().await;
 
         let channel_keys = received
@@ -416,7 +410,10 @@ impl GroupKeyDistribution {
             .create_distribution_records(channel_id, &[(new_member_id, new_member_key)])
             .await?;
 
-        records.into_iter().next().ok_or_else(|| Error::crypto("Failed to create record"))
+        records
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::crypto("Failed to create record"))
     }
 
     /// Handle member leave - rotate sender key
@@ -477,10 +474,7 @@ impl GroupKeyDistribution {
                 .get(&channel_id)
                 .map(|s| s.message_count)
                 .unwrap_or(0),
-            received_keys_count: received_keys
-                .get(&channel_id)
-                .map(|r| r.len())
-                .unwrap_or(0),
+            received_keys_count: received_keys.get(&channel_id).map(|r| r.len()).unwrap_or(0),
             member_count: memberships.get(&channel_id).map(|m| m.len()).unwrap_or(0),
         }
     }
