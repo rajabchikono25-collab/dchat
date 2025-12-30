@@ -1,0 +1,37 @@
+{
+  "chain_id": "dchat-mainnet-1",
+  "genesis_time": "2025-12-30T12:36:09.707903902+00:00",
+  "initial_supply": 1000000000,
+  "foundation_allocation": 200000000,
+  "validator_allocation": 240000000,
+  "community_allocation": 560000000,
+  "validators": [
+    {
+      "name": "validator-0",
+      "public_key": "f096e562b7a6cd16b3a263b391f89e99e30b5c6bfb882aed20cae566ab5105bf",
+      "stake": 10000000,
+      "voting_power": 1,
+      "region": "unknown"
+    },
+    {
+      "name": "validator-1",
+      "public_key": "60bca864756f3c4de3ae2c2413ea95eb7b8c5b10b3cd1382db778bfd01e412af",
+      "stake": 10000000,
+      "voting_power": 1,
+      "region": "unknown"
+    },
+    {
+      "name": "validator-2",
+      "public_key": "ebf007bd5cd5762a3efa41a3d69941f9e7ed34201393dc52bd5a757fe2d90709",
+      "stake": 10000000,
+      "voting_power": 1,
+      "region": "unknown"
+    }
+  ],
+  "pools": {
+    "staking_pool": 240000000,
+    "rewards_pool": 224000000,
+    "liquidity_pool": 168000000,
+    "foundation_pool": 200000000
+  }
+}
