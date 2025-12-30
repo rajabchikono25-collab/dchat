@@ -576,10 +576,11 @@ impl EpochTokenIssuer {
     /// Set FROST key share for this relay (registers with the internal signer)
     ///
     /// The key_share should be serialized bytes from `RelayFrostKeyShare::to_bytes()`.
-    /// This method deserializes and registers the key share with the FROST signer.
+    /// This method deserializes and registers the key share with the FROST signer,
+    /// and also registers the committee in the global CommitteeRegistry.
     ///
     /// For production use with multiple committees, prefer using `register_committee_key_share()`
-    /// which allows specifying the committee ID explicitly.
+    /// which allows specifying the committee ID explicitly and provides better error handling.
     pub fn set_frost_key_share(&mut self, key_share: Vec<u8>) {
         // Create a signer if not present
         if self.frost_signer.is_none() {
@@ -590,16 +591,51 @@ impl EpochTokenIssuer {
         // Deserialize and register the key share
         match super::frost_signing::RelayFrostKeyShare::from_bytes(&key_share) {
             Ok(share) => {
-                // Use a default committee ID derived from the group public key
-                // For multi-committee support, use register_committee_key_share instead
+                // Compute committee ID from the group public key for consistency
                 let committee_id = share.group_public_key;
+                let group_public_key = share.group_public_key;
+                let threshold = share.threshold;
+                let relay_id = self.relay_id;
+                let share_clone = share.clone();
 
-                // Register asynchronously - spawn a task since this is sync
+                // Register with the FROST signer
                 if let Some(ref signer) = self.frost_signer {
                     let signer_clone = Arc::clone(signer);
                     tokio::spawn(async move {
-                        if let Err(e) = signer_clone.register_key_share(committee_id, share).await {
-                            tracing::error!("Failed to register FROST key share: {}", e);
+                        // Register key share with signer
+                        if let Err(e) = signer_clone
+                            .register_key_share(committee_id, share_clone)
+                            .await
+                        {
+                            tracing::error!(
+                                "Failed to register FROST key share with signer: {}",
+                                e
+                            );
+                            return;
+                        }
+
+                        // Also register the committee in the global registry for verification
+                        if let Some(registry) = super::frost_signing::global_registry() {
+                            let registration = super::frost_signing::CommitteeRegistration::new(
+                                committee_id,
+                                group_public_key,
+                                vec![relay_id], // Note: This is incomplete - in production, get all relay IDs
+                                threshold,
+                                0, // Block height - would be set from blockchain in production
+                                [0u8; 32], // TX hash - would be set from blockchain in production
+                            );
+
+                            if let Err(e) = registry.register_committee(registration).await {
+                                tracing::warn!(
+                                    "Failed to register committee in global registry: {} (non-fatal)",
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "✅ FROST key share registered for committee {}",
+                                    hex::encode(&committee_id[..8])
+                                );
+                            }
                         }
                     });
                 }
@@ -614,16 +650,109 @@ impl EpochTokenIssuer {
     ///
     /// This is the preferred method for production use where relays may participate
     /// in multiple committees (e.g., different conversations).
+    ///
+    /// # Production Integration
+    ///
+    /// This method:
+    /// 1. Registers the key share with the local FROST signer
+    /// 2. Updates the global CommitteeRegistry with the committee information
+    /// 3. Ensures the committee can be verified during signature validation
+    ///
+    /// # Arguments
+    ///
+    /// * `committee_id` - Unique identifier for the committee (usually derived from conversation ID)
+    /// * `key_share` - The relay's FROST key share for this committee
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or an error if the signer is not initialized
     pub async fn register_committee_key_share(
         &self,
         committee_id: [u8; 32],
         key_share: super::frost_signing::RelayFrostKeyShare,
     ) -> dchat_core::error::Result<()> {
         if let Some(ref signer) = self.frost_signer {
-            signer.register_key_share(committee_id, key_share).await
+            // Register with the local signer
+            signer
+                .register_key_share(committee_id, key_share.clone())
+                .await?;
+
+            // Register the committee in the global registry for verification
+            if let Some(registry) = super::frost_signing::global_registry() {
+                let registration = super::frost_signing::CommitteeRegistration::new(
+                    committee_id,
+                    key_share.group_public_key,
+                    vec![self.relay_id], // Partial registration - full list comes from DKG
+                    key_share.threshold,
+                    0,         // Block height - set from blockchain confirmation
+                    [0u8; 32], // TX hash - set from blockchain confirmation
+                );
+
+                registry.register_committee(registration).await?;
+            }
+
+            tracing::info!(
+                "✅ Registered key share for committee {} (threshold: {})",
+                hex::encode(&committee_id[..8]),
+                key_share.threshold
+            );
+
+            Ok(())
         } else {
             Err(dchat_core::error::Error::crypto(
                 "FROST signer not initialized. Call set_frost_signer first.".to_string(),
+            ))
+        }
+    }
+
+    /// Register a complete committee with all relay members
+    ///
+    /// This should be called after DKG completion when the full committee
+    /// information is known. It updates the global registry with complete
+    /// information for signature verification.
+    ///
+    /// # Arguments
+    ///
+    /// * `committee_id` - Unique identifier for the committee
+    /// * `group_public_key` - The committee's FROST group public key
+    /// * `member_relay_ids` - All relay IDs participating in this committee
+    /// * `threshold` - Minimum number of signers required
+    /// * `registered_at_block` - Block height where the committee was registered
+    /// * `registration_tx_hash` - Transaction hash of the registration
+    pub async fn register_full_committee(
+        &self,
+        committee_id: [u8; 32],
+        group_public_key: [u8; 32],
+        member_relay_ids: Vec<[u8; 32]>,
+        threshold: u8,
+        registered_at_block: u64,
+        registration_tx_hash: [u8; 32],
+    ) -> dchat_core::error::Result<()> {
+        if let Some(registry) = super::frost_signing::global_registry() {
+            let member_count = member_relay_ids.len();
+            let registration = super::frost_signing::CommitteeRegistration::new(
+                committee_id,
+                group_public_key,
+                member_relay_ids,
+                threshold,
+                registered_at_block,
+                registration_tx_hash,
+            );
+
+            registry.register_committee(registration).await?;
+
+            tracing::info!(
+                "✅ Registered full committee {} with {} members (threshold: {}, block: {})",
+                hex::encode(&committee_id[..8]),
+                member_count,
+                threshold,
+                registered_at_block
+            );
+
+            Ok(())
+        } else {
+            Err(dchat_core::error::Error::validation(
+                "Global committee registry not initialized".to_string(),
             ))
         }
     }

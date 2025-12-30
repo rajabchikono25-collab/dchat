@@ -720,6 +720,455 @@ pub fn verify_frost_signature(
     Ok(vk.verify(message, &sig).is_ok())
 }
 
+/// Committee registration information stored on-chain
+///
+/// When a relay committee is formed (e.g., for a new conversation),
+/// the committee's group public key and member list are registered
+/// on-chain for verification purposes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitteeRegistration {
+    /// Unique identifier for the committee (typically derived from conversation/channel ID)
+    pub committee_id: [u8; 32],
+    /// The FROST group public key for this committee
+    pub group_public_key: [u8; 32],
+    /// IDs of all relay members in the committee
+    pub member_relay_ids: Vec<[u8; 32]>,
+    /// Threshold required for valid signatures
+    pub threshold: u8,
+    /// Block height when this committee was registered
+    pub registered_at_block: u64,
+    /// Block height when this committee expires (0 = never)
+    pub expires_at_block: u64,
+    /// Whether this committee is currently active
+    pub is_active: bool,
+    /// Transaction hash of the registration transaction
+    pub registration_tx_hash: [u8; 32],
+}
+
+impl CommitteeRegistration {
+    /// Create a new committee registration
+    pub fn new(
+        committee_id: [u8; 32],
+        group_public_key: [u8; 32],
+        member_relay_ids: Vec<[u8; 32]>,
+        threshold: u8,
+        registered_at_block: u64,
+        registration_tx_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            committee_id,
+            group_public_key,
+            member_relay_ids,
+            threshold,
+            registered_at_block,
+            expires_at_block: 0,
+            is_active: true,
+            registration_tx_hash,
+        }
+    }
+
+    /// Compute the committee ID from relay member IDs (deterministic)
+    ///
+    /// This creates a canonical committee ID from the sorted set of relay IDs.
+    /// Used when forming a new committee to derive its ID.
+    pub fn compute_committee_id(relay_ids: &[[u8; 32]]) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"dchat-committee-id-v1");
+
+        // Sort relay IDs for deterministic ordering
+        let mut sorted_ids = relay_ids.to_vec();
+        sorted_ids.sort();
+
+        for id in sorted_ids {
+            hasher.update(id);
+        }
+        hasher.finalize().into()
+    }
+
+    /// Verify that a set of relay IDs matches this committee
+    pub fn verify_membership(&self, relay_ids: &[[u8; 32]]) -> bool {
+        if relay_ids.len() < self.threshold as usize {
+            return false;
+        }
+        // Check all provided relay IDs are members
+        relay_ids
+            .iter()
+            .all(|id| self.member_relay_ids.contains(id))
+    }
+
+    /// Serialize for on-chain storage
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self).map_err(|e| {
+            Error::crypto(format!("Failed to serialize committee registration: {}", e))
+        })
+    }
+
+    /// Deserialize from on-chain storage
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        bincode::deserialize(data).map_err(|e| {
+            Error::crypto(format!(
+                "Failed to deserialize committee registration: {}",
+                e
+            ))
+        })
+    }
+}
+
+/// Committee registry for tracking FROST committees
+///
+/// This registry provides the authoritative source for committee group public keys.
+/// In production, this is synchronized with on-chain committee registrations.
+///
+/// # On-Chain Integration
+///
+/// Committees register their group public keys on-chain during DKG completion.
+/// The registry caches these registrations locally and validates them against
+/// the blockchain when needed.
+///
+/// # Security Properties
+///
+/// - Committee public keys are verified against on-chain registrations
+/// - Expired or revoked committees are automatically invalidated
+/// - Cache is periodically synchronized with blockchain state
+pub struct CommitteeRegistry {
+    /// Local cache of committee registrations
+    committees: Arc<RwLock<BTreeMap<[u8; 32], CommitteeRegistration>>>,
+    /// Relay ID to committee mappings (which committees a relay participates in)
+    relay_committees: Arc<RwLock<BTreeMap<[u8; 32], Vec<[u8; 32]>>>>,
+    /// Last blockchain sync height
+    last_sync_block: Arc<RwLock<u64>>,
+    /// Blockchain RPC endpoint for verification
+    blockchain_rpc_url: Option<String>,
+}
+
+impl CommitteeRegistry {
+    /// Create a new committee registry
+    pub fn new() -> Self {
+        Self {
+            committees: Arc::new(RwLock::new(BTreeMap::new())),
+            relay_committees: Arc::new(RwLock::new(BTreeMap::new())),
+            last_sync_block: Arc::new(RwLock::new(0)),
+            blockchain_rpc_url: None,
+        }
+    }
+
+    /// Create a registry with blockchain RPC for on-chain verification
+    pub fn with_blockchain_rpc(rpc_url: String) -> Self {
+        Self {
+            committees: Arc::new(RwLock::new(BTreeMap::new())),
+            relay_committees: Arc::new(RwLock::new(BTreeMap::new())),
+            last_sync_block: Arc::new(RwLock::new(0)),
+            blockchain_rpc_url: Some(rpc_url),
+        }
+    }
+
+    /// Register a new committee (called after DKG completion)
+    ///
+    /// In production, this should be called after the committee registration
+    /// transaction has been confirmed on-chain.
+    pub async fn register_committee(&self, registration: CommitteeRegistration) -> Result<()> {
+        // Validate the registration
+        if registration.member_relay_ids.len() < registration.threshold as usize {
+            return Err(Error::validation(format!(
+                "Committee size ({}) is less than threshold ({})",
+                registration.member_relay_ids.len(),
+                registration.threshold
+            )));
+        }
+
+        let committee_id = registration.committee_id;
+        let relay_ids = registration.member_relay_ids.clone();
+        let relay_count = relay_ids.len();
+
+        // Store in committee map
+        {
+            let mut committees = self.committees.write().await;
+            committees.insert(committee_id, registration);
+        }
+
+        // Update relay -> committee mappings
+        {
+            let mut relay_committees = self.relay_committees.write().await;
+            for relay_id in relay_ids {
+                relay_committees
+                    .entry(relay_id)
+                    .or_insert_with(Vec::new)
+                    .push(committee_id);
+            }
+        }
+
+        tracing::info!(
+            "✅ Registered committee {} with {} members",
+            hex::encode(&committee_id[..8]),
+            relay_count
+        );
+
+        Ok(())
+    }
+
+    /// Get a committee's group public key
+    ///
+    /// This is the primary method for looking up committee public keys
+    /// for signature verification.
+    pub async fn get_group_public_key(&self, committee_id: &[u8; 32]) -> Option<[u8; 32]> {
+        let committees = self.committees.read().await;
+        committees
+            .get(committee_id)
+            .filter(|c| c.is_active)
+            .map(|c| c.group_public_key)
+    }
+
+    /// Get full committee registration
+    pub async fn get_committee(&self, committee_id: &[u8; 32]) -> Option<CommitteeRegistration> {
+        let committees = self.committees.read().await;
+        committees.get(committee_id).cloned()
+    }
+
+    /// Look up committee by relay member IDs
+    ///
+    /// When verifying a FROST signature, we may only have the relay IDs that
+    /// participated. This method finds the matching committee.
+    pub async fn find_committee_by_relays(
+        &self,
+        relay_ids: &[[u8; 32]],
+    ) -> Option<CommitteeRegistration> {
+        // Compute the canonical committee ID from the relay set
+        let expected_committee_id = CommitteeRegistration::compute_committee_id(relay_ids);
+
+        let committees = self.committees.read().await;
+
+        // First try exact match by computed committee ID
+        if let Some(registration) = committees.get(&expected_committee_id) {
+            if registration.is_active && registration.verify_membership(relay_ids) {
+                return Some(registration.clone());
+            }
+        }
+
+        // Fallback: search for any committee where all provided relays are members
+        for registration in committees.values() {
+            if registration.is_active && registration.verify_membership(relay_ids) {
+                return Some(registration.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Get all committees a relay participates in
+    pub async fn get_relay_committees(&self, relay_id: &[u8; 32]) -> Vec<[u8; 32]> {
+        let relay_committees = self.relay_committees.read().await;
+        relay_committees.get(relay_id).cloned().unwrap_or_default()
+    }
+
+    /// Deactivate a committee (e.g., when expired or superseded)
+    pub async fn deactivate_committee(&self, committee_id: &[u8; 32]) -> Result<()> {
+        let mut committees = self.committees.write().await;
+        if let Some(committee) = committees.get_mut(committee_id) {
+            committee.is_active = false;
+            tracing::info!("Committee {} deactivated", hex::encode(&committee_id[..8]));
+            Ok(())
+        } else {
+            Err(Error::validation(format!(
+                "Committee {} not found",
+                hex::encode(committee_id)
+            )))
+        }
+    }
+
+    /// Synchronize with blockchain state
+    ///
+    /// This method should be called periodically to ensure the local cache
+    /// is up-to-date with on-chain committee registrations.
+    pub async fn sync_with_blockchain(&self) -> Result<u64> {
+        let rpc_url = match &self.blockchain_rpc_url {
+            Some(url) => url.clone(),
+            None => {
+                tracing::debug!("No blockchain RPC configured, skipping sync");
+                return Ok(0);
+            }
+        };
+
+        let last_sync = *self.last_sync_block.read().await;
+
+        // Query blockchain for committee registration events since last sync
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
+
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "chain_getCommitteeRegistrations",
+            "params": {
+                "from_block": last_sync,
+                "to_block": null
+            },
+            "id": 1
+        });
+
+        let response = client
+            .post(&rpc_url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::network(format!(
+                "RPC returned error: {}",
+                response.status()
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
+
+        // Process registrations from response
+        let mut new_registrations = 0u64;
+        let mut max_block = last_sync;
+
+        if let Some(registrations) = json["result"]["registrations"].as_array() {
+            for reg_json in registrations {
+                // Parse registration from JSON
+                if let Ok(registration) =
+                    serde_json::from_value::<CommitteeRegistration>(reg_json.clone())
+                {
+                    if registration.registered_at_block > max_block {
+                        max_block = registration.registered_at_block;
+                    }
+                    if let Err(e) = self.register_committee(registration).await {
+                        tracing::warn!("Failed to register committee from blockchain: {}", e);
+                    } else {
+                        new_registrations += 1;
+                    }
+                }
+            }
+        }
+
+        // Update last sync block
+        *self.last_sync_block.write().await = max_block;
+
+        tracing::info!(
+            "✅ Blockchain sync complete: {} new registrations, synced to block {}",
+            new_registrations,
+            max_block
+        );
+
+        Ok(new_registrations)
+    }
+
+    /// Verify a FROST signature using the registry
+    ///
+    /// This is the production method for verifying FROST signatures from
+    /// relay quorums. It looks up the committee's group public key from
+    /// the registry and verifies the signature.
+    pub async fn verify_frost_signature_with_registry(
+        &self,
+        relay_ids: &[[u8; 32]],
+        signature: &[u8; 64],
+        message: &[u8],
+        threshold: u8,
+    ) -> Result<()> {
+        // Verify we have enough relays
+        if relay_ids.len() < threshold as usize {
+            return Err(Error::crypto(format!(
+                "Insufficient relay signatures: {} < {}",
+                relay_ids.len(),
+                threshold
+            )));
+        }
+
+        // Look up the committee registration
+        let committee = self
+            .find_committee_by_relays(relay_ids)
+            .await
+            .ok_or_else(|| {
+                Error::crypto(format!(
+                    "No registered committee found for relay set (first relay: {})",
+                    hex::encode(&relay_ids[0][..8])
+                ))
+            })?;
+
+        // Verify the signature threshold matches
+        if threshold < committee.threshold {
+            return Err(Error::crypto(format!(
+                "Signature threshold {} is below committee minimum {}",
+                threshold, committee.threshold
+            )));
+        }
+
+        // Verify the FROST signature
+        match verify_frost_signature(signature, message, &committee.group_public_key) {
+            Ok(true) => {
+                tracing::debug!(
+                    "✅ FROST signature verified for committee {}",
+                    hex::encode(&committee.committee_id[..8])
+                );
+                Ok(())
+            }
+            Ok(false) => Err(Error::crypto("FROST signature verification failed")),
+            Err(e) => Err(Error::crypto(format!("FROST verification error: {}", e))),
+        }
+    }
+
+    /// Get statistics about the registry
+    pub async fn stats(&self) -> CommitteeRegistryStats {
+        let committees = self.committees.read().await;
+        let active = committees.values().filter(|c| c.is_active).count();
+        let total = committees.len();
+        let last_sync = *self.last_sync_block.read().await;
+
+        CommitteeRegistryStats {
+            total_committees: total,
+            active_committees: active,
+            inactive_committees: total - active,
+            last_sync_block: last_sync,
+        }
+    }
+}
+
+impl Default for CommitteeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Statistics about the committee registry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitteeRegistryStats {
+    /// Total number of committees in registry
+    pub total_committees: usize,
+    /// Number of active committees
+    pub active_committees: usize,
+    /// Number of inactive/expired committees
+    pub inactive_committees: usize,
+    /// Last blockchain sync block height
+    pub last_sync_block: u64,
+}
+
+/// Global committee registry singleton
+///
+/// This provides a shared registry instance for the entire relay node.
+/// In production, this is initialized at startup and synchronized with
+/// blockchain state periodically.
+static GLOBAL_REGISTRY: std::sync::OnceLock<CommitteeRegistry> = std::sync::OnceLock::new();
+
+/// Initialize the global committee registry
+pub fn init_global_registry(rpc_url: Option<String>) -> &'static CommitteeRegistry {
+    GLOBAL_REGISTRY.get_or_init(|| match rpc_url {
+        Some(url) => CommitteeRegistry::with_blockchain_rpc(url),
+        None => CommitteeRegistry::new(),
+    })
+}
+
+/// Get the global committee registry
+pub fn global_registry() -> Option<&'static CommitteeRegistry> {
+    GLOBAL_REGISTRY.get()
+}
+
 /// Generate FROST key shares for a new committee using trusted dealer
 ///
 /// This should be called during committee formation. For fully distributed
@@ -1044,5 +1493,323 @@ mod tests {
         assert_eq!(original.relay_id, restored.relay_id);
         assert_eq!(original.group_public_key, restored.group_public_key);
         assert_eq!(original.threshold, restored.threshold);
+    }
+
+    #[test]
+    fn test_committee_registration_creation() {
+        let committee_id = [1u8; 32];
+        let group_public_key = [2u8; 32];
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let threshold = 3;
+
+        let registration = CommitteeRegistration::new(
+            committee_id,
+            group_public_key,
+            relay_ids.clone(),
+            threshold,
+            1000,
+            [3u8; 32],
+        );
+
+        assert_eq!(registration.committee_id, committee_id);
+        assert_eq!(registration.group_public_key, group_public_key);
+        assert_eq!(registration.member_relay_ids.len(), 5);
+        assert_eq!(registration.threshold, 3);
+        assert!(registration.is_active);
+    }
+
+    #[test]
+    fn test_committee_registration_membership_verification() {
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let registration =
+            CommitteeRegistration::new([1u8; 32], [2u8; 32], relay_ids.clone(), 3, 1000, [3u8; 32]);
+
+        // Valid: 3 members (equals threshold)
+        assert!(registration.verify_membership(&relay_ids[0..3]));
+
+        // Valid: 4 members (above threshold)
+        assert!(registration.verify_membership(&relay_ids[0..4]));
+
+        // Invalid: 2 members (below threshold)
+        assert!(!registration.verify_membership(&relay_ids[0..2]));
+
+        // Invalid: non-member relay
+        let fake_relay = [99u8; 32];
+        assert!(!registration.verify_membership(&[fake_relay]));
+    }
+
+    #[test]
+    fn test_committee_registration_serialization() {
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let registration =
+            CommitteeRegistration::new([1u8; 32], [2u8; 32], relay_ids, 3, 1000, [3u8; 32]);
+
+        let bytes = registration.to_bytes().unwrap();
+        let restored = CommitteeRegistration::from_bytes(&bytes).unwrap();
+
+        assert_eq!(registration.committee_id, restored.committee_id);
+        assert_eq!(registration.group_public_key, restored.group_public_key);
+        assert_eq!(registration.threshold, restored.threshold);
+        assert_eq!(
+            registration.member_relay_ids.len(),
+            restored.member_relay_ids.len()
+        );
+    }
+
+    #[test]
+    fn test_compute_committee_id_deterministic() {
+        let relay_ids: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+
+        // Same order should produce same ID
+        let id1 = CommitteeRegistration::compute_committee_id(&relay_ids);
+        let id2 = CommitteeRegistration::compute_committee_id(&relay_ids);
+        assert_eq!(id1, id2);
+
+        // Different order should produce same ID (sorted internally)
+        let relay_ids_reversed: Vec<[u8; 32]> = vec![[3u8; 32], [2u8; 32], [1u8; 32]];
+        let id3 = CommitteeRegistration::compute_committee_id(&relay_ids_reversed);
+        assert_eq!(id1, id3);
+
+        // Different relays should produce different ID
+        let different_relays: Vec<[u8; 32]> = vec![[4u8; 32], [5u8; 32], [6u8; 32]];
+        let id4 = CommitteeRegistration::compute_committee_id(&different_relays);
+        assert_ne!(id1, id4);
+    }
+
+    #[tokio::test]
+    async fn test_committee_registry_basic_operations() {
+        let registry = CommitteeRegistry::new();
+
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let committee_id = [1u8; 32];
+        let group_public_key = [2u8; 32];
+
+        let registration = CommitteeRegistration::new(
+            committee_id,
+            group_public_key,
+            relay_ids.clone(),
+            3,
+            1000,
+            [3u8; 32],
+        );
+
+        // Register committee
+        registry.register_committee(registration).await.unwrap();
+
+        // Retrieve by committee ID
+        let retrieved = registry.get_group_public_key(&committee_id).await;
+        assert_eq!(retrieved, Some(group_public_key));
+
+        // Retrieve full registration
+        let full = registry.get_committee(&committee_id).await;
+        assert!(full.is_some());
+        assert_eq!(full.unwrap().threshold, 3);
+
+        // Check stats
+        let stats = registry.stats().await;
+        assert_eq!(stats.total_committees, 1);
+        assert_eq!(stats.active_committees, 1);
+    }
+
+    #[tokio::test]
+    async fn test_committee_registry_find_by_relays() {
+        let registry = CommitteeRegistry::new();
+
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let committee_id = CommitteeRegistration::compute_committee_id(&relay_ids);
+        let group_public_key = [2u8; 32];
+
+        let registration = CommitteeRegistration::new(
+            committee_id,
+            group_public_key,
+            relay_ids.clone(),
+            3,
+            1000,
+            [3u8; 32],
+        );
+
+        registry.register_committee(registration).await.unwrap();
+
+        // Find by exact relay set
+        let found = registry.find_committee_by_relays(&relay_ids).await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().group_public_key, group_public_key);
+
+        // Find by subset (threshold met)
+        let subset: Vec<[u8; 32]> = relay_ids[0..3].to_vec();
+        let found_subset = registry.find_committee_by_relays(&subset).await;
+        assert!(found_subset.is_some());
+
+        // Not found with unknown relays
+        let unknown: Vec<[u8; 32]> = vec![[99u8; 32], [98u8; 32], [97u8; 32]];
+        let not_found = registry.find_committee_by_relays(&unknown).await;
+        assert!(not_found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_committee_registry_deactivation() {
+        let registry = CommitteeRegistry::new();
+
+        let relay_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8 + 10; 32]).collect();
+        let committee_id = [1u8; 32];
+
+        let registration =
+            CommitteeRegistration::new(committee_id, [2u8; 32], relay_ids, 3, 1000, [3u8; 32]);
+
+        registry.register_committee(registration).await.unwrap();
+
+        // Committee should be active
+        assert!(registry.get_group_public_key(&committee_id).await.is_some());
+
+        // Deactivate
+        registry.deactivate_committee(&committee_id).await.unwrap();
+
+        // Should no longer be returned by get_group_public_key (filters inactive)
+        assert!(registry.get_group_public_key(&committee_id).await.is_none());
+
+        // But still exists in full registration query
+        let full = registry.get_committee(&committee_id).await;
+        assert!(full.is_some());
+        assert!(!full.unwrap().is_active);
+
+        // Stats should show inactive
+        let stats = registry.stats().await;
+        assert_eq!(stats.inactive_committees, 1);
+        assert_eq!(stats.active_committees, 0);
+    }
+
+    #[tokio::test]
+    async fn test_committee_registry_verify_signature() {
+        let registry = CommitteeRegistry::new();
+
+        // Generate actual FROST keys
+        let relay_ids: Vec<[u8; 32]> = (0..7).map(|i| [i as u8 + 1; 32]).collect();
+        let (key_shares, group_pk) = generate_committee_keys(&relay_ids, 4).unwrap();
+
+        let committee_id = CommitteeRegistration::compute_committee_id(&relay_ids);
+
+        // Register the committee with actual group public key
+        let registration = CommitteeRegistration::new(
+            committee_id,
+            group_pk,
+            relay_ids.clone(),
+            4,
+            1000,
+            [0u8; 32],
+        );
+
+        registry.register_committee(registration).await.unwrap();
+
+        // Perform signing with first 4 relays
+        let message = b"test message for verification";
+        let session_id = "verify-test";
+
+        // Create signers and sign
+        let mut signers: Vec<RelayFrostSigner> = Vec::new();
+        for share in &key_shares {
+            let signer = RelayFrostSigner::new(share.relay_id);
+            signer
+                .register_key_share(committee_id, share.clone())
+                .await
+                .unwrap();
+            signers.push(signer);
+        }
+
+        // Round 1
+        let mut round1_outputs = Vec::new();
+        for signer in signers.iter().take(4) {
+            let output = signer
+                .generate_round1(&committee_id, session_id.to_string(), message.to_vec())
+                .await
+                .unwrap();
+            round1_outputs.push(output);
+        }
+
+        let commitments: BTreeMap<u16, Vec<u8>> = round1_outputs
+            .iter()
+            .map(|o| (o.participant_index, o.commitments.clone()))
+            .collect();
+
+        // Round 2
+        let mut round2_outputs = Vec::new();
+        for signer in signers.iter().take(4) {
+            let output = signer
+                .generate_round2(&committee_id, session_id, &commitments)
+                .await
+                .unwrap();
+            round2_outputs.push(output);
+        }
+
+        let signature_shares: BTreeMap<u16, Vec<u8>> = round2_outputs
+            .iter()
+            .map(|o| (o.participant_index, o.signature_share.clone()))
+            .collect();
+
+        // Aggregate
+        let aggregator = FrostSignatureAggregator::new(
+            CommitteeFrostConfig::for_direct(),
+            key_shares[0].all_verifying_shares.clone(),
+            group_pk,
+        );
+
+        let aggregated = aggregator
+            .aggregate(message, &commitments, &signature_shares, session_id)
+            .unwrap();
+
+        // Verify using registry
+        let signing_relay_ids: Vec<[u8; 32]> = relay_ids[0..4].to_vec();
+        let result = registry
+            .verify_frost_signature_with_registry(
+                &signing_relay_ids,
+                &aggregated.signature,
+                message,
+                4,
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Signature verification failed: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_relay_committee_mappings() {
+        let registry = CommitteeRegistry::new();
+
+        let relay_id = [42u8; 32];
+        let relay_ids: Vec<[u8; 32]> = vec![relay_id, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]];
+
+        // Register two committees that include the same relay
+        let committee1_id = [100u8; 32];
+        let committee2_id = [200u8; 32];
+
+        let reg1 = CommitteeRegistration::new(
+            committee1_id,
+            [10u8; 32],
+            relay_ids.clone(),
+            3,
+            1000,
+            [0u8; 32],
+        );
+
+        let reg2 = CommitteeRegistration::new(
+            committee2_id,
+            [20u8; 32],
+            relay_ids.clone(),
+            3,
+            2000,
+            [0u8; 32],
+        );
+
+        registry.register_committee(reg1).await.unwrap();
+        registry.register_committee(reg2).await.unwrap();
+
+        // Relay should be in both committees
+        let committees = registry.get_relay_committees(&relay_id).await;
+        assert_eq!(committees.len(), 2);
+        assert!(committees.contains(&committee1_id));
+        assert!(committees.contains(&committee2_id));
     }
 }

@@ -15,8 +15,9 @@ pub use epoch_token::{
     QUORUM_SIZE_CHANNEL_SMALL, THRESHOLD_1TO1, THRESHOLD_CHANNEL_LARGE, THRESHOLD_CHANNEL_SMALL,
 };
 pub use frost_signing::{
-    generate_committee_keys, verify_frost_signature, AggregatedFrostSignature,
-    CommitteeFrostConfig, FrostRound1Output, FrostRound2Output, FrostSignatureAggregator,
+    generate_committee_keys, global_registry, init_global_registry, verify_frost_signature,
+    AggregatedFrostSignature, CommitteeFrostConfig, CommitteeRegistration, CommitteeRegistry,
+    CommitteeRegistryStats, FrostRound1Output, FrostRound2Output, FrostSignatureAggregator,
     FrostSigningError, RelayFrostKeyShare, RelayFrostSigner,
 };
 pub use proof::{
@@ -25,8 +26,9 @@ pub use proof::{
 };
 pub use reputation::{RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier};
 pub use revocation::{
-    RevocationAuthority, RevocationCheckResult, RevocationChecker, RevocationEntry, RevocationId,
-    RevocationReason, RevocationStats, RevocationStore, RevocationType, MAX_ACTIVE_REVOCATIONS,
-    REVOCATION_ARCHIVE_AGE_SECS, REVOCATION_ENTRY_VERSION, REVOCATION_PROPAGATION_GRACE_SECS,
+    verify_frost_signature_async, RevocationAuthority, RevocationCheckResult, RevocationChecker,
+    RevocationEntry, RevocationId, RevocationReason, RevocationStats, RevocationStore,
+    RevocationType, MAX_ACTIVE_REVOCATIONS, REVOCATION_ARCHIVE_AGE_SECS, REVOCATION_ENTRY_VERSION,
+    REVOCATION_PROPAGATION_GRACE_SECS,
 };
 pub use staking::{RelayStakeInfo, RelayStakingValidator};
