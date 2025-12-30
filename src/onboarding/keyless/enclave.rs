@@ -1,21 +1,18 @@
 use dchat_core::error::{Error, Result};
 
-/// Path utilities for software enclave storage (debug builds only)
-#[cfg(debug_assertions)]
+/// Path utilities for software enclave storage
 use std::path::PathBuf;
 
-/// Path to software enclave storage directory (debug builds only)
-/// In production, keys are stored in hardware security modules and never touch the filesystem.
-#[cfg(debug_assertions)]
+/// Path to software enclave storage directory
+/// Used for debug builds and when DCHAT_ALLOW_SOFTWARE_KEYS is set in production.
 fn enclave_storage_path() -> PathBuf {
     let mut dir = std::env::temp_dir();
     dir.push("dchat_enclave");
     dir
 }
 
-/// Validate enclave storage path is secure (debug builds only)
-/// In production, this check is not needed as hardware enclaves handle security.
-#[cfg(debug_assertions)]
+/// Validate enclave storage path is secure
+/// Ensures storage directory is within expected bounds.
 fn validate_enclave_storage_security(path: &PathBuf) -> Result<()> {
     // Ensure parent directory exists and is accessible
     if let Some(parent) = path.parent() {
@@ -53,8 +50,7 @@ pub enum EnclaveType {
     AndroidTee,
     /// TPM 2.0 (Windows/Linux hardware)
     Tpm2,
-    /// Software-only fallback (debug builds only)
-    #[cfg(debug_assertions)]
+    /// Software-only fallback (debug builds or when DCHAT_ALLOW_SOFTWARE_KEYS is set)
     Software,
 }
 
@@ -96,7 +92,7 @@ fn detect_enclave_type() -> EnclaveType {
             }
         }
 
-        // Fallback to software enclave in debug mode only
+        // Fallback to software enclave in debug mode or when explicitly allowed
         #[cfg(debug_assertions)]
         {
             tracing::warn!(
@@ -107,6 +103,15 @@ fn detect_enclave_type() -> EnclaveType {
 
         #[cfg(not(debug_assertions))]
         {
+            // Allow software keys in production if explicitly opted-in via environment variable
+            // This is for cloud environments (Azure, AWS, GCP) that don't have TPM
+            if std::env::var("DCHAT_ALLOW_SOFTWARE_KEYS").is_ok() {
+                tracing::warn!(
+                    "⚠️  DCHAT_ALLOW_SOFTWARE_KEYS set - using software key fallback in PRODUCTION"
+                );
+                tracing::warn!("⚠️  This reduces security - keys are not hardware-protected!");
+                return EnclaveType::Software;
+            }
             panic!("No hardware security module available. Production requires TPM 2.0, Secure Enclave, or StrongBox.");
         }
     }
@@ -124,6 +129,10 @@ fn detect_enclave_type() -> EnclaveType {
         }
         #[cfg(not(debug_assertions))]
         {
+            if std::env::var("DCHAT_ALLOW_SOFTWARE_KEYS").is_ok() {
+                tracing::warn!("⚠️  Using software keys on unsupported platform");
+                return EnclaveType::Software;
+            }
             panic!("Unsupported platform for production enclave");
         }
     }
@@ -150,16 +159,21 @@ pub async fn init_enclave() -> Result<()> {
             // In production, this would use the tss-esapi crate
             tracing::info!("TPM 2.0 initialized");
         }
-        #[cfg(debug_assertions)]
         EnclaveType::Software => {
-            // Software fallback for development
+            // Software fallback for development or when DCHAT_ALLOW_SOFTWARE_KEYS is set
             let dir = enclave_storage_path();
             // Validate storage security before creating
             validate_enclave_storage_security(&dir)?;
             tokio::fs::create_dir_all(&dir)
                 .await
                 .map_err(|e| Error::internal(format!("Failed to create enclave dir: {}", e)))?;
+            #[cfg(debug_assertions)]
             tracing::warn!("Using software enclave at {:?} (DEBUG BUILD ONLY)", dir);
+            #[cfg(not(debug_assertions))]
+            tracing::warn!(
+                "⚠️  Using software enclave at {:?} (DCHAT_ALLOW_SOFTWARE_KEYS)",
+                dir
+            );
         }
     }
 
@@ -192,11 +206,10 @@ pub fn generate_device_key() -> Result<Vec<u8>> {
             // Calls: Esys::create_primary() with sealing template
             generate_hardware_backed_key("tpm2")
         }
-        #[cfg(debug_assertions)]
         EnclaveType::Software => {
             use rand::RngCore;
 
-            // Software fallback for development only
+            // Software fallback for development or when DCHAT_ALLOW_SOFTWARE_KEYS is set
             let mut path = enclave_storage_path();
             // Validate storage security
             validate_enclave_storage_security(&path)?;
@@ -220,8 +233,14 @@ pub fn generate_device_key() -> Result<Vec<u8>> {
             rand::thread_rng().fill_bytes(&mut key);
             std::fs::write(&path, &key)
                 .map_err(|e| Error::internal(format!("write key: {}", e)))?;
+            #[cfg(debug_assertions)]
             tracing::warn!(
                 "Generated software device key at {:?} (DEBUG BUILD ONLY)",
+                path
+            );
+            #[cfg(not(debug_assertions))]
+            tracing::warn!(
+                "⚠️  Generated software device key at {:?} (DCHAT_ALLOW_SOFTWARE_KEYS)",
                 path
             );
             Ok(key)
@@ -393,10 +412,14 @@ pub fn attest_device() -> Result<String> {
                 Ok("tpm2-attestation-simulated-v1".to_string())
             }
         }
-        #[cfg(debug_assertions)]
         EnclaveType::Software => {
+            #[cfg(debug_assertions)]
             tracing::warn!(
                 "Returning simulated attestation for software enclave (DEBUG BUILD ONLY)"
+            );
+            #[cfg(not(debug_assertions))]
+            tracing::warn!(
+                "⚠️  Returning simulated attestation for software enclave (DCHAT_ALLOW_SOFTWARE_KEYS)"
             );
             Ok("dchat-enclave-attestation-v1".to_string())
         }
