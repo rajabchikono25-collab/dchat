@@ -175,27 +175,55 @@ impl RevocationRequest {
         }
     }
 
-    /// Sign the request
-    pub fn sign(&mut self, signing_key: &[u8]) {
-        // In production: Ed25519 sign over (channel_id || target_id || action || timestamp || nonce)
+    /// Get the data to be signed
+    fn signing_data(&self) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(&self.channel_id);
+        data.extend_from_slice(&self.admin_id);
         data.extend_from_slice(&self.target_id);
         data.extend_from_slice(self.action.action_name().as_bytes());
         data.extend_from_slice(&self.timestamp.to_le_bytes());
         data.extend_from_slice(&self.nonce);
-
-        // Placeholder signature
-        self.signature = blake3::hash(&data).as_bytes().to_vec();
+        data
     }
 
-    /// Verify the signature
-    pub fn verify(&self) -> Result<bool> {
-        if self.signature.is_empty() {
+    /// Sign the request with Ed25519 signing key
+    pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) {
+        use ed25519_dalek::Signer;
+        let data = self.signing_data();
+        let signature = signing_key.sign(&data);
+        self.signature = signature.to_bytes().to_vec();
+    }
+
+    /// Verify the Ed25519 signature using the admin's verifying key
+    pub fn verify(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> Result<bool> {
+        if self.signature.len() != 64 {
             return Ok(false);
         }
-        // In production: verify Ed25519 signature
-        Ok(true)
+        let sig_bytes: [u8; 64] = match self.signature.as_slice().try_into() {
+            Ok(b) => b,
+            Err(_) => return Ok(false),
+        };
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        let data = self.signing_data();
+        use ed25519_dalek::Verifier;
+        Ok(verifying_key.verify(&data, &signature).is_ok())
+    }
+
+    /// Legacy sign method using raw key bytes (for backwards compatibility)
+    /// Derives an Ed25519 signing key from the provided bytes using HKDF.
+    pub fn sign_with_bytes(&mut self, key_bytes: &[u8]) {
+        // Derive Ed25519 seed from key bytes
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let hk = Hkdf::<Sha256>::new(None, key_bytes);
+        let mut seed = [0u8; 32];
+        hk.expand(b"dchat-admin-revocation-signing", &mut seed)
+            .expect("valid length");
+
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        self.sign(&signing_key);
     }
 }
 
@@ -462,11 +490,25 @@ impl AdminRevocationManager {
         Ok(())
     }
 
-    /// Process a revocation request
-    pub async fn process_revocation(&self, request: RevocationRequest) -> Result<RevocationRecord> {
-        // Verify request
-        if !request.verify()? {
-            return Err(Error::network("Invalid request signature"));
+    /// Process a revocation request with signature verification
+    ///
+    /// The `admin_verifying_key` should be the Ed25519 public key of the admin
+    /// making the request, obtained through a trusted channel.
+    pub async fn process_revocation(
+        &self,
+        request: RevocationRequest,
+        admin_verifying_key: Option<&ed25519_dalek::VerifyingKey>,
+    ) -> Result<RevocationRecord> {
+        // Verify request signature if key provided
+        if let Some(vk) = admin_verifying_key {
+            if !request.verify(vk)? {
+                return Err(Error::network("Invalid request signature"));
+            }
+        } else if !request.signature.is_empty() {
+            // Signature exists but no key provided - cannot verify
+            return Err(Error::network(
+                "Signature present but no verifying key provided",
+            ));
         }
 
         let mut channels = self.channels.write().await;
@@ -877,6 +919,10 @@ mod tests {
             .await
             .unwrap();
 
+        // Generate a signing key for the owner
+        let owner_signing_key = ed25519_dalek::SigningKey::from_bytes(&[0xCD; 32]);
+        let owner_verifying_key = owner_signing_key.verifying_key();
+
         let mut request = RevocationRequest::new(
             channel,
             owner,
@@ -886,9 +932,12 @@ mod tests {
                 reason: "Test timeout".to_string(),
             },
         );
-        request.sign(&[]);
+        request.sign(&owner_signing_key);
 
-        let record = manager.process_revocation(request).await.unwrap();
+        let record = manager
+            .process_revocation(request, Some(&owner_verifying_key))
+            .await
+            .unwrap();
         assert_eq!(record.status, RevocationStatus::Active);
 
         let status = manager.get_member_status(channel, member).await.unwrap();
@@ -938,6 +987,9 @@ mod tests {
             .unwrap();
 
         // Admin bans member
+        let admin_signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x11; 32]);
+        let admin_verifying_key = admin_signing_key.verifying_key();
+
         let mut request = RevocationRequest::new(
             channel,
             admin,
@@ -947,8 +999,11 @@ mod tests {
                 revoke_history: false,
             },
         );
-        request.sign(&[]);
-        manager.process_revocation(request).await.unwrap();
+        request.sign(&admin_signing_key);
+        manager
+            .process_revocation(request, Some(&admin_verifying_key))
+            .await
+            .unwrap();
 
         // Owner lifts the ban
         manager

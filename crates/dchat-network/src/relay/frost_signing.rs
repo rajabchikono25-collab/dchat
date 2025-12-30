@@ -110,7 +110,7 @@ pub enum FrostSigningError {
     Timeout,
 }
 
-(impl std::fmt::Display for FrostSigningError {
+impl std::fmt::Display for FrostSigningError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsufficientSigners {

@@ -151,7 +151,8 @@ impl CachedToken {
 /// Minimal epoch token data for caching
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpochTokenData {
-    /// Aggregated FROST signature
+    /// Aggregated FROST signature (64 bytes)
+    #[serde(with = "serde_bytes_64")]
     pub signature: [u8; 64],
     /// Epoch ID this token is for
     pub epoch_id: u64,
@@ -163,6 +164,34 @@ pub struct EpochTokenData {
     pub contributing_relays: u8,
     /// Threshold used for aggregation
     pub threshold: u8,
+}
+
+/// Serde helper for [u8; 64] arrays
+mod serde_bytes_64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        bytes.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<u8> = Vec::deserialize(deserializer)?;
+        if vec.len() != 64 {
+            return Err(serde::de::Error::custom(format!(
+                "expected 64 bytes, got {}",
+                vec.len()
+            )));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&vec);
+        Ok(arr)
+    }
 }
 
 /// Cache for a single conversation's tokens

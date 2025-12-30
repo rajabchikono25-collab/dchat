@@ -127,10 +127,60 @@ pub struct SenderKeyRecord {
 }
 
 impl SenderKeyRecord {
-    /// Verify the distribution signature
-    pub fn verify_signature(&self) -> Result<bool> {
-        // In production: verify with sender's signing key
-        Ok(!self.signature.is_empty())
+    /// Verify the distribution signature using the sender's public key
+    pub fn verify_signature(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> Result<bool> {
+        if self.signature.len() != 64 {
+            return Ok(false);
+        }
+        let sig_bytes: [u8; 64] = match self.signature.as_slice().try_into() {
+            Ok(b) => b,
+            Err(_) => return Ok(false),
+        };
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+
+        // Verify signature over (sender_id || signing_key || generation || created_at || encrypted_chain_key)
+        let data = self.signing_data();
+        use ed25519_dalek::Verifier;
+        Ok(verifying_key.verify(&data, &signature).is_ok())
+    }
+
+    /// Create a signed sender key record
+    pub fn new_signed(
+        sender_id: [u8; 32],
+        signing_key: &ed25519_dalek::SigningKey,
+        encrypted_chain_key: Vec<u8>,
+        created_at: u64,
+        generation: u32,
+    ) -> Self {
+        use ed25519_dalek::Signer;
+
+        let signing_key_bytes: [u8; 32] = signing_key.verifying_key().to_bytes();
+
+        let mut record = Self {
+            sender_id,
+            signing_key: signing_key_bytes,
+            encrypted_chain_key,
+            created_at,
+            generation,
+            signature: Vec::new(),
+        };
+
+        let data = record.signing_data();
+        let signature = signing_key.sign(&data);
+        record.signature = signature.to_bytes().to_vec();
+
+        record
+    }
+
+    /// Get the data that is signed
+    fn signing_data(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(32 + 32 + 4 + 8 + self.encrypted_chain_key.len());
+        data.extend_from_slice(&self.sender_id);
+        data.extend_from_slice(&self.signing_key);
+        data.extend_from_slice(&self.generation.to_le_bytes());
+        data.extend_from_slice(&self.created_at.to_le_bytes());
+        data.extend_from_slice(&self.encrypted_chain_key);
+        data
     }
 }
 
@@ -261,14 +311,27 @@ impl GroupKeyDistribution {
         // Encrypt with message key
         let ciphertext = encrypt_with_key(&message_key, plaintext)?;
 
+        // Create unsigned message - caller should sign with their key
         Ok(GroupEncryptedMessage {
             sender_id: self.our_id,
             channel_id,
             message_number,
             generation: state.generation,
             ciphertext,
-            signature: vec![], // Would sign in production
+            signature: vec![], // Caller must call msg.sign(signing_key)
         })
+    }
+
+    /// Encrypt a message for a group channel with signing
+    pub async fn encrypt_group_message_signed(
+        &self,
+        channel_id: [u8; 32],
+        plaintext: &[u8],
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> Result<GroupEncryptedMessage> {
+        let mut msg = self.encrypt_group_message(channel_id, plaintext).await?;
+        msg.sign(signing_key);
+        Ok(msg)
     }
 
     /// Decrypt a message from a group channel
@@ -320,14 +383,29 @@ impl GroupKeyDistribution {
     }
 
     /// Register a received sender key
+    ///
+    /// The `sender_verifying_key` should be obtained through a trusted channel
+    /// (e.g., from the sender's identity key or a key distribution message).
     pub async fn register_sender_key(
         &self,
         channel_id: [u8; 32],
         record: &SenderKeyRecord,
         decryption_key: &[u8; 32],
+        sender_verifying_key: Option<&ed25519_dalek::VerifyingKey>,
     ) -> Result<()> {
-        // Verify signature
-        record.verify_signature()?;
+        // Verify signature if verifying key provided
+        if let Some(vk) = sender_verifying_key {
+            if !record.verify_signature(vk)? {
+                return Err(Error::crypto("Invalid sender key record signature"));
+            }
+        } else if !record.signature.is_empty() {
+            // If signature exists but no key provided, try to use embedded signing_key
+            if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&record.signing_key) {
+                if !record.verify_signature(&vk)? {
+                    return Err(Error::crypto("Invalid sender key record signature"));
+                }
+            }
+        }
 
         // Decrypt the chain key
         let chain_key_bytes = decrypt_with_key(decryption_key, &record.encrypted_chain_key)?;
@@ -361,7 +439,9 @@ impl GroupKeyDistribution {
         Ok(())
     }
 
-    /// Create sender key distribution records for members
+    /// Create sender key distribution records for members (unsigned)
+    ///
+    /// Use `create_distribution_records_signed` for production use.
     pub async fn create_distribution_records(
         &self,
         channel_id: [u8; 32],
@@ -374,24 +454,60 @@ impl GroupKeyDistribution {
 
         let mut records = Vec::with_capacity(member_keys.len());
 
-        for (member_id, enc_key) in member_keys {
+        for (_member_id, enc_key) in member_keys {
             // Encrypt our chain key to this member
             let encrypted_chain_key = encrypt_with_key(enc_key, &state.chain_key.key_data)?;
 
+            // Create unsigned record - caller should use signed variant in production
             records.push(SenderKeyRecord {
                 sender_id: self.our_id,
-                signing_key: [0u8; 32], // Would use real signing key
+                signing_key: [0u8; 32],
                 encrypted_chain_key,
                 created_at: state.created_at,
                 generation: state.generation,
-                signature: vec![0u8; 64], // Would sign in production
+                signature: vec![],
             });
         }
 
         Ok(records)
     }
 
-    /// Handle member join - distribute our sender key
+    /// Create signed sender key distribution records for members
+    ///
+    /// This is the recommended method for production use.
+    pub async fn create_distribution_records_signed(
+        &self,
+        channel_id: [u8; 32],
+        member_keys: &[([u8; 32], [u8; 32])], // (member_id, encryption_key)
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> Result<Vec<SenderKeyRecord>> {
+        let keys = self.sender_keys.read().await;
+        let state = keys
+            .get(&channel_id)
+            .ok_or_else(|| Error::crypto("No sender key for channel"))?;
+
+        let mut records = Vec::with_capacity(member_keys.len());
+
+        for (_member_id, enc_key) in member_keys {
+            // Encrypt our chain key to this member
+            let encrypted_chain_key = encrypt_with_key(enc_key, &state.chain_key.key_data)?;
+
+            // Create signed record
+            records.push(SenderKeyRecord::new_signed(
+                self.our_id,
+                signing_key,
+                encrypted_chain_key,
+                state.created_at,
+                state.generation,
+            ));
+        }
+
+        Ok(records)
+    }
+
+    /// Handle member join - distribute our sender key (unsigned)
+    ///
+    /// Use `handle_member_join_signed` for production use.
     pub async fn handle_member_join(
         &self,
         channel_id: [u8; 32],
@@ -408,6 +524,38 @@ impl GroupKeyDistribution {
         // Create distribution record for new member
         let records = self
             .create_distribution_records(channel_id, &[(new_member_id, new_member_key)])
+            .await?;
+
+        records
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::crypto("Failed to create record"))
+    }
+
+    /// Handle member join - distribute our sender key (signed)
+    ///
+    /// This is the recommended method for production use.
+    pub async fn handle_member_join_signed(
+        &self,
+        channel_id: [u8; 32],
+        new_member_id: [u8; 32],
+        new_member_key: [u8; 32],
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> Result<SenderKeyRecord> {
+        // Track membership
+        {
+            let mut memberships = self.memberships.write().await;
+            let members = memberships.entry(channel_id).or_insert_with(HashSet::new);
+            members.insert(new_member_id);
+        }
+
+        // Create signed distribution record for new member
+        let records = self
+            .create_distribution_records_signed(
+                channel_id,
+                &[(new_member_id, new_member_key)],
+                signing_key,
+            )
             .await?;
 
         records
@@ -503,8 +651,43 @@ pub struct GroupEncryptedMessage {
     pub generation: u32,
     /// Encrypted content
     pub ciphertext: Vec<u8>,
-    /// Signature over (channel_id || message_number || ciphertext)
+    /// Ed25519 signature over (channel_id || message_number || generation || ciphertext)
     pub signature: Vec<u8>,
+}
+
+impl GroupEncryptedMessage {
+    /// Sign this message with the sender's Ed25519 signing key
+    pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) {
+        use ed25519_dalek::Signer;
+        let data = self.signing_data();
+        let signature = signing_key.sign(&data);
+        self.signature = signature.to_bytes().to_vec();
+    }
+
+    /// Verify the signature using the sender's public key
+    pub fn verify(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> bool {
+        use ed25519_dalek::Verifier;
+        if self.signature.len() != 64 {
+            return false;
+        }
+        let sig_bytes: [u8; 64] = match self.signature.as_slice().try_into() {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        let data = self.signing_data();
+        verifying_key.verify(&data, &signature).is_ok()
+    }
+
+    /// Get the data that is signed
+    fn signing_data(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(32 + 4 + 4 + self.ciphertext.len());
+        data.extend_from_slice(&self.channel_id);
+        data.extend_from_slice(&self.message_number.to_le_bytes());
+        data.extend_from_slice(&self.generation.to_le_bytes());
+        data.extend_from_slice(&self.ciphertext);
+        data
+    }
 }
 
 /// Tree-based key distribution for very large groups
