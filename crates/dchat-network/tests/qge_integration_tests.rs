@@ -1,3 +1,5 @@
+#![cfg(feature = "qge-integration-tests")]
+
 //! QGE Integration Tests
 //!
 //! End-to-end integration tests for Quorum-Gated Encryption flow.

@@ -16,6 +16,23 @@ pub struct Config {
     pub crypto: CryptoConfig,
     pub governance: GovernanceConfig,
     pub relay: RelayConfig,
+
+    #[serde(default)]
+    pub rpc: RpcConfig,
+}
+
+/// RPC configuration for external chain dependencies
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RpcConfig {
+    /// Chat chain JSON-RPC endpoint.
+    ///
+    /// Environment override: `DCHAT_CHAT_CHAIN_RPC_URL`
+    pub chat_chain_rpc_url: Option<String>,
+
+    /// Currency chain JSON-RPC endpoint.
+    ///
+    /// Environment override: `DCHAT_CURRENCY_CHAIN_RPC_URL`
+    pub currency_chain_rpc_url: Option<String>,
 }
 
 /// Network configuration
@@ -124,7 +141,59 @@ impl Default for Config {
                 uptime_reporting_interval_minutes: 15,
                 stake_amount: 1000,
             },
+
+            rpc: RpcConfig::default(),
         }
+    }
+}
+
+impl RpcConfig {
+    pub fn resolved_chat_chain_rpc_url(&self) -> Option<String> {
+        if let Some(url) = &self.chat_chain_rpc_url {
+            if !url.trim().is_empty() {
+                return Some(url.clone());
+            }
+        }
+
+        for key in [
+            "DCHAT_CHAT_CHAIN_RPC_URL",
+            // Legacy/compat env vars
+            "CHAT_CHAIN_RPC",
+            "CHAT_CHAIN_RPC_URL",
+        ] {
+            if let Ok(v) = std::env::var(key) {
+                let trimmed = v.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn resolved_currency_chain_rpc_url(&self) -> Option<String> {
+        if let Some(url) = &self.currency_chain_rpc_url {
+            if !url.trim().is_empty() {
+                return Some(url.clone());
+            }
+        }
+
+        for key in [
+            "DCHAT_CURRENCY_CHAIN_RPC_URL",
+            // Legacy/compat env vars
+            "CURRENCY_CHAIN_RPC",
+            "CURRENCY_CHAIN_RPC_URL",
+        ] {
+            if let Ok(v) = std::env::var(key) {
+                let trimmed = v.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
+                }
+            }
+        }
+
+        None
     }
 }
 

@@ -8,6 +8,7 @@ use libp2p::{
     gossipsub::{self, MessageId},
     identify, kad, mdns, ping, relay,
     request_response::{self, OutboundRequestId, ProtocolSupport},
+    swarm::behaviour::toggle::Toggle,
     swarm::NetworkBehaviour,
     PeerId, StreamProtocol,
 };
@@ -150,8 +151,8 @@ pub struct DchatBehavior {
     /// Kademlia DHT for peer discovery and routing
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
 
-    /// mDNS for local network discovery
-    pub mdns: mdns::tokio::Behaviour,
+    /// mDNS for local network discovery (optional; disabled by default in production configs)
+    pub mdns: Toggle<mdns::tokio::Behaviour>,
 
     /// Gossipsub for message propagation
     pub gossipsub: gossipsub::Behaviour,
@@ -181,6 +182,7 @@ impl DchatBehavior {
         local_peer_id: PeerId,
         local_key: &libp2p::identity::Keypair,
         relay_client: relay::client::Behaviour,
+        enable_mdns: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Kademlia configuration
         let store = kad::store::MemoryStore::new(local_peer_id);
@@ -189,9 +191,16 @@ impl DchatBehavior {
         kad_config.set_query_timeout(Duration::from_secs(60));
         let kademlia = kad::Behaviour::with_config(local_peer_id, store, kad_config);
 
-        // mDNS for local discovery
-        let mdns_config = mdns::Config::default();
-        let mdns = mdns::tokio::Behaviour::new(mdns_config, local_peer_id)?;
+        // mDNS for local discovery (must be explicitly enabled)
+        let mdns = if enable_mdns {
+            let mdns_config = mdns::Config::default();
+            Toggle::from(Some(mdns::tokio::Behaviour::new(
+                mdns_config,
+                local_peer_id,
+            )?))
+        } else {
+            Toggle::from(None)
+        };
 
         // Gossipsub configuration - optimized for 23-user network
         // Fixed: mesh_n_low must be >= 1 to prevent underflow panic at behaviour.rs:2135
@@ -329,7 +338,8 @@ mod tests {
     fn test_behavior_creation() {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
-        let behavior = DchatBehavior::new(peer_id, &keypair);
+        let (_transport, relay_client) = relay::client::new(peer_id);
+        let behavior = DchatBehavior::new(peer_id, &keypair, relay_client, false);
         assert!(behavior.is_ok());
     }
 
@@ -337,7 +347,8 @@ mod tests {
     fn test_channel_subscription() {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
-        let mut behavior = DchatBehavior::new(peer_id, &keypair).unwrap();
+        let (_transport, relay_client) = relay::client::new(peer_id);
+        let mut behavior = DchatBehavior::new(peer_id, &keypair, relay_client, false).unwrap();
 
         let result = behavior.subscribe_channel("test-channel");
         assert!(result.is_ok());

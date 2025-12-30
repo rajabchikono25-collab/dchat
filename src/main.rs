@@ -222,6 +222,48 @@ fn extract_ip_from_multiaddr(multiaddr: &str) -> Option<String> {
     }
 }
 
+fn allow_localhost_chain_rpc_defaults() -> bool {
+    match std::env::var("DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS") {
+        Ok(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
+
+fn resolve_required_currency_chain_rpc_url(config: &Config) -> Result<String> {
+    if let Some(url) = config.rpc.resolved_currency_chain_rpc_url() {
+        return Ok(url);
+    }
+
+    if allow_localhost_chain_rpc_defaults() {
+        return Ok(CurrencyChainConfig::default().rpc_url);
+    }
+
+    Err(Error::Config(
+        "Currency chain RPC URL not configured. Set `rpc.currency_chain_rpc_url` in config.toml or env `DCHAT_CURRENCY_CHAIN_RPC_URL`.\n\
+For local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
+            .to_string(),
+    ))
+}
+
+fn resolve_required_chat_chain_rpc_url(config: &Config) -> Result<String> {
+    if let Some(url) = config.rpc.resolved_chat_chain_rpc_url() {
+        return Ok(url);
+    }
+
+    if allow_localhost_chain_rpc_defaults() {
+        return Ok(ChatChainConfig::default().rpc_url);
+    }
+
+    Err(Error::Config(
+        "Chat chain RPC URL not configured. Set `rpc.chat_chain_rpc_url` in config.toml or env `DCHAT_CHAT_CHAIN_RPC_URL`.\n\
+For local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
+            .to_string(),
+    ))
+}
+
 /// Validate production environment requirements for mainnet deployment
 async fn validate_mainnet_environment(_config: &Config, node_type: NodeType) -> Result<()> {
     info!("🔍 Validating mainnet environment requirements...");
@@ -1635,6 +1677,32 @@ enum NetworkCommand {
 
     /// Show banned peers list
     Banned,
+
+    /// Generate a stable bootstrap peer record (includes /p2p/<PeerId>)
+    ///
+    /// This is intended for mainnet ceremony setup where operators must publish
+    /// bootstrap multiaddrs that include the correct PeerId.
+    PeerRecord {
+        /// Node type for the record (validator or relay)
+        #[arg(long, default_value = "validator")]
+        node_type: String,
+
+        /// Path to the local validator key JSON (required for validator records)
+        #[arg(long)]
+        key: Option<PathBuf>,
+
+        /// DNS name to embed in the multiaddr (e.g. validator-1.dchat.network)
+        #[arg(long)]
+        dns: String,
+
+        /// TCP port to embed in the multiaddr
+        #[arg(long, default_value = "7070")]
+        port: u16,
+
+        /// Optional output path to write a JSON record
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 /// Wallet operations commands
@@ -1838,8 +1906,8 @@ enum ProgramCommand {
         upgrade_authority: Option<PathBuf>,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Maximum program size (for future upgrades)
         #[arg(long)]
@@ -1865,8 +1933,8 @@ enum ProgramCommand {
         authority: PathBuf,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -1884,8 +1952,8 @@ enum ProgramCommand {
         authority: PathBuf,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Skip confirmation prompt (WARNING: irreversible!)
         #[arg(long)]
@@ -1899,8 +1967,8 @@ enum ProgramCommand {
         program_id: String,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
     },
 
     /// Transfer upgrade authority to a new keypair
@@ -1918,8 +1986,8 @@ enum ProgramCommand {
         new_authority: String,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
     },
 
     /// Close a program and reclaim motes
@@ -1937,8 +2005,8 @@ enum ProgramCommand {
         destination: Option<String>,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -1971,8 +2039,8 @@ enum ProgramCommand {
         program: String,
 
         /// RPC endpoint URL (required if program is an ID)
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Output format: text, json, or yaml
         #[arg(long, default_value = "text")]
@@ -1998,8 +2066,8 @@ enum ProgramCommand {
         idl: Option<PathBuf>,
 
         /// RPC endpoint URL (required if program is an ID)
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
     },
 
     /// Build and deploy from a contract source directory
@@ -2013,8 +2081,8 @@ enum ProgramCommand {
         keypair: PathBuf,
 
         /// RPC endpoint URL
-        #[arg(long, default_value = "http://localhost:8545")]
-        rpc_url: String,
+        #[arg(long)]
+        rpc_url: Option<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -3132,7 +3200,7 @@ async fn main() -> Result<()> {
         Commands::Accessibility { action } => run_accessibility_command(action).await,
         Commands::Chaos { action } => run_chaos_command(action).await,
         Commands::Governance { action } => run_governance_command(action).await,
-        Commands::Token { action } => run_token_command(action).await,
+        Commands::Token { action } => run_token_command(config, action).await,
         Commands::Update { action } => run_update_command(action).await,
         #[cfg(feature = "deployment")]
         Commands::Deploy { action } => run_deploy_command(action).await,
@@ -3142,7 +3210,7 @@ async fn main() -> Result<()> {
         Commands::Wallet { action } => run_wallet_command(config, action).await,
         Commands::Staking { action } => run_staking_command(config, action).await,
         Commands::Rewards { action } => run_rewards_command(config, action).await,
-        Commands::Program { action } => run_program_command(action).await,
+        Commands::Program { action } => run_program_command(config, action).await,
         Commands::MiniApp { action } => run_miniapp_command(action).await,
         Commands::Qge { action } => run_qge_command(config, action).await,
     }
@@ -3308,11 +3376,21 @@ async fn run_relay_node(
 
     info!("🔀 Relay Node Configuration:");
     info!("   Listen Address: {}", listen_addr);
-    info!("   Bootstrap Peers: {} provided", bootstrap_peers.len());
+
+    // CLI bootstrap peers override config; config provides the production default.
+    let mut effective_bootstrap_peers = bootstrap_peers;
+    if effective_bootstrap_peers.is_empty() {
+        effective_bootstrap_peers = config.network.bootstrap_peers.clone();
+    }
+
+    info!(
+        "   Bootstrap Peers: {} provided",
+        effective_bootstrap_peers.len()
+    );
 
     // MAINNET SECURITY: Validate bootstrap peer addresses
     let is_mainnet = true; // Assume mainnet for security validation
-    for peer_addr in &bootstrap_peers {
+    for peer_addr in &effective_bootstrap_peers {
         if peer_addr.is_empty() {
             return Err(Error::validation("Bootstrap peer address cannot be empty"));
         }
@@ -3404,7 +3482,7 @@ async fn run_relay_node(
         }
         Err(e) => {
             error!("❌ DNS validator discovery failed: {}", e);
-            if bootstrap_peers.is_empty() {
+            if effective_bootstrap_peers.is_empty() {
                 return Err(Error::network(format!(
                     "Failed to discover validators via DNS and no bootstrap peers provided: {}",
                     e
@@ -3502,7 +3580,7 @@ async fn run_relay_node(
     }
 
     // Add manually specified bootstrap peers - MAINNET-SAFE: Require proper format
-    for peer_str in &bootstrap_peers {
+    for peer_str in &effective_bootstrap_peers {
         if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
             let multiaddr_str = multiaddr.to_string();
 
@@ -3607,6 +3685,25 @@ async fn run_relay_node(
     network.start().await?;
     info!("✓ Relay network initialized (peer_id: {})", peer_id);
 
+    // Dial DNS-discovered peers even if they lack /p2p/<PeerId>. Identify will learn the PeerId
+    // and the swarm event handler will feed addresses into Kademlia.
+    for validator in &discovered_validators {
+        if let Err(e) = network.dial(validator.multiaddr.clone()) {
+            debug!(
+                "Dial to DNS-discovered validator {} ({}) failed: {}",
+                validator.identifier, validator.multiaddr, e
+            );
+        }
+    }
+    for relay in &discovered_relays {
+        if let Err(e) = network.dial(relay.multiaddr.clone()) {
+            debug!(
+                "Dial to DNS-discovered relay {} ({}) failed: {}",
+                relay.identifier, relay.multiaddr, e
+            );
+        }
+    }
+
     // Start DNS refresh background task
     let _dns_refresh_handle = dns_discovery.start_refresh_task();
 
@@ -3662,6 +3759,37 @@ async fn run_relay_node(
                 };
                 peer_registry.add_bootstrap_peer(peer_info.clone()).await;
                 peer_registry.add_peer(peer_info).await;
+            }
+        }
+    }
+
+    // Register manual bootstrap peers (config/CLI) in the registry as relays.
+    // This is critical because DNS discovery currently yields address-only multiaddrs.
+    for peer_str in &effective_bootstrap_peers {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            let multiaddr_str = multiaddr.to_string();
+            if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+                if let Ok(pid) = peer_id_part.parse::<PeerId>() {
+                    let peer_info = PeerInfo {
+                        peer_id: pid,
+                        multiaddr: multiaddr.clone(),
+                        node_type: NodeType::Relay,
+                        geographic_region: None,
+                        last_seen: SystemTime::now(),
+                        connection_quality: 1.0,
+                        capabilities: vec!["routing".to_string(), "relay".to_string()],
+                        is_bootstrap: true,
+                        rtt_ms: None,
+                        packet_loss: 0.0,
+                        jitter_ms: None,
+                        total_messages_sent: 0,
+                        total_messages_received: 0,
+                        handshake_success: false,
+                        connected_since: SystemTime::now(),
+                    };
+                    peer_registry.add_bootstrap_peer(peer_info.clone()).await;
+                    peer_registry.add_peer(peer_info).await;
+                }
             }
         }
     }
@@ -3855,7 +3983,16 @@ async fn run_relay_node(
 
     // Phase 6b: Initialize Currency Chain and Payment Processor
     info!("💰 Phase 6b: Initializing payment processor");
-    let currency_chain_config = CurrencyChainConfig::default();
+    let mut currency_chain_config = CurrencyChainConfig::default();
+    let currency_rpc_url = resolve_required_currency_chain_rpc_url(&config)?;
+    if config.rpc.resolved_currency_chain_rpc_url().is_none()
+        && allow_localhost_chain_rpc_defaults()
+    {
+        warn!(
+            "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+        );
+    }
+    currency_chain_config.rpc_url = currency_rpc_url;
     let currency_chain = Arc::new(
         CurrencyChainClient::new(currency_chain_config).map_err(|e| {
             Error::internal(format!("Failed to create currency chain client: {}", e))
@@ -5858,43 +5995,70 @@ async fn run_validator_node(
     }
 
     // Convert discovered validators to bootstrap nodes
-    // Extract PeerID from multiaddr or use discovery mechanism
-    let mut bootstrap_nodes = Vec::new();
-    for validator in &discovered_validators {
-        // Try to extract peer_id from multiaddr if it contains /p2p/ component
-        let peer_id = if let Some(p2p_part) = validator.multiaddr.to_string().split("/p2p/").nth(1)
-        {
-            if let Ok(pid) = p2p_part.split('/').next().unwrap_or("").parse::<PeerId>() {
-                pid
-            } else {
-                // Will be discovered during connection handshake
-                PeerId::random()
-            }
-        } else {
-            // Will be discovered during connection handshake
-            PeerId::random()
-        };
-        bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
-        info!(
-            "  + Validator bootstrap: {} at {}",
-            peer_id, validator.multiaddr
-        );
+    // IMPORTANT: libp2p Kademlia needs correct PeerIds for bootstrap.
+    // DNS discovery returns address-only multiaddrs (no /p2p/), so we must not invent PeerIds.
+    // Seed bootstrap peers from config/CLI (must include /p2p/<PeerId>).
+    let mut bootstrap_nodes: Vec<(PeerId, Multiaddr)> = Vec::new();
+
+    for peer_str in &config.network.bootstrap_peers {
+        let multiaddr = peer_str.parse::<Multiaddr>().map_err(|e| {
+            Error::Config(format!(
+                "Invalid bootstrap peer multiaddr '{}': {e}",
+                peer_str
+            ))
+        })?;
+
+        let multiaddr_str = multiaddr.to_string();
+        let peer_id = multiaddr_str
+            .split("/p2p/")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "Mainnet bootstrap peer must include /p2p/<PeerId>: {}",
+                    peer_str
+                ))
+            })?
+            .parse::<PeerId>()
+            .map_err(|e| {
+                Error::Config(format!(
+                    "Invalid /p2p/<PeerId> in bootstrap peer '{}': {e}",
+                    peer_str
+                ))
+            })?;
+
+        bootstrap_nodes.push((peer_id, multiaddr.clone()));
+        info!("  + Bootstrap peer: {} at {}", peer_id, multiaddr);
     }
 
-    // Also add any manually configured bootstrap peers from config
-    for peer_str in &config.network.bootstrap_peers {
-        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
-            let peer_id_str = multiaddr.to_string();
-            if let Some(p2p_part) = peer_id_str.split("/p2p/").nth(1) {
-                if let Ok(peer_id) = p2p_part.parse::<PeerId>() {
-                    bootstrap_nodes.push((peer_id, multiaddr.clone()));
-                    info!("  + Manual bootstrap peer: {} at {}", peer_id, multiaddr);
-                }
-            }
+    // If DNS discovery ever includes /p2p/<PeerId> in the future, accept it as an additional source.
+    for validator in &discovered_validators {
+        let multiaddr_str = validator.multiaddr.to_string();
+        let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) else {
+            continue;
+        };
+
+        if let Ok(peer_id) = peer_id_part
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .parse::<PeerId>()
+        {
+            bootstrap_nodes.push((peer_id, validator.multiaddr.clone()));
+            info!(
+                "  + DNS bootstrap peer: {} at {}",
+                peer_id, validator.multiaddr
+            );
         }
     }
 
     info!("📡 Total bootstrap peers: {}", bootstrap_nodes.len());
+
+    if bootstrap_nodes.is_empty() {
+        return Err(Error::Config(
+            "No valid bootstrap peers configured for mainnet validator. Set [network].bootstrap_peers to multiaddrs including /p2p/<PeerId>.".to_string(),
+        ));
+    }
 
     // Derive libp2p keypair from validator key for persistent peer ID
     let libp2p_keypair = if let Some(private_key_bytes) = validator_key.private_key_bytes() {
@@ -5971,6 +6135,17 @@ async fn run_validator_node(
     network.start().await?;
     info!("✓ Validator network initialized (peer_id: {})", peer_id);
 
+    // Dial DNS-discovered validator addresses (address-only). This helps initial connectivity
+    // even when PeerIds are learned via Identify after connection establishment.
+    for validator in &discovered_validators {
+        if let Err(e) = network.dial(validator.multiaddr.clone()) {
+            debug!(
+                "Dial to DNS-discovered validator {} ({}) failed: {}",
+                validator.identifier, validator.multiaddr, e
+            );
+        }
+    }
+
     // Subscribe to validator consensus topic
     network.subscribe_validators()?;
     info!("✓ Subscribed to validator consensus network");
@@ -5978,11 +6153,16 @@ async fn run_validator_node(
     // Count all unique validators: discovered via DNS + manual bootstrap peers from config
     let mut unique_validator_peers = std::collections::HashSet::new();
 
-    // Add discovered validators
+    // Add discovered validators (only if they include /p2p/<PeerId>)
     for validator in &discovered_validators {
         let multiaddr_str = validator.multiaddr.to_string();
         if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
-            if let Ok(pid) = peer_id_part.parse::<PeerId>() {
+            if let Ok(pid) = peer_id_part
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .parse::<PeerId>()
+            {
                 unique_validator_peers.insert(pid);
             }
         }
@@ -8264,8 +8444,28 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
     let database = dchat_storage::Database::new(db_config).await?;
 
     // Initialize parallel chains
-    let chat_chain = Arc::new(ChatChainClient::new(ChatChainConfig::default())?);
-    let currency_chain = Arc::new(CurrencyChainClient::new(CurrencyChainConfig::default())?);
+    let mut chat_chain_config = ChatChainConfig::default();
+    let chat_rpc_url = resolve_required_chat_chain_rpc_url(&_config)?;
+    if _config.rpc.resolved_chat_chain_rpc_url().is_none() && allow_localhost_chain_rpc_defaults() {
+        warn!(
+            "Using localhost chat chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+        );
+    }
+    chat_chain_config.rpc_url = chat_rpc_url;
+
+    let mut currency_chain_config = CurrencyChainConfig::default();
+    let currency_rpc_url = resolve_required_currency_chain_rpc_url(&_config)?;
+    if _config.rpc.resolved_currency_chain_rpc_url().is_none()
+        && allow_localhost_chain_rpc_defaults()
+    {
+        warn!(
+            "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+        );
+    }
+    currency_chain_config.rpc_url = currency_rpc_url;
+
+    let chat_chain = Arc::new(ChatChainClient::new(chat_chain_config)?);
+    let currency_chain = Arc::new(CurrencyChainClient::new(currency_chain_config)?);
     let bridge = Arc::new(CrossChainBridge::new(
         Arc::clone(&chat_chain),
         Arc::clone(&currency_chain),
@@ -8917,7 +9117,17 @@ async fn run_marketplace_command(_config: Config, action: MarketplaceCommand) ->
                 info!("Processing payment of {} tokens...", price);
 
                 // Initialize currency chain client
-                let currency_chain = CurrencyChainClient::new(CurrencyChainConfig::default())?;
+                let mut currency_chain_config = CurrencyChainConfig::default();
+                let currency_rpc_url = resolve_required_currency_chain_rpc_url(&_config)?;
+                if _config.rpc.resolved_currency_chain_rpc_url().is_none()
+                    && allow_localhost_chain_rpc_defaults()
+                {
+                    warn!(
+                        "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                    );
+                }
+                currency_chain_config.rpc_url = currency_rpc_url;
+                let currency_chain = CurrencyChainClient::new(currency_chain_config)?;
 
                 // Check buyer balance before transfer
                 let buyer_balance = currency_chain.get_balance(&buyer)?;
@@ -10184,7 +10394,7 @@ fn parse_hex_color(hex: &str) -> Result<Color> {
 }
 
 /// Run token and tokenomics commands
-async fn run_token_command(action: TokenCommand) -> Result<()> {
+async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<()> {
     use dchat::blockchain::{
         BurnReason, MintReason, RecipientType, TokenSupplyConfig, TokenomicsManager,
     };
@@ -10206,16 +10416,11 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
     };
     let _tokenomics_db = Database::new(db_config).await?;
 
-    let config = TokenSupplyConfig::default();
-    let tokenomics_inner = Arc::new(TokenomicsManager::new(config));
+    let token_supply_config = TokenSupplyConfig::default();
+    let tokenomics_inner = Arc::new(TokenomicsManager::new(token_supply_config));
     let tokenomics = Arc::new(Mutex::new(tokenomics_inner.clone()));
 
-    // Initialize currency chain client with persistent tokenomics
-    let currency_config = CurrencyChainConfig::default();
-    let currency_client = Arc::new(Mutex::new(CurrencyChainClient::with_tokenomics(
-        currency_config,
-        tokenomics_inner,
-    )));
+    let mut currency_client: Option<CurrencyChainClient> = None;
 
     match action {
         TokenCommand::Stats => {
@@ -10569,9 +10774,26 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
         }
 
         TokenCommand::Transfer { from, to, amount } => {
-            let currency_client = currency_client
-                .lock()
-                .expect("currency_client mutex poisoned");
+            if currency_client.is_none() {
+                let mut currency_config = CurrencyChainConfig::default();
+                let currency_rpc_url = resolve_required_currency_chain_rpc_url(&app_config)?;
+                if app_config.rpc.resolved_currency_chain_rpc_url().is_none()
+                    && allow_localhost_chain_rpc_defaults()
+                {
+                    warn!(
+                        "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                    );
+                }
+                currency_config.rpc_url = currency_rpc_url;
+                currency_client = Some(CurrencyChainClient::with_tokenomics(
+                    currency_config,
+                    tokenomics_inner.clone(),
+                )?);
+            }
+
+            let client = currency_client
+                .as_ref()
+                .ok_or_else(|| Error::internal("Currency client not initialized"))?;
 
             let from_id = UserId(
                 Uuid::parse_str(&from).map_err(|_| Error::validation("Invalid from user ID"))?,
@@ -10579,16 +10801,6 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
             let to_id =
                 UserId(Uuid::parse_str(&to).map_err(|_| Error::validation("Invalid to user ID"))?);
 
-            // Ensure wallets exist
-            // Wallet creation handled internally by currency chain
-            if false { // Placeholder check
-                 // Wallet auto-created
-            }
-
-            // Currency client operations - unwrap Result from MutexGuard
-            let client = currency_client
-                .as_ref()
-                .map_err(|e| Error::chain(format!("Currency client error: {}", e)))?;
             let tx_id = client.transfer(&from_id, &to_id, amount)?;
 
             println!("\n💸 Transfer Completed");
@@ -10607,17 +10819,30 @@ async fn run_token_command(action: TokenCommand) -> Result<()> {
         }
 
         TokenCommand::Balance { user_id } => {
-            let currency_client = currency_client
-                .lock()
-                .expect("currency_client mutex poisoned");
+            if currency_client.is_none() {
+                let mut currency_config = CurrencyChainConfig::default();
+                let currency_rpc_url = resolve_required_currency_chain_rpc_url(&app_config)?;
+                if app_config.rpc.resolved_currency_chain_rpc_url().is_none()
+                    && allow_localhost_chain_rpc_defaults()
+                {
+                    warn!(
+                        "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                    );
+                }
+                currency_config.rpc_url = currency_rpc_url;
+                currency_client = Some(CurrencyChainClient::with_tokenomics(
+                    currency_config,
+                    tokenomics_inner.clone(),
+                )?);
+            }
+
+            let client = currency_client
+                .as_ref()
+                .ok_or_else(|| Error::internal("Currency client not initialized"))?;
 
             let id = UserId(
                 Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
             );
-
-            let client = currency_client
-                .as_ref()
-                .map_err(|e| Error::chain(format!("Currency client error: {}", e)))?;
 
             let wallet = client
                 .get_wallet(&id)?
@@ -11086,6 +11311,74 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             println!("No banned peers.");
             println!();
             println!("Ban a peer with: dchat network ban --peer-id <ID> --reason <REASON>");
+
+            Ok(())
+        }
+
+        NetworkCommand::PeerRecord {
+            node_type,
+            key,
+            dns,
+            port,
+            output,
+        } => {
+            #[derive(serde::Serialize)]
+            struct PeerRecordOutput {
+                node_type: String,
+                peer_id: String,
+                multiaddr: String,
+            }
+
+            let node_type_normalized = node_type.trim().to_lowercase();
+            if node_type_normalized != "validator" && node_type_normalized != "relay" {
+                return Err(Error::validation(
+                    "node-type must be one of: validator, relay".to_string(),
+                ));
+            }
+
+            // For now, we only support deriving PeerId from a local key file.
+            // KMS/HSM keys cannot expose private bytes, so they cannot deterministically
+            // derive a stable libp2p PeerId without an additional dedicated libp2p key.
+            let key_path = key.ok_or_else(|| {
+                Error::Config(
+                    "--key is required to generate a stable peer record. Provide a local validator key JSON file generated by `dchat keygen --validator`."
+                        .to_string(),
+                )
+            })?;
+
+            let validator_keypair = load_validator_key(&key_path).await?;
+            let priv_bytes = validator_keypair.private_key().as_bytes();
+            let libp2p_keypair = libp2p::identity::Keypair::ed25519_from_bytes(priv_bytes.to_vec())
+                .map_err(|e| Error::crypto(format!("Failed to derive libp2p keypair: {}", e)))?;
+            let peer_id = libp2p_keypair.public().to_peer_id();
+
+            let multiaddr_str = format!("/dns4/{}/tcp/{}/p2p/{}", dns, port, peer_id);
+            let _validated: Multiaddr = multiaddr_str
+                .parse()
+                .map_err(|e| Error::validation(format!("Generated multiaddr invalid: {}", e)))?;
+
+            let record = PeerRecordOutput {
+                node_type: node_type_normalized.clone(),
+                peer_id: peer_id.to_string(),
+                multiaddr: multiaddr_str.clone(),
+            };
+
+            if let Some(path) = output {
+                let json = serde_json::to_string_pretty(&record).map_err(|e| {
+                    Error::Config(format!("Failed to serialize peer record: {}", e))
+                })?;
+                tokio::fs::write(&path, json).await.map_err(Error::Io)?;
+                println!("✓ Wrote peer record to {:?}", path);
+            }
+
+            println!("\nPeerId: {}", record.peer_id);
+            println!("Multiaddr: {}", record.multiaddr);
+            println!("\nConfig snippet:");
+            println!("[network]");
+            println!("bootstrap_peers = [\"{}\"]", record.multiaddr);
+
+            // Avoid unused variable warnings when config isn't otherwise referenced.
+            let _ = config;
 
             Ok(())
         }
@@ -12054,7 +12347,7 @@ async fn run_rewards_command(_config: Config, action: RewardsCommand) -> Result<
 }
 
 /// Smart contract/program management command handler
-async fn run_program_command(action: ProgramCommand) -> Result<()> {
+async fn run_program_command(config: Config, action: ProgramCommand) -> Result<()> {
     use std::io::{self, Write};
 
     match action {
@@ -12066,6 +12359,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             max_data_len,
             yes,
         } => {
+            let rpc_url = rpc_url.unwrap_or(resolve_required_chat_chain_rpc_url(&config)?);
             println!("\n🚀 DCHAT PROGRAM DEPLOYMENT");
             println!("══════════════════════════════════════════════════════════════════");
 
@@ -12212,9 +12506,16 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
-                    let result: serde_json::Value = resp.json().await.unwrap_or_else(
-                        |_| serde_json::json!({"result": {"program_id": program_id}}),
-                    );
+                    let body = resp.text().await.map_err(|e| {
+                        Error::network(format!("Failed to read RPC response: {}", e))
+                    })?;
+
+                    let result: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+                        Error::network(format!(
+                            "Failed to parse RPC JSON response: {} (body: {})",
+                            e, body
+                        ))
+                    })?;
 
                     let deployed_id = result
                         .get("result")
@@ -12250,65 +12551,16 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
                 Ok(resp) => {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
-
-                    // Simulate successful deployment for demo (RPC may not be running)
-                    if rpc_url.contains("localhost") {
-                        println!("   Step 2/3: Uploading bytecode... ✅");
-                        println!("   Step 3/3: Finalizing deployment... ✅");
-
-                        println!(
-                            "\n══════════════════════════════════════════════════════════════════"
-                        );
-                        println!("✅ PROGRAM DEPLOYED SUCCESSFULLY (simulated - RPC offline)");
-                        println!(
-                            "══════════════════════════════════════════════════════════════════"
-                        );
-                        println!();
-                        println!("   Program ID:        0x{}", program_id);
-                        println!("   Upgrade Authority: 0x{}...", &authority_pubkey[..16]);
-                        println!("   Size:              {} bytes", wasm_bytes.len());
-                        println!();
-                        println!(
-                            "⚠️  Note: RPC returned {} - deployment simulated locally",
-                            status
-                        );
-                        println!(
-                            "   To deploy for real, ensure blockchain RPC is running at: {}",
-                            rpc_url
-                        );
-                    } else {
-                        return Err(Error::network(format!(
-                            "Deployment failed: {} - {}",
-                            status, body
-                        )));
-                    }
+                    return Err(Error::network(format!(
+                        "Deployment failed: {} - {}",
+                        status, body
+                    )));
                 }
                 Err(e) => {
-                    // Simulate for demo when RPC is not available
-                    if rpc_url.contains("localhost") {
-                        println!("   Step 2/3: Uploading bytecode... ✅");
-                        println!("   Step 3/3: Finalizing deployment... ✅");
-
-                        println!(
-                            "\n══════════════════════════════════════════════════════════════════"
-                        );
-                        println!("✅ PROGRAM DEPLOYED SUCCESSFULLY (simulated - RPC offline)");
-                        println!(
-                            "══════════════════════════════════════════════════════════════════"
-                        );
-                        println!();
-                        println!("   Program ID:        0x{}", program_id);
-                        println!("   Upgrade Authority: 0x{}...", &authority_pubkey[..16]);
-                        println!("   Size:              {} bytes", wasm_bytes.len());
-                        println!();
-                        println!(
-                            "⚠️  Note: Could not connect to RPC ({}) - deployment simulated",
-                            e
-                        );
-                        println!("   To deploy for real, start the blockchain node.");
-                    } else {
-                        return Err(Error::network(format!("Failed to connect to RPC: {}", e)));
-                    }
+                    return Err(Error::network(format!(
+                        "Failed to connect to RPC {}: {}",
+                        rpc_url, e
+                    )));
                 }
             }
 
@@ -12624,7 +12876,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             } else {
                 // Query from deployed program
                 println!("Source: Program ID {}", program);
-                println!("RPC:    {}", rpc_url);
+                println!("RPC:    {}", rpc_url.as_deref().unwrap_or("<not provided>"));
                 println!();
                 println!("⚠️  On-chain manifest query not yet implemented.");
                 println!("   Use --program with a local WASM file path for now.");
@@ -12727,7 +12979,10 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
                 }
             } else {
                 println!("Program: {}", program);
-                println!("RPC:     {}", rpc_url);
+                println!(
+                    "RPC:     {}",
+                    rpc_url.as_deref().unwrap_or("<not provided>")
+                );
                 println!();
                 println!("⚠️  On-chain manifest query not yet implemented.");
                 return Ok(());
@@ -12877,7 +13132,7 @@ async fn run_program_command(action: ProgramCommand) -> Result<()> {
             };
 
             // Box the recursive call to avoid infinite size
-            Box::pin(run_program_command(deploy_action)).await?;
+            Box::pin(run_program_command(config.clone(), deploy_action)).await?;
 
             Ok(())
         }

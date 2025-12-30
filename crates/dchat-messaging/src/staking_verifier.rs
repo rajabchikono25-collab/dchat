@@ -162,61 +162,59 @@ pub struct ChainStakingVerifier {
 
 impl ChainStakingVerifier {
     /// Create a new ChainStakingVerifier with HTTPS enforcement
-    /// 
+    ///
     /// # Security
     /// In production (non-debug) builds, the RPC URL MUST use HTTPS.
     /// This prevents man-in-the-middle attacks on stake verification,
     /// which could allow attackers to bypass stake requirements.
-    /// 
+    ///
     /// # Errors
     /// Returns an error in production if the URL does not use HTTPS
     /// (exception: localhost URLs for development)
     pub fn new(rpc_url: String) -> Result<Self> {
         Self::validate_rpc_url(&rpc_url)?;
-        
+
         Ok(Self {
             rpc_url,
             client: reqwest::Client::new(),
         })
     }
-    
+
     /// Validate RPC URL for security requirements
-    /// 
+    ///
     /// # Security Rules (Production)
     /// 1. HTTPS is required (prevents MITM attacks)
     /// 2. Exception: localhost/127.0.0.1 allowed for local development
-    /// 
+    ///
     /// # Security Rules (Debug/Test)
     /// - All URLs allowed with warning for non-HTTPS
     fn validate_rpc_url(rpc_url: &str) -> Result<()> {
         let url = url::Url::parse(rpc_url)
             .map_err(|e| dchat_core::Error::validation(format!("Invalid RPC URL: {}", e)))?;
-        
+
         let scheme = url.scheme();
         let host = url.host_str().unwrap_or("");
-        
+
         // Check if this is a localhost URL (exempt from HTTPS in all builds)
-        let is_localhost = host == "localhost" 
-            || host == "127.0.0.1" 
+        let is_localhost = host == "localhost"
+            || host == "127.0.0.1"
             || host == "::1"
             || host.ends_with(".localhost");
-        
+
         // In production builds, enforce HTTPS (except for localhost)
         #[cfg(not(debug_assertions))]
         {
             if scheme != "https" && !is_localhost {
-                return Err(dchat_core::Error::validation(
-                    format!(
-                        "SECURITY: RPC URL must use HTTPS in production. \
+                return Err(dchat_core::Error::validation(format!(
+                    "SECURITY: RPC URL must use HTTPS in production. \
                         Got '{}' with scheme '{}'. \
                         Non-HTTPS connections allow MITM attacks on stake verification. \
                         Use 'https://{}' or connect to localhost for development.",
-                        rpc_url, scheme, host
-                    )
-                ));
+                    rpc_url, scheme, host
+                )));
             }
         }
-        
+
         // In debug builds, warn but allow non-HTTPS
         #[cfg(debug_assertions)]
         {
@@ -229,7 +227,7 @@ impl ChainStakingVerifier {
                 );
             }
         }
-        
+
         // Additional validation: reject HTTP basic auth in URLs (credentials in URL)
         if url.username() != "" || url.password().is_some() {
             tracing::warn!(
@@ -237,13 +235,42 @@ impl ChainStakingVerifier {
                 Consider using environment variables or secure credential storage."
             );
         }
-        
+
         Ok(())
     }
 
     pub fn from_env() -> Result<Self> {
-        let rpc_url = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
+        fn allow_localhost_chain_rpc_defaults_from_env() -> bool {
+            match std::env::var("DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS") {
+                Ok(v) => {
+                    let v = v.trim();
+                    v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+                }
+                Err(_) => false,
+            }
+        }
+
+        let rpc_url = std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+            .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+            .ok()
+            .or_else(|| {
+                if allow_localhost_chain_rpc_defaults_from_env() {
+                    tracing::warn!(
+                        "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                    );
+                    Some("http://localhost:8545".to_string())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                dchat_core::Error::Config(
+                    "Currency chain RPC URL not configured. Set env `DCHAT_CURRENCY_CHAIN_RPC_URL` (preferred) or legacy `CURRENCY_CHAIN_RPC`.\n\
+For local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
+                        .to_string(),
+                )
+            })?;
+
         Self::new(rpc_url)
     }
 }

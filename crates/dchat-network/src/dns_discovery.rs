@@ -203,9 +203,12 @@ impl DnsDiscoveryManager {
         for subdomain in &self.config.validator_subdomains {
             match self.resolve_and_cache(subdomain).await {
                 Ok(ip) => {
-                    let multiaddr = format!("/ip4/{}/tcp/{}", ip, self.config.validator_port)
-                        .parse()
-                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+                    // Use a stable /dns4 multiaddr so IP changes do not require config churn.
+                    // We still resolve and store the current IP for observability.
+                    let multiaddr =
+                        format!("/dns4/{}/tcp/{}", subdomain, self.config.validator_port)
+                            .parse()
+                            .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let peer = DiscoveredPeer {
                         identifier: subdomain.clone(),
@@ -251,9 +254,10 @@ impl DnsDiscoveryManager {
             match self.resolve_and_cache(subdomain).await {
                 Ok(ip) => {
                     // Relay 1
-                    let multiaddr1 = format!("/ip4/{}/tcp/{}", ip, self.config.relay_ports.0)
-                        .parse()
-                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+                    let multiaddr1 =
+                        format!("/dns4/{}/tcp/{}", subdomain, self.config.relay_ports.0)
+                            .parse()
+                            .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let relay1 = DiscoveredPeer {
                         identifier: format!("{}-relay1", subdomain),
@@ -265,9 +269,10 @@ impl DnsDiscoveryManager {
                     };
 
                     // Relay 2
-                    let multiaddr2 = format!("/ip4/{}/tcp/{}", ip, self.config.relay_ports.1)
-                        .parse()
-                        .map_err(|e| format!("Invalid multiaddr: {}", e))?;
+                    let multiaddr2 =
+                        format!("/dns4/{}/tcp/{}", subdomain, self.config.relay_ports.1)
+                            .parse()
+                            .map_err(|e| format!("Invalid multiaddr: {}", e))?;
 
                     let relay2 = DiscoveredPeer {
                         identifier: format!("{}-relay2", subdomain),
@@ -379,11 +384,7 @@ impl DnsDiscoveryManager {
                     );
                     peer.ip = cached.ip;
 
-                    // Update multiaddr
-                    let new_multiaddr = format!("/ip4/{}/tcp/{}", cached.ip, peer.port)
-                        .parse()
-                        .unwrap();
-                    peer.multiaddr = new_multiaddr;
+                    // Multiaddr is /dns4/... and stays stable across IP changes.
                 }
             }
         }

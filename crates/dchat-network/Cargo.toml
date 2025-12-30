@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 metrics = ["prometheus"]
+qge-integration-tests = []
 
 [dependencies]
 # Workspace dependencies

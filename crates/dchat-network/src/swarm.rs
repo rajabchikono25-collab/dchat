@@ -9,6 +9,7 @@ use crate::{
 };
 use dchat_core::error::{Error, Result};
 use futures::StreamExt;
+use libp2p::multiaddr::Protocol;
 use libp2p::{
     gossipsub, identify, kad, mdns, relay,
     swarm::{Swarm, SwarmEvent},
@@ -72,6 +73,8 @@ pub struct NetworkManager {
     discovery: Discovery,
     nat: NatTraversal,
     router: Router,
+
+    pending_kad_bootstrap: bool,
 }
 
 impl NetworkManager {
@@ -83,12 +86,16 @@ impl NetworkManager {
     /// Create a new network manager with an optional keypair
     /// If keypair is None, a random one is generated
     pub async fn with_keypair(
-        config: NetworkConfig,
+        mut config: NetworkConfig,
         keypair: Option<libp2p::identity::Keypair>,
     ) -> Result<Self> {
         // Use provided keypair or generate a random one
         let local_key = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
         let local_peer_id = local_key.public().to_peer_id();
+
+        // Keep DiscoveryConfig consistent with the swarm peer id.
+        // This avoids internal discovery state tracking a different identity.
+        config.discovery.local_peer_id = local_peer_id;
 
         tracing::info!("Local peer ID: {}", local_peer_id);
 
@@ -100,8 +107,13 @@ impl NetworkManager {
         let transport = build_transport_with_relay(&local_key, relay_transport)?;
 
         // Create behavior with relay client
-        let behavior = DchatBehavior::new(local_peer_id, &local_key, relay_client)
-            .map_err(|e| Error::network(format!("Failed to create behavior: {}", e)))?;
+        let behavior = DchatBehavior::new(
+            local_peer_id,
+            &local_key,
+            relay_client,
+            config.discovery.enable_mdns,
+        )
+        .map_err(|e| Error::network(format!("Failed to create behavior: {}", e)))?;
 
         // Build swarm using new API
         let swarm_config = libp2p::swarm::Config::with_tokio_executor();
@@ -117,7 +129,51 @@ impl NetworkManager {
             discovery,
             nat,
             router,
+            pending_kad_bootstrap: false,
         })
+    }
+
+    fn ensure_p2p_addr(addr: &Multiaddr, peer_id: PeerId) -> Multiaddr {
+        let mut out = addr.clone();
+        let has_p2p = addr.iter().any(|p| matches!(p, Protocol::P2p(_)));
+        if !has_p2p {
+            out.push(Protocol::P2p(peer_id));
+        }
+        out
+    }
+
+    fn strip_p2p(addr: &Multiaddr) -> Multiaddr {
+        let mut out = Multiaddr::empty();
+        for p in addr.iter() {
+            if matches!(p, Protocol::P2p(_)) {
+                continue;
+            }
+            out.push(p);
+        }
+        out
+    }
+
+    fn try_kad_bootstrap(&mut self, reason: &'static str) {
+        match self.swarm.behaviour_mut().kademlia.bootstrap() {
+            Ok(query_id) => {
+                tracing::info!(
+                    "📡 DHT bootstrap started ({}, query={:?})",
+                    reason,
+                    query_id
+                );
+                self.pending_kad_bootstrap = false;
+            }
+            Err(e) => {
+                // This commonly fails at startup when we haven't connected to any peer yet.
+                // Keep running and retry once we establish a connection.
+                tracing::warn!(
+                    "⚠️ DHT bootstrap attempt failed ({}): {} (will retry after connecting)",
+                    reason,
+                    e
+                );
+                self.pending_kad_bootstrap = true;
+            }
+        }
     }
 
     /// Get the message router for direct routing operations
@@ -147,14 +203,18 @@ impl NetworkManager {
                     }
 
                     // Establish connectivity using best strategy for detected NAT type
-                    let local_port = self.config.listen_addrs[0]
-                        .iter()
-                        .find_map(|proto| {
-                            if let libp2p::multiaddr::Protocol::Tcp(port) = proto {
-                                Some(port)
-                            } else {
-                                None
-                            }
+                    let local_port = self
+                        .config
+                        .listen_addrs
+                        .first()
+                        .and_then(|addr| {
+                            addr.iter().find_map(|proto| {
+                                if let libp2p::multiaddr::Protocol::Tcp(port) = proto {
+                                    Some(port)
+                                } else {
+                                    None
+                                }
+                            })
                         })
                         .unwrap_or(0);
 
@@ -210,34 +270,37 @@ impl NetworkManager {
             );
 
             for (peer_id, addr) in bootstrap_nodes {
-                tracing::info!("  → Bootstrap peer: {} at {}", peer_id, addr);
+                let peer_id = *peer_id;
+                let addr = addr.clone();
+
+                let dial_addr = Self::ensure_p2p_addr(&addr, peer_id);
+                let kad_addr = Self::strip_p2p(&dial_addr);
+
+                tracing::info!("  → Bootstrap peer: {} at {}", peer_id, dial_addr);
                 self.swarm
                     .behaviour_mut()
                     .kademlia
-                    .add_address(peer_id, addr.clone());
+                    .add_address(&peer_id, kad_addr);
 
-                // Actively dial each bootstrap peer
-                match self.swarm.dial(addr.clone()) {
+                // Actively dial each bootstrap peer, enforcing the expected PeerId.
+                match self.swarm.dial(dial_addr) {
                     Ok(_) => tracing::debug!("Dialing bootstrap peer: {}", peer_id),
                     Err(e) => tracing::warn!("Failed to dial bootstrap peer {}: {}", peer_id, e),
                 }
             }
 
-            // Bootstrap the DHT with configured bootstrap nodes
-            self.swarm
-                .behaviour_mut()
-                .kademlia
-                .bootstrap()
-                .map_err(|e| Error::network(format!("DHT bootstrap failed: {}", e)))?;
-            tracing::info!(
-                "✓ DHT bootstrapped with {} bootstrap nodes",
-                bootstrap_nodes.len()
-            );
-        } else {
+            // Trigger the DHT bootstrap. If we haven't connected yet, we'll retry later.
+            self.try_kad_bootstrap("startup");
+        } else if self.config.discovery.enable_mdns {
             // No bootstrap nodes configured - will rely on mDNS for local discovery
             // and wait for other peers to connect
             tracing::info!(
                 "No bootstrap nodes configured - will use mDNS for local peer discovery"
+            );
+        } else {
+            // With both bootstrap and mDNS disabled, the node will likely remain isolated.
+            tracing::warn!(
+                "No bootstrap nodes configured and mDNS is disabled; node may remain isolated"
             );
         }
 
@@ -382,6 +445,10 @@ impl NetworkManager {
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                     tracing::info!("🔗 Connection established with peer: {}", peer_id);
                     self.discovery.peer_connected(peer_id);
+
+                    if self.pending_kad_bootstrap {
+                        self.try_kad_bootstrap("post-connect");
+                    }
                     return Some(NetworkEvent::PeerConnected(peer_id));
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
@@ -411,10 +478,17 @@ impl NetworkManager {
                     // Register peer with default address
                     let peer_info = crate::discovery::PeerInfo::new(peer_id, vec![]);
                     let _ = self.discovery.register_peer(peer_info);
+                    let dial_addr = Self::ensure_p2p_addr(&addr, peer_id);
+                    let kad_addr = Self::strip_p2p(&dial_addr);
                     self.swarm
                         .behaviour_mut()
                         .kademlia
-                        .add_address(&peer_id, addr);
+                        .add_address(&peer_id, kad_addr);
+
+                    // Attempt to dial discovered peers immediately.
+                    if let Err(e) = self.swarm.dial(dial_addr) {
+                        tracing::debug!("mDNS dial failed for {}: {}", peer_id, e);
+                    }
                 }
                 None
             }
@@ -424,10 +498,15 @@ impl NetworkManager {
                 }
                 None
             }
-            DchatBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, .. }) => {
+            DchatBehaviorEvent::Gossipsub(gossipsub::Event::Message {
+                propagation_source,
+                message,
+                ..
+            }) => {
                 match crate::behavior::decode_wire_message(&message.data) {
                     Ok(dchat_msg) => Some(NetworkEvent::MessageReceived {
-                        from: message.source.unwrap_or(PeerId::random()),
+                        // Never fabricate identities. Use the peer that forwarded the message.
+                        from: propagation_source,
                         message: dchat_msg,
                     }),
                     Err(e) => {

@@ -24,11 +24,31 @@ impl HttpCurrencyChainClient {
         }
     }
 
-    /// Create from environment variable or default
-    pub fn from_env() -> Self {
-        let rpc_url = std::env::var("CURRENCY_CHAIN_RPC")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-        Self::new(rpc_url)
+    /// Create from environment variable.
+    ///
+    /// Resolution order:
+    /// - `DCHAT_CURRENCY_CHAIN_RPC_URL`
+    /// - `CURRENCY_CHAIN_RPC` (legacy)
+    pub fn from_env() -> Result<Self> {
+        let rpc_url = std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+            .ok()
+            .and_then(|v| {
+                let trimmed = v.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            })
+            .or_else(|| {
+                std::env::var("CURRENCY_CHAIN_RPC").ok().and_then(|v| {
+                    let trimmed = v.trim().to_string();
+                    (!trimmed.is_empty()).then_some(trimmed)
+                })
+            })
+            .ok_or_else(|| {
+                Error::Config(
+                    "Currency chain RPC URL not configured. Set env `DCHAT_CURRENCY_CHAIN_RPC_URL` (preferred) or `CURRENCY_CHAIN_RPC`.".to_string(),
+                )
+            })?;
+
+        Ok(Self::new(rpc_url))
     }
 
     /// Make JSON-RPC call
@@ -195,7 +215,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires running currency chain
     async fn test_get_validator_stake() {
-        let client = HttpCurrencyChainClient::from_env();
+        let client = HttpCurrencyChainClient::from_env().expect("client from env");
         let validator_key = b"test_validator_key";
 
         let result = client.get_validator_stake(validator_key).await;
@@ -210,7 +230,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires running currency chain
     async fn test_execute_slash() {
-        let client = HttpCurrencyChainClient::from_env();
+        let client = HttpCurrencyChainClient::from_env().expect("client from env");
         let validator_key = b"test_validator_key";
 
         let result = client
@@ -231,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_from_env() {
-        // Should not panic
-        let _client = HttpCurrencyChainClient::from_env();
+        std::env::set_var("DCHAT_CURRENCY_CHAIN_RPC_URL", "http://localhost:8545");
+        let _client = HttpCurrencyChainClient::from_env().expect("client from env");
     }
 }

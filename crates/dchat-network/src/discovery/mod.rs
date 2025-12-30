@@ -50,7 +50,7 @@ impl Default for DiscoveryConfig {
         Self {
             local_peer_id: PeerId::random(),
             bootstrap_nodes: vec![],
-            enable_mdns: true,
+            enable_mdns: false,
             min_peers: 10,
             max_peers: 100,
             query_timeout: Duration::from_secs(60),

@@ -6,8 +6,8 @@
 # Addresses to listen on (multiaddr format)
 # Default: Listen on all interfaces with random ports
 listen_addresses = [
-    "/ip4/0.0.0.0/tcp/7070",           # TCP on port 7070
-    "/ip4/0.0.0.0/udp/7070/quic-v1"    # QUIC on port 7070
+  "/ip4/0.0.0.0/tcp/7070",         # TCP on port 7070
+  "/ip4/0.0.0.0/udp/7070/quic-v1", # QUIC on port 7070
 ]
 
 # Bootstrap peer addresses (multiaddr format with peer IDs)
@@ -132,11 +132,25 @@ uptime_reporting_interval_minutes = 60
 # Default: 5000
 stake_amount = 5000
 
+[rpc]
+# Chat chain JSON-RPC endpoint.
+# Required for most mainnet operations.
+# Env override: DCHAT_CHAT_CHAIN_RPC_URL
+chat_chain_rpc_url = "https://chat-validator-1.example.com:8545"
+
+# Currency chain JSON-RPC endpoint.
+# Required for fees, staking, rewards, and marketplace payments.
+# Env override: DCHAT_CURRENCY_CHAIN_RPC_URL
+currency_chain_rpc_url = "https://currency-validator-1.example.com:8546"
+
 # Environment Variable Overrides:
 # DCHAT_LISTEN_ADDR - Override listen addresses (comma-separated)
 # DCHAT_BOOTSTRAP_PEERS - Override bootstrap peers (comma-separated)
 # DCHAT_DATA_DIR - Override data directory path
 # DCHAT_MAX_CONNECTIONS - Override max connections
+# DCHAT_CHAT_CHAIN_RPC_URL - Override chat chain RPC URL
+# DCHAT_CURRENCY_CHAIN_RPC_URL - Override currency chain RPC URL
+# DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS - (dev-only) allow localhost RPC defaults when rpc URLs are not configured
 #
 # Example:
 # DCHAT_LISTEN_ADDR="/ip4/0.0.0.0/tcp/7070" dchat relay

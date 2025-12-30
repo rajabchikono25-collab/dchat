@@ -8,6 +8,105 @@ use thiserror::Error;
 
 use dchat_core::config::constants::{MIN_RELAY_STAKE, MIN_VALIDATOR_STAKE};
 
+fn resolve_currency_chain_rpc_url() -> Result<String, StakingError> {
+    for key in ["DCHAT_CURRENCY_CHAIN_RPC_URL", "CURRENCY_CHAIN_RPC"] {
+        if let Ok(v) = std::env::var(key) {
+            let trimmed = v.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(trimmed);
+            }
+        }
+    }
+
+    Err(StakingError::ChainError(
+        "Currency chain RPC URL not configured. Set env `DCHAT_CURRENCY_CHAIN_RPC_URL` (preferred) or `CURRENCY_CHAIN_RPC`.".to_string(),
+    ))
+}
+
+async fn post_json_rpc_with_retry(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    payload: &serde_json::Value,
+    per_try_timeout: Duration,
+    max_wait: Duration,
+) -> Result<serde_json::Value, StakingError> {
+    use reqwest::StatusCode;
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let deadline = start + max_wait;
+    let mut backoff = Duration::from_millis(250);
+    let mut last_error: Option<String> = None;
+
+    loop {
+        if Instant::now() >= deadline {
+            let suffix = last_error
+                .as_deref()
+                .map(|e| format!(" Last error: {}", e))
+                .unwrap_or_default();
+            return Err(StakingError::ChainError(format!(
+                "Currency chain RPC unavailable after {:.1}s.{}",
+                start.elapsed().as_secs_f64(),
+                suffix
+            )));
+        }
+
+        let attempt = client
+            .post(rpc_url)
+            .json(payload)
+            .timeout(per_try_timeout)
+            .send()
+            .await;
+
+        match attempt {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("<failed to read body: {}>", e));
+
+                if !status.is_success() {
+                    let is_retryable = status.is_server_error()
+                        || status == StatusCode::TOO_MANY_REQUESTS
+                        || status == StatusCode::REQUEST_TIMEOUT;
+
+                    // For 4xx (except 429), fail fast: caller likely misconfigured.
+                    if status.is_client_error() && !is_retryable {
+                        return Err(StakingError::ChainError(format!(
+                            "Currency chain RPC rejected request (status {}). Body: {}",
+                            status, body
+                        )));
+                    }
+
+                    last_error = Some(format!("HTTP {}", status));
+                } else {
+                    let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+                        StakingError::ChainError(format!(
+                            "Failed to parse currency chain RPC JSON response: {} (body: {})",
+                            e, body
+                        ))
+                    })?;
+
+                    if let Some(err) = parsed.get("error") {
+                        // JSON-RPC errors can be transient (node still starting) or permanent.
+                        // Treat them as retryable until deadline.
+                        last_error = Some(format!("JSON-RPC error: {}", err));
+                    } else {
+                        return Ok(parsed);
+                    }
+                }
+            }
+            Err(e) => {
+                last_error = Some(e.to_string());
+            }
+        }
+
+        tokio::time::sleep(backoff).await;
+        backoff = std::cmp::min(backoff.saturating_mul(2), Duration::from_secs(5));
+    }
+}
+
 /// Errors that can occur during staking operations
 #[derive(Debug, Error)]
 pub enum StakingError {
@@ -100,8 +199,7 @@ pub async fn submit_validator_stake(request: &StakeRequest) -> Result<StakeRecei
     let unlock_time = now + Duration::from_secs(request.lockup_period_days * 24 * 3600);
 
     // Get chain RPC endpoint from environment or config
-    let rpc_url =
-        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let rpc_url = resolve_currency_chain_rpc_url()?;
 
     // Build stake transaction
     let tx_payload = json!({
@@ -117,25 +215,15 @@ pub async fn submit_validator_stake(request: &StakeRequest) -> Result<StakeRecei
 
     // Submit transaction to chain
     let client = HttpClient::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&tx_payload)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("RPC request failed: {}", e)))?;
 
-    if !response.status().is_success() {
-        return Err(StakingError::ChainError(format!(
-            "Chain RPC error: status {}",
-            response.status()
-        )));
-    }
-
-    let response_body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Failed to parse response: {}", e)))?;
+    let response_body = post_json_rpc_with_retry(
+        &client,
+        &rpc_url,
+        &tx_payload,
+        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(90),
+    )
+    .await?;
 
     // Extract transaction ID and block height
     let tx_id = response_body["result"]["tx_id"]
@@ -189,8 +277,7 @@ pub async fn submit_validator_unstake(
         ));
     }
 
-    let rpc_url =
-        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let rpc_url = resolve_currency_chain_rpc_url()?;
 
     let payload = json!({
         "method": "currency.unstake_validator",
@@ -206,24 +293,15 @@ pub async fn submit_validator_unstake(
     tracing::info!("   Validator: {}", hex::encode(validator_key.as_bytes()));
 
     let client = HttpClient::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&payload)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Unstake RPC failed: {}", e)))?;
 
-    if !response.status().is_success() {
-        return Err(StakingError::ChainError(format!(
-            "Unstake RPC error: status {}",
-            response.status()
-        )));
-    }
-
-    let response_body: serde_json::Value = response.json().await.map_err(|e| {
-        StakingError::ChainError(format!("Failed to parse unstake response: {}", e))
-    })?;
+    let response_body = post_json_rpc_with_retry(
+        &client,
+        &rpc_url,
+        &payload,
+        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(90),
+    )
+    .await?;
 
     let tx_id = response_body["result"]["tx_id"]
         .as_str()
@@ -258,8 +336,7 @@ pub async fn get_validator_stake(validator_key: &VerifyingKey) -> Result<u64, St
     use reqwest::Client as HttpClient;
     use serde_json::json;
 
-    let rpc_url =
-        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let rpc_url = resolve_currency_chain_rpc_url()?;
 
     let query = json!({
         "method": "currency.query_validator_stake",
@@ -271,18 +348,14 @@ pub async fn get_validator_stake(validator_key: &VerifyingKey) -> Result<u64, St
     });
 
     let client = HttpClient::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&query)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("RPC query failed: {}", e)))?;
-
-    let response_body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Failed to parse response: {}", e)))?;
+    let response_body = post_json_rpc_with_retry(
+        &client,
+        &rpc_url,
+        &query,
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
+    )
+    .await?;
 
     let stake_amount = response_body["result"]["stake_amount"]
         .as_u64()
@@ -297,8 +370,7 @@ pub async fn is_stake_unlocked(validator_key: &VerifyingKey) -> Result<bool, Sta
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let rpc_url =
-        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let rpc_url = resolve_currency_chain_rpc_url()?;
 
     let query = json!({
         "method": "currency.query_stake_lockup",
@@ -310,18 +382,14 @@ pub async fn is_stake_unlocked(validator_key: &VerifyingKey) -> Result<bool, Sta
     });
 
     let client = HttpClient::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&query)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("RPC lockup query failed: {}", e)))?;
-
-    let response_body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Failed to parse lockup response: {}", e)))?;
+    let response_body = post_json_rpc_with_retry(
+        &client,
+        &rpc_url,
+        &query,
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
+    )
+    .await?;
 
     let unlock_timestamp = response_body["result"]["unlock_timestamp"]
         .as_u64()
@@ -355,8 +423,7 @@ pub async fn submit_relay_stake(
     // Relay lockup is 3 days (shorter than validator)
     let lockup_seconds = 3 * 24 * 3600u64;
 
-    let rpc_url =
-        std::env::var("CURRENCY_CHAIN_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
+    let rpc_url = resolve_currency_chain_rpc_url()?;
 
     let payload = json!({
         "method": "currency.stake_relay",
@@ -376,25 +443,15 @@ pub async fn submit_relay_stake(
     tracing::info!("   Lockup: {} seconds (3 days)", lockup_seconds);
 
     let client = HttpClient::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&payload)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Failed to submit relay stake tx: {}", e)))?;
 
-    if !response.status().is_success() {
-        return Err(StakingError::ChainError(format!(
-            "RPC returned error status: {}",
-            response.status()
-        )));
-    }
-
-    let response_body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| StakingError::ChainError(format!("Failed to parse RPC response: {}", e)))?;
+    let response_body = post_json_rpc_with_retry(
+        &client,
+        &rpc_url,
+        &payload,
+        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(90),
+    )
+    .await?;
 
     let tx_id = response_body["result"]["tx_id"]
         .as_str()
