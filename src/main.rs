@@ -1100,6 +1100,10 @@ enum Commands {
         /// Save as plaintext (unencrypted) for automated deployments
         #[arg(long)]
         plaintext: bool,
+
+        /// Generate validator keypair (includes private key for validator nodes)
+        #[arg(long)]
+        validator: bool,
     },
 
     /// Initialize mainnet genesis (first validator only)
@@ -3113,7 +3117,7 @@ async fn main() -> Result<()> {
             data_dir,
             observability,
         } => run_testnet(config, validators, relays, clients, data_dir, observability).await,
-        Commands::Keygen { output, burner, plaintext } => generate_keys(output, burner, plaintext).await,
+        Commands::Keygen { output, burner, plaintext, validator } => generate_keys(output, burner, plaintext, validator).await,
         Commands::Genesis { output, chain_id, initial_supply, foundation_percent, validators } => {
             run_genesis_init(output, chain_id, initial_supply, foundation_percent, validators).await
         }
@@ -7511,8 +7515,45 @@ fn start_metrics_server(
 // ============================================================================
 
 /// Generate new identity and keys
-async fn generate_keys(output: PathBuf, burner: bool, plaintext: bool) -> Result<()> {
+async fn generate_keys(
+    output: PathBuf,
+    burner: bool,
+    plaintext: bool,
+    validator: bool,
+) -> Result<()> {
     info!("🔑 Generating new identity...");
+
+    if validator {
+        // Generate validator keypair with private key included
+        info!("Generating validator keypair...");
+        #[allow(deprecated)]
+        let keypair = KeyPair::generate();
+
+        let public_key_hex = hex::encode(keypair.public_key().as_bytes());
+        let private_key_bytes: Vec<u8> = keypair.private_key().as_bytes().to_vec();
+
+        // Format private key as JSON array string for compatibility
+        let private_key_str = format!("{:?}", private_key_bytes);
+
+        let validator_key_json = serde_json::json!({
+            "private_key": private_key_str,
+            "public_key": public_key_hex,
+            "created_at": chrono::Utc::now().to_rfc3339(),
+            "key_type": "ed25519"
+        });
+
+        let json_str = serde_json::to_string_pretty(&validator_key_json)
+            .map_err(|e| Error::crypto(format!("Serialization failed: {}", e)))?;
+        tokio::fs::write(&output, &json_str)
+            .await
+            .map_err(Error::Io)?;
+
+        info!("✓ Validator keypair generated");
+        info!("📋 Public key: {}", public_key_hex);
+        warn!("⚠️  KEEP THIS FILE SECURE - contains private key!");
+        info!("✓ Validator key saved to {:?}", output);
+        return Ok(());
+    }
 
     if burner {
         info!("Creating burner/ephemeral identity");
