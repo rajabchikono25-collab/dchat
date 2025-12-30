@@ -51,17 +51,19 @@ pub struct DnsDiscoveryConfig {
 impl Default for DnsDiscoveryConfig {
     fn default() -> Self {
         Self {
-            base_domain: "schikuno.top".to_string(),
+            base_domain: "firebirdcomputing.com".to_string(),
+            // Mainnet foundation validators (Azure - firebirdcomputing.com)
             validator_subdomains: vec![
-                "validator1-ohio.schikuno.top".to_string(),
-                "validator1-singapore.schikuno.top".to_string(),
-                "validator1-stockholm.schikuno.top".to_string(),
-                "validator1-saopaulo.schikuno.top".to_string(),
-                "validator1-india.schikuno.top".to_string(),
-                "validator1-southafrica.schikuno.top".to_string(),
-                "validator1-uae.schikuno.top".to_string(),
+                "ind.firebirdcomputing.com".to_string(), // India (74.225.183.196)
+                "sa.firebirdcomputing.com".to_string(),  // South Africa (4.221.211.71)
+                "uae.firebirdcomputing.com".to_string(), // UAE (4.161.34.228)
             ],
-            relay_subdomains: vec![], // Empty means use validator hosts
+            // Mainnet foundation relays (AWS - schikuno.top)
+            relay_subdomains: vec![
+                "relay.ohio.schikuno.top".to_string(), // Ohio (18.223.119.189)
+                "relay.saopaulo.schikuno.top".to_string(), // Sao Paulo (18.231.117.182)
+                "relay.stockholm.schikuno.top".to_string(), // Stockholm (13.50.105.166)
+            ],
             cache_ttl: Duration::from_secs(300), // 5 minutes
             query_timeout: Duration::from_secs(5),
             validator_port: 7070,
