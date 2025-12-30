@@ -31,6 +31,23 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::{StorageError, StorageResult};
 
+fn allow_localhost_chain_rpc_defaults() -> bool {
+    matches!(
+        std::env::var("DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn is_localhost_rpc_endpoint(endpoint: &str) -> bool {
+    let e = endpoint.trim().to_ascii_lowercase();
+    e.starts_with("http://localhost")
+        || e.starts_with("https://localhost")
+        || e.contains("://127.0.0.1")
+        || e.contains("://[::1]")
+}
+
 /// Size threshold for inline storage vs blob storage (64KB)
 pub const INLINE_SIZE_THRESHOLD: usize = 64 * 1024;
 
@@ -267,6 +284,23 @@ pub struct StorageRouter {
 impl StorageRouter {
     /// Create a new storage router
     pub async fn new(config: StorageRouterConfig) -> StorageResult<Self> {
+        if !config.offline_mode {
+            if config.chain_rpc_endpoint.trim().is_empty() {
+                return Err(StorageError::Config(
+                    "Storage router requires `chain_rpc_endpoint` when offline_mode=false"
+                        .to_string(),
+                ));
+            }
+
+            if is_localhost_rpc_endpoint(&config.chain_rpc_endpoint)
+                && !allow_localhost_chain_rpc_defaults()
+            {
+                return Err(StorageError::Config(
+                    "Refusing to use localhost chain RPC endpoint for storage router. Configure a non-localhost RPC endpoint, or (DEV ONLY) set DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1.".to_string(),
+                ));
+            }
+        }
+
         let registry_config = ProviderRegistryConfig {
             database_url: config.cockroach_url.clone(),
             chain_rpc_endpoint: config.chain_rpc_endpoint.clone(),

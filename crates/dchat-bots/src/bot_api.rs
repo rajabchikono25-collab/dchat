@@ -699,47 +699,26 @@ impl BotApi {
     /// Query blockchain RPC for a transaction by ID
     /// Used when transaction is not in local cache
     async fn query_transaction_from_rpc(&self, tx_id: Uuid) -> Result<Option<serde_json::Value>> {
-        let rpc_url = std::env::var("BLOCKCHAIN_RPC_URL")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "chain_getTransaction",
-            "params": [tx_id.to_string()],
-            "id": 1
-        });
-
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&rpc_url)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
+        match self
+            .blockchain_client
+            .call_rpc(
+                "chain_getTransaction",
+                serde_json::json!([tx_id.to_string()]),
+            )
             .await
-            .map_err(|e| Error::network(format!("RPC request failed: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(Error::network(format!(
-                "RPC error: status {}",
-                response.status()
-            )));
+        {
+            Ok(result) => {
+                if result.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(result))
+                }
+            }
+            Err(e) => {
+                tracing::warn!("RPC error querying transaction {}: {}", tx_id, e);
+                Ok(None)
+            }
         }
-
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
-
-        if let Some(error) = json.get("error") {
-            tracing::warn!("RPC error querying transaction {}: {:?}", tx_id, error);
-            return Ok(None);
-        }
-
-        if json["result"].is_null() {
-            return Ok(None);
-        }
-
-        Ok(Some(json["result"].clone()))
     }
 }
 

@@ -19,6 +19,23 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::{StorageError, StorageResult};
 
+fn allow_localhost_chain_rpc_defaults() -> bool {
+    matches!(
+        std::env::var("DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn is_localhost_rpc_endpoint(endpoint: &str) -> bool {
+    let e = endpoint.trim().to_ascii_lowercase();
+    e.starts_with("http://localhost")
+        || e.starts_with("https://localhost")
+        || e.contains("://127.0.0.1")
+        || e.contains("://[::1]")
+}
+
 /// Registry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRegistryConfig {
@@ -239,6 +256,22 @@ impl ProviderRegistry {
     /// Create a new provider registry with database connection
     pub async fn new(config: ProviderRegistryConfig) -> StorageResult<Self> {
         info!("Initializing provider registry");
+
+        if !config.offline_mode {
+            if config.chain_rpc_endpoint.trim().is_empty() {
+                return Err(StorageError::Config(
+                    "Storage provider registry requires `chain_rpc_endpoint` when offline_mode=false".to_string(),
+                ));
+            }
+
+            if is_localhost_rpc_endpoint(&config.chain_rpc_endpoint)
+                && !allow_localhost_chain_rpc_defaults()
+            {
+                return Err(StorageError::Config(
+                    "Refusing to use localhost chain RPC endpoint for storage provider registry. Configure a non-localhost RPC endpoint, or (DEV ONLY) set DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1.".to_string(),
+                ));
+            }
+        }
 
         let pool = if !config.offline_mode {
             let pool = sqlx::postgres::PgPoolOptions::new()

@@ -6491,8 +6491,9 @@ async fn run_validator_node(
             error!("     1. CURRENCY_CHAIN_RPC environment variable is set correctly");
             error!(
                 "     2. Currency chain RPC endpoint is accessible: {}",
-                std::env::var("CURRENCY_CHAIN_RPC")
-                    .unwrap_or_else(|_| "http://localhost:8545".to_string())
+                std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+                    .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+                    .unwrap_or_else(|_| "<unset>".to_string())
             );
             error!(
                 "     3. Validator wallet has sufficient balance (need {} tokens + gas)",
@@ -6605,9 +6606,26 @@ async fn run_validator_node(
             let hardened_consensus =
                 HardenedPoRW::new(snapshot_store.clone(), batch_verifier.clone());
 
+            let currency_chain_rpc_url = match std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+                .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    if allow_localhost_chain_rpc_defaults() {
+                        warn!(
+                            "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                        );
+                        "http://localhost:8545".to_string()
+                    } else {
+                        panic!(
+                            "Currency chain RPC URL not configured. Set `rpc.currency_chain_rpc_url` in config.toml or env `DCHAT_CURRENCY_CHAIN_RPC_URL`.\nFor local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
+                        );
+                    }
+                }
+            };
+
             let currency_chain_config = CurrencyChainConfig {
-                rpc_url: std::env::var("CURRENCY_CHAIN_RPC")
-                    .unwrap_or_else(|_| "http://localhost:8545".to_string()),
+                rpc_url: currency_chain_rpc_url,
                 ..Default::default()
             };
             let currency_client = Arc::new(

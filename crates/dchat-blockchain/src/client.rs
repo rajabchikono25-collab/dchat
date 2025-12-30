@@ -461,6 +461,15 @@ impl BlockchainClient {
         &self.config
     }
 
+    /// Generic JSON-RPC call passthrough using this client's configured RPC backend.
+    pub async fn call_rpc(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.rpc_client.call_rpc(method, params).await
+    }
+
     /// Create a new blockchain client with production RPC
     pub fn new(config: BlockchainConfig) -> Result<Self> {
         let rpc_client = HttpRpcClient::new(config.rpc_url.clone())?;
@@ -710,72 +719,57 @@ impl BlockchainClient {
 
     /// Wait for transaction confirmation
     pub async fn wait_for_confirmation(&self, tx_id: Uuid) -> Result<TransactionReceipt> {
-        use reqwest::Client as HttpClient;
         use serde_json::json;
-
-        let rpc_url = std::env::var("BLOCKCHAIN_RPC_URL")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
 
         // Poll for confirmation with exponential backoff
         for attempt in 0..30 {
-            let query = json!({
-                "jsonrpc": "2.0",
-                "method": "get_transaction_receipt",
-                "params": {
-                    "tx_id": tx_id.to_string(),
-                },
-                "id": 1,
-            });
-
-            let client = HttpClient::new();
-            match client
-                .post(&rpc_url)
-                .json(&query)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
+            match self
+                .rpc_client
+                .call_rpc(
+                    "get_transaction_receipt",
+                    json!({
+                        "tx_id": tx_id.to_string(),
+                    }),
+                )
                 .await
             {
-                Ok(resp) => {
-                    if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        if let Some(result) = body.get("result") {
-                            if !result.is_null() {
-                                // Transaction confirmed
-                                let block_height = result["block_height"].as_u64().unwrap_or(0);
-                                let block_hash = result["block_hash"]
-                                    .as_str()
-                                    .unwrap_or("unknown")
-                                    .to_string();
-                                let success = result["success"].as_bool().unwrap_or(false);
-                                let error = result["error"].as_str().map(|s| s.to_string());
+                Ok(result) => {
+                    if !result.is_null() {
+                        // Transaction confirmed
+                        let block_height = result["block_height"].as_u64().unwrap_or(0);
+                        let block_hash = result["block_hash"]
+                            .as_str()
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let success = result["success"].as_bool().unwrap_or(false);
+                        let error = result["error"].as_str().map(|s| s.to_string());
 
-                                // Update local transaction status
-                                let mut transactions = self.transactions.write().unwrap();
-                                if let Some((tx, _hash)) = transactions.get_mut(&tx_id) {
-                                    tx.status = TransactionStatus::Confirmed {
-                                        block_height,
-                                        block_hash: block_hash.clone(),
-                                    };
-                                    tx.confirmed_at = Some(Utc::now());
-                                }
-
-                                tracing::info!(
-                                    "✅ Transaction confirmed: {} at block {}",
-                                    tx_id,
-                                    block_height
-                                );
-
-                                return Ok(TransactionReceipt {
-                                    tx_id,
-                                    block_height,
-                                    block_hash,
-                                    tx_index: result["tx_index"].as_u64().unwrap_or(0) as u32,
-                                    gas_used: result["gas_used"].as_u64().unwrap_or(21000),
-                                    confirmed_at: Utc::now(),
-                                    success,
-                                    error,
-                                });
-                            }
+                        // Update local transaction status
+                        let mut transactions = self.transactions.write().unwrap();
+                        if let Some((tx, _hash)) = transactions.get_mut(&tx_id) {
+                            tx.status = TransactionStatus::Confirmed {
+                                block_height,
+                                block_hash: block_hash.clone(),
+                            };
+                            tx.confirmed_at = Some(Utc::now());
                         }
+
+                        tracing::info!(
+                            "✅ Transaction confirmed: {} at block {}",
+                            tx_id,
+                            block_height
+                        );
+
+                        return Ok(TransactionReceipt {
+                            tx_id,
+                            block_height,
+                            block_hash,
+                            tx_index: result["tx_index"].as_u64().unwrap_or(0) as u32,
+                            gas_used: result["gas_used"].as_u64().unwrap_or(21000),
+                            confirmed_at: Utc::now(),
+                            success,
+                            error,
+                        });
                     }
                 }
                 Err(e) => {
@@ -821,63 +815,31 @@ impl BlockchainClient {
     /// This is a fallback method when the RPC client interface is not sufficient.
     /// For most operations, use the dedicated methods like `register_user`, `create_channel`, etc.
     pub async fn submit_transaction_to_chain(&self, transaction: Transaction) -> Result<()> {
-        use reqwest::Client as HttpClient;
         use serde_json::json;
-
-        let rpc_url = std::env::var("BLOCKCHAIN_RPC_URL")
-            .unwrap_or_else(|_| "http://localhost:8545".to_string());
 
         // Serialize transaction payload
         let tx_bytes = bincode::serialize(&transaction)
             .map_err(|e| Error::network(format!("Failed to serialize transaction: {}", e)))?;
 
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "method": "submit_transaction",
-            "params": {
-                "tx_id": transaction.tx_id.to_string(),
-                "tx_type": format!("{:?}", transaction.tx_type),
-                "tx_hash": transaction.tx_hash.clone(),
-                "data": hex::encode(&tx_bytes),
-                "fee": transaction.fee_paid,
-            },
-            "id": 1,
+        let params = json!({
+            "tx_id": transaction.tx_id.to_string(),
+            "tx_type": format!("{:?}", transaction.tx_type),
+            "tx_hash": transaction.tx_hash.clone(),
+            "data": hex::encode(&tx_bytes),
+            "fee": transaction.fee_paid,
         });
 
         tracing::info!(
             "📤 Submitting transaction {} to blockchain",
             transaction.tx_id
         );
-        tracing::debug!("   RPC endpoint: {}", rpc_url);
+        tracing::debug!("   RPC endpoint: <configured rpc_client>");
         tracing::debug!("   Type: {:?}", transaction.tx_type);
 
-        let client = HttpClient::new();
-        let response = client
-            .post(&rpc_url)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| Error::network(format!("Failed to submit transaction: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(Error::network(format!(
-                "Blockchain RPC error: status {}",
-                response.status()
-            )));
-        }
-
-        let response_body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| Error::network(format!("Failed to parse RPC response: {}", e)))?;
-
-        if let Some(error) = response_body.get("error") {
-            return Err(Error::network(format!(
-                "Blockchain rejected transaction: {}",
-                error
-            )));
-        }
+        let _ = self
+            .rpc_client
+            .call_rpc("submit_transaction", params)
+            .await?;
 
         tracing::info!(
             "✅ Transaction {} submitted successfully",
