@@ -11,6 +11,8 @@
 pub mod crypto; // Additional crypto modules (handshake, versioning)
 pub mod device_key; // Hardware DeviceKey for secure enclave integration
 mod encryption;
+pub mod forward_secrecy_cleanup; // Automatic cleanup for forward secrecy
+pub mod group_key; // Sender key distribution for group channels
 pub mod handshake;
 pub mod kdf;
 pub mod keys;
@@ -23,6 +25,7 @@ pub mod ratchet; // Double Ratchet protocol for E2E encryption
 pub mod rotation;
 pub mod signatures;
 pub mod suk; // Storage Unlock Key for Quorum-Gated Encryption
+pub mod token_cache; // Client-side epoch token caching
 pub mod typed_handshake; // Typed state machine handshake with identity binding
 
 // Re-export crypto submodule contents
@@ -38,6 +41,16 @@ pub use encryption::{
     decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
     generate_encryption_key, EncryptedData, KEY_SIZE, NONCE_SIZE,
 };
+pub use forward_secrecy_cleanup::{
+    CleanupConfig, CleanupEvent, CleanupEventType, CleanupStats, ConversationCleanupStats,
+    ForwardSecrecyCleanup, CLEANUP_INTERVAL_SECS, DEFAULT_CHAIN_KEY_RETENTION,
+    DEFAULT_EPOCH_KEY_RETENTION, DEFAULT_SKIPPED_KEY_RETENTION_SECS, MAX_TRACKED_CONVERSATIONS,
+}; // Forward secrecy cleanup exports
+pub use group_key::{
+    GroupEncryptedMessage, GroupKeyDistribution, GroupKeyStats, SenderKeyRecord,
+    TreeKeyDistribution, MAX_GROUP_SIZE, MAX_MESSAGES_PER_KEY, MAX_SENDER_KEY_AGE_SECS,
+    TREE_FANOUT,
+}; // Group sender key exports
 pub use keys::{Address, KeyPair, PrivateKey, PublicKey as CryptoPublicKey};
 pub use kms::{AwsKmsClient, Ed25519KmsWrapper, KmsError, KmsKeyType}; // Re-export KMS types
 pub use mnemonic::{Mnemonic, MnemonicLength, Seed}; // BIP-39 mnemonic exports
@@ -51,9 +64,15 @@ pub use signatures::{
     sign, sign_with_private_key, verify, verify_with_public_key, SigningKey, VerifyingKey,
 };
 pub use suk::{
-    EncryptedSuk, EpochToken, StorageUnlockKey, SukManager, UnlockKey, WrappedMessageKey,
-    EPOCH_TOKEN_TTL_SECONDS, SUK_SIZE,
+    EncryptedSuk, EpochToken, StorageUnlockKey, SukManager, UnlockKey, UnlockKeyBuilder,
+    UnlockKeyDerivationConfig, UnlockKeyMetadata, WrappedMessageKey, EPOCH_TOKEN_TTL_SECONDS,
+    SUK_SIZE,
 }; // Quorum-Gated Encryption exports
+pub use token_cache::{
+    CacheStats, CachedToken, EpochTokenCache, EpochTokenData, RefreshStatus, TokenCacheConfig,
+    MAX_CACHED_CONVERSATIONS, MAX_TOKENS_PER_CONVERSATION, MAX_TOKEN_AGE_SECS,
+    MIN_REFRESH_INTERVAL_SECS, PREEMPTIVE_REFRESH_SECS,
+}; // Epoch token caching exports
 pub use typed_handshake::{
     HandshakeFailure, HandshakeMessage, HandshakePhase, HandshakeRejectReason, HandshakeRole,
     IdentityClaim, ProtocolVersion, TimeoutAwareHandshake, TypedHandshake, VerifiedPeerIdentity,

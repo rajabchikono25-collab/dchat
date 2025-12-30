@@ -164,38 +164,259 @@ impl std::fmt::Debug for EpochToken {
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct UnlockKey {
     key: [u8; 32],
+    /// Metadata for key lifecycle tracking (not included in zeroize)
+    #[zeroize(skip)]
+    metadata: UnlockKeyMetadata,
+}
+
+/// Metadata for unlock key lifecycle tracking
+#[derive(Debug, Clone, Default)]
+pub struct UnlockKeyMetadata {
+    /// Epoch ID this key was derived for
+    pub epoch_id: u64,
+    /// Conversation ID hash (first 8 bytes for logging)
+    pub conversation_prefix: [u8; 8],
+    /// Device ID hash (first 8 bytes for logging)
+    pub device_prefix: [u8; 8],
+    /// Derivation timestamp
+    pub derived_at: u64,
+    /// Number of times this key has been used
+    pub use_count: u32,
+    /// Maximum allowed uses per epoch (anti-harvesting)
+    pub max_uses: u32,
+}
+
+/// Configuration for unlock key derivation
+#[derive(Debug, Clone)]
+pub struct UnlockKeyDerivationConfig {
+    /// Per-device salt for additional isolation
+    pub device_salt: Option<[u8; 16]>,
+    /// Maximum unlock operations per epoch (anti-harvesting)
+    pub max_uses_per_epoch: u32,
+    /// Require attestation binding
+    pub require_attestation: bool,
+    /// Optional attestation data to bind to the key
+    pub attestation_binding: Option<Vec<u8>>,
+}
+
+impl Default for UnlockKeyDerivationConfig {
+    fn default() -> Self {
+        Self {
+            device_salt: None,
+            max_uses_per_epoch: 1000, // Default limit per epoch
+            require_attestation: false,
+            attestation_binding: None,
+        }
+    }
 }
 
 impl UnlockKey {
-    /// Derive unlock key from epoch token
+    /// Derive unlock key from epoch token (basic version for backward compatibility)
     pub fn derive(
         epoch_token: &EpochToken,
         conversation_id: &[u8; 32],
         device_id: &[u8; 32],
     ) -> Result<Self> {
-        let mut info = Vec::with_capacity(64 + 6);
-        info.extend_from_slice(b"unlock");
+        Self::derive_with_config(
+            epoch_token,
+            conversation_id,
+            device_id,
+            &UnlockKeyDerivationConfig::default(),
+        )
+    }
+
+    /// Derive unlock key with advanced configuration
+    ///
+    /// # Security Properties
+    ///
+    /// - **Per-device isolation**: Optional device salt prevents cross-device correlation
+    /// - **Anti-harvesting**: Tracks use count to limit key reuse attacks
+    /// - **Attestation binding**: Can bind key derivation to device attestation
+    /// - **Epoch binding**: Key is cryptographically bound to specific epoch
+    ///
+    /// # Derivation Formula
+    ///
+    /// ```text
+    /// salt = device_salt || epoch_id.to_le_bytes()
+    /// info = b"dchat-unlock-v1" || conversation_id || device_id || attestation_binding?
+    /// UK = HKDF-SHA256(salt, epoch_token, info, 32)
+    /// ```
+    pub fn derive_with_config(
+        epoch_token: &EpochToken,
+        conversation_id: &[u8; 32],
+        device_id: &[u8; 32],
+        config: &UnlockKeyDerivationConfig,
+    ) -> Result<Self> {
+        // Validate epoch token
+        if !epoch_token.is_valid() {
+            return Err(Error::crypto("Cannot derive key from expired epoch token"));
+        }
+
+        // Build salt: device_salt (optional) || epoch_id
+        let mut salt = Vec::with_capacity(24);
+        if let Some(device_salt) = &config.device_salt {
+            salt.extend_from_slice(device_salt);
+        }
+        salt.extend_from_slice(&epoch_token.epoch_id.to_le_bytes());
+
+        // Build info: protocol_version || conversation_id || device_id || attestation?
+        let mut info = Vec::with_capacity(80);
+        info.extend_from_slice(b"dchat-unlock-v1");
         info.extend_from_slice(conversation_id);
         info.extend_from_slice(device_id);
 
-        let derived = Hkdf::derive(None, epoch_token.as_bytes(), &info, 32)?;
+        // Bind to attestation if provided
+        if let Some(attestation) = &config.attestation_binding {
+            // Hash attestation to fixed size
+            let attestation_hash = blake3::hash(attestation);
+            info.extend_from_slice(attestation_hash.as_bytes());
+        }
+
+        // Use HKDF with optional salt
+        let salt_slice = if salt.is_empty() {
+            None
+        } else {
+            Some(salt.as_slice())
+        };
+
+        let derived = Hkdf::derive(salt_slice, epoch_token.as_bytes(), &info, 32)?;
 
         let mut key = [0u8; 32];
         key.copy_from_slice(&derived);
-        Ok(Self { key })
+
+        // Build metadata
+        let mut conversation_prefix = [0u8; 8];
+        let mut device_prefix = [0u8; 8];
+        conversation_prefix.copy_from_slice(&conversation_id[..8]);
+        device_prefix.copy_from_slice(&device_id[..8]);
+
+        let derived_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        Ok(Self {
+            key,
+            metadata: UnlockKeyMetadata {
+                epoch_id: epoch_token.epoch_id,
+                conversation_prefix,
+                device_prefix,
+                derived_at,
+                use_count: 0,
+                max_uses: config.max_uses_per_epoch,
+            },
+        })
+    }
+
+    /// Record a key usage and check if limit exceeded
+    ///
+    /// Returns error if max uses exceeded (anti-harvesting protection)
+    pub fn record_use(&mut self) -> Result<()> {
+        self.metadata.use_count += 1;
+        if self.metadata.use_count > self.metadata.max_uses {
+            return Err(Error::crypto(format!(
+                "Unlock key use limit exceeded: {} > {}",
+                self.metadata.use_count, self.metadata.max_uses
+            )));
+        }
+        Ok(())
+    }
+
+    /// Check if key is still within usage limits
+    pub fn is_within_limits(&self) -> bool {
+        self.metadata.use_count < self.metadata.max_uses
     }
 
     /// Get the key bytes for AEAD operations
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.key
     }
+
+    /// Get key metadata (for logging/monitoring)
+    pub fn metadata(&self) -> &UnlockKeyMetadata {
+        &self.metadata
+    }
+
+    /// Get the epoch ID this key was derived for
+    pub fn epoch_id(&self) -> u64 {
+        self.metadata.epoch_id
+    }
+
+    /// Check if key is for a specific epoch
+    pub fn is_for_epoch(&self, epoch_id: u64) -> bool {
+        self.metadata.epoch_id == epoch_id
+    }
+
+    /// Get remaining uses before limit
+    pub fn remaining_uses(&self) -> u32 {
+        self.metadata
+            .max_uses
+            .saturating_sub(self.metadata.use_count)
+    }
 }
 
 impl std::fmt::Debug for UnlockKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnlockKey")
+            .field("epoch_id", &self.metadata.epoch_id)
+            .field(
+                "conversation",
+                &hex::encode(&self.metadata.conversation_prefix),
+            )
+            .field("device", &hex::encode(&self.metadata.device_prefix))
+            .field("use_count", &self.metadata.use_count)
+            .field("max_uses", &self.metadata.max_uses)
             .field("key", &"[REDACTED]")
             .finish()
+    }
+}
+
+/// Builder for creating unlock keys with custom configuration
+pub struct UnlockKeyBuilder {
+    epoch_token: EpochToken,
+    conversation_id: [u8; 32],
+    device_id: [u8; 32],
+    config: UnlockKeyDerivationConfig,
+}
+
+impl UnlockKeyBuilder {
+    /// Create a new builder
+    pub fn new(epoch_token: EpochToken, conversation_id: [u8; 32], device_id: [u8; 32]) -> Self {
+        Self {
+            epoch_token,
+            conversation_id,
+            device_id,
+            config: UnlockKeyDerivationConfig::default(),
+        }
+    }
+
+    /// Set device salt for per-device isolation
+    pub fn with_device_salt(mut self, salt: [u8; 16]) -> Self {
+        self.config.device_salt = Some(salt);
+        self
+    }
+
+    /// Set maximum uses per epoch (anti-harvesting)
+    pub fn with_max_uses(mut self, max_uses: u32) -> Self {
+        self.config.max_uses_per_epoch = max_uses;
+        self
+    }
+
+    /// Bind key to device attestation
+    pub fn with_attestation_binding(mut self, attestation: Vec<u8>) -> Self {
+        self.config.attestation_binding = Some(attestation);
+        self.config.require_attestation = true;
+        self
+    }
+
+    /// Build the unlock key
+    pub fn build(self) -> Result<UnlockKey> {
+        UnlockKey::derive_with_config(
+            &self.epoch_token,
+            &self.conversation_id,
+            &self.device_id,
+            &self.config,
+        )
     }
 }
 
@@ -677,5 +898,144 @@ mod tests {
 
         assert!(token.is_valid());
         assert!(token.ttl_seconds() <= EPOCH_TOKEN_TTL_SECONDS);
+    }
+
+    #[test]
+    fn test_unlock_key_with_device_salt() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let salt: [u8; 16] = [0xAB; 16];
+
+        // Derive with salt
+        let config_with_salt = UnlockKeyDerivationConfig {
+            device_salt: Some(salt),
+            ..Default::default()
+        };
+
+        let key_with_salt = UnlockKey::derive_with_config(
+            &epoch_token,
+            &conversation_id,
+            &device_id,
+            &config_with_salt,
+        )
+        .unwrap();
+
+        // Derive without salt
+        let key_without_salt =
+            UnlockKey::derive(&epoch_token, &conversation_id, &device_id).unwrap();
+
+        // Keys should be different
+        assert_ne!(key_with_salt.as_bytes(), key_without_salt.as_bytes());
+    }
+
+    #[test]
+    fn test_unlock_key_use_limits() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let config = UnlockKeyDerivationConfig {
+            max_uses_per_epoch: 3,
+            ..Default::default()
+        };
+
+        let mut unlock_key =
+            UnlockKey::derive_with_config(&epoch_token, &conversation_id, &device_id, &config)
+                .unwrap();
+
+        // First 3 uses should succeed
+        assert!(unlock_key.record_use().is_ok());
+        assert!(unlock_key.record_use().is_ok());
+        assert!(unlock_key.record_use().is_ok());
+
+        // 4th use should fail (exceeds limit)
+        assert!(unlock_key.record_use().is_err());
+        assert!(!unlock_key.is_within_limits());
+    }
+
+    #[test]
+    fn test_unlock_key_remaining_uses() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let config = UnlockKeyDerivationConfig {
+            max_uses_per_epoch: 5,
+            ..Default::default()
+        };
+
+        let mut unlock_key =
+            UnlockKey::derive_with_config(&epoch_token, &conversation_id, &device_id, &config)
+                .unwrap();
+
+        assert_eq!(unlock_key.remaining_uses(), 5);
+        unlock_key.record_use().unwrap();
+        assert_eq!(unlock_key.remaining_uses(), 4);
+        unlock_key.record_use().unwrap();
+        assert_eq!(unlock_key.remaining_uses(), 3);
+    }
+
+    #[test]
+    fn test_unlock_key_attestation_binding() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let attestation1 = b"attestation-data-1".to_vec();
+        let attestation2 = b"attestation-data-2".to_vec();
+
+        let key1 = UnlockKeyBuilder::new(epoch_token.clone(), conversation_id, device_id)
+            .with_attestation_binding(attestation1)
+            .build()
+            .unwrap();
+
+        let key2 = UnlockKeyBuilder::new(epoch_token.clone(), conversation_id, device_id)
+            .with_attestation_binding(attestation2)
+            .build()
+            .unwrap();
+
+        // Different attestations should produce different keys
+        assert_ne!(key1.as_bytes(), key2.as_bytes());
+    }
+
+    #[test]
+    fn test_unlock_key_builder() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+        let salt: [u8; 16] = [0xCD; 16];
+
+        let unlock_key = UnlockKeyBuilder::new(epoch_token.clone(), conversation_id, device_id)
+            .with_device_salt(salt)
+            .with_max_uses(100)
+            .with_attestation_binding(b"test-attestation".to_vec())
+            .build()
+            .unwrap();
+
+        assert_eq!(unlock_key.epoch_id(), epoch_token.epoch_id);
+        assert!(unlock_key.is_for_epoch(epoch_token.epoch_id));
+        assert_eq!(unlock_key.remaining_uses(), 100);
+    }
+
+    #[test]
+    fn test_unlock_key_epoch_check() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let unlock_key = UnlockKey::derive(&epoch_token, &conversation_id, &device_id).unwrap();
+
+        assert!(unlock_key.is_for_epoch(epoch_token.epoch_id));
+        assert!(!unlock_key.is_for_epoch(epoch_token.epoch_id + 1));
+    }
+
+    #[test]
+    fn test_unlock_key_metadata() {
+        let (conversation_id, device_id, _) = create_test_ids();
+        let epoch_token = create_test_epoch_token();
+
+        let unlock_key = UnlockKey::derive(&epoch_token, &conversation_id, &device_id).unwrap();
+
+        let metadata = unlock_key.metadata();
+        assert_eq!(metadata.epoch_id, epoch_token.epoch_id);
+        assert_eq!(metadata.conversation_prefix, conversation_id[..8]);
+        assert_eq!(metadata.device_prefix, device_id[..8]);
+        assert_eq!(metadata.use_count, 0);
     }
 }

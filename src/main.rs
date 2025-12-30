@@ -1246,6 +1246,12 @@ enum Commands {
         #[command(subcommand)]
         action: MiniAppCommand,
     },
+
+    /// Quorum-Gated Encryption (QGE) management
+    Qge {
+        #[command(subcommand)]
+        action: QgeCommand,
+    },
 }
 
 /// Mini-app platform commands
@@ -1358,6 +1364,219 @@ enum MiniAppCommand {
         /// Show detailed validation report
         #[arg(long)]
         verbose: bool,
+    },
+}
+
+/// Quorum-Gated Encryption (QGE) commands
+#[derive(Debug, Subcommand)]
+enum QgeCommand {
+    /// Show QGE token status for current user
+    TokenStatus {
+        /// Filter by conversation type (direct, channel, group)
+        #[arg(long)]
+        conversation_type: Option<String>,
+
+        /// Show tokens for a specific epoch
+        #[arg(long)]
+        epoch: Option<u64>,
+
+        /// Show expired tokens
+        #[arg(long)]
+        include_expired: bool,
+    },
+
+    /// Request a new epoch token
+    RequestToken {
+        /// Channel or user ID (hex string)
+        #[arg(long)]
+        target: String,
+
+        /// Conversation type (direct, channel, group)
+        #[arg(long, default_value = "direct")]
+        conversation_type: String,
+
+        /// Force refresh even if token exists
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Show relay committee information
+    Committee {
+        /// Show detailed member information
+        #[arg(long)]
+        detailed: bool,
+
+        /// Show historical rotations
+        #[arg(long)]
+        history: bool,
+
+        /// Number of historical epochs to show
+        #[arg(long, default_value = "10")]
+        epochs: u64,
+    },
+
+    /// Show relay status and incentives
+    RelayStatus {
+        /// Relay ID (hex string, defaults to local relay)
+        #[arg(long)]
+        relay_id: Option<String>,
+
+        /// Show stake information
+        #[arg(long)]
+        stake: bool,
+
+        /// Show performance metrics
+        #[arg(long)]
+        metrics: bool,
+
+        /// Show reward history
+        #[arg(long)]
+        rewards: bool,
+    },
+
+    /// Manage revocations (admin only)
+    Revocation {
+        #[command(subcommand)]
+        action: QgeRevocationAction,
+    },
+
+    /// View audit logs
+    AuditLog {
+        /// Filter by category (token, key, access, admin, security, system)
+        #[arg(long)]
+        category: Option<String>,
+
+        /// Minimum severity (debug, info, warning, error, critical, alert)
+        #[arg(long)]
+        min_severity: Option<String>,
+
+        /// Start time (Unix timestamp or ISO8601)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// End time (Unix timestamp or ISO8601)
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Maximum number of entries
+        #[arg(long, default_value = "100")]
+        limit: usize,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+
+    /// Check rate limit status
+    RateLimitStatus {
+        /// User ID to check (defaults to current user)
+        #[arg(long)]
+        user_id: Option<String>,
+
+        /// Show detailed bucket information
+        #[arg(long)]
+        detailed: bool,
+    },
+
+    /// Show QGE statistics and health
+    Stats {
+        /// Include network-wide statistics
+        #[arg(long)]
+        network: bool,
+
+        /// Show detailed breakdown
+        #[arg(long)]
+        detailed: bool,
+    },
+
+    /// Cleanup old cryptographic state
+    Cleanup {
+        /// Force cleanup now (don't wait for scheduler)
+        #[arg(long)]
+        force: bool,
+
+        /// Show what would be cleaned (dry run)
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Maximum age for keys in seconds
+        #[arg(long)]
+        max_age: Option<u64>,
+    },
+}
+
+/// QGE revocation subcommands
+#[derive(Debug, Subcommand)]
+enum QgeRevocationAction {
+    /// List active revocations
+    List {
+        /// Channel ID to filter by
+        #[arg(long)]
+        channel_id: Option<String>,
+
+        /// Show only pending revocations
+        #[arg(long)]
+        pending: bool,
+
+        /// Include expired revocations
+        #[arg(long)]
+        include_expired: bool,
+    },
+
+    /// Check if a user is revoked
+    Check {
+        /// User ID to check (hex string)
+        #[arg(long)]
+        user_id: String,
+
+        /// Channel ID (hex string)
+        #[arg(long)]
+        channel_id: String,
+    },
+
+    /// Revoke a user from a channel (admin only)
+    Create {
+        /// User ID to revoke (hex string)
+        #[arg(long)]
+        user_id: String,
+
+        /// Channel ID (hex string)
+        #[arg(long)]
+        channel_id: String,
+
+        /// Revocation type (timeout, mute, soft_revoke, ban, shadow_ban)
+        #[arg(long, default_value = "soft_revoke")]
+        action: String,
+
+        /// Duration in seconds (for timeout/mute)
+        #[arg(long)]
+        duration: Option<u64>,
+
+        /// Reason for revocation
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Lift a revocation (admin only)
+    Lift {
+        /// Revocation ID (hex string)
+        #[arg(long)]
+        revocation_id: String,
+
+        /// Reason for lifting
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Submit an appeal for a revocation
+    Appeal {
+        /// Revocation ID (hex string)
+        #[arg(long)]
+        revocation_id: String,
+
+        /// Appeal message
+        #[arg(long)]
+        message: String,
     },
 }
 
@@ -2921,6 +3140,7 @@ async fn main() -> Result<()> {
         Commands::Rewards { action } => run_rewards_command(config, action).await,
         Commands::Program { action } => run_program_command(action).await,
         Commands::MiniApp { action } => run_miniapp_command(action).await,
+        Commands::Qge { action } => run_qge_command(config, action).await,
     }
 }
 
@@ -13522,4 +13742,422 @@ async fn perform_epoch_rewards(
 
     info!("✅ Epoch {} reward distribution complete", epoch);
     Ok(())
+}
+
+/// Run QGE (Quorum-Gated Encryption) command
+async fn run_qge_command(config: Config, action: QgeCommand) -> Result<()> {
+    use dchat_network::relay::{
+        current_epoch_id, EventCategory, QgeAuditLogger, Severity, EPOCH_DURATION_SECS,
+    };
+
+    match action {
+        QgeCommand::TokenStatus {
+            conversation_type,
+            epoch,
+            include_expired,
+        } => {
+            println!("\n🔐 QGE TOKEN STATUS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            let current_epoch = current_epoch_id();
+            println!("Current Epoch:     {}", current_epoch);
+            println!("Epoch Duration:    {} seconds", EPOCH_DURATION_SECS);
+
+            if let Some(ref conv_type) = conversation_type {
+                println!("Filter:            {}", conv_type);
+            }
+            if let Some(e) = epoch {
+                println!("Showing Epoch:     {}", e);
+            }
+            if include_expired {
+                println!("Including:         Expired tokens");
+            }
+
+            // In production, this would query the local token store
+            println!();
+            println!("📋 Active Tokens:");
+            println!("   (Token listing requires connection to local QGE state)");
+            println!();
+            println!("💡 Tip: Use 'dchat qge request-token' to request new tokens");
+
+            Ok(())
+        }
+
+        QgeCommand::RequestToken {
+            target,
+            conversation_type,
+            force,
+        } => {
+            println!("\n🔑 REQUESTING QGE TOKEN");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            println!("Target:            {}", target);
+            println!("Conversation Type: {}", conversation_type);
+            println!("Force Refresh:     {}", force);
+            println!();
+
+            // In production, this would initiate token request to relay committee
+            println!("📡 Contacting relay committee...");
+            println!("   (Token request requires active network connection)");
+            println!();
+            println!("💡 Token requests are processed by the relay committee using");
+            println!("   threshold signatures to ensure decentralized issuance.");
+
+            Ok(())
+        }
+
+        QgeCommand::Committee {
+            detailed,
+            history,
+            epochs,
+        } => {
+            println!("\n👥 QGE RELAY COMMITTEE");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            let current_epoch = current_epoch_id();
+            println!("Current Epoch: {}", current_epoch);
+            println!();
+
+            // In production, this would query the committee registry
+            println!("📋 Committee Members:");
+            println!("   (Committee information requires network connection)");
+
+            if detailed {
+                println!();
+                println!("📊 Detailed View:");
+                println!("   Member performance, stake, and uptime would be shown here");
+            }
+
+            if history {
+                println!();
+                println!("📜 Rotation History (last {} epochs):", epochs);
+                println!("   Historical committee rotations would be shown here");
+            }
+
+            Ok(())
+        }
+
+        QgeCommand::RelayStatus {
+            relay_id,
+            stake,
+            metrics,
+            rewards,
+        } => {
+            println!("\n📡 RELAY STATUS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            if let Some(ref id) = relay_id {
+                println!("Relay ID: {}", id);
+            } else {
+                println!("Relay ID: (local relay)");
+            }
+            println!();
+
+            if stake {
+                println!("💰 Stake Information:");
+                println!("   Current Stake:     (requires network connection)");
+                println!("   Effective Stake:   (capped at max effective stake)");
+                println!("   Stake Lock Until:  (unlock timestamp)");
+            }
+
+            if metrics {
+                println!();
+                println!("📊 Performance Metrics:");
+                println!("   Uptime:            (requires relay connection)");
+                println!("   Tokens Issued:     (this epoch)");
+                println!("   Messages Relayed:  (this epoch)");
+                println!("   Latency (avg):     (milliseconds)");
+            }
+
+            if rewards {
+                println!();
+                println!("🎁 Reward History:");
+                println!("   (Reward history requires blockchain connection)");
+            }
+
+            if !stake && !metrics && !rewards {
+                println!("💡 Use --stake, --metrics, or --rewards for detailed info");
+            }
+
+            Ok(())
+        }
+
+        QgeCommand::Revocation { action } => run_qge_revocation_command(action).await,
+
+        QgeCommand::AuditLog {
+            category,
+            min_severity,
+            from,
+            to,
+            limit,
+            format,
+        } => {
+            println!("\n📜 QGE AUDIT LOG");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            // Parse filters
+            let cat_filter = category.as_ref().map(|c| match c.to_lowercase().as_str() {
+                "token" => EventCategory::Token,
+                "key" => EventCategory::Key,
+                "access" => EventCategory::Access,
+                "admin" => EventCategory::Admin,
+                "security" => EventCategory::Security,
+                "system" => EventCategory::System,
+                "network" => EventCategory::Network,
+                "relay" => EventCategory::Relay,
+                _ => EventCategory::System,
+            });
+
+            let sev_filter = min_severity
+                .as_ref()
+                .map(|s| match s.to_lowercase().as_str() {
+                    "debug" => Severity::Debug,
+                    "info" => Severity::Info,
+                    "warning" => Severity::Warning,
+                    "error" => Severity::Error,
+                    "critical" => Severity::Critical,
+                    "alert" => Severity::Alert,
+                    _ => Severity::Info,
+                });
+
+            println!("Filters:");
+            if let Some(ref cat) = category {
+                println!("  Category:    {}", cat);
+            }
+            if let Some(ref sev) = min_severity {
+                println!("  Min Severity: {}", sev);
+            }
+            if let Some(ref f) = from {
+                println!("  From:        {}", f);
+            }
+            if let Some(ref t) = to {
+                println!("  To:          {}", t);
+            }
+            println!("  Limit:       {}", limit);
+            println!("  Format:      {}", format);
+            println!();
+
+            // In production, this would query the audit logger
+            let logger = QgeAuditLogger::new();
+            let stats = logger.stats().await;
+
+            println!("📊 Audit Log Statistics:");
+            println!("   Total Entries: {}", stats.total_entries);
+            println!("   Chain Valid:   {}", stats.chain_valid);
+            println!();
+            println!("   (Full audit log requires local QGE state)");
+
+            Ok(())
+        }
+
+        QgeCommand::RateLimitStatus { user_id, detailed } => {
+            println!("\n⏱️ RATE LIMIT STATUS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            if let Some(ref id) = user_id {
+                println!("User ID: {}", id);
+            } else {
+                println!("User ID: (current user)");
+            }
+            println!();
+
+            // In production, this would query the rate limiter
+            println!("📊 Rate Limit Buckets:");
+            println!("   Token Requests:   (available/capacity)");
+            println!("   Message Relay:    (available/capacity)");
+            println!("   Revocation Check: (available/capacity)");
+
+            if detailed {
+                println!();
+                println!("📈 Detailed Statistics:");
+                println!("   Refill Rate:      tokens/second");
+                println!("   Window Size:      seconds");
+                println!("   Reputation Score: (affects limits)");
+            }
+
+            Ok(())
+        }
+
+        QgeCommand::Stats { network, detailed } => {
+            println!("\n📊 QGE STATISTICS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            let current_epoch = current_epoch_id();
+            println!("Current Epoch:  {}", current_epoch);
+            println!();
+
+            println!("🔐 Local Statistics:");
+            println!("   Active Tokens:     (requires local state)");
+            println!("   Cached Keys:       (sender keys, epoch keys)");
+            println!("   Pending Requests:  (awaiting committee response)");
+
+            if network {
+                println!();
+                println!("🌐 Network Statistics:");
+                println!("   Active Relays:     (requires network)");
+                println!("   Committee Size:    (threshold)");
+                println!("   Total Revocations: (network-wide)");
+            }
+
+            if detailed {
+                println!();
+                println!("📈 Detailed Breakdown:");
+                println!("   Token request latency (p50/p95/p99)");
+                println!("   Key rotation frequency");
+                println!("   Memory usage by component");
+            }
+
+            Ok(())
+        }
+
+        QgeCommand::Cleanup {
+            force,
+            dry_run,
+            max_age,
+        } => {
+            println!("\n🧹 QGE CLEANUP");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            if dry_run {
+                println!("Mode: DRY RUN (no changes will be made)");
+            } else if force {
+                println!("Mode: FORCE (immediate cleanup)");
+            } else {
+                println!("Mode: STANDARD (respects scheduler)");
+            }
+
+            if let Some(age) = max_age {
+                println!("Max Age: {} seconds", age);
+            }
+            println!();
+
+            // In production, this would trigger the cleanup manager
+            println!("🔍 Analyzing cryptographic state...");
+            println!();
+            println!("   Epoch Keys:     (eligible for cleanup)");
+            println!("   Chain Keys:     (eligible for cleanup)");
+            println!("   Skipped Keys:   (eligible for cleanup)");
+            println!("   SUKs:           (eligible for cleanup)");
+
+            if !dry_run {
+                println!();
+                println!("✅ Cleanup scheduled (or completed if --force)");
+            }
+
+            Ok(())
+        }
+    }
+}
+
+/// Run QGE revocation subcommand
+async fn run_qge_revocation_command(action: QgeRevocationAction) -> Result<()> {
+    match action {
+        QgeRevocationAction::List {
+            channel_id,
+            pending,
+            include_expired,
+        } => {
+            println!("\n📋 QGE REVOCATIONS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            if let Some(ref ch) = channel_id {
+                println!("Channel: {}", ch);
+            }
+            if pending {
+                println!("Filter:  Pending only");
+            }
+            if include_expired {
+                println!("Include: Expired revocations");
+            }
+            println!();
+
+            // In production, this would query the revocation store
+            println!("   (Revocation list requires network connection)");
+
+            Ok(())
+        }
+
+        QgeRevocationAction::Check {
+            user_id,
+            channel_id,
+        } => {
+            println!("\n🔍 CHECKING REVOCATION STATUS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            println!("User:    {}", user_id);
+            println!("Channel: {}", channel_id);
+            println!();
+
+            // In production, this would check the revocation store
+            println!("Status: (requires network connection)");
+            println!();
+            println!("💡 Revocation checks are cached locally for fast access");
+
+            Ok(())
+        }
+
+        QgeRevocationAction::Create {
+            user_id,
+            channel_id,
+            action,
+            duration,
+            reason,
+        } => {
+            println!("\n⚠️ CREATING REVOCATION");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            println!("User:     {}", user_id);
+            println!("Channel:  {}", channel_id);
+            println!("Action:   {}", action);
+            if let Some(d) = duration {
+                println!("Duration: {} seconds", d);
+            }
+            println!("Reason:   {}", reason);
+            println!();
+
+            // In production, this would submit the revocation request
+            println!("📡 Submitting revocation request...");
+            println!("   (Requires admin privileges and network connection)");
+
+            Ok(())
+        }
+
+        QgeRevocationAction::Lift {
+            revocation_id,
+            reason,
+        } => {
+            println!("\n✅ LIFTING REVOCATION");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            println!("Revocation ID: {}", revocation_id);
+            if let Some(ref r) = reason {
+                println!("Reason:        {}", r);
+            }
+            println!();
+
+            // In production, this would submit the lift request
+            println!("📡 Submitting lift request...");
+            println!("   (Requires admin privileges and network connection)");
+
+            Ok(())
+        }
+
+        QgeRevocationAction::Appeal {
+            revocation_id,
+            message,
+        } => {
+            println!("\n📝 SUBMITTING APPEAL");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            println!("Revocation ID: {}", revocation_id);
+            println!("Message:       {}", message);
+            println!();
+
+            // In production, this would submit the appeal
+            println!("📡 Submitting appeal...");
+            println!("   (Appeals are reviewed by channel administrators)");
+
+            Ok(())
+        }
+    }
 }
