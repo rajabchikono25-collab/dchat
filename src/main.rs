@@ -1190,6 +1190,12 @@ enum Commands {
         init_pools: bool,
     },
 
+    /// Pre-stake genesis - create genesis with pre-staked validators (solves chicken-and-egg problem)
+    PreStakeGenesis {
+        #[command(subcommand)]
+        action: PreStakeGenesisCommand,
+    },
+
     /// User account management
     Account {
         #[command(subcommand)]
@@ -2964,6 +2970,97 @@ enum TokenCommand {
     },
 }
 
+/// Pre-stake genesis commands - solves chicken-and-egg mainnet launch problem
+#[derive(Debug, Subcommand)]
+enum PreStakeGenesisCommand {
+    /// Create a new pre-stake manifest for collecting validator commitments
+    InitManifest {
+        /// Chain ID for mainnet
+        #[arg(long, default_value = "dchat-mainnet-1")]
+        chain_id: String,
+
+        /// Output file for the manifest
+        #[arg(long, default_value = "./prestake-manifest.json")]
+        output: PathBuf,
+
+        /// Initial token supply (in DCHAT, not motes)
+        #[arg(long, default_value = "1000000000")]
+        initial_supply: u64,
+
+        /// Minimum stake required per validator (in DCHAT)
+        #[arg(long, default_value = "10000")]
+        min_stake: u64,
+    },
+
+    /// Create a signed bond commitment for a validator to join genesis
+    CreateCommitment {
+        /// Path to validator private key file (Ed25519)
+        #[arg(long)]
+        key_file: PathBuf,
+
+        /// Validator name/identifier
+        #[arg(long)]
+        name: String,
+
+        /// Stake amount (in DCHAT, not motes)
+        #[arg(long)]
+        stake: u64,
+
+        /// Network address (IP:port or DNS:port)
+        #[arg(long)]
+        address: String,
+
+        /// Geographic region (e.g., us-east, eu-west, ap-south)
+        #[arg(long)]
+        region: String,
+
+        /// Lockup period in days (minimum 7)
+        #[arg(long, default_value = "30")]
+        lockup_days: u64,
+
+        /// Chain ID this commitment is for
+        #[arg(long, default_value = "dchat-mainnet-1")]
+        chain_id: String,
+
+        /// Output file for the commitment
+        #[arg(long)]
+        output: PathBuf,
+    },
+
+    /// Add a validator's bond commitment to the manifest
+    AddCommitment {
+        /// Path to the pre-stake manifest
+        #[arg(long)]
+        manifest: PathBuf,
+
+        /// Path to the bond commitment file
+        #[arg(long)]
+        commitment: PathBuf,
+    },
+
+    /// Validate the manifest is ready for genesis
+    ValidateManifest {
+        /// Path to the pre-stake manifest
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+
+    /// Generate genesis files from the pre-stake manifest
+    GenerateGenesis {
+        /// Path to the pre-stake manifest
+        #[arg(long)]
+        manifest: PathBuf,
+
+        /// Path to coordinator private key file (Ed25519)
+        #[arg(long)]
+        coordinator_key: PathBuf,
+
+        /// Output directory for genesis files
+        #[arg(long, default_value = "./genesis")]
+        output: PathBuf,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum AccountCommand {
     /// Create a new user account
@@ -3192,6 +3289,7 @@ async fn main() -> Result<()> {
         Commands::MainnetInit { config: mainnet_config, genesis_validator, fund_foundation, init_pools } => {
             run_mainnet_init(mainnet_config, genesis_validator, fund_foundation, init_pools).await
         }
+        Commands::PreStakeGenesis { action } => run_prestake_genesis_command(action).await,
         Commands::Account { action } => run_account_command(config, action).await,
         Commands::Database { action } => run_database_command(config, action).await,
         Commands::Health { url } => check_health(&url).await,
@@ -5081,6 +5179,244 @@ struct GenesisPools {
     foundation_pool: u64,
 }
 
+/// Handle pre-stake genesis commands
+async fn run_prestake_genesis_command(action: PreStakeGenesisCommand) -> Result<()> {
+    use dchat_chain::chain::prestake_genesis::{
+        create_signed_commitment, BondCommitment, PreStakeGenesisBuilder, PreStakeManifest,
+    };
+    use dchat_core::motes::MOTES_PER_DCHAT;
+
+    match action {
+        PreStakeGenesisCommand::InitManifest {
+            chain_id,
+            output,
+            initial_supply,
+            min_stake,
+        } => {
+            info!("📋 Creating pre-stake manifest...");
+            info!("   Chain ID: {}", chain_id);
+            info!("   Initial supply: {} DCHAT", initial_supply);
+            info!("   Minimum stake: {} DCHAT", min_stake);
+
+            let initial_supply_motes = initial_supply.saturating_mul(MOTES_PER_DCHAT);
+            let min_stake_motes = min_stake.saturating_mul(MOTES_PER_DCHAT);
+
+            let mut manifest =
+                PreStakeManifest::new(chain_id, chrono::Utc::now(), initial_supply_motes);
+            manifest.min_stake = min_stake_motes;
+
+            manifest
+                .save_to_file(&output)
+                .map_err(|e| Error::Config(format!("Failed to save manifest: {}", e)))?;
+
+            info!("✅ Pre-stake manifest created: {:?}", output);
+            info!("");
+            info!("Next steps:");
+            info!("  1. Distribute manifest to validators");
+            info!("  2. Each validator runs: dchat prestake-genesis create-commitment ...");
+            info!("  3. Collect commitments and run: dchat prestake-genesis add-commitment ...");
+            info!("  4. Validate manifest: dchat prestake-genesis validate-manifest ...");
+            info!("  5. Generate genesis: dchat prestake-genesis generate-genesis ...");
+
+            Ok(())
+        }
+
+        PreStakeGenesisCommand::CreateCommitment {
+            key_file,
+            name,
+            stake,
+            address,
+            region,
+            lockup_days,
+            chain_id,
+            output,
+        } => {
+            info!("📝 Creating bond commitment for {}...", name);
+
+            // Load private key
+            let key_bytes = tokio::fs::read(&key_file).await.map_err(|e| Error::Io(e))?;
+
+            let key_bytes: [u8; 32] = if key_bytes.len() == 64 {
+                // Hex encoded
+                let decoded = hex::decode(&key_bytes)
+                    .map_err(|e| Error::Config(format!("Invalid hex key: {}", e)))?;
+                decoded
+                    .try_into()
+                    .map_err(|_| Error::Config("Key must be 32 bytes".to_string()))?
+            } else if key_bytes.len() == 32 {
+                // Raw bytes
+                key_bytes
+                    .try_into()
+                    .map_err(|_| Error::Config("Key must be 32 bytes".to_string()))?
+            } else {
+                return Err(Error::Config(format!(
+                    "Invalid key file length: {} (expected 32 or 64 bytes)",
+                    key_bytes.len()
+                )));
+            };
+
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+
+            // Convert stake to motes
+            let stake_motes = stake.saturating_mul(MOTES_PER_DCHAT);
+
+            let commitment = create_signed_commitment(
+                &signing_key,
+                name.clone(),
+                stake_motes,
+                address.clone(),
+                region.clone(),
+                lockup_days,
+                &chain_id,
+            )
+            .map_err(|e| Error::Config(format!("Failed to create commitment: {}", e)))?;
+
+            // Save commitment
+            let json = serde_json::to_string_pretty(&commitment)
+                .map_err(|e| Error::Config(format!("Failed to serialize commitment: {}", e)))?;
+            tokio::fs::write(&output, json)
+                .await
+                .map_err(|e| Error::Io(e))?;
+
+            info!("✅ Bond commitment created: {:?}", output);
+            info!("   Validator: {}", name);
+            info!("   Stake: {} DCHAT", stake);
+            info!("   Address: {}", address);
+            info!("   Region: {}", region);
+            info!("   Lockup: {} days", lockup_days);
+            info!(
+                "   Public key: {}",
+                hex::encode(signing_key.verifying_key().as_bytes())
+            );
+
+            Ok(())
+        }
+
+        PreStakeGenesisCommand::AddCommitment {
+            manifest,
+            commitment,
+        } => {
+            info!("➕ Adding commitment to manifest...");
+
+            // Load manifest
+            let mut manifest_data = PreStakeManifest::load_from_file(&manifest)
+                .map_err(|e| Error::Config(format!("Failed to load manifest: {}", e)))?;
+
+            // Load commitment
+            let commitment_json = tokio::fs::read_to_string(&commitment)
+                .await
+                .map_err(|e| Error::Io(e))?;
+            let commitment_data: BondCommitment = serde_json::from_str(&commitment_json)
+                .map_err(|e| Error::Config(format!("Failed to parse commitment: {}", e)))?;
+
+            // Add commitment
+            manifest_data
+                .add_commitment(commitment_data.clone())
+                .map_err(|e| Error::Config(format!("Failed to add commitment: {}", e)))?;
+
+            // Save updated manifest
+            manifest_data
+                .save_to_file(&manifest)
+                .map_err(|e| Error::Config(format!("Failed to save manifest: {}", e)))?;
+
+            info!("✅ Commitment added");
+            info!(
+                "   Validator: {} ({})",
+                commitment_data.validator_name, commitment_data.region
+            );
+            info!("   Total validators: {}", manifest_data.commitments.len());
+
+            Ok(())
+        }
+
+        PreStakeGenesisCommand::ValidateManifest { manifest } => {
+            info!("🔍 Validating pre-stake manifest...");
+
+            let manifest_data = PreStakeManifest::load_from_file(&manifest)
+                .map_err(|e| Error::Config(format!("Failed to load manifest: {}", e)))?;
+
+            match manifest_data.validate() {
+                Ok(_) => {
+                    info!("✅ Manifest is valid and ready for genesis!");
+                    info!("   Validators: {}", manifest_data.commitments.len());
+                    info!(
+                        "   Total staked: {} DCHAT",
+                        manifest_data.total_staked() / MOTES_PER_DCHAT
+                    );
+
+                    // Show validators by region
+                    let by_region = manifest_data.validators_by_region();
+                    info!("   Regions: {}", by_region.len());
+                    for (region, validators) in by_region {
+                        info!("     - {}: {} validators", region, validators.len());
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Manifest validation failed: {}", e);
+                    return Err(Error::Config(format!("Manifest validation failed: {}", e)));
+                }
+            }
+
+            Ok(())
+        }
+
+        PreStakeGenesisCommand::GenerateGenesis {
+            manifest,
+            coordinator_key,
+            output,
+        } => {
+            info!("🚀 Generating genesis files from pre-stake manifest...");
+
+            // Load manifest
+            let manifest_data = PreStakeManifest::load_from_file(&manifest)
+                .map_err(|e| Error::Config(format!("Failed to load manifest: {}", e)))?;
+
+            // Load coordinator key
+            let key_bytes = tokio::fs::read(&coordinator_key)
+                .await
+                .map_err(|e| Error::Io(e))?;
+
+            let key_bytes: [u8; 32] = if key_bytes.len() == 64 {
+                let decoded = hex::decode(&key_bytes)
+                    .map_err(|e| Error::Config(format!("Invalid hex key: {}", e)))?;
+                decoded
+                    .try_into()
+                    .map_err(|_| Error::Config("Key must be 32 bytes".to_string()))?
+            } else if key_bytes.len() == 32 {
+                key_bytes
+                    .try_into()
+                    .map_err(|_| Error::Config("Key must be 32 bytes".to_string()))?
+            } else {
+                return Err(Error::Config(format!(
+                    "Invalid key file length: {} (expected 32 or 64 bytes)",
+                    key_bytes.len()
+                )));
+            };
+
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+
+            // Build and generate genesis
+            let builder = PreStakeGenesisBuilder::new(manifest_data, signing_key);
+            builder
+                .generate_files(&output)
+                .map_err(|e| Error::Config(format!("Failed to generate genesis: {}", e)))?;
+
+            info!("✅ Genesis files generated!");
+            info!("   Output directory: {:?}", output);
+            info!("");
+            info!("Next steps:");
+            info!("  1. Distribute genesis files to all validators");
+            info!(
+                "  2. Each validator starts with: dchat --role validator --genesis-dir {:?}",
+                output
+            );
+            info!("  3. Network starts automatically with pre-staked validators");
+
+            Ok(())
+        }
+    }
+}
+
 /// Initialize mainnet genesis (first validator only)
 async fn run_genesis_init(
     output: PathBuf,
@@ -6491,8 +6827,9 @@ async fn run_validator_node(
             error!("     1. CURRENCY_CHAIN_RPC environment variable is set correctly");
             error!(
                 "     2. Currency chain RPC endpoint is accessible: {}",
-                std::env::var("CURRENCY_CHAIN_RPC")
-                    .unwrap_or_else(|_| "http://localhost:8545".to_string())
+                std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+                    .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+                    .unwrap_or_else(|_| "<unset>".to_string())
             );
             error!(
                 "     3. Validator wallet has sufficient balance (need {} tokens + gas)",
@@ -6605,9 +6942,26 @@ async fn run_validator_node(
             let hardened_consensus =
                 HardenedPoRW::new(snapshot_store.clone(), batch_verifier.clone());
 
+            let currency_chain_rpc_url = match std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+                .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    if allow_localhost_chain_rpc_defaults() {
+                        warn!(
+                            "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
+                        );
+                        "http://localhost:8545".to_string()
+                    } else {
+                        panic!(
+                            "Currency chain RPC URL not configured. Set `rpc.currency_chain_rpc_url` in config.toml or env `DCHAT_CURRENCY_CHAIN_RPC_URL`.\nFor local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
+                        );
+                    }
+                }
+            };
+
             let currency_chain_config = CurrencyChainConfig {
-                rpc_url: std::env::var("CURRENCY_CHAIN_RPC")
-                    .unwrap_or_else(|_| "http://localhost:8545".to_string()),
+                rpc_url: currency_chain_rpc_url,
                 ..Default::default()
             };
             let currency_client = Arc::new(
