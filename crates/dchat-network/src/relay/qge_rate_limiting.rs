@@ -169,6 +169,9 @@ impl TokenBucket {
     fn time_until_available(&self, cost: f64) -> Duration {
         if self.tokens >= cost {
             Duration::ZERO
+        } else if self.refill_rate <= 0.0 {
+            // If no refill, wait indefinitely (use max reasonable duration)
+            Duration::from_secs(3600) // 1 hour
         } else {
             let needed = cost - self.tokens;
             Duration::from_secs_f64(needed / self.refill_rate)
@@ -431,8 +434,16 @@ impl QgeRateLimiter {
         };
 
         // Check token bucket
-        let bucket = state.get_or_create_bucket(category, &config);
-        if !bucket.try_consume(cost) {
+        let bucket_result = {
+            let bucket = state.get_or_create_bucket(category, &config);
+            if bucket.try_consume(cost) {
+                Ok(bucket.tokens_available())
+            } else {
+                Err(bucket.time_until_available(cost).as_millis() as u64)
+            }
+        };
+
+        if let Err(retry_after_ms) = bucket_result {
             let mut stats = self.stats.write().await;
             stats.throttled_requests += 1;
             stats
@@ -445,14 +456,24 @@ impl QgeRateLimiter {
             state.record_abuse(1);
 
             return RateLimitDecision::Throttled {
-                retry_after_ms: bucket.time_until_available(cost).as_millis() as u64,
+                retry_after_ms,
                 reason: format!("Rate limit exceeded for {:?}", category),
             };
         }
 
+        let remaining = bucket_result.unwrap();
+
         // Check sliding window
-        let window = state.get_or_create_window(category, &config);
-        if !window.try_request() {
+        let window_result = {
+            let window = state.get_or_create_window(category, &config);
+            if window.try_request() {
+                Ok(window.reset_at())
+            } else {
+                Err(())
+            }
+        };
+
+        if window_result.is_err() {
             let mut stats = self.stats.write().await;
             stats.throttled_requests += 1;
 
@@ -461,6 +482,8 @@ impl QgeRateLimiter {
                 reason: format!("Window limit exceeded for {:?}", category),
             };
         }
+
+        let reset_at = window_result.unwrap();
 
         // Update stats
         {
@@ -474,8 +497,8 @@ impl QgeRateLimiter {
         }
 
         RateLimitDecision::Allowed {
-            remaining: bucket.tokens_available(),
-            reset_at: window.reset_at(),
+            remaining,
+            reset_at,
         }
     }
 

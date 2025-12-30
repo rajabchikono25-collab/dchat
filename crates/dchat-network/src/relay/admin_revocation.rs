@@ -648,21 +648,37 @@ impl AdminRevocationManager {
             .map(|m| m.role)
             .ok_or_else(|| Error::network("Lifter not found"))?;
 
+        // First collect the admin IDs and their roles we need to check
+        if let Some(member) = state.members.get(&target_id) {
+            let revocations_to_check: Vec<_> = member
+                .revocations
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.status == RevocationStatus::Active)
+                .map(|(i, r)| {
+                    let admin_role = state
+                        .members
+                        .get(&r.request.admin_id)
+                        .map(|m| m.role)
+                        .unwrap_or(AdminRole::Member);
+                    (i, admin_role)
+                })
+                .collect();
+
+            // Check permissions before making any mutations
+            for (_, original_admin_role) in &revocations_to_check {
+                if lifter_role <= *original_admin_role && lifter_role != AdminRole::Owner {
+                    return Err(Error::network(
+                        "Cannot lift revocation by higher/equal admin",
+                    ));
+                }
+            }
+        }
+
+        // Now we can safely mutate
         if let Some(member) = state.members.get_mut(&target_id) {
             for revocation in &mut member.revocations {
                 if revocation.status == RevocationStatus::Active {
-                    let original_admin_role = state
-                        .members
-                        .get(&revocation.request.admin_id)
-                        .map(|m| m.role)
-                        .unwrap_or(AdminRole::Member);
-
-                    if lifter_role <= original_admin_role && lifter_role != AdminRole::Owner {
-                        return Err(Error::network(
-                            "Cannot lift revocation by higher/equal admin",
-                        ));
-                    }
-
                     revocation.status = RevocationStatus::Lifted;
                 }
             }

@@ -187,15 +187,83 @@ impl RevocationAuthority {
                 verify_ed25519_signature(admin_id, signature, &data)
             }
             RevocationAuthority::ChannelGovernance {
-                channel_id: _,
-                vote_block: _,
+                channel_id,
+                vote_block,
                 vote_proof,
             } => {
                 // Verify merkle proof of governance vote
                 if vote_proof.is_empty() {
                     return Err(Error::validation("Empty vote proof"));
                 }
-                // Full merkle verification would check against channel's governance root
+
+                // Minimum proof length: channel_id (32) + block (8) + at least one proof node (32)
+                if vote_proof.len() < 72 {
+                    return Err(Error::validation("Vote proof too short"));
+                }
+
+                // Parse the vote proof structure:
+                // - First 32 bytes: governance root from vote block
+                // - Next 32 bytes: leaf hash (hash of revocation data)
+                // - Remaining: merkle path nodes (32 bytes each)
+                let governance_root: [u8; 32] = vote_proof[0..32]
+                    .try_into()
+                    .map_err(|_| Error::validation("Invalid governance root in proof"))?;
+
+                let leaf_hash: [u8; 32] = vote_proof[32..64]
+                    .try_into()
+                    .map_err(|_| Error::validation("Invalid leaf hash in proof"))?;
+
+                // Compute expected leaf hash from revocation data
+                let revocation_data = revocation.signing_data();
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(channel_id);
+                hasher.update(&vote_block.to_le_bytes());
+                hasher.update(&revocation_data);
+                let expected_leaf: [u8; 32] = hasher.finalize().into();
+
+                // Verify the leaf hash matches our computed value
+                if leaf_hash != expected_leaf {
+                    return Err(Error::validation("Leaf hash doesn't match revocation data"));
+                }
+
+                // Parse and verify merkle path
+                let path_data = &vote_proof[64..];
+                if path_data.len() % 32 != 0 {
+                    return Err(Error::validation("Invalid merkle path length"));
+                }
+
+                let path: Vec<[u8; 32]> = path_data
+                    .chunks(32)
+                    .map(|chunk| {
+                        chunk
+                            .try_into()
+                            .map_err(|_| Error::validation("Invalid path node"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                // Verify merkle path from leaf to root
+                let mut current = leaf_hash;
+                for (i, sibling) in path.iter().enumerate() {
+                    let mut hasher = blake3::Hasher::new();
+                    // Alternate left/right based on path bit
+                    // Use block height + index to determine ordering
+                    if ((*vote_block >> i) & 1) == 0 {
+                        hasher.update(&current);
+                        hasher.update(sibling);
+                    } else {
+                        hasher.update(sibling);
+                        hasher.update(&current);
+                    }
+                    current = hasher.finalize().into();
+                }
+
+                // Verify we arrived at the governance root
+                if current != governance_root {
+                    return Err(Error::validation(
+                        "Merkle proof verification failed: root mismatch",
+                    ));
+                }
+
                 Ok(())
             }
             RevocationAuthority::RelayQuorum {
@@ -690,6 +758,21 @@ impl RevocationStore {
     /// Get current sequence number
     pub fn current_sequence(&self) -> u64 {
         self.current_sequence
+    }
+
+    /// Alias for current_sequence (for compatibility)
+    pub fn sequence(&self) -> u64 {
+        self.current_sequence
+    }
+
+    /// Get revocation by ID
+    pub fn get_by_id(&self, id: &RevocationId) -> Option<&RevocationEntry> {
+        self.by_id.get(id)
+    }
+
+    /// Iterate over all entries
+    pub fn all_entries(&self) -> impl Iterator<Item = &RevocationEntry> {
+        self.by_id.values()
     }
 
     /// Get total count of active revocations

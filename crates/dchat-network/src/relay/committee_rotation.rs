@@ -49,6 +49,61 @@ use super::epoch_token::{
     EPOCH_GRACE_PERIOD_SECS,
 };
 
+/// Serde helper for [u8; 64] arrays (signatures, VRF proofs)
+mod serde_bytes_64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 64], serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        bytes.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<u8> = Vec::deserialize(deserializer)?;
+        vec.try_into()
+            .map_err(|_| serde::de::Error::custom("Expected 64 bytes"))
+    }
+}
+
+/// Serde helper for Option<[u8; 64]>
+mod serde_bytes_64_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(
+        bytes: &Option<[u8; 64]>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match bytes {
+            Some(b) => serializer.serialize_some(&b.as_slice()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Option<[u8; 64]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<u8>> = Option::deserialize(deserializer)?;
+        match opt {
+            Some(vec) => {
+                let arr: [u8; 64] = vec
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("Expected 64 bytes"))?;
+                Ok(Some(arr))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 /// Transition period duration (seconds before and after epoch boundary)
 pub const TRANSITION_PERIOD_SECS: u64 = 30;
 
@@ -157,6 +212,7 @@ pub struct CommitteeInfo {
     pub threshold: u8,
 
     /// VRF proof of committee selection
+    #[serde(with = "serde_bytes_64_option")]
     pub vrf_proof: Option<[u8; 64]>,
 
     /// Geographic distribution
@@ -404,7 +460,7 @@ impl CommitteeRotationManager {
                 events.push(RotationEvent::PreRotationStarted {
                     conversation_id_hash: *conversation_id_hash,
                     target_epoch: current_epoch + 1,
-                    next_committee_size: state.conversation_type.quorum_size(),
+                    next_committee_size: state.conversation_type.quorum_size() as usize,
                 });
             }
 

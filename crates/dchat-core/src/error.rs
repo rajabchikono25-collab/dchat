@@ -117,4 +117,19 @@ impl Error {
     pub fn unavailable(msg: impl Into<String>) -> Self {
         Self::Internal(format!("Unavailable: {}", msg.into()))
     }
+
+    /// Create a not found error
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+
+    /// Create an IO error with custom message
+    pub fn io(msg: impl Into<String>) -> Self {
+        Self::Internal(format!("IO: {}", msg.into()))
+    }
+
+    /// Create a serialization error with custom message
+    pub fn serialization(msg: impl Into<String>) -> Self {
+        Self::Internal(format!("Serialization: {}", msg.into()))
+    }
 }

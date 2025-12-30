@@ -621,9 +621,8 @@ impl QgeAuditLogger {
         // Write to file if configured
         if let Some(ref file) = self.log_file {
             if let Ok(json) = serde_json::to_string(&entry) {
-                if let Ok(mut f) = file.write().await {
-                    let _ = writeln!(f, "{}", json);
-                }
+                let mut f = file.write().await;
+                let _ = writeln!(f, "{}", json);
             }
         }
 

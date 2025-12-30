@@ -41,6 +41,27 @@ use tokio::sync::{mpsc, RwLock};
 
 use super::revocation::{RevocationEntry, RevocationId, RevocationStore, RevocationType};
 
+/// Serde helper for [u8; 64] arrays (signatures)
+mod serde_bytes_64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 64], serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        bytes.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec: Vec<u8> = Vec::deserialize(deserializer)?;
+        vec.try_into()
+            .map_err(|_| serde::de::Error::custom("Expected 64 bytes"))
+    }
+}
+
 /// Gossipsub topic for revocation messages
 pub const REVOCATION_TOPIC: &str = "/dchat/revocations/1.0.0";
 
@@ -95,6 +116,7 @@ pub struct RevocationGossipMessage {
     /// Timestamp
     pub timestamp: u64,
     /// Signature from sender
+    #[serde(with = "serde_bytes_64")]
     pub signature: [u8; 64],
 }
 
@@ -605,7 +627,7 @@ impl RevocationPropagator {
         _sender: [u8; 32],
     ) -> Result<Option<RevocationGossipMessage>> {
         let store = self.store.read().await;
-        let local_root = store.merkle_root;
+        let local_root = *store.merkle_root();
         let local_sequence = store.sequence();
 
         // If roots match, no sync needed
@@ -665,7 +687,7 @@ impl RevocationPropagator {
 
         RevocationGossipMessage::sync_request(
             self.relay_id,
-            store.merkle_root,
+            *store.merkle_root(),
             store.sequence(),
             bloom.to_bytes(),
         )
