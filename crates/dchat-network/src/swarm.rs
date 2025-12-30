@@ -5,12 +5,12 @@ use crate::{
     discovery::{Discovery, DiscoveryConfig},
     nat::{NatConfig, NatTraversal},
     routing::Router,
-    transport::build_transport,
+    transport::build_transport_with_relay,
 };
 use dchat_core::error::{Error, Result};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identify, kad, mdns,
+    gossipsub, identify, kad, mdns, relay,
     swarm::{Swarm, SwarmEvent},
     Multiaddr, PeerId,
 };
@@ -92,11 +92,15 @@ impl NetworkManager {
 
         tracing::info!("Local peer ID: {}", local_peer_id);
 
-        // Build transport
-        let transport = build_transport(&local_key)?;
+        // Create relay client - this returns (transport, behavior) pair
+        // The transport must stay alive as long as the behavior is used
+        let (relay_transport, relay_client) = relay::client::new(local_peer_id);
 
-        // Create behavior
-        let behavior = DchatBehavior::new(local_peer_id, &local_key)
+        // Build transport with relay support
+        let transport = build_transport_with_relay(&local_key, relay_transport)?;
+
+        // Create behavior with relay client
+        let behavior = DchatBehavior::new(local_peer_id, &local_key, relay_client)
             .map_err(|e| Error::network(format!("Failed to create behavior: {}", e)))?;
 
         // Build swarm using new API

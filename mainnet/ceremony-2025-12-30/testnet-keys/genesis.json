@@ -1,0 +1,46 @@
+{
+  "app_state": {
+    "initial_supply": 1000000,
+    "min_stake": 1000
+  },
+  "chain_id": "dchat-testnet-1",
+  "genesis_time": "2025-12-30T02:27:59.050192700+00:00",
+  "initial_height": "1",
+  "validators": [
+    {
+      "id": "validator_0",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_1",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_2",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_3",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_4",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_5",
+      "stake": 10000,
+      "voting_power": 1
+    },
+    {
+      "id": "validator_6",
+      "stake": 10000,
+      "voting_power": 1
+    }
+  ]
+}

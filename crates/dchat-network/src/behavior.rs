@@ -174,9 +174,13 @@ pub struct DchatBehavior {
 
 impl DchatBehavior {
     /// Create a new dchat network behavior
+    ///
+    /// The relay_client must be created externally via `relay::client::new(peer_id)`
+    /// so that the corresponding transport can be wrapped around the main transport.
     pub fn new(
         local_peer_id: PeerId,
         local_key: &libp2p::identity::Keypair,
+        relay_client: relay::client::Behaviour,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Kademlia configuration
         let store = kad::store::MemoryStore::new(local_peer_id);
@@ -226,10 +230,6 @@ impl DchatBehavior {
         let req_resp_config =
             request_response::Config::default().with_request_timeout(Duration::from_secs(30));
         let req_resp = cbor::Behaviour::new(protocols, req_resp_config);
-
-        // Relay client for NAT traversal (allows connecting through relay nodes)
-        // relay::client::new() returns (Transport, Behaviour) tuple
-        let (_relay_transport, relay_client) = relay::client::new(local_peer_id);
 
         // DCUtR for direct connection upgrade after relay (hole punching)
         let dcutr = dcutr::Behaviour::new(local_peer_id);

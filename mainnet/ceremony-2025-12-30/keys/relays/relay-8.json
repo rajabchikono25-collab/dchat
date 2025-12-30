@@ -1,0 +1,22 @@
+{
+  "user_id": "161d2ab9-c135-4d55-8c1b-9b090f0bc58c",
+  "username": "user",
+  "normalized_username": "user",
+  "public_key": [
+    168, 157, 239, 242, 161, 193, 120, 225, 84, 172, 1, 243, 54, 181, 146, 198,
+    193, 27, 95, 150, 226, 69, 66, 209, 26, 37, 165, 147, 152, 247, 130, 127
+  ],
+  "display_name": null,
+  "bio": null,
+  "reputation": {
+    "total": 0,
+    "messaging": 0,
+    "governance": 0,
+    "relay": 0,
+    "last_updated": "2025-12-30T02:22:04.884614500Z"
+  },
+  "created_at": "2025-12-30T02:22:04.884619100Z",
+  "verified": false,
+  "badges": [],
+  "metadata": {}
+}

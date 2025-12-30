@@ -143,6 +143,49 @@ pub fn build_quic_transport(
     )
 }
 
+/// Build transport with relay support for NAT traversal
+///
+/// This wraps the main transport with the relay transport so that
+/// connections can be established through relay nodes when direct
+/// connections fail (e.g., behind symmetric NAT).
+///
+/// The relay transport only provides a raw connection (AsyncRead+AsyncWrite),
+/// so we must apply Noise encryption and Yamux multiplexing on top.
+pub fn build_transport_with_relay(
+    keypair: &identity::Keypair,
+    relay_transport: libp2p::relay::client::Transport,
+) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
+    use libp2p::Transport;
+
+    // Build base transport (QUIC + TCP with Noise + Yamux)
+    let base_transport = build_transport(keypair)?;
+
+    // The relay client transport provides a raw connection (AsyncRead+AsyncWrite)
+    // We need to upgrade it with Noise (for encryption) and Yamux (for multiplexing)
+    let noise_config = noise::Config::new(keypair)
+        .map_err(|e| Error::crypto(format!("Noise config error for relay: {}", e)))?;
+    let yamux_config = yamux::Config::default();
+
+    // Apply Noise + Yamux upgrade to relay connections
+    let relay_upgraded = relay_transport
+        .upgrade(upgrade::Version::V1)
+        .authenticate(noise_config)
+        .multiplex(yamux_config)
+        .timeout(Duration::from_secs(20))
+        .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)));
+
+    // Combine: relay transport (for /p2p-circuit addresses) OR base transport
+    // The relay transport takes priority for circuit addresses, base for direct
+    let transport = libp2p::core::transport::OrTransport::new(relay_upgraded, base_transport)
+        .map(|either, _| match either {
+            futures::future::Either::Left(output) => output,
+            futures::future::Either::Right(output) => output,
+        })
+        .boxed();
+
+    Ok(transport)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

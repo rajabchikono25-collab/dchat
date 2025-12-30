@@ -1,0 +1,556 @@
+{
+  "networks": {
+    "dchat-testnet": {
+      "driver": "bridge"
+    }
+  },
+  "services": {
+    "relay0": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7070",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7070:7070"],
+      "restart": "unless-stopped"
+    },
+    "relay1": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7072",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7072:7072"],
+      "restart": "unless-stopped"
+    },
+    "relay10": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7090",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7090:7090"],
+      "restart": "unless-stopped"
+    },
+    "relay11": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7092",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7092:7092"],
+      "restart": "unless-stopped"
+    },
+    "relay12": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7094",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7094:7094"],
+      "restart": "unless-stopped"
+    },
+    "relay13": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7096",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7096:7096"],
+      "restart": "unless-stopped"
+    },
+    "relay2": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7074",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7074:7074"],
+      "restart": "unless-stopped"
+    },
+    "relay3": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7076",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7076:7076"],
+      "restart": "unless-stopped"
+    },
+    "relay4": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7078",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7078:7078"],
+      "restart": "unless-stopped"
+    },
+    "relay5": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7080",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7080:7080"],
+      "restart": "unless-stopped"
+    },
+    "relay6": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7082",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7082:7082"],
+      "restart": "unless-stopped"
+    },
+    "relay7": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7084",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7084:7084"],
+      "restart": "unless-stopped"
+    },
+    "relay8": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7086",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7086:7086"],
+      "restart": "unless-stopped"
+    },
+    "relay9": {
+      "command": [
+        "relay",
+        "--listen",
+        "0.0.0.0:7088",
+        "--bootstrap",
+        [
+          "/ip4/127.0.0.1/tcp/7070",
+          "/ip4/127.0.0.1/tcp/7072",
+          "/ip4/127.0.0.1/tcp/7074",
+          "/ip4/127.0.0.1/tcp/7076",
+          "/ip4/127.0.0.1/tcp/7078",
+          "/ip4/127.0.0.1/tcp/7080",
+          "/ip4/127.0.0.1/tcp/7082",
+          "/ip4/127.0.0.1/tcp/7084",
+          "/ip4/127.0.0.1/tcp/7086",
+          "/ip4/127.0.0.1/tcp/7088",
+          "/ip4/127.0.0.1/tcp/7090",
+          "/ip4/127.0.0.1/tcp/7092",
+          "/ip4/127.0.0.1/tcp/7094",
+          "/ip4/127.0.0.1/tcp/7096"
+        ],
+        "--stake",
+        "1000"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "ports": ["7088:7088"],
+      "restart": "unless-stopped"
+    },
+    "validator0": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_0.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator1": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_1.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator2": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_2.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator3": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_3.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator4": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_4.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator5": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_5.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    },
+    "validator6": {
+      "command": [
+        "validator",
+        "--key",
+        "/data/validator_6.key",
+        "--chain-rpc",
+        "http://chain-rpc:26657",
+        "--stake",
+        "10000",
+        "--producer"
+      ],
+      "image": "dchat:latest",
+      "networks": ["dchat-testnet"],
+      "restart": "unless-stopped",
+      "volumes": [
+        "mainnet\\ceremony-2025-12-30\\testnet-keys\\validators:/data"
+      ]
+    }
+  },
+  "version": "3.8"
+}
