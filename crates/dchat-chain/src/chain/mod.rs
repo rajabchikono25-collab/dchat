@@ -4,6 +4,7 @@ pub mod bootstrap;
 pub mod currency_chain;
 pub mod genesis;
 pub mod guardians;
+pub mod prestake_genesis;
 pub mod slashing;
 
 pub use bootstrap::{BootstrapCoordinator, BootstrapEvent, BootstrapStatus};
@@ -15,6 +16,11 @@ pub use genesis::{
 };
 pub use guardians::{
     GuardianChainState, InitiateRecoveryTx, RegisterGuardianTx, SubmitGuardianSignatureTx,
+};
+pub use prestake_genesis::{
+    create_signed_commitment, BondCommitment, GenesisSummary, PreStakeGenesisBuilder,
+    PreStakeManifest, TokenAllocations, DEFAULT_MIN_GENESIS_STAKE, MAX_GENESIS_VALIDATORS,
+    MIN_GENESIS_VALIDATORS,
 };
 pub use slashing::{
     EvidenceError, EvidenceType, PenaltyApplicator, PenaltyError, SlashableOffense,

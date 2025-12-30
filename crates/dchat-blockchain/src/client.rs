@@ -502,6 +502,17 @@ impl BlockchainClient {
         Self::new(BlockchainConfig::default())
     }
 
+    /// Call a JSON-RPC method on the underlying blockchain
+    ///
+    /// This exposes the internal RPC client's call_rpc method for custom queries.
+    pub async fn call_rpc(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.rpc_client.call_rpc(method, params).await
+    }
+
     /// Submit a user registration transaction
     pub async fn register_user(
         &self,
