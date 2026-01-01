@@ -839,7 +839,7 @@ graph TB
 
 #### Key Hierarchy
 
-```
+```text
 AWS KMS CMK (alias/dchat-validator-key)
 └── Envelope Encryption
     └── Ed25519 Validator Signing Key
@@ -971,7 +971,7 @@ services:
 
 ### Kubernetes Deployment
 
-```
+```text
 helm/
 ├── dchat-validator/
 │   ├── templates/
@@ -1322,7 +1322,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ### Benchmark Suite
 
-```
+```text
 benches/
 ├── message_throughput.rs      # E2E message latency
 ├── crypto_performance.rs      # Crypto primitives
