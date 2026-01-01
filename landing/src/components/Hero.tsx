@@ -1,8 +1,7 @@
 "use client";
 
 import site from "@/content/site.json";
-import LottieAnimation from "./LottieAnimation";
-import networkAnimation from "@/animations/network.json";
+import Image from "next/image";
 
 const { hero } = site;
 
@@ -113,18 +112,22 @@ export default function Hero() {
             </div>
           </div>
 
-          {/* Lottie Animation with glassmorphism card */}
+          {/* Hero Image with glassmorphism card */}
           <div className="flex justify-center lg:justify-end animate-fade-in-right delay-300">
             <div className="relative">
               {/* Glow effect */}
               <div className="absolute -inset-4 bg-gradient-to-r from-purple-500/30 via-blue-500/30 to-purple-500/30 rounded-3xl blur-2xl animate-pulse-glow" />
 
               {/* Main card */}
-              <div className="relative glass-strong rounded-3xl p-8 w-full max-w-md">
-                <div className="h-[350px] relative">
-                  <LottieAnimation
-                    animationData={networkAnimation}
-                    className="w-full h-full"
+              <div className="relative glass-strong rounded-3xl p-8 w-full max-w-lg">
+                <div className="relative h-[400px] flex items-center justify-center">
+                  <Image
+                    src="/images/network-hero.svg"
+                    alt="Decentralized Network"
+                    width={450}
+                    height={450}
+                    className="w-full h-auto drop-shadow-2xl"
+                    priority
                   />
                 </div>
 

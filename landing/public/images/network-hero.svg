@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" fill="none">
+  <defs>
+    <linearGradient id="centerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#a855f7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6366f1;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#c4b5fd;stop-opacity:0.6" />
+      <stop offset="100%" style="stop-color:#a5b4fc;stop-opacity:0.6" />
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Outer dashed circle -->
+  <circle cx="400" cy="400" r="340" stroke="#c4b5fd" stroke-width="2" stroke-dasharray="8 8" fill="none" opacity="0.6"/>
+  
+  <!-- Connection lines from center to outer nodes -->
+  <g stroke="#a5b4fc" stroke-width="1.5" opacity="0.5">
+    <line x1="400" y1="400" x2="400" y2="80" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="680" y2="160" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="720" y2="400" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="680" y2="640" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="400" y2="720" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="120" y2="640" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="80" y2="400" stroke-dasharray="4 4"/>
+    <line x1="400" y1="400" x2="120" y2="160" stroke-dasharray="4 4"/>
+  </g>
+  
+  <!-- Inner hexagon connections -->
+  <g stroke="#c4b5fd" stroke-width="1.5" opacity="0.7">
+    <line x1="400" y1="240" x2="540" y2="320"/>
+    <line x1="540" y1="320" x2="540" y2="480"/>
+    <line x1="540" y1="480" x2="400" y2="560"/>
+    <line x1="400" y1="560" x2="260" y2="480"/>
+    <line x1="260" y1="480" x2="260" y2="320"/>
+    <line x1="260" y1="320" x2="400" y2="240"/>
+  </g>
+  
+  <!-- Inner ring nodes -->
+  <g filter="url(#softGlow)">
+    <circle cx="400" cy="240" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="540" cy="320" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="540" cy="480" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="400" cy="560" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="260" cy="480" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+    <circle cx="260" cy="320" r="18" fill="#1e1b4b" stroke="#c4b5fd" stroke-width="2"/>
+  </g>
+  
+  <!-- Inner node icons (small symbols) -->
+  <g fill="#e9d5ff" opacity="0.9">
+    <circle cx="400" cy="240" r="6"/>
+    <circle cx="540" cy="320" r="6"/>
+    <circle cx="540" cy="480" r="6"/>
+    <circle cx="400" cy="560" r="6"/>
+    <circle cx="260" cy="480" r="6"/>
+    <circle cx="260" cy="320" r="6"/>
+  </g>
+  
+  <!-- Outer device nodes -->
+  <g filter="url(#softGlow)">
+    <!-- Top - Document -->
+    <circle cx="400" cy="80" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="382" y="60" width="36" height="40" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="388" y1="72" x2="412" y2="72" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="388" y1="80" x2="412" y2="80" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="388" y1="88" x2="406" y2="88" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Top Right - Laptop -->
+    <circle cx="680" cy="160" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="658" y="145" width="44" height="28" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="655" y1="178" x2="705" y2="178" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Right - Monitor -->
+    <circle cx="720" cy="400" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="698" y="378" width="44" height="32" rx="2" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="720" y1="410" x2="720" y2="420" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="708" y1="420" x2="732" y2="420" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Bottom Right - Laptop -->
+    <circle cx="680" cy="640" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="658" y="625" width="44" height="28" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="655" y1="658" x2="705" y2="658" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Bottom - Laptop -->
+    <circle cx="400" cy="720" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="378" y="705" width="44" height="28" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="375" y1="738" x2="425" y2="738" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Bottom Left - Laptop -->
+    <circle cx="120" cy="640" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="98" y="625" width="44" height="28" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="95" y1="658" x2="145" y2="658" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Left - 3D Cube -->
+    <circle cx="80" cy="400" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <polygon points="80,375 100,387 100,413 80,425 60,413 60,387" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="80" y1="375" x2="80" y2="400" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="60" y1="387" x2="80" y2="400" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="100" y1="387" x2="80" y2="400" stroke="#e0e7ff" stroke-width="1.5"/>
+    
+    <!-- Top Left - Laptop -->
+    <circle cx="120" cy="160" r="45" fill="#1e1b4b" stroke="#a5b4fc" stroke-width="2"/>
+    <rect x="98" y="145" width="44" height="28" rx="3" fill="none" stroke="#e0e7ff" stroke-width="1.5"/>
+    <line x1="95" y1="178" x2="145" y2="178" stroke="#e0e7ff" stroke-width="1.5"/>
+  </g>
+  
+  <!-- Center geometric shape (icosahedron-style) -->
+  <g filter="url(#glow)" transform="translate(400, 400)">
+    <!-- Outer glow ring -->
+    <circle cx="0" cy="0" r="95" fill="none" stroke="url(#centerGrad)" stroke-width="1.5" opacity="0.5"/>
+    
+    <!-- Radiating lines -->
+    <g stroke="#c4b5fd" stroke-width="1" opacity="0.6">
+      <line x1="0" y1="-75" x2="0" y2="-100" />
+      <line x1="53" y1="-53" x2="71" y2="-71" />
+      <line x1="75" y1="0" x2="100" y2="0" />
+      <line x1="53" y1="53" x2="71" y2="71" />
+      <line x1="0" y1="75" x2="0" y2="100" />
+      <line x1="-53" y1="53" x2="-71" y2="71" />
+      <line x1="-75" y1="0" x2="-100" y2="0" />
+      <line x1="-53" y1="-53" x2="-71" y2="-71" />
+    </g>
+    
+    <!-- Main icosahedron shape -->
+    <polygon points="0,-65 56,-32 56,32 0,65 -56,32 -56,-32" fill="#1e1b4b" stroke="url(#centerGrad)" stroke-width="2.5"/>
+    
+    <!-- Inner lines for 3D effect -->
+    <line x1="0" y1="-65" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    <line x1="56" y1="-32" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    <line x1="56" y1="32" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    <line x1="0" y1="65" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    <line x1="-56" y1="32" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    <line x1="-56" y1="-32" x2="0" y2="0" stroke="#c4b5fd" stroke-width="1.5" opacity="0.9"/>
+    
+    <!-- Inner triangular facets -->
+    <polygon points="0,-65 56,-32 0,0" fill="#a855f7" opacity="0.25"/>
+    <polygon points="56,-32 56,32 0,0" fill="#8b5cf6" opacity="0.2"/>
+    <polygon points="0,0 -56,-32 -56,32" fill="#a855f7" opacity="0.22"/>
+    
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="10" fill="url(#centerGrad)"/>
+    <circle cx="0" cy="0" r="5" fill="#ffffff" opacity="0.8"/>
+  </g>
+</svg>
