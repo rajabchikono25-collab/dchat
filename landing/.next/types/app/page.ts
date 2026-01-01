@@ -1,4 +1,4 @@
-// File: C:\Users\USER\dchat\dchat\landing\src\app\page.tsx
+// File: C:\Users\USER\dchat\dchat.worktrees\worktree-2026-01-01T12-20-57\landing\src\app\page.tsx
 import * as entry from "../../../src/app/page.js";
 import type {
   ResolvingMetadata,

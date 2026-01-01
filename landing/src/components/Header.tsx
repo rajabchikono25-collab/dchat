@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import site from "@/content/site.json";
 
 const { nav } = site;
@@ -18,9 +19,13 @@ export default function Header() {
           <div className="flex items-center justify-between h-16 lg:h-18">
             {/* Logo */}
             <a href="/" className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
-                <span className="text-white font-bold text-lg">D</span>
-              </div>
+              <Image
+                src="/logo.svg"
+                alt="DChat Logo"
+                width={40}
+                height={40}
+                className="rounded-xl"
+              />
               <span className="text-xl font-bold text-white">{nav.logo}</span>
             </a>
 
