@@ -7,8 +7,9 @@
     "logo": "DChat",
     "links": [
       { "label": "Features", "href": "#features" },
-      { "label": "How It Works", "href": "#how-it-works" },
-      { "label": "Security", "href": "#security" },
+      { "label": "Blockchain", "href": "/blockchain" },
+      { "label": "Tokenomics", "href": "/tokenomics" },
+      { "label": "Developers", "href": "/developers" },
       { "label": "Roadmap", "href": "#roadmap" }
     ],
     "cta": { "label": "Get Started", "href": "#get-started" }
@@ -24,34 +25,40 @@
     "sectionTitle": "Why DChat?",
     "items": [
       {
-        "icon": "lock",
-        "title": "End-to-End Encryption",
-        "description": "Every message is encrypted with state-of-the-art cryptography. Only you and your recipients can read your messages."
+        "icon": "chain",
+        "title": "Tri-Chain Architecture",
+        "description": "Three specialized chains: Message Chain for 10,000+ TPS messaging, Currency Chain for DeFi, and Governance Chain for decentralized upgrades.",
+        "link": "/blockchain"
       },
       {
-        "icon": "globe",
-        "title": "Truly Decentralized",
-        "description": "No central servers to hack or shut down. Your messages flow through a distributed network of validators."
+        "icon": "lock",
+        "title": "Zero-Knowledge Privacy",
+        "description": "zkSNARK proofs hide sender/recipient metadata. End-to-end encryption with X25519 + AES-256-GCM. Your messages are truly private.",
+        "link": "/blockchain#privacy"
       },
       {
         "icon": "shield",
-        "title": "Censorship Resistant",
-        "description": "No single entity can block your communications. Speak freely without fear of censorship."
+        "title": "21-Validator Consensus",
+        "description": "Tendermint BFT with 3-second finality. Byzantine fault tolerant up to 7 malicious validators. Single-slot finality means no reorganizations.",
+        "link": "/blockchain#consensus"
       },
       {
         "icon": "zap",
-        "title": "Lightning Fast",
-        "description": "Sub-second message delivery powered by our optimized consensus mechanism."
+        "title": "10,000 TPS Capacity",
+        "description": "Parallel execution across 64 shards. Sub-500ms message delivery with optimistic confirmation. Epoch-level finality every 5 minutes.",
+        "link": "/blockchain#performance"
       },
       {
-        "icon": "users",
-        "title": "Group Channels",
-        "description": "Create public or private channels for communities, teams, or friends."
+        "icon": "coin",
+        "title": "DCHAT Token Economy",
+        "description": "1B total supply with 2% inflation. 50% fee burn creates deflationary pressure. Stake for 8-12% APY and governance voting power.",
+        "link": "/tokenomics"
       },
       {
-        "icon": "key",
-        "title": "Self-Sovereign Identity",
-        "description": "You own your identity. No phone numbers or email required. Just your keys."
+        "icon": "code",
+        "title": "Smart Contract Platform",
+        "description": "EVM-compatible Currency Chain. Build premium channels, NFT gates, and DeFi integrations. TypeScript SDK for rapid development.",
+        "link": "/developers"
       }
     ]
   },

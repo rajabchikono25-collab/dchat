@@ -3,20 +3,20 @@ import site from "@/content/site.json";
 const { features } = site;
 
 const icons: Record<string, React.ReactNode> = {
+  chain: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+    />
+  ),
   lock: (
     <path
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeWidth={2}
       d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-    />
-  ),
-  globe: (
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
     />
   ),
   shield: (
@@ -33,6 +33,30 @@ const icons: Record<string, React.ReactNode> = {
       strokeLinejoin="round"
       strokeWidth={2}
       d="M13 10V3L4 14h7v7l9-11h-7z"
+    />
+  ),
+  coin: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+    />
+  ),
+  code: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+    />
+  ),
+  globe: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
     />
   ),
   users: (
@@ -92,9 +116,10 @@ export default function Features() {
         {/* Features grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
           {features.items.map((feature, index) => (
-            <div
+            <a
               key={feature.title}
-              className="group relative glass rounded-3xl p-8 card-hover"
+              href={(feature as { link?: string }).link || "#"}
+              className="group relative glass rounded-3xl p-8 card-hover block"
             >
               {/* Gradient border on hover */}
               <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-purple-500/20 to-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 -z-10 blur-xl" />
@@ -140,7 +165,7 @@ export default function Features() {
                   />
                 </svg>
               </div>
-            </div>
+            </a>
           ))}
         </div>
       </div>
