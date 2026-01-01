@@ -1,10 +1,11 @@
 import site from "@/content/site.json";
+import { ReactNode } from "react";
 
 const { roadmap } = site;
 
 const statusConfig: Record<
   string,
-  { styles: string; icon: JSX.Element; label: string }
+  { styles: string; icon: ReactNode; label: string }
 > = {
   completed: {
     styles: "from-green-500 to-emerald-500",

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import site from "@/content/site.json";
 
 const { footer } = site;
@@ -52,9 +53,13 @@ export default function Footer() {
           {/* Brand column */}
           <div className="lg:col-span-2">
             <a href="/" className="inline-flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
-                <span className="text-white font-bold text-lg">D</span>
-              </div>
+              <Image
+                src="/logo.svg"
+                alt="DChat Logo"
+                width={40}
+                height={40}
+                className="rounded-xl"
+              />
               <span className="text-2xl font-bold gradient-text">
                 {footer.logo}
               </span>
