@@ -10,6 +10,30 @@ globalThis.__RSC_MANIFEST["/page"] = {
         async: false,
       },
     },
+    "(app-pages-browser)/./src/components/Hero.tsx": {
+      "*": {
+        id: "(ssr)/./src/components/Hero.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
+    "(app-pages-browser)/./src/components/HowItWorks.tsx": {
+      "*": {
+        id: "(ssr)/./src/components/HowItWorks.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
+    "(app-pages-browser)/./src/components/Security.tsx": {
+      "*": {
+        id: "(ssr)/./src/components/Security.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
     "(app-pages-browser)/./node_modules/next/dist/client/components/builtin/global-error.js":
       {
         "*": {
@@ -118,6 +142,24 @@ globalThis.__RSC_MANIFEST["/page"] = {
     },
     "C:\\Users\\USER\\dchat\\dchat\\landing\\src\\components\\Header.tsx": {
       id: "(app-pages-browser)/./src/components/Header.tsx",
+      name: "*",
+      chunks: ["app/page", "static/chunks/app/page.js"],
+      async: false,
+    },
+    "C:\\Users\\USER\\dchat\\dchat\\landing\\src\\components\\Hero.tsx": {
+      id: "(app-pages-browser)/./src/components/Hero.tsx",
+      name: "*",
+      chunks: ["app/page", "static/chunks/app/page.js"],
+      async: false,
+    },
+    "C:\\Users\\USER\\dchat\\dchat\\landing\\src\\components\\HowItWorks.tsx": {
+      id: "(app-pages-browser)/./src/components/HowItWorks.tsx",
+      name: "*",
+      chunks: ["app/page", "static/chunks/app/page.js"],
+      async: false,
+    },
+    "C:\\Users\\USER\\dchat\\dchat\\landing\\src\\components\\Security.tsx": {
+      id: "(app-pages-browser)/./src/components/Security.tsx",
       name: "*",
       chunks: ["app/page", "static/chunks/app/page.js"],
       async: false,
@@ -282,6 +324,30 @@ globalThis.__RSC_MANIFEST["/page"] = {
     "(app-pages-browser)/./src/components/Header.tsx": {
       "*": {
         id: "(rsc)/./src/components/Header.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
+    "(app-pages-browser)/./src/components/Hero.tsx": {
+      "*": {
+        id: "(rsc)/./src/components/Hero.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
+    "(app-pages-browser)/./src/components/HowItWorks.tsx": {
+      "*": {
+        id: "(rsc)/./src/components/HowItWorks.tsx",
+        name: "*",
+        chunks: [],
+        async: false,
+      },
+    },
+    "(app-pages-browser)/./src/components/Security.tsx": {
+      "*": {
+        id: "(rsc)/./src/components/Security.tsx",
         name: "*",
         chunks: [],
         async: false,

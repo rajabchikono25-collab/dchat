@@ -53,43 +53,93 @@ const icons: Record<string, React.ReactNode> = {
   ),
 };
 
+const iconColors = [
+  "from-purple-500 to-pink-500",
+  "from-blue-500 to-cyan-500",
+  "from-green-500 to-emerald-500",
+  "from-yellow-500 to-orange-500",
+  "from-pink-500 to-rose-500",
+  "from-indigo-500 to-purple-500",
+];
+
 export default function Features() {
   return (
-    <section id="features" className="py-20 lg:py-32 bg-slate-900/50">
-      <div className="container mx-auto px-4 lg:px-8">
-        <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-              {features.sectionTitle}
+    <section id="features" className="py-24 lg:py-32 relative overflow-hidden">
+      {/* Background elements */}
+      <div className="absolute inset-0 grid-bg opacity-30" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1000px] h-[600px] bg-purple-500/5 rounded-full blur-[150px]" />
+
+      <div className="container relative mx-auto px-4 lg:px-8">
+        {/* Section header */}
+        <div className="text-center mb-20">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-6">
+            <span className="text-sm text-purple-400 font-medium">
+              Features
+            </span>
+          </div>
+          <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6">
+            <span className="text-white">Why Choose </span>
+            <span className="gradient-text-purple">
+              {features.sectionTitle.split(" ").pop()}
             </span>
           </h2>
-          <p className="text-slate-400 max-w-2xl mx-auto">
+          <p className="text-gray-400 max-w-2xl mx-auto text-lg">
             Built from the ground up for privacy, security, and freedom.
+            Experience the future of decentralized communication.
           </p>
         </div>
 
+        {/* Features grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-          {features.items.map((feature) => (
+          {features.items.map((feature, index) => (
             <div
               key={feature.title}
-              className="group p-6 lg:p-8 bg-slate-800/50 rounded-2xl border border-slate-700/50 hover:border-cyan-500/50 transition-all hover:bg-slate-800/80"
+              className="group relative glass rounded-3xl p-8 card-hover"
             >
-              <div className="w-12 h-12 mb-4 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-600/20 flex items-center justify-center group-hover:from-cyan-500/30 group-hover:to-blue-600/30 transition-all">
+              {/* Gradient border on hover */}
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-purple-500/20 to-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 -z-10 blur-xl" />
+
+              {/* Icon */}
+              <div
+                className={`w-14 h-14 mb-6 rounded-2xl bg-gradient-to-br ${iconColors[index % iconColors.length]} p-0.5`}
+              >
+                <div className="w-full h-full rounded-2xl bg-[#0a0a0f] flex items-center justify-center">
+                  <svg
+                    className="w-6 h-6 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    {icons[feature.icon]}
+                  </svg>
+                </div>
+              </div>
+
+              {/* Content */}
+              <h3 className="text-xl font-semibold mb-3 text-white group-hover:text-purple-400 transition-colors">
+                {feature.title}
+              </h3>
+              <p className="text-gray-400 leading-relaxed">
+                {feature.description}
+              </p>
+
+              {/* Arrow indicator */}
+              <div className="mt-6 flex items-center gap-2 text-gray-500 group-hover:text-purple-400 transition-colors">
+                <span className="text-sm font-medium">Learn more</span>
                 <svg
-                  className="w-6 h-6 text-cyan-400"
+                  className="w-4 h-4 group-hover:translate-x-1 transition-transform"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
                 >
-                  {icons[feature.icon]}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 8l4 4m0 0l-4 4m4-4H3"
+                  />
                 </svg>
               </div>
-              <h3 className="text-xl font-semibold mb-2 text-white">
-                {feature.title}
-              </h3>
-              <p className="text-slate-400 leading-relaxed">
-                {feature.description}
-              </p>
             </div>
           ))}
         </div>
