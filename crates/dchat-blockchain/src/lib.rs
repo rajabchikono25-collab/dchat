@@ -58,7 +58,8 @@ pub use consensus_types::{
 pub use cross_chain::{CrossChainBridge, CrossChainStatus, CrossChainTransaction};
 pub use currency_chain::{
     CreateStorageBondResult, CurrencyChainClient, CurrencyChainConfig, StorageBondRecord,
-    StorageBondStatus,
+    StorageBondStatus, TransactionDirection, TransactionHistoryEntry, TransactionHistoryStatus,
+    TransactionType as CurrencyTransactionType,
 };
 pub use currency_chain_block_sync::{
     BlockSyncConfig, BlockSyncManager, CurrencyBlock, CurrencyBlockHeader, ForkInfo, SyncStatus,

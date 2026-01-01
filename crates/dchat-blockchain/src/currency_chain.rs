@@ -104,6 +104,80 @@ pub struct RewardHistoryEntry {
     pub epoch: Option<u64>,
 }
 
+/// Transaction history entry for wallet display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionHistoryEntry {
+    /// Transaction ID
+    pub tx_id: Uuid,
+    /// Transaction type
+    pub tx_type: TransactionType,
+    /// Amount
+    pub amount: u64,
+    /// Transaction status
+    pub status: TransactionHistoryStatus,
+    /// Timestamp
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Counterparty address (for display)
+    pub counterparty: Option<String>,
+    /// Direction (incoming or outgoing)
+    pub direction: TransactionDirection,
+}
+
+/// Transaction type for history display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransactionType {
+    Transfer,
+    Stake,
+    Unstake,
+    Reward,
+    Slash,
+    Swap,
+    StorageBond,
+}
+
+impl std::str::FromStr for TransactionType {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "transfer" | "payment" => Ok(TransactionType::Transfer),
+            "stake" => Ok(TransactionType::Stake),
+            "unstake" => Ok(TransactionType::Unstake),
+            "reward" => Ok(TransactionType::Reward),
+            "slash" => Ok(TransactionType::Slash),
+            "swap" => Ok(TransactionType::Swap),
+            "storage_bond" => Ok(TransactionType::StorageBond),
+            _ => Ok(TransactionType::Transfer),
+        }
+    }
+}
+
+/// Transaction status for history display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransactionHistoryStatus {
+    Pending,
+    Confirmed,
+    Failed,
+}
+
+impl std::str::FromStr for TransactionHistoryStatus {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(TransactionHistoryStatus::Pending),
+            "confirmed" => Ok(TransactionHistoryStatus::Confirmed),
+            "failed" => Ok(TransactionHistoryStatus::Failed),
+            _ => Ok(TransactionHistoryStatus::Pending),
+        }
+    }
+}
+
+/// Transaction direction for display
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransactionDirection {
+    Incoming,
+    Outgoing,
+}
+
 /// Pending rewards breakdown by source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingRewardsBreakdown {
@@ -390,6 +464,8 @@ pub struct CurrencyChainClient {
     genesis_allocation: Arc<RwLock<GenesisAllocation>>,
     /// Unbonding queue (user -> list of unbonding records)
     unbonding_queue: Arc<RwLock<HashMap<UserId, Vec<UnbondingRecord>>>>,
+    /// Address derivation counts (for HD wallet support)
+    address_counts: Arc<RwLock<HashMap<UserId, u32>>>,
 }
 
 impl CurrencyChainClient {
@@ -554,6 +630,7 @@ impl CurrencyChainClient {
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
             genesis_allocation: Arc::new(RwLock::new(Self::default_genesis_allocation())),
             unbonding_queue: Arc::new(RwLock::new(HashMap::new())),
+            address_counts: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -600,6 +677,7 @@ impl CurrencyChainClient {
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
             genesis_allocation: Arc::new(RwLock::new(Self::default_genesis_allocation())),
             unbonding_queue: Arc::new(RwLock::new(HashMap::new())),
+            address_counts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -662,6 +740,7 @@ impl CurrencyChainClient {
             redeemed_tokens: Arc::new(RwLock::new(HashSet::new())),
             genesis_allocation: Arc::new(RwLock::new(Self::default_genesis_allocation())),
             unbonding_queue: Arc::new(RwLock::new(HashMap::new())),
+            address_counts: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -1508,6 +1587,55 @@ impl CurrencyChainClient {
     /// Get wallet info
     pub fn get_wallet(&self, user_id: &UserId) -> Result<Option<Wallet>> {
         Ok(self.wallets.read().unwrap().get(user_id).cloned())
+    }
+
+    /// Get transaction history for a user with pagination
+    pub fn get_transaction_history(
+        &self,
+        user_id: &UserId,
+        limit: usize,
+    ) -> Result<Vec<TransactionHistoryEntry>> {
+        let txs = self.transactions.read().unwrap();
+        let mut entries: Vec<TransactionHistoryEntry> = txs
+            .values()
+            .filter(|tx| tx.from == *user_id || tx.to.as_ref() == Some(user_id))
+            .map(|tx| TransactionHistoryEntry {
+                tx_id: tx.id,
+                tx_type: tx.tx_type.parse().unwrap_or(TransactionType::Transfer),
+                amount: tx.amount,
+                status: tx
+                    .status
+                    .parse()
+                    .unwrap_or(TransactionHistoryStatus::Confirmed),
+                timestamp: chrono::DateTime::from_timestamp(tx.created_at, 0)
+                    .unwrap_or_else(chrono::Utc::now),
+                counterparty: tx.to.as_ref().map(|u| u.to_string()),
+                direction: if tx.from == *user_id {
+                    TransactionDirection::Outgoing
+                } else {
+                    TransactionDirection::Incoming
+                },
+            })
+            .collect();
+
+        // Sort by timestamp descending (newest first)
+        entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        entries.truncate(limit);
+        Ok(entries)
+    }
+
+    /// Get the count of derived addresses for a user
+    pub fn get_address_count(&self, user_id: &UserId) -> Result<u32> {
+        let counts = self.address_counts.read().unwrap();
+        Ok(*counts.get(user_id).unwrap_or(&0))
+    }
+
+    /// Increment the derived address count for a user
+    pub fn increment_address_count(&self, user_id: &UserId) -> Result<u32> {
+        let mut counts = self.address_counts.write().unwrap();
+        let count = counts.entry(*user_id).or_insert(0);
+        *count += 1;
+        Ok(*count)
     }
 
     /// Get current block height from blockchain
