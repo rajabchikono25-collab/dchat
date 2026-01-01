@@ -458,3 +458,298 @@ fn test_max_recipients_constant() {
     assert!(MAX_RECIPIENTS >= 2);
     assert!(MAX_RECIPIENTS <= 16);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADDITIONAL ASSET TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_escrow_state_invalid_transitions() {
+    // Released is terminal - cannot transition anywhere
+    let released = EscrowState::Released;
+    assert!(!released.can_transition_to(EscrowState::Locked));
+    assert!(!released.can_transition_to(EscrowState::Delivered));
+    assert!(!released.can_transition_to(EscrowState::Disputed));
+    assert!(!released.can_transition_to(EscrowState::Refunded));
+    assert!(!released.can_transition_to(EscrowState::Expired));
+
+    // Refunded is terminal - cannot transition anywhere
+    let refunded = EscrowState::Refunded;
+    assert!(!refunded.can_transition_to(EscrowState::Locked));
+    assert!(!refunded.can_transition_to(EscrowState::Delivered));
+    assert!(!refunded.can_transition_to(EscrowState::Disputed));
+    assert!(!refunded.can_transition_to(EscrowState::Released));
+    assert!(!refunded.can_transition_to(EscrowState::Expired));
+
+    // Expired is terminal - cannot transition anywhere
+    let expired = EscrowState::Expired;
+    assert!(!expired.can_transition_to(EscrowState::Locked));
+    assert!(!expired.can_transition_to(EscrowState::Delivered));
+    assert!(!expired.can_transition_to(EscrowState::Disputed));
+    assert!(!expired.can_transition_to(EscrowState::Released));
+    assert!(!expired.can_transition_to(EscrowState::Refunded));
+}
+
+#[test]
+fn test_escrow_state_from_u8() {
+    assert_eq!(EscrowState::from_u8(0), Some(EscrowState::Locked));
+    assert_eq!(EscrowState::from_u8(1), Some(EscrowState::Delivered));
+    assert_eq!(EscrowState::from_u8(2), Some(EscrowState::Disputed));
+    assert_eq!(EscrowState::from_u8(3), Some(EscrowState::Released));
+    assert_eq!(EscrowState::from_u8(4), Some(EscrowState::Refunded));
+    assert_eq!(EscrowState::from_u8(5), Some(EscrowState::Expired));
+    assert_eq!(EscrowState::from_u8(6), None);
+    assert_eq!(EscrowState::from_u8(255), None);
+}
+
+#[test]
+fn test_recipient_split_size() {
+    // Verify RecipientSplit size constant matches actual serialization
+    assert_eq!(RecipientSplit::SIZE, 40);
+}
+
+#[test]
+fn test_multi_party_distribution_three_way() {
+    let amount: u64 = 1_000_000;
+
+    let share1_bps: u64 = 5000; // 50%
+    let share2_bps: u64 = 3000; // 30%
+    let share3_bps: u64 = 2000; // 20%
+
+    let dist1 = (amount as u128 * share1_bps as u128 / 10000) as u64;
+    let dist2 = (amount as u128 * share2_bps as u128 / 10000) as u64;
+    let dist3 = (amount as u128 * share3_bps as u128 / 10000) as u64;
+
+    assert_eq!(dist1, 500_000);
+    assert_eq!(dist2, 300_000);
+    assert_eq!(dist3, 200_000);
+    assert_eq!(dist1 + dist2 + dist3, amount);
+}
+
+#[test]
+fn test_multi_party_distribution_uneven_shares() {
+    let amount: u64 = 1_000_000;
+
+    // Uneven split: 33.33%, 33.33%, 33.34%
+    let share1_bps: u64 = 3333;
+    let share2_bps: u64 = 3333;
+    let share3_bps: u64 = 3334;
+
+    let dist1 = (amount as u128 * share1_bps as u128 / 10000) as u64;
+    let dist2 = (amount as u128 * share2_bps as u128 / 10000) as u64;
+    let dist3 = (amount as u128 * share3_bps as u128 / 10000) as u64;
+
+    assert_eq!(dist1, 333_300);
+    assert_eq!(dist2, 333_300);
+    assert_eq!(dist3, 333_400);
+    assert_eq!(dist1 + dist2 + dist3, amount);
+}
+
+#[test]
+fn test_escrow_with_max_recipients() {
+    let buyer = pubkey_n(1);
+    let mint = pubkey_n(3);
+    let dispute_resolver = pubkey_n(20);
+
+    // Create maximum number of recipients
+    let mut recipients = Vec::with_capacity(MAX_RECIPIENTS);
+    let share_per_recipient = 10000 / MAX_RECIPIENTS as u64;
+    let remainder = 10000 % MAX_RECIPIENTS as u64;
+
+    for i in 0..MAX_RECIPIENTS {
+        let share = if i == 0 {
+            share_per_recipient + remainder // Give remainder to first recipient
+        } else {
+            share_per_recipient
+        };
+        recipients.push(RecipientSplit {
+            pubkey: pubkey_n(10 + i as u8),
+            share_bps: share,
+        });
+    }
+
+    // Verify shares sum to 100%
+    let total_shares: u64 = recipients.iter().map(|r| r.share_bps).sum();
+    assert_eq!(total_shares, 10000);
+
+    let escrow = EscrowAccount::new(
+        buyer,
+        &recipients,
+        mint,
+        10_000_000,
+        1000,
+        0,
+        dispute_resolver,
+        5,
+    )
+    .expect("create escrow with max recipients");
+
+    assert_eq!(escrow.recipient_count, MAX_RECIPIENTS as u8);
+}
+
+#[test]
+fn test_escrow_serialization_roundtrip_with_dispute() {
+    let buyer = pubkey_n(2);
+    let mint = pubkey_n(3);
+    let dispute_resolver = pubkey_n(20);
+    let recipients = vec![RecipientSplit {
+        pubkey: pubkey_n(10),
+        share_bps: 10000,
+    }];
+
+    let mut escrow = EscrowAccount::new(
+        buyer,
+        &recipients,
+        mint,
+        500_000,
+        1000,
+        99999,
+        dispute_resolver,
+        3,
+    )
+    .expect("create escrow");
+
+    // Simulate state transition to disputed
+    escrow.state = EscrowState::Disputed;
+    escrow.has_dispute = true;
+    escrow.dispute_slot = 1500;
+    escrow.increment_nonce();
+
+    let bytes = escrow.to_bytes();
+    let restored = EscrowAccount::from_bytes(&bytes).expect("deserialize");
+
+    assert_eq!(restored.state, EscrowState::Disputed);
+    assert!(restored.has_dispute);
+    assert_eq!(restored.dispute_slot, 1500);
+    assert_eq!(restored.nonce, 1);
+}
+
+#[test]
+fn test_escrow_zero_amount() {
+    let buyer = pubkey_n(1);
+    let mint = pubkey_n(3);
+    let dispute_resolver = pubkey_n(20);
+    let recipients = vec![RecipientSplit {
+        pubkey: pubkey_n(10),
+        share_bps: 10000,
+    }];
+
+    // Zero amount should still create a valid escrow structurally
+    let escrow = EscrowAccount::new(buyer, &recipients, mint, 0, 1000, 0, dispute_resolver, 5);
+
+    // The escrow should be created (validation of minimum amount is handled elsewhere)
+    assert!(escrow.is_ok());
+    assert_eq!(escrow.unwrap().amount, 0);
+}
+
+#[test]
+fn test_escrow_large_amount() {
+    let buyer = pubkey_n(1);
+    let mint = pubkey_n(3);
+    let dispute_resolver = pubkey_n(20);
+    let recipients = vec![RecipientSplit {
+        pubkey: pubkey_n(10),
+        share_bps: 10000,
+    }];
+
+    // Test with maximum u64 amount
+    let escrow = EscrowAccount::new(
+        buyer,
+        &recipients,
+        mint,
+        u64::MAX,
+        1000,
+        0,
+        dispute_resolver,
+        5,
+    )
+    .expect("create escrow with max amount");
+
+    assert_eq!(escrow.amount, u64::MAX);
+
+    // Verify serialization/deserialization
+    let bytes = escrow.to_bytes();
+    let restored = EscrowAccount::from_bytes(&bytes).expect("deserialize");
+    assert_eq!(restored.amount, u64::MAX);
+}
+
+#[test]
+fn test_instruction_all_variants() {
+    // Test all instruction variants can be packed and unpacked
+    let variants = [
+        MarketplaceInstruction::CreateEscrow {
+            recipients: vec![RecipientSplit {
+                pubkey: pubkey_n(10),
+                share_bps: 10000,
+            }],
+            amount: 1_000_000,
+            expiry_slot: 1000,
+            dispute_resolver: pubkey_n(20),
+            expected_nonce: 0,
+        },
+        MarketplaceInstruction::MarkDelivered { expected_nonce: 1 },
+        MarketplaceInstruction::Release { expected_nonce: 2 },
+        MarketplaceInstruction::Refund { expected_nonce: 3 },
+        MarketplaceInstruction::RaiseDispute { expected_nonce: 4 },
+        MarketplaceInstruction::ResolveDispute {
+            expected_nonce: 5,
+            release: true,
+        },
+        MarketplaceInstruction::ResolveDispute {
+            expected_nonce: 6,
+            release: false,
+        },
+    ];
+
+    for ix in variants {
+        let bytes = ix.pack();
+        let restored = MarketplaceInstruction::unpack(&bytes).expect("deserialize instruction");
+
+        // Verify round-trip produces equivalent bytes
+        let restored_bytes = restored.pack();
+        assert_eq!(bytes, restored_bytes);
+    }
+}
+
+#[test]
+fn test_marketplace_event_all_variants() {
+    // Test all event variants can be serialized
+    let events = [
+        MarketplaceEvent::EscrowCreated {
+            escrow: pubkey_n(1),
+            buyer: pubkey_n(2),
+            amount: 1_000_000,
+            mint: pubkey_n(3),
+            expiry_slot: 99999,
+        },
+        MarketplaceEvent::EscrowDelivered {
+            escrow: pubkey_n(1),
+            seller: pubkey_n(2),
+        },
+        MarketplaceEvent::EscrowReleased {
+            escrow: pubkey_n(1),
+            releaser: pubkey_n(2),
+            amount: 500_000,
+        },
+        MarketplaceEvent::EscrowRefunded {
+            escrow: pubkey_n(1),
+            refunder: pubkey_n(2),
+            amount: 500_000,
+        },
+        MarketplaceEvent::DisputeRaised {
+            escrow: pubkey_n(1),
+            disputer: pubkey_n(2),
+        },
+        MarketplaceEvent::DisputeResolved {
+            escrow: pubkey_n(1),
+            resolver: pubkey_n(2),
+            released: true,
+            bot_authorized: true,
+        },
+    ];
+
+    for event in events {
+        let program_event = event.to_program_event();
+        assert!(!program_event.data.is_empty());
+    }
+}

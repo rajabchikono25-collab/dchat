@@ -1,6 +1,7 @@
 //! Account types for DPL programs
 
 use crate::error::DplError;
+use core::cell::RefCell;
 use core::marker::PhantomData;
 
 /// 32-byte public key
@@ -88,10 +89,11 @@ impl<'info> SystemAccount<'info> {
     }
 }
 
-/// Typed account wrapper
+/// Typed account wrapper that stores deserialized data
 pub struct Account<'info, T> {
     info: AccountInfo<'info>,
-    _phantom: PhantomData<T>,
+    /// Lazily deserialized account data
+    data_cache: RefCell<Option<T>>,
 }
 
 impl<'info, T> Account<'info, T> {
@@ -113,6 +115,31 @@ impl<'info, T> Account<'info, T> {
     }
 }
 
+impl<'info, T> Account<'info, T>
+where
+    T: AccountDeserialize,
+{
+    /// Ensure the data is deserialized and cached
+    fn ensure_deserialized(&self) -> &T {
+        // Use interior mutability to cache the deserialized data
+        let mut cache = self.data_cache.borrow_mut();
+        if cache.is_none() {
+            let mut data_slice: &[u8] = self.info.data;
+            // Panic on deserialization failure - this indicates corrupt account data
+            let deserialized =
+                T::try_deserialize(&mut data_slice).expect("Failed to deserialize account data");
+            *cache = Some(deserialized);
+        }
+        drop(cache);
+        // SAFETY: We just ensured the Option is Some above
+        // We need to return a reference with the right lifetime, so we re-borrow
+        let cache = self.data_cache.borrow();
+        // This is safe because the cache lives as long as self
+        // We use a pointer to avoid borrow checker issues with RefCell
+        unsafe { &*(cache.as_ref().unwrap() as *const T) }
+    }
+}
+
 impl<'info, T> core::ops::Deref for Account<'info, T>
 where
     T: AccountDeserialize,
@@ -120,8 +147,7 @@ where
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        // In production, this would deserialize from info.data
-        unimplemented!("Account deref requires runtime")
+        self.ensure_deserialized()
     }
 }
 
@@ -130,8 +156,10 @@ where
     T: AccountDeserialize + AccountSerialize,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // In production, this would deserialize from info.data
-        unimplemented!("Account deref_mut requires runtime")
+        // First ensure deserialized via deref
+        let _ = self.ensure_deserialized();
+        // Now get mutable access - safe because we have &mut self
+        self.data_cache.get_mut().as_mut().unwrap()
     }
 }
 
@@ -222,7 +250,7 @@ impl<'info, T> FromAccountEntry<'info> for Account<'info, T> {
         };
         Ok(Account {
             info,
-            _phantom: PhantomData,
+            data_cache: RefCell::new(None),
         })
     }
 }

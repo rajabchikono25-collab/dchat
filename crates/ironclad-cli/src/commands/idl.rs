@@ -207,31 +207,129 @@ pub async fn run_generate(
 fn extract_idl_from_wasm(wasm_path: &std::path::Path) -> IroncladResult<String> {
     let wasm_bytes = std::fs::read(wasm_path)?;
 
-    // Look for DPLM section
-    for (i, window) in wasm_bytes.windows(4).enumerate() {
-        if window == b"DPLM" {
-            if i + 7 > wasm_bytes.len() {
-                return Err(IroncladError::IdlError("Truncated manifest".to_string()));
+    // Parse the WASM binary to find dpl_manifest custom section
+    // WASM binary starts with magic (\0asm) and version
+    if wasm_bytes.len() < 8 || &wasm_bytes[0..4] != b"\0asm" {
+        return Err(IroncladError::IdlError("Invalid WASM file".to_string()));
+    }
+
+    let mut offset = 8; // Skip magic and version
+    let mut manifest_data: Option<&[u8]> = None;
+    let program_name = wasm_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "program".to_string());
+
+    // Parse sections
+    while offset < wasm_bytes.len() {
+        if offset >= wasm_bytes.len() {
+            break;
+        }
+
+        let section_id = wasm_bytes[offset];
+        offset += 1;
+
+        // Read section size (LEB128)
+        let (section_size, bytes_read) = read_leb128(&wasm_bytes[offset..])?;
+        offset += bytes_read;
+
+        if section_id == 0 {
+            // Custom section - check if it's dpl_manifest
+            let section_start = offset;
+            let (name_len, name_bytes_read) = read_leb128(&wasm_bytes[offset..])?;
+            offset += name_bytes_read;
+
+            if offset + name_len > wasm_bytes.len() {
+                break;
             }
 
-            let version = wasm_bytes[i + 4];
-            let len_bytes: [u8; 2] = [wasm_bytes[i + 5], wasm_bytes[i + 6]];
-            let len = u16::from_le_bytes(len_bytes) as usize;
+            let name = &wasm_bytes[offset..offset + name_len];
+            offset += name_len;
 
-            if i + 7 + len > wasm_bytes.len() {
+            if name == b"dpl_manifest" {
+                let data_len = section_size - name_bytes_read - name_len;
+                if offset + data_len <= wasm_bytes.len() {
+                    manifest_data = Some(&wasm_bytes[offset..offset + data_len]);
+                }
+            }
+
+            // Move to end of section
+            offset = section_start + section_size;
+        } else {
+            // Skip non-custom sections
+            offset += section_size;
+        }
+    }
+
+    // Parse manifest if found
+    match manifest_data {
+        Some(data) if data.len() >= 64 => {
+            // Verify magic bytes
+            if &data[0..4] != b"DPLM" {
                 return Err(IroncladError::IdlError(
-                    "Invalid manifest length".to_string(),
+                    "Invalid manifest magic bytes".to_string(),
                 ));
             }
 
-            let _manifest_data = &wasm_bytes[i + 7..i + 7 + len];
+            // Parse manifest fields
+            let sdk_major = u16::from_le_bytes([data[4], data[5]]);
+            let sdk_minor = u16::from_le_bytes([data[6], data[7]]);
+            let sdk_patch = u16::from_le_bytes([data[8], data[9]]);
+            let edition = u16::from_le_bytes([data[10], data[11]]);
+            let abi_version = data[12];
+            let import_profile = match data[13] {
+                0 => "legacy",
+                1 => "wasi",
+                2 => "hybrid",
+                _ => "unknown",
+            };
+
+            // Extract schema hash
+            let mut schema_hash = [0u8; 32];
+            schema_hash.copy_from_slice(&data[16..48]);
+
+            // Parse capabilities
+            let cap_bits = u64::from_le_bytes([
+                data[48], data[49], data[50], data[51], data[52], data[53], data[54], data[55],
+            ]);
+
+            let mut capabilities = Vec::new();
+            if cap_bits & (1 << 0) != 0 {
+                capabilities.push("emits_events");
+            }
+            if cap_bits & (1 << 1) != 0 {
+                capabilities.push("uses_cpi");
+            }
+            if cap_bits & (1 << 2) != 0 {
+                capabilities.push("uses_pdas");
+            }
+            if cap_bits & (1 << 3) != 0 {
+                capabilities.push("requires_signers");
+            }
+            if cap_bits & (1 << 4) != 0 {
+                capabilities.push("uses_tokens");
+            }
+            if cap_bits & (1 << 5) != 0 {
+                capabilities.push("uses_privacy");
+            }
+            if cap_bits & (1 << 6) != 0 {
+                capabilities.push("uses_capabilities");
+            }
+            if cap_bits & (1 << 7) != 0 {
+                capabilities.push("upgradeable");
+            }
 
             // Generate IDL from manifest
             let idl = serde_json::json!({
                 "version": "0.1.0",
-                "name": "program",
+                "name": program_name,
                 "metadata": {
-                    "manifest_version": version,
+                    "sdk_version": format!("{}.{}.{}", sdk_major, sdk_minor, sdk_patch),
+                    "edition": edition,
+                    "abi_version": abi_version,
+                    "import_profile": import_profile,
+                    "schema_hash": hex::encode(schema_hash),
+                    "capabilities": capabilities,
                     "source": wasm_path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()
                 },
                 "instructions": [],
@@ -241,13 +339,38 @@ fn extract_idl_from_wasm(wasm_path: &std::path::Path) -> IroncladResult<String> 
                 "errors": []
             });
 
-            return serde_json::to_string_pretty(&idl)
-                .map_err(|e| IroncladError::IdlError(format!("Failed to serialize IDL: {}", e)));
+            serde_json::to_string_pretty(&idl)
+                .map_err(|e| IroncladError::IdlError(format!("Failed to serialize IDL: {}", e)))
+        }
+        Some(_) => Err(IroncladError::IdlError(
+            "Manifest section too small".to_string(),
+        )),
+        None => Err(IroncladError::IdlError(
+            "No dpl_manifest section found in WASM".to_string(),
+        )),
+    }
+}
+
+/// Read a LEB128 unsigned integer from bytes
+fn read_leb128(bytes: &[u8]) -> IroncladResult<(usize, usize)> {
+    let mut result: usize = 0;
+    let mut shift = 0;
+    let mut bytes_read = 0;
+
+    for &byte in bytes {
+        bytes_read += 1;
+        result |= ((byte & 0x7F) as usize) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((result, bytes_read));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(IroncladError::IdlError("LEB128 overflow".to_string()));
         }
     }
 
     Err(IroncladError::IdlError(
-        "No DPLM manifest found in WASM".to_string(),
+        "Truncated LEB128 encoding".to_string(),
     ))
 }
 
