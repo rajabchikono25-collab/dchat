@@ -1,0 +1,80 @@
+---
+interface Props {
+  src?: string;
+  fallback?: string;
+  class?: string;
+  width?: string;
+  height?: string;
+}
+
+const { 
+  src, 
+  fallback = "pulse", 
+  class: className = "",
+  width = "200px",
+  height = "200px"
+} = Astro.props;
+---
+
+<div 
+  class:list={["lottie-slot relative", className]}
+  style={`width: ${width}; height: ${height};`}
+  data-lottie-src={src}
+>
+  {!src && (
+    <div class:list={[
+      "absolute inset-0 flex items-center justify-center",
+      fallback === "pulse" && "animate-pulse-slow",
+      fallback === "float" && "animate-float",
+      fallback === "spin" && "animate-spin-slow"
+    ]}>
+      <slot />
+    </div>
+  )}
+</div>
+
+<style>
+  @keyframes pulse-slow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.98); }
+  }
+  
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  
+  @keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  .animate-pulse-slow {
+    animation: pulse-slow 3s ease-in-out infinite;
+  }
+  
+  .animate-float {
+    animation: float 4s ease-in-out infinite;
+  }
+  
+  .animate-spin-slow {
+    animation: spin-slow 8s linear infinite;
+  }
+</style>
+
+<script>
+  // Future Lottie integration
+  document.querySelectorAll('.lottie-slot[data-lottie-src]').forEach(async (el) => {
+    const src = el.getAttribute('data-lottie-src');
+    if (src && typeof lottie !== 'undefined') {
+      // @ts-ignore
+      lottie.loadAnimation({
+        container: el,
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        path: src
+      });
+    }
+  });
+</script>

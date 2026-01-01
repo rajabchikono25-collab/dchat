@@ -1,0 +1,74 @@
+---
+import site from '../content/site.json';
+import LottieSlot from './LottieSlot.astro';
+
+const { security } = site;
+---
+
+<section id="security" class="py-20 lg:py-32 bg-slate-900/50">
+  <div class="container mx-auto px-4 lg:px-8">
+    <div class="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
+      <!-- Animation placeholder -->
+      <div class="order-2 lg:order-1 flex justify-center">
+        <LottieSlot fallback="pulse" width="100%" height="300px" class="max-w-sm">
+          <svg viewBox="0 0 200 200" class="w-full h-full">
+            <defs>
+              <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            <!-- Shield shape -->
+            <path 
+              d="M100 20 L160 45 L160 95 C160 135 130 165 100 180 C70 165 40 135 40 95 L40 45 Z" 
+              fill="url(#shieldGrad)" 
+              opacity="0.2"
+              stroke="url(#shieldGrad)"
+              stroke-width="2"
+            />
+            <!-- Inner shield -->
+            <path 
+              d="M100 40 L140 55 L140 90 C140 120 120 145 100 155 C80 145 60 120 60 90 L60 55 Z" 
+              fill="url(#shieldGrad)" 
+              opacity="0.4"
+            />
+            <!-- Checkmark -->
+            <path 
+              d="M80 95 L95 110 L120 80" 
+              stroke="white" 
+              stroke-width="6" 
+              stroke-linecap="round" 
+              stroke-linejoin="round"
+              fill="none"
+            />
+          </svg>
+        </LottieSlot>
+      </div>
+
+      <!-- Text content -->
+      <div class="order-1 lg:order-2">
+        <p class="text-cyan-400 font-semibold tracking-wider uppercase text-sm mb-4">
+          {security.sectionTitle}
+        </p>
+        <h2 class="text-3xl md:text-4xl font-bold mb-6">
+          <span class="bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+            {security.headline}
+          </span>
+        </h2>
+        <p class="text-lg text-slate-400 mb-8">
+          {security.description}
+        </p>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-3 gap-4">
+          {security.stats.map((stat) => (
+            <div class="text-center p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+              <div class="text-xl md:text-2xl font-bold text-cyan-400 mb-1">{stat.value}</div>
+              <div class="text-xs md:text-sm text-slate-500">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
