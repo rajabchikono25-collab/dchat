@@ -1,0 +1,122 @@
+{
+  "meta": {
+    "title": "DChat - Decentralized Messaging",
+    "description": "Private, secure, and censorship-resistant messaging powered by blockchain technology."
+  },
+  "nav": {
+    "logo": "DChat",
+    "links": [
+      { "label": "Features", "href": "#features" },
+      { "label": "How It Works", "href": "#how-it-works" },
+      { "label": "Security", "href": "#security" },
+      { "label": "Roadmap", "href": "#roadmap" }
+    ],
+    "cta": { "label": "Get Started", "href": "#get-started" }
+  },
+  "hero": {
+    "headline": "Messaging Without Boundaries",
+    "subheadline": "Private. Secure. Unstoppable.",
+    "description": "DChat is a decentralized messaging platform that puts you in control. No central servers. No data harvesting. Just pure, encrypted communication.",
+    "primaryCta": { "label": "Download Now", "href": "#download" },
+    "secondaryCta": { "label": "Learn More", "href": "#features" }
+  },
+  "features": {
+    "sectionTitle": "Why DChat?",
+    "items": [
+      {
+        "icon": "lock",
+        "title": "End-to-End Encryption",
+        "description": "Every message is encrypted with state-of-the-art cryptography. Only you and your recipients can read your messages."
+      },
+      {
+        "icon": "globe",
+        "title": "Truly Decentralized",
+        "description": "No central servers to hack or shut down. Your messages flow through a distributed network of validators."
+      },
+      {
+        "icon": "shield",
+        "title": "Censorship Resistant",
+        "description": "No single entity can block your communications. Speak freely without fear of censorship."
+      },
+      {
+        "icon": "zap",
+        "title": "Lightning Fast",
+        "description": "Sub-second message delivery powered by our optimized consensus mechanism."
+      },
+      {
+        "icon": "users",
+        "title": "Group Channels",
+        "description": "Create public or private channels for communities, teams, or friends."
+      },
+      {
+        "icon": "key",
+        "title": "Self-Sovereign Identity",
+        "description": "You own your identity. No phone numbers or email required. Just your keys."
+      }
+    ]
+  },
+  "howItWorks": {
+    "sectionTitle": "How It Works",
+    "steps": [
+      {
+        "number": 1,
+        "title": "Generate Your Keys",
+        "description": "Create a cryptographic identity in seconds. Your private key stays on your device."
+      },
+      {
+        "number": 2,
+        "title": "Connect to the Network",
+        "description": "Join the decentralized network of validators spread across the globe."
+      },
+      {
+        "number": 3,
+        "title": "Start Messaging",
+        "description": "Send encrypted messages that only your recipients can decrypt and read."
+      }
+    ]
+  },
+  "security": {
+    "sectionTitle": "Built for Security",
+    "headline": "Military-Grade Protection",
+    "description": "DChat leverages blockchain technology and advanced cryptography to ensure your communications remain private and secure.",
+    "stats": [
+      { "value": "256-bit", "label": "AES Encryption" },
+      { "value": "Ed25519", "label": "Digital Signatures" },
+      { "value": "Zero", "label": "Central Points of Failure" }
+    ]
+  },
+  "roadmap": {
+    "sectionTitle": "Roadmap",
+    "milestones": [
+      {
+        "quarter": "Q1 2026",
+        "title": "Testnet Launch",
+        "status": "completed"
+      },
+      { "quarter": "Q2 2026", "title": "Mainnet Beta", "status": "current" },
+      { "quarter": "Q3 2026", "title": "Mobile Apps", "status": "upcoming" },
+      {
+        "quarter": "Q4 2026",
+        "title": "DeFi Integration",
+        "status": "upcoming"
+      }
+    ]
+  },
+  "cta": {
+    "headline": "Ready to Take Control?",
+    "description": "Join thousands of users who have already made the switch to truly private messaging.",
+    "primaryButton": { "label": "Download DChat", "href": "#download" },
+    "secondaryButton": { "label": "Read the Docs", "href": "/docs" }
+  },
+  "footer": {
+    "logo": "DChat",
+    "tagline": "Decentralized communication for everyone.",
+    "links": [
+      { "label": "GitHub", "href": "https://github.com/dchat" },
+      { "label": "Discord", "href": "https://discord.gg/dchat" },
+      { "label": "Twitter", "href": "https://twitter.com/dchat" },
+      { "label": "Documentation", "href": "/docs" }
+    ],
+    "copyright": "© 2026 DChat. Open source under MIT License."
+  }
+}
