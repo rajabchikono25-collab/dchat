@@ -79,10 +79,103 @@ pub struct CryptoConfig {
 /// Governance configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceConfig {
+    /// Duration of voting period in hours
     pub voting_period_hours: u32,
+    /// Minimum stake required to submit a proposal
     pub minimum_stake_for_proposal: u64,
-    pub quorum_threshold: f64,
+    /// Quorum threshold in basis points (0-10000, where 10000 = 100%)
+    /// Example: 1000 = 10% quorum required
+    ///
+    /// For backward compatibility, also accepts `quorum_threshold` as f64 (0.0-1.0)
+    /// which will be converted to basis points automatically.
+    #[serde(
+        default = "default_quorum_bps",
+        deserialize_with = "deserialize_quorum_bps",
+        alias = "quorum_threshold"
+    )]
+    pub quorum_threshold_bps: u16,
+    /// Enable anonymous/encrypted voting
     pub enable_anonymous_voting: bool,
+    /// Approval threshold in basis points (0-10000, where 5001 = simple majority)
+    #[serde(default = "default_approval_bps")]
+    pub approval_threshold_bps: u16,
+}
+
+fn default_quorum_bps() -> u16 {
+    1000 // 10%
+}
+
+fn default_approval_bps() -> u16 {
+    5001 // Simple majority (>50%)
+}
+
+/// Deserialize quorum threshold - accepts either:
+/// - u16 (basis points: 0-10000)
+/// - f64 (decimal: 0.0-1.0, converted to bps)
+fn deserialize_quorum_bps<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct QuorumVisitor;
+
+    impl<'de> Visitor<'de> for QuorumVisitor {
+        type Value = u16;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(
+                "a number representing quorum threshold (0-10000 bps or 0.0-1.0 decimal)",
+            )
+        }
+
+        fn visit_i64<E>(self, value: i64) -> std::result::Result<u16, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 || value > 10000 {
+                return Err(E::custom(format!(
+                    "quorum bps {} out of range 0-10000",
+                    value
+                )));
+            }
+            Ok(value as u16)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> std::result::Result<u16, E>
+        where
+            E: de::Error,
+        {
+            if value > 10000 {
+                return Err(E::custom(format!(
+                    "quorum bps {} out of range 0-10000",
+                    value
+                )));
+            }
+            Ok(value as u16)
+        }
+
+        fn visit_f64<E>(self, value: f64) -> std::result::Result<u16, E>
+        where
+            E: de::Error,
+        {
+            // f64 values <= 1.0 are treated as decimals (0.5 = 50% = 5000 bps)
+            // f64 values > 1.0 and <= 100.0 are treated as percentages (50.0 = 5000 bps)
+            // f64 values > 100.0 and <= 10000.0 are treated as bps directly
+            let bps = if value <= 1.0 {
+                (value * 10000.0).round() as u16
+            } else if value <= 100.0 {
+                (value * 100.0).round() as u16
+            } else if value <= 10000.0 {
+                value.round() as u16
+            } else {
+                return Err(E::custom(format!("quorum value {} out of range", value)));
+            };
+            Ok(bps)
+        }
+    }
+
+    deserializer.deserialize_any(QuorumVisitor)
 }
 
 /// Relay configuration
@@ -131,8 +224,9 @@ impl Default for Config {
             governance: GovernanceConfig {
                 voting_period_hours: 168, // 1 week
                 minimum_stake_for_proposal: 1000,
-                quorum_threshold: 0.1, // 10%
+                quorum_threshold_bps: 1000, // 10%
                 enable_anonymous_voting: true,
+                approval_threshold_bps: 5001, // Simple majority
             },
             relay: RelayConfig {
                 enable_relay: false,
@@ -247,9 +341,15 @@ impl Config {
             ));
         }
 
-        if !(0.0..=1.0).contains(&self.governance.quorum_threshold) {
+        if self.governance.quorum_threshold_bps > 10000 {
             return Err(Error::Config(
-                "quorum_threshold must be between 0.0 and 1.0".to_string(),
+                "quorum_threshold_bps must be between 0 and 10000".to_string(),
+            ));
+        }
+
+        if self.governance.approval_threshold_bps > 10000 {
+            return Err(Error::Config(
+                "approval_threshold_bps must be between 0 and 10000".to_string(),
             ));
         }
 

@@ -219,7 +219,8 @@ pub struct UpgradeProposal {
     /// Vote tally
     pub votes_for: u64,
     pub votes_against: u64,
-    pub quorum_percentage: u32,
+    /// Quorum in basis points (0-10000, where 10000 = 100%)
+    pub quorum_bps: u16,
 
     /// Created timestamp
     pub created_at: DateTime<Utc>,
@@ -291,10 +292,10 @@ impl UpgradeProposal {
         title: String,
         description: String,
         voting_period_days: i64,
-        quorum_percentage: u32,
+        quorum_bps: u16,
     ) -> Result<Self> {
-        if quorum_percentage > 100 {
-            return Err(Error::validation("Quorum cannot exceed 100%"));
+        if quorum_bps > 10000 {
+            return Err(Error::validation("Quorum cannot exceed 10000 bps (100%)"));
         }
 
         // Validate version progression
@@ -334,7 +335,7 @@ impl UpgradeProposal {
             status: UpgradeStatus::Proposed,
             votes_for: 0,
             votes_against: 0,
-            quorum_percentage,
+            quorum_bps,
             created_at: now,
             validator_signatures: Vec::new(),
         })
@@ -345,10 +346,10 @@ impl UpgradeProposal {
         matches!(self.status, UpgradeStatus::Proposed) && Utc::now() < self.voting_deadline
     }
 
-    /// Check if proposal passes
+    /// Check if proposal passes (using basis points)
     pub fn passes(&self, total_stake: u64) -> bool {
         let total_votes = self.votes_for + self.votes_against;
-        let required_votes = (total_stake * self.quorum_percentage as u64) / 100;
+        let required_votes = (total_stake as u128 * self.quorum_bps as u128 / 10000) as u64;
 
         total_votes >= required_votes && self.votes_for > self.votes_against
     }
@@ -391,7 +392,13 @@ impl UpgradeProposal {
     /// Set GitHub release information
     pub fn set_github_release(&mut self, release: GitHubRelease) -> Result<()> {
         // Update the github_source with the release tag
-        if let Some(CodeSource::GitHub { owner, repo, git_ref, .. }) = &self.github_source {
+        if let Some(CodeSource::GitHub {
+            owner,
+            repo,
+            git_ref,
+            ..
+        }) = &self.github_source
+        {
             self.github_source = Some(CodeSource::GitHub {
                 owner: owner.clone(),
                 repo: repo.clone(),
@@ -406,20 +413,32 @@ impl UpgradeProposal {
     /// Add an upgrade artifact
     pub fn add_artifact(&mut self, artifact: UpgradeArtifact) -> Result<()> {
         // Ensure no duplicate platforms
-        if self.artifacts.iter().any(|a| a.platform == artifact.platform && a.name == artifact.name) {
-            return Err(Error::validation("Artifact for this platform already exists"));
+        if self
+            .artifacts
+            .iter()
+            .any(|a| a.platform == artifact.platform && a.name == artifact.name)
+        {
+            return Err(Error::validation(
+                "Artifact for this platform already exists",
+            ));
         }
         self.artifacts.push(artifact);
         Ok(())
     }
 
     /// Set required signers for artifact verification
-    pub fn set_required_signers(&mut self, signers: Vec<String>, min_signatures: u32) -> Result<()> {
+    pub fn set_required_signers(
+        &mut self,
+        signers: Vec<String>,
+        min_signatures: u32,
+    ) -> Result<()> {
         if min_signatures == 0 {
             return Err(Error::validation("At least one signature required"));
         }
         if min_signatures as usize > signers.len() {
-            return Err(Error::validation("min_signatures cannot exceed number of signers"));
+            return Err(Error::validation(
+                "min_signatures cannot exceed number of signers",
+            ));
         }
         self.required_signers = signers;
         self.min_signatures = min_signatures;
@@ -428,15 +447,17 @@ impl UpgradeProposal {
 
     /// Verify artifact hash
     pub fn verify_artifact_hash(&self, platform: &str, data: &[u8]) -> Result<bool> {
-        use sha2::{Sha256, Digest};
-        
-        let artifact = self.artifacts.iter()
+        use sha2::{Digest, Sha256};
+
+        let artifact = self
+            .artifacts
+            .iter()
             .find(|a| a.platform == platform)
             .ok_or_else(|| Error::NotFound(format!("No artifact for platform: {}", platform)))?;
-        
+
         let hash = Sha256::digest(data);
         let hex_hash = hex::encode(hash);
-        
+
         Ok(hex_hash == artifact.sha256.to_lowercase())
     }
 
@@ -448,7 +469,9 @@ impl UpgradeProposal {
     /// Check if all required signatures are present
     pub fn has_sufficient_signatures(&self) -> bool {
         if let Some(release) = &self.github_release {
-            let valid_signatures = release.verified_signers.iter()
+            let valid_signatures = release
+                .verified_signers
+                .iter()
                 .filter(|s| self.required_signers.contains(s))
                 .count();
             valid_signatures >= self.min_signatures as usize
@@ -468,8 +491,17 @@ impl UpgradeProposal {
 
     /// Get GitHub release URL
     pub fn github_release_url(&self) -> Option<String> {
-        if let Some(CodeSource::GitHub { owner, repo, release_tag: Some(tag), .. }) = &self.github_source {
-            Some(format!("https://github.com/{}/{}/releases/tag/{}", owner, repo, tag))
+        if let Some(CodeSource::GitHub {
+            owner,
+            repo,
+            release_tag: Some(tag),
+            ..
+        }) = &self.github_source
+        {
+            Some(format!(
+                "https://github.com/{}/{}/releases/tag/{}",
+                owner, repo, tag
+            ))
         } else {
             None
         }
@@ -664,17 +696,18 @@ impl UpgradeManager {
     pub fn get_proposal(&self, id: &Uuid) -> Option<&UpgradeProposal> {
         self.proposals.get(id)
     }
-    
+
     /// Add validator signature to proposal (for hard forks)
     pub fn add_validator_signature(
-        &mut self, 
-        proposal_id: &Uuid, 
-        signature: ValidatorSignature
+        &mut self,
+        proposal_id: &Uuid,
+        signature: ValidatorSignature,
     ) -> Result<()> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get_mut(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         proposal.add_validator_signature(signature)
     }
 
@@ -710,10 +743,11 @@ impl UpgradeManager {
         repo: String,
         git_ref: String,
     ) -> Result<()> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get_mut(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         proposal.set_github_source(owner, repo, git_ref);
         Ok(())
     }
@@ -724,10 +758,11 @@ impl UpgradeManager {
         proposal_id: &Uuid,
         release: GitHubRelease,
     ) -> Result<()> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get_mut(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         proposal.set_github_release(release)
     }
 
@@ -737,32 +772,38 @@ impl UpgradeManager {
         proposal_id: &Uuid,
         artifact: UpgradeArtifact,
     ) -> Result<()> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get_mut(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         proposal.add_artifact(artifact)
     }
 
     /// Get download sources for a proposal (GitHub, IPFS, BitTorrent, etc.)
-    pub fn get_proposal_download_sources(&self, proposal_id: &Uuid, platform: &str) -> Result<Vec<CodeSource>> {
-        let proposal = self.proposals
+    pub fn get_proposal_download_sources(
+        &self,
+        proposal_id: &Uuid,
+        platform: &str,
+    ) -> Result<Vec<CodeSource>> {
+        let proposal = self
+            .proposals
             .get(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         let mut sources = Vec::new();
-        
+
         // Add GitHub source if available
         if let Some(source) = &proposal.github_source {
             sources.push(source.clone());
         }
-        
+
         // Add artifact-specific sources
         if let Some(artifact) = proposal.get_artifact_for_platform(platform) {
             sources.push(artifact.source.clone());
             sources.extend(artifact.mirrors.clone());
         }
-        
+
         Ok(sources)
     }
 
@@ -773,26 +814,32 @@ impl UpgradeManager {
         platform: &str,
         data: &[u8],
     ) -> Result<bool> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         proposal.verify_artifact_hash(platform, data)
     }
 
     /// Check if proposal has verified GitHub release with sufficient signatures
     pub fn proposal_has_verified_release(&self, proposal_id: &Uuid) -> Result<bool> {
-        let proposal = self.proposals
+        let proposal = self
+            .proposals
             .get(proposal_id)
             .ok_or_else(|| Error::NotFound(format!("Proposal not found: {}", proposal_id)))?;
-        
+
         Ok(proposal.has_sufficient_signatures())
     }
 }
 
 impl CodeSource {
     /// Create a new GitHub source
-    pub fn github(owner: impl Into<String>, repo: impl Into<String>, git_ref: impl Into<String>) -> Self {
+    pub fn github(
+        owner: impl Into<String>,
+        repo: impl Into<String>,
+        git_ref: impl Into<String>,
+    ) -> Self {
         CodeSource::GitHub {
             owner: owner.into(),
             repo: repo.into(),
@@ -803,9 +850,9 @@ impl CodeSource {
 
     /// Create a new GitHub source with release tag
     pub fn github_release(
-        owner: impl Into<String>, 
-        repo: impl Into<String>, 
-        tag: impl Into<String>
+        owner: impl Into<String>,
+        repo: impl Into<String>,
+        tag: impl Into<String>,
     ) -> Self {
         let tag_str = tag.into();
         CodeSource::GitHub {
@@ -837,7 +884,12 @@ impl CodeSource {
     /// Get the download URL for this source
     pub fn download_url(&self) -> Option<String> {
         match self {
-            CodeSource::GitHub { owner, repo, git_ref, release_tag } => {
+            CodeSource::GitHub {
+                owner,
+                repo,
+                git_ref,
+                release_tag,
+            } => {
                 if let Some(tag) = release_tag {
                     // GitHub release download URL
                     Some(format!(
@@ -852,21 +904,18 @@ impl CodeSource {
                     ))
                 }
             }
-            CodeSource::Ipfs { cid } => {
-                Some(format!("https://ipfs.io/ipfs/{}", cid))
-            }
-            CodeSource::BitTorrent { magnet_uri, .. } => {
-                Some(magnet_uri.clone())
-            }
-            CodeSource::Http { url } => {
-                Some(url.clone())
-            }
+            CodeSource::Ipfs { cid } => Some(format!("https://ipfs.io/ipfs/{}", cid)),
+            CodeSource::BitTorrent { magnet_uri, .. } => Some(magnet_uri.clone()),
+            CodeSource::Http { url } => Some(url.clone()),
         }
     }
 
     /// Check if this is a content-addressed source (IPFS, BitTorrent)
     pub fn is_content_addressed(&self) -> bool {
-        matches!(self, CodeSource::Ipfs { .. } | CodeSource::BitTorrent { .. })
+        matches!(
+            self,
+            CodeSource::Ipfs { .. } | CodeSource::BitTorrent { .. }
+        )
     }
 
     /// Check if this is a decentralized source
@@ -1255,8 +1304,14 @@ mod tests {
     #[test]
     fn test_github_source_creation() {
         let source = CodeSource::github("dchat-network", "dchat", "v2.0.0");
-        
-        if let CodeSource::GitHub { owner, repo, git_ref, release_tag } = &source {
+
+        if let CodeSource::GitHub {
+            owner,
+            repo,
+            git_ref,
+            release_tag,
+        } = &source
+        {
             assert_eq!(owner, "dchat-network");
             assert_eq!(repo, "dchat");
             assert_eq!(git_ref, "v2.0.0");
@@ -1264,10 +1319,10 @@ mod tests {
         } else {
             panic!("Expected GitHub source");
         }
-        
+
         assert!(source.is_decentralized());
         assert!(!source.is_content_addressed());
-        
+
         let url = source.download_url().unwrap();
         assert!(url.contains("github.com"));
         assert!(url.contains("dchat-network/dchat"));
@@ -1276,13 +1331,13 @@ mod tests {
     #[test]
     fn test_github_release_source() {
         let source = CodeSource::github_release("dchat-network", "dchat", "v2.0.0");
-        
+
         if let CodeSource::GitHub { release_tag, .. } = &source {
             assert_eq!(release_tag.as_ref().unwrap(), "v2.0.0");
         } else {
             panic!("Expected GitHub source");
         }
-        
+
         let url = source.download_url().unwrap();
         assert!(url.contains("releases/download/v2.0.0"));
     }
@@ -1290,21 +1345,18 @@ mod tests {
     #[test]
     fn test_ipfs_source() {
         let source = CodeSource::ipfs("QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco");
-        
+
         assert!(source.is_decentralized());
         assert!(source.is_content_addressed());
-        
+
         let url = source.download_url().unwrap();
         assert!(url.contains("ipfs.io/ipfs/"));
     }
 
     #[test]
     fn test_bittorrent_source() {
-        let source = CodeSource::bittorrent(
-            "magnet:?xt=urn:btih:abc123",
-            "abc123"
-        );
-        
+        let source = CodeSource::bittorrent("magnet:?xt=urn:btih:abc123", "abc123");
+
         assert!(source.is_decentralized());
         assert!(source.is_content_addressed());
     }
@@ -1319,11 +1371,13 @@ mod tests {
             1024 * 1024 * 50, // 50 MB
             source,
         );
-        
+
         // Add mirrors
         artifact.add_mirror(CodeSource::ipfs("Qm123..."));
-        artifact.add_mirror(CodeSource::http("https://releases.dchat.io/v2.0.0/dchat-linux-x86_64"));
-        
+        artifact.add_mirror(CodeSource::http(
+            "https://releases.dchat.io/v2.0.0/dchat-linux-x86_64",
+        ));
+
         assert_eq!(artifact.all_sources().len(), 3);
         assert_eq!(artifact.platform, "linux-x86_64");
     }
@@ -1352,9 +1406,12 @@ mod tests {
             "dchat".to_string(),
             "v1.1.0".to_string(),
         );
-        
+
         assert!(proposal.github_source.is_some());
-        assert_eq!(proposal.github_url(), Some("https://github.com/dchat-network/dchat".to_string()));
+        assert_eq!(
+            proposal.github_url(),
+            Some("https://github.com/dchat-network/dchat".to_string())
+        );
     }
 
     #[test]
@@ -1394,10 +1451,10 @@ mod tests {
             artifacts: Vec::new(),
             verified_signers: vec!["key123".to_string(), "key456".to_string()],
         };
-        
+
         proposal.set_github_release(release).unwrap();
         assert!(proposal.github_release.is_some());
-        
+
         // Add artifact
         let artifact = UpgradeArtifact::new(
             "dchat-linux-x86_64",
@@ -1406,10 +1463,10 @@ mod tests {
             50_000_000,
             CodeSource::github_release("dchat-network", "dchat", "v1.1.0"),
         );
-        
+
         proposal.add_artifact(artifact).unwrap();
         assert_eq!(proposal.artifacts.len(), 1);
-        
+
         // Check URL
         assert_eq!(
             proposal.github_release_url(),
@@ -1437,7 +1494,7 @@ mod tests {
 
         // SHA-256 of "hello world"
         let expected_hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
-        
+
         let artifact = UpgradeArtifact::new(
             "test-artifact",
             "linux-x86_64",
@@ -1445,15 +1502,19 @@ mod tests {
             11,
             CodeSource::http("https://example.com/test"),
         );
-        
+
         proposal.add_artifact(artifact).unwrap();
-        
+
         // Verify with correct data
-        let result = proposal.verify_artifact_hash("linux-x86_64", b"hello world").unwrap();
+        let result = proposal
+            .verify_artifact_hash("linux-x86_64", b"hello world")
+            .unwrap();
         assert!(result);
-        
+
         // Verify with incorrect data
-        let result = proposal.verify_artifact_hash("linux-x86_64", b"wrong data").unwrap();
+        let result = proposal
+            .verify_artifact_hash("linux-x86_64", b"wrong data")
+            .unwrap();
         assert!(!result);
     }
 
@@ -1476,10 +1537,12 @@ mod tests {
         .unwrap();
 
         // Set required signers (2 of 3 required)
-        proposal.set_required_signers(
-            vec!["key1".to_string(), "key2".to_string(), "key3".to_string()],
-            2,
-        ).unwrap();
+        proposal
+            .set_required_signers(
+                vec!["key1".to_string(), "key2".to_string(), "key3".to_string()],
+                2,
+            )
+            .unwrap();
 
         // Without release, should not have sufficient signatures
         assert!(!proposal.has_sufficient_signatures());
@@ -1497,7 +1560,7 @@ mod tests {
             artifacts: Vec::new(),
             verified_signers: vec!["key1".to_string(), "key2".to_string()],
         };
-        
+
         proposal.set_github_release(release).unwrap();
         assert!(proposal.has_sufficient_signatures());
     }
@@ -1526,12 +1589,14 @@ mod tests {
         let proposal_id = manager.submit_proposal(proposal).unwrap();
 
         // Set GitHub source via manager
-        manager.set_proposal_github_source(
-            &proposal_id,
-            "dchat-network".to_string(),
-            "dchat".to_string(),
-            "v1.1.0".to_string(),
-        ).unwrap();
+        manager
+            .set_proposal_github_source(
+                &proposal_id,
+                "dchat-network".to_string(),
+                "dchat".to_string(),
+                "v1.1.0".to_string(),
+            )
+            .unwrap();
 
         // Add artifact via manager
         let artifact = UpgradeArtifact::new(
@@ -1541,11 +1606,15 @@ mod tests {
             50_000_000,
             CodeSource::github_release("dchat-network", "dchat", "v1.1.0"),
         );
-        
-        manager.add_proposal_artifact(&proposal_id, artifact).unwrap();
+
+        manager
+            .add_proposal_artifact(&proposal_id, artifact)
+            .unwrap();
 
         // Get download sources
-        let sources = manager.get_proposal_download_sources(&proposal_id, "linux-x86_64").unwrap();
+        let sources = manager
+            .get_proposal_download_sources(&proposal_id, "linux-x86_64")
+            .unwrap();
         assert!(!sources.is_empty());
     }
 }

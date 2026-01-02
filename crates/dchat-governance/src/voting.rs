@@ -44,8 +44,8 @@ pub struct Proposal {
     pub created_at: DateTime<Utc>,
     /// Voting deadline
     pub deadline: DateTime<Utc>,
-    /// Minimum quorum (percentage of total stake)
-    pub quorum_percentage: u32,
+    /// Minimum quorum in basis points (0-10000, where 10000 = 100% of total stake)
+    pub quorum_bps: u16,
     /// Current vote tally
     pub votes_for: u64,
     pub votes_against: u64,
@@ -88,10 +88,12 @@ impl Proposal {
         title: String,
         description: String,
         voting_period_days: i64,
-        quorum_percentage: u32,
+        quorum_bps: u16,
     ) -> Result<Self> {
-        if quorum_percentage > 100 {
-            return Err(Error::validation("Quorum cannot exceed 100%".to_string()));
+        if quorum_bps > 10000 {
+            return Err(Error::validation(
+                "Quorum cannot exceed 10000 bps (100%)".to_string(),
+            ));
         }
 
         let now = Utc::now();
@@ -105,7 +107,7 @@ impl Proposal {
             description,
             created_at: now,
             deadline,
-            quorum_percentage,
+            quorum_bps,
             votes_for: 0,
             votes_against: 0,
             finalized: false,
@@ -120,7 +122,8 @@ impl Proposal {
     /// Check if quorum has been met
     pub fn meets_quorum(&self, total_stake: u64) -> bool {
         let total_votes = self.votes_for + self.votes_against;
-        let required_votes = (total_stake * self.quorum_percentage as u64) / 100;
+        // quorum_bps is in basis points (0-10000)
+        let required_votes = (total_stake as u128 * self.quorum_bps as u128 / 10000) as u64;
         total_votes >= required_votes
     }
 
@@ -308,12 +311,12 @@ mod tests {
             "Test Proposal".to_string(),
             "A test proposal".to_string(),
             7,
-            50,
+            5000, // 50% quorum in bps
         )
         .unwrap();
 
         assert_eq!(proposal.title, "Test Proposal");
-        assert_eq!(proposal.quorum_percentage, 50);
+        assert_eq!(proposal.quorum_bps, 5000);
         assert!(proposal.is_open());
         assert!(!proposal.finalized);
     }
@@ -343,7 +346,7 @@ mod tests {
             "Fund Project X".to_string(),
             "Allocate 1000 tokens to Project X".to_string(),
             7,
-            60,
+            6000, // 60% quorum in bps
         )
         .unwrap();
 
@@ -363,7 +366,7 @@ mod tests {
             "Test".to_string(),
             "Test".to_string(),
             7,
-            50,
+            5000, // 50% in bps
         )
         .unwrap();
         let proposal_id = manager.submit_proposal(proposal).unwrap();
@@ -386,7 +389,7 @@ mod tests {
             "Test".to_string(),
             "Test".to_string(),
             7,
-            50,
+            5000, // 50% in bps
         )
         .unwrap();
         let proposal_id = manager.submit_proposal(proposal).unwrap();
@@ -410,7 +413,7 @@ mod tests {
             description: "Test".to_string(),
             created_at: Utc::now(),
             deadline: Utc::now() + Duration::days(7),
-            quorum_percentage: 50,
+            quorum_bps: 5000, // 50% in basis points
             votes_for: 600,
             votes_against: 400,
             finalized: false,
@@ -430,7 +433,7 @@ mod tests {
             description: "Test".to_string(),
             created_at: Utc::now(),
             deadline: Utc::now() + Duration::days(7),
-            quorum_percentage: 50,
+            quorum_bps: 5000, // 50% in basis points
             votes_for: 600,
             votes_against: 400,
             finalized: false,
@@ -454,7 +457,7 @@ mod tests {
             "Active".to_string(),
             "Active proposal".to_string(),
             7,
-            50,
+            5000, // 50% in bps
         )
         .unwrap();
 
@@ -464,7 +467,7 @@ mod tests {
             "Finalized".to_string(),
             "Finalized proposal".to_string(),
             7,
-            50,
+            5000, // 50% in bps
         )
         .unwrap();
         proposal2.finalized = true;

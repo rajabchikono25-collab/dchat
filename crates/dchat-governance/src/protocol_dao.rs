@@ -27,7 +27,7 @@ pub trait GovernanceChainClient: Send + Sync {
         new_value: &str,
         proposal_id: &str,
     ) -> Result<GovernanceTxReceipt>;
-    
+
     /// Submit a treasury transfer transaction
     async fn submit_treasury_transfer(
         &self,
@@ -36,7 +36,7 @@ pub trait GovernanceChainClient: Send + Sync {
         purpose: &str,
         proposal_id: &str,
     ) -> Result<GovernanceTxReceipt>;
-    
+
     /// Submit a protocol upgrade activation
     async fn submit_protocol_upgrade(
         &self,
@@ -45,27 +45,27 @@ pub trait GovernanceChainClient: Send + Sync {
         activation_block: u64,
         is_hard_fork: bool,
     ) -> Result<GovernanceTxReceipt>;
-    
+
     /// Submit an emergency action (pause/resume/circuit breaker)
     async fn submit_emergency_action(
         &self,
         action_type: &str,
         parameters: &HashMap<String, String>,
     ) -> Result<GovernanceTxReceipt>;
-    
+
     /// Submit a feature toggle
     async fn submit_feature_toggle(
         &self,
         feature_name: &str,
         enable: bool,
     ) -> Result<GovernanceTxReceipt>;
-    
+
     /// Get current protocol parameters
     async fn get_protocol_parameter(&self, parameter: &str) -> Result<String>;
-    
+
     /// Get current block height
     async fn get_current_block(&self) -> Result<u64>;
-    
+
     /// Wait for transaction confirmation
     async fn wait_for_confirmation(&self, tx_hash: &str, confirmations: u32) -> Result<bool>;
 }
@@ -145,22 +145,22 @@ pub struct ProtocolProposal {
     pub title: String,
     pub description: String,
     pub rationale: String,
-    
+
     /// Current status
     pub status: ProposalStatus,
-    
+
     /// Voting information
     pub voting: VotingInfo,
-    
-    /// Required quorum percentage (0-100)
-    pub quorum_required: u8,
-    
-    /// Required approval percentage (0-100)
-    pub approval_required: u8,
-    
+
+    /// Required quorum in basis points (0-10000, where 10000 = 100%)
+    pub quorum_required_bps: u16,
+
+    /// Required approval in basis points (0-10000, where 5001 = simple majority)
+    pub approval_required_bps: u16,
+
     /// Execution details
     pub execution: Option<ExecutionInfo>,
-    
+
     /// Timestamps
     pub created_at: DateTime<Utc>,
     pub voting_starts_at: DateTime<Utc>,
@@ -177,33 +177,30 @@ pub enum ProposalType {
         current_value: String,
         proposed_value: String,
     },
-    
+
     /// Protocol upgrade
     ProtocolUpgrade {
         version: String,
         upgrade_hash: String,
         is_hard_fork: bool,
     },
-    
+
     /// Treasury allocation
     TreasuryAllocation {
         amount: u64,
         recipient: UserId,
         purpose: String,
     },
-    
+
     /// Emergency action
     EmergencyAction {
         action_type: EmergencyActionType,
         justification: String,
     },
-    
+
     /// Feature toggle
-    FeatureToggle {
-        feature_name: String,
-        enable: bool,
-    },
-    
+    FeatureToggle { feature_name: String, enable: bool },
+
     /// Grant program
     GrantProgram {
         program_name: String,
@@ -220,19 +217,19 @@ pub enum ProtocolParameter {
     ValidatorCount,
     MinimumStake,
     SlashingRate,
-    
+
     // Economic parameters
     TransactionFee,
     MessageFee,
     RelayReward,
     StakingYield,
-    
+
     // Network parameters
     MaxPeers,
     MessageTTL,
     MaxMessageSize,
     RateLimitPerUser,
-    
+
     // Governance parameters
     ProposalDeposit,
     VotingPeriod,
@@ -245,16 +242,16 @@ pub enum ProtocolParameter {
 pub enum EmergencyActionType {
     /// Pause protocol operations
     PauseProtocol,
-    
+
     /// Resume protocol operations
     ResumeProtocol,
-    
+
     /// Activate circuit breaker for specific module
     CircuitBreaker { module: String },
-    
+
     /// Emergency parameter override
     EmergencyOverride { parameter: String, value: String },
-    
+
     /// Force protocol upgrade
     ForceUpgrade { version: String },
 }
@@ -264,22 +261,22 @@ pub enum EmergencyActionType {
 pub enum ProposalStatus {
     /// Proposal submitted, waiting for voting period
     Pending,
-    
+
     /// Currently accepting votes
     Active,
-    
+
     /// Voting completed, passed
     Passed,
-    
+
     /// Voting completed, rejected
     Rejected,
-    
+
     /// Executed successfully
     Executed,
-    
+
     /// Execution failed
     ExecutionFailed { reason: String },
-    
+
     /// Cancelled by proposer or emergency action
     Cancelled,
 }
@@ -327,8 +324,13 @@ pub struct ExecutionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutionResult {
     Success,
-    Failed { error: String },
-    PartialSuccess { completed: Vec<String>, failed: Vec<String> },
+    Failed {
+        error: String,
+    },
+    PartialSuccess {
+        completed: Vec<String>,
+        failed: Vec<String>,
+    },
 }
 
 /// Vote delegation
@@ -437,7 +439,10 @@ impl ProtocolDaoManager {
 
     /// Get all active grant programs
     pub fn get_active_grant_programs(&self) -> Vec<&GrantProgramState> {
-        self.grant_programs.values().filter(|p| p.is_active).collect()
+        self.grant_programs
+            .values()
+            .filter(|p| p.is_active)
+            .collect()
     }
 
     /// Check if protocol is paused
@@ -550,15 +555,20 @@ impl ProtocolDaoManager {
             return Err(Error::validation("Insufficient voting power to propose"));
         }
 
-        // Set quorum and approval based on proposal type
-        let (quorum_required, approval_required) = match &proposal_type {
-            ProposalType::EmergencyAction { .. } => (75, 90),
-            ProposalType::ProtocolUpgrade { is_hard_fork: true, .. } => (80, 85),
-            ProposalType::ProtocolUpgrade { is_hard_fork: false, .. } => (60, 75),
-            ProposalType::ParameterChange { .. } => (50, 66),
-            ProposalType::TreasuryAllocation { .. } => (55, 70),
-            ProposalType::FeatureToggle { .. } => (45, 60),
-            ProposalType::GrantProgram { .. } => (50, 65),
+        // Set quorum and approval based on proposal type (in basis points)
+        let (quorum_required_bps, approval_required_bps): (u16, u16) = match &proposal_type {
+            ProposalType::EmergencyAction { .. } => (7500, 9000), // 75% quorum, 90% approval
+            ProposalType::ProtocolUpgrade {
+                is_hard_fork: true, ..
+            } => (8000, 8500), // 80%, 85%
+            ProposalType::ProtocolUpgrade {
+                is_hard_fork: false,
+                ..
+            } => (6000, 7500), // 60%, 75%
+            ProposalType::ParameterChange { .. } => (5000, 6600), // 50%, 66%
+            ProposalType::TreasuryAllocation { .. } => (5500, 7000), // 55%, 70%
+            ProposalType::FeatureToggle { .. } => (4500, 6000),   // 45%, 60%
+            ProposalType::GrantProgram { .. } => (5000, 6500),    // 50%, 65%
         };
 
         let now = Utc::now();
@@ -581,8 +591,8 @@ impl ProtocolDaoManager {
                 votes: HashMap::new(),
                 use_quadratic_voting: true, // Enable by default
             },
-            quorum_required,
-            approval_required,
+            quorum_required_bps,
+            approval_required_bps,
             execution: None,
             created_at: now,
             voting_starts_at: voting_starts,
@@ -609,7 +619,9 @@ impl ProtocolDaoManager {
             return Err(Error::validation("No voting power"));
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::validation("Proposal not found"))?;
 
         // Check if voting is active
@@ -639,9 +651,15 @@ impl ProtocolDaoManager {
         // Check for existing vote and remove it
         if let Some(old_vote) = proposal.voting.votes.remove(&voter) {
             match old_vote.vote_type {
-                VoteType::For => proposal.voting.total_votes_for -= old_vote.quadratic_weight as u64,
-                VoteType::Against => proposal.voting.total_votes_against -= old_vote.quadratic_weight as u64,
-                VoteType::Abstain => proposal.voting.total_votes_abstain -= old_vote.quadratic_weight as u64,
+                VoteType::For => {
+                    proposal.voting.total_votes_for -= old_vote.quadratic_weight as u64
+                }
+                VoteType::Against => {
+                    proposal.voting.total_votes_against -= old_vote.quadratic_weight as u64
+                }
+                VoteType::Abstain => {
+                    proposal.voting.total_votes_abstain -= old_vote.quadratic_weight as u64
+                }
             }
         } else {
             proposal.voting.total_voting_power += voting_power;
@@ -701,14 +719,17 @@ impl ProtocolDaoManager {
 
     /// Revoke voting delegation
     pub fn revoke_delegation(&mut self, delegator: UserId) -> Result<()> {
-        self.delegations.remove(&delegator)
+        self.delegations
+            .remove(&delegator)
             .ok_or_else(|| Error::validation("No active delegation"))?;
         Ok(())
     }
 
     /// Finalize proposal after voting ends
     pub fn finalize_proposal(&mut self, proposal_id: Uuid) -> Result<ProposalStatus> {
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::validation("Proposal not found"))?;
 
         if Utc::now() < proposal.voting_ends_at {
@@ -725,22 +746,25 @@ impl ProtocolDaoManager {
             return Err(Error::validation("No eligible voters"));
         }
 
-        // Check quorum
-        let participation_rate = (proposal.voting.total_voting_power * 100) / total_eligible_power;
-        if participation_rate < proposal.quorum_required as u64 {
+        // Check quorum (using basis points: 10000 = 100%)
+        let participation_rate_bps = ((proposal.voting.total_voting_power as u128 * 10000)
+            / total_eligible_power as u128) as u64;
+        if participation_rate_bps < proposal.quorum_required_bps as u64 {
             proposal.status = ProposalStatus::Rejected;
             return Ok(ProposalStatus::Rejected);
         }
 
         // Check approval
-        let total_decisive_votes = proposal.voting.total_votes_for + proposal.voting.total_votes_against;
+        let total_decisive_votes =
+            proposal.voting.total_votes_for + proposal.voting.total_votes_against;
         if total_decisive_votes == 0 {
             proposal.status = ProposalStatus::Rejected;
             return Ok(ProposalStatus::Rejected);
         }
 
-        let approval_rate = (proposal.voting.total_votes_for * 100) / total_decisive_votes;
-        if approval_rate >= proposal.approval_required as u64 {
+        let approval_rate_bps = ((proposal.voting.total_votes_for as u128 * 10000)
+            / total_decisive_votes as u128) as u64;
+        if approval_rate_bps >= proposal.approval_required_bps as u64 {
             proposal.status = ProposalStatus::Passed;
             Ok(ProposalStatus::Passed)
         } else {
@@ -755,7 +779,9 @@ impl ProtocolDaoManager {
         proposal_id: Uuid,
         executor: UserId,
     ) -> Result<ExecutionResult> {
-        let proposal = self.proposals.get(&proposal_id)
+        let proposal = self
+            .proposals
+            .get(&proposal_id)
             .ok_or_else(|| Error::validation("Proposal not found"))?;
 
         if proposal.status != ProposalStatus::Passed {
@@ -771,66 +797,89 @@ impl ProtocolDaoManager {
 
         // Execute based on proposal type with on-chain submission
         let (result, tx_hash) = match proposal_type {
-            ProposalType::ParameterChange { parameter, proposed_value, current_value } => {
+            ProposalType::ParameterChange {
+                parameter,
+                proposed_value,
+                current_value,
+            } => {
                 self.execute_parameter_change_production(
                     &proposal_id_str,
                     parameter,
                     &current_value,
                     &proposed_value,
-                ).await?
-            },
-            ProposalType::TreasuryAllocation { amount, recipient, purpose } => {
+                )
+                .await?
+            }
+            ProposalType::TreasuryAllocation {
+                amount,
+                recipient,
+                purpose,
+            } => {
                 self.execute_treasury_allocation_production(
                     proposal_id,
                     amount,
                     recipient,
                     &purpose,
-                ).await?
-            },
-            ProposalType::ProtocolUpgrade { version, upgrade_hash, is_hard_fork } => {
-                self.execute_protocol_upgrade_production(
-                    &version,
-                    &upgrade_hash,
-                    is_hard_fork,
-                ).await?
-            },
-            ProposalType::EmergencyAction { action_type, justification } => {
-                self.execute_emergency_action_production(
-                    action_type,
-                    &justification,
-                ).await?
-            },
-            ProposalType::FeatureToggle { feature_name, enable } => {
-                self.execute_feature_toggle_production(
-                    &feature_name,
-                    enable,
-                ).await?
-            },
-            ProposalType::GrantProgram { program_name, total_budget, duration_days } => {
+                )
+                .await?
+            }
+            ProposalType::ProtocolUpgrade {
+                version,
+                upgrade_hash,
+                is_hard_fork,
+            } => {
+                self.execute_protocol_upgrade_production(&version, &upgrade_hash, is_hard_fork)
+                    .await?
+            }
+            ProposalType::EmergencyAction {
+                action_type,
+                justification,
+            } => {
+                self.execute_emergency_action_production(action_type, &justification)
+                    .await?
+            }
+            ProposalType::FeatureToggle {
+                feature_name,
+                enable,
+            } => {
+                self.execute_feature_toggle_production(&feature_name, enable)
+                    .await?
+            }
+            ProposalType::GrantProgram {
+                program_name,
+                total_budget,
+                duration_days,
+            } => {
                 self.execute_grant_program_production(
                     proposal_id,
                     &program_name,
                     total_budget,
                     duration_days,
-                ).await?
-            },
+                )
+                .await?
+            }
         };
 
         // Compute post-state hash
         let post_state_hash = self.compute_state_hash();
 
         // Update proposal status - safe because we verified it exists at the start
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or_else(|| Error::internal("Proposal disappeared during execution"))?;
-        
-        if matches!(result, ExecutionResult::Success | ExecutionResult::PartialSuccess { .. }) {
+
+        if matches!(
+            result,
+            ExecutionResult::Success | ExecutionResult::PartialSuccess { .. }
+        ) {
             proposal.status = ProposalStatus::Executed;
         } else {
-            proposal.status = ProposalStatus::ExecutionFailed { 
-                reason: format!("{:?}", result)
+            proposal.status = ProposalStatus::ExecutionFailed {
+                reason: format!("{:?}", result),
             };
         }
-        
+
         proposal.executed_at = Some(Utc::now());
         proposal.execution = Some(ExecutionInfo {
             executor: Some(executor.clone()),
@@ -868,18 +917,25 @@ impl ProtocolDaoManager {
         if let Some(metrics) = &self.metrics {
             let mut labels = HashMap::new();
             labels.insert("action_type".to_string(), action_type.to_string());
-            labels.insert("success".to_string(), matches!(result, ExecutionResult::Success).to_string());
-            let _ = metrics.record_counter(
-                "governance_executions_total".to_string(),
-                1.0,
-                labels,
-                "Total governance proposal executions".to_string(),
-            ).await;
+            labels.insert(
+                "success".to_string(),
+                matches!(result, ExecutionResult::Success).to_string(),
+            );
+            let _ = metrics
+                .record_counter(
+                    "governance_executions_total".to_string(),
+                    1.0,
+                    labels,
+                    "Total governance proposal executions".to_string(),
+                )
+                .await;
         }
 
         tracing::info!(
             "✅ Governance proposal {} executed: action={}, success={}",
-            proposal_id, action_type, matches!(result, ExecutionResult::Success)
+            proposal_id,
+            action_type,
+            matches!(result, ExecutionResult::Success)
         );
 
         Ok(result)
@@ -889,24 +945,24 @@ impl ProtocolDaoManager {
     fn compute_state_hash(&self) -> String {
         use blake3::Hasher;
         let mut hasher = Hasher::new();
-        
+
         // Hash treasury state
         hasher.update(&self.treasury.total_balance.to_le_bytes());
         hasher.update(&self.treasury.available_funds.to_le_bytes());
         hasher.update(&self.treasury.reserved_funds.to_le_bytes());
-        
+
         // Hash protocol parameters
         for (key, value) in &self.protocol_parameters {
             hasher.update(key.as_bytes());
             hasher.update(value.as_bytes());
         }
-        
+
         // Hash feature flags
         for (key, value) in &self.feature_flags {
             hasher.update(key.as_bytes());
             hasher.update(&[*value as u8]);
         }
-        
+
         hex::encode(hasher.finalize().as_bytes())
     }
 
@@ -928,49 +984,50 @@ impl ProtocolDaoManager {
         new_value: &str,
     ) -> Result<(ExecutionResult, String)> {
         let parameter_name = format!("{:?}", parameter);
-        
+
         // Submit to chain if client available
         let tx_hash = if let Some(client) = &self.chain_client {
-            let receipt = client.submit_parameter_change(
-                &parameter_name,
-                current_value,
-                new_value,
-                proposal_id,
-            ).await?;
-            
+            let receipt = client
+                .submit_parameter_change(&parameter_name, current_value, new_value, proposal_id)
+                .await?;
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Chain transaction failed: tx_hash={}", receipt.tx_hash)
+                        error: format!("Chain transaction failed: tx_hash={}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             // Wait for confirmation (2 blocks for safety)
             let confirmed = client.wait_for_confirmation(&receipt.tx_hash, 2).await?;
             if !confirmed {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: "Transaction confirmation timeout".to_string()
+                        error: "Transaction confirmation timeout".to_string(),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
         };
-        
+
         // Update local parameter cache
-        self.protocol_parameters.insert(parameter_name.clone(), new_value.to_string());
-        
+        self.protocol_parameters
+            .insert(parameter_name.clone(), new_value.to_string());
+
         tracing::info!(
             "Parameter {} changed: {} → {} (tx: {})",
-            parameter_name, current_value, new_value, tx_hash
+            parameter_name,
+            current_value,
+            new_value,
+            tx_hash
         );
-        
+
         Ok((ExecutionResult::Success, tx_hash))
     }
 
@@ -989,41 +1046,43 @@ impl ProtocolDaoManager {
                     error: format!(
                         "Insufficient treasury funds: requested {}, available {}",
                         amount, self.treasury.available_funds
-                    )
+                    ),
                 },
                 String::new(),
             ));
         }
-        
+
         // Submit to chain if client available
         let tx_hash = if let Some(client) = &self.chain_client {
-            let receipt = client.submit_treasury_transfer(
-                &recipient.0.as_bytes()[..],
-                amount,
-                purpose,
-                &proposal_id.to_string(),
-            ).await?;
-            
+            let receipt = client
+                .submit_treasury_transfer(
+                    &recipient.0.as_bytes()[..],
+                    amount,
+                    purpose,
+                    &proposal_id.to_string(),
+                )
+                .await?;
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Treasury transfer failed: {}", receipt.tx_hash)
+                        error: format!("Treasury transfer failed: {}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             // Wait for confirmation
             let confirmed = client.wait_for_confirmation(&receipt.tx_hash, 2).await?;
             if !confirmed {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: "Transfer confirmation timeout".to_string()
+                        error: "Transfer confirmation timeout".to_string(),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1048,7 +1107,10 @@ impl ProtocolDaoManager {
 
         tracing::info!(
             "Treasury allocation: {} tokens to {:?} for '{}' (tx: {})",
-            amount, recipient, purpose, tx_hash
+            amount,
+            recipient,
+            purpose,
+            tx_hash
         );
 
         Ok((ExecutionResult::Success, tx_hash))
@@ -1065,24 +1127,21 @@ impl ProtocolDaoManager {
         let current_block = self.get_current_block().await?;
         let grace_period_blocks = if is_hard_fork { 14400 } else { 7200 }; // ~2 days or 1 day
         let activation_block = current_block + grace_period_blocks;
-        
+
         let tx_hash = if let Some(client) = &self.chain_client {
-            let receipt = client.submit_protocol_upgrade(
-                version,
-                upgrade_hash,
-                activation_block,
-                is_hard_fork,
-            ).await?;
-            
+            let receipt = client
+                .submit_protocol_upgrade(version, upgrade_hash, activation_block, is_hard_fork)
+                .await?;
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Upgrade scheduling failed: {}", receipt.tx_hash)
+                        error: format!("Upgrade scheduling failed: {}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1090,7 +1149,10 @@ impl ProtocolDaoManager {
 
         tracing::info!(
             "🚀 Protocol upgrade scheduled: v{} (hash: {}) activating at block {} (hard_fork: {})",
-            version, upgrade_hash, activation_block, is_hard_fork
+            version,
+            upgrade_hash,
+            activation_block,
+            is_hard_fork
         );
 
         Ok((ExecutionResult::Success, tx_hash))
@@ -1105,7 +1167,7 @@ impl ProtocolDaoManager {
         let action_str = format!("{:?}", action_type);
         let mut params = HashMap::new();
         params.insert("justification".to_string(), justification.to_string());
-        
+
         // Add action-specific parameters
         match &action_type {
             EmergencyActionType::CircuitBreaker { module } => {
@@ -1120,19 +1182,19 @@ impl ProtocolDaoManager {
             }
             _ => {}
         }
-        
+
         let tx_hash = if let Some(client) = &self.chain_client {
             let receipt = client.submit_emergency_action(&action_str, &params).await?;
-            
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Emergency action failed: {}", receipt.tx_hash)
+                        error: format!("Emergency action failed: {}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1153,7 +1215,8 @@ impl ProtocolDaoManager {
                 tracing::warn!("⚠️ Circuit breaker activated for module: {}", module);
             }
             EmergencyActionType::EmergencyOverride { parameter, value } => {
-                self.protocol_parameters.insert(parameter.clone(), value.clone());
+                self.protocol_parameters
+                    .insert(parameter.clone(), value.clone());
                 tracing::warn!("⚠️ Emergency override: {} = {}", parameter, value);
             }
             EmergencyActionType::ForceUpgrade { version } => {
@@ -1172,16 +1235,16 @@ impl ProtocolDaoManager {
     ) -> Result<(ExecutionResult, String)> {
         let tx_hash = if let Some(client) = &self.chain_client {
             let receipt = client.submit_feature_toggle(feature_name, enable).await?;
-            
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Feature toggle failed: {}", receipt.tx_hash)
+                        error: format!("Feature toggle failed: {}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1192,7 +1255,9 @@ impl ProtocolDaoManager {
 
         tracing::info!(
             "Feature '{}' toggled: {} (tx: {})",
-            feature_name, if enable { "enabled" } else { "disabled" }, tx_hash
+            feature_name,
+            if enable { "enabled" } else { "disabled" },
+            tx_hash
         );
 
         Ok((ExecutionResult::Success, tx_hash))
@@ -1213,7 +1278,7 @@ impl ProtocolDaoManager {
                     error: format!(
                         "Insufficient treasury funds for grant program: requested {}, available {}",
                         total_budget, self.treasury.available_funds
-                    )
+                    ),
                 },
                 String::new(),
             ));
@@ -1225,18 +1290,20 @@ impl ProtocolDaoManager {
             params.insert("program_name".to_string(), program_name.to_string());
             params.insert("budget".to_string(), total_budget.to_string());
             params.insert("duration_days".to_string(), duration_days.to_string());
-            
-            let receipt = client.submit_emergency_action("CreateGrantProgram", &params).await?;
-            
+
+            let receipt = client
+                .submit_emergency_action("CreateGrantProgram", &params)
+                .await?;
+
             if !receipt.success {
                 return Ok((
                     ExecutionResult::Failed {
-                        error: format!("Grant program creation failed: {}", receipt.tx_hash)
+                        error: format!("Grant program creation failed: {}", receipt.tx_hash),
                     },
                     receipt.tx_hash,
                 ));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1267,7 +1334,11 @@ impl ProtocolDaoManager {
 
         tracing::info!(
             "📋 Grant program '{}' created: budget={}, duration={}d, ends at block {} (tx: {})",
-            program_name, total_budget, duration_days, end_block, tx_hash
+            program_name,
+            total_budget,
+            duration_days,
+            end_block,
+            tx_hash
         );
 
         Ok((ExecutionResult::Success, tx_hash))
@@ -1283,18 +1354,25 @@ impl ProtocolDaoManager {
     ) -> Result<String> {
         // Get current block first before mutable borrow
         let current_block = self.get_current_block().await?;
-        
+
         // Get program info for validation
         let (is_active, end_block, remaining_budget, program_name) = {
-            let program = self.grant_programs.get(&program_id)
+            let program = self
+                .grant_programs
+                .get(&program_id)
                 .ok_or_else(|| Error::validation("Grant program not found"))?;
-            (program.is_active, program.end_block, program.remaining_budget, program.program_name.clone())
+            (
+                program.is_active,
+                program.end_block,
+                program.remaining_budget,
+                program.program_name.clone(),
+            )
         };
-        
+
         if !is_active {
             return Err(Error::validation("Grant program is not active"));
         }
-        
+
         if current_block > end_block {
             // Mark as inactive
             if let Some(program) = self.grant_programs.get_mut(&program_id) {
@@ -1302,30 +1380,32 @@ impl ProtocolDaoManager {
             }
             return Err(Error::validation("Grant program has expired"));
         }
-        
+
         if amount > remaining_budget {
             return Err(Error::validation(format!(
                 "Insufficient program budget: requested {}, remaining {}",
                 amount, remaining_budget
             )));
         }
-        
+
         // Submit disbursement to chain
         let tx_hash = if let Some(client) = &self.chain_client {
-            let receipt = client.submit_treasury_transfer(
-                &recipient.0.as_bytes()[..],
-                amount,
-                &format!("Grant: {} - {}", program_name, purpose),
-                &program_id.to_string(),
-            ).await?;
-            
+            let receipt = client
+                .submit_treasury_transfer(
+                    &recipient.0.as_bytes()[..],
+                    amount,
+                    &format!("Grant: {} - {}", program_name, purpose),
+                    &program_id.to_string(),
+                )
+                .await?;
+
             if !receipt.success {
                 return Err(Error::chain(format!(
                     "Grant disbursement failed: {}",
                     receipt.tx_hash
                 )));
             }
-            
+
             receipt.tx_hash
         } else {
             format!("local_{}", Uuid::new_v4())
@@ -1333,9 +1413,11 @@ impl ProtocolDaoManager {
 
         // Record disbursement - now we can mutate
         // Safe because we verified it exists earlier
-        let program = self.grant_programs.get_mut(&program_id)
+        let program = self
+            .grant_programs
+            .get_mut(&program_id)
             .ok_or_else(|| Error::internal("Grant program disappeared during disbursement"))?;
-        
+
         let disbursement = GrantDisbursement {
             recipient: recipient.clone(),
             amount,
@@ -1353,7 +1435,10 @@ impl ProtocolDaoManager {
 
         tracing::info!(
             "💰 Grant disbursed: {} tokens to {:?} from program '{}' (tx: {})",
-            amount, recipient, program.program_name, tx_hash
+            amount,
+            recipient,
+            program.program_name,
+            tx_hash
         );
 
         Ok(tx_hash)
@@ -1362,9 +1447,11 @@ impl ProtocolDaoManager {
     /// Get effective voting power including delegations
     fn get_effective_voting_power(&self, user: &UserId) -> u64 {
         let own_power = self.voting_power.get(user).copied().unwrap_or(0);
-        
+
         // Add delegated power
-        let delegated_power: u64 = self.delegations.values()
+        let delegated_power: u64 = self
+            .delegations
+            .values()
             .filter(|d| &d.delegate == user)
             .filter(|d| d.expires_at.map_or(true, |exp| Utc::now() < exp))
             .map(|d| d.delegated_power)
@@ -1391,7 +1478,8 @@ impl ProtocolDaoManager {
 
     /// Get all active proposals
     pub fn get_active_proposals(&self) -> Vec<&ProtocolProposal> {
-        self.proposals.values()
+        self.proposals
+            .values()
             .filter(|p| p.status == ProposalStatus::Active || p.status == ProposalStatus::Pending)
             .collect()
     }
@@ -1407,13 +1495,18 @@ impl ProtocolDaoManager {
         if new_signers.is_empty() {
             return Err(Error::validation("Emergency multisig cannot be empty"));
         }
-        
+
         if new_signers.len() < 3 {
-            return Err(Error::validation("Emergency multisig requires at least 3 signers"));
+            return Err(Error::validation(
+                "Emergency multisig requires at least 3 signers",
+            ));
         }
 
         // Check for duplicates
-        let unique_count = new_signers.iter().collect::<std::collections::HashSet<_>>().len();
+        let unique_count = new_signers
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
         if unique_count != new_signers.len() {
             return Err(Error::validation("Duplicate signers in emergency multisig"));
         }
@@ -1475,22 +1568,24 @@ mod tests {
     fn test_submit_proposal() {
         let mut dao = ProtocolDaoManager::new(vec![]);
         let proposer = create_test_user();
-        
+
         // Set voting power
         dao.set_voting_power(proposer.clone(), 2000);
 
-        let proposal_id = dao.submit_proposal(
-            proposer,
-            ProposalType::ParameterChange {
-                parameter: ProtocolParameter::BlockTime,
-                current_value: "6s".to_string(),
-                proposed_value: "5s".to_string(),
-            },
-            "Reduce Block Time".to_string(),
-            "Proposal to reduce block time for faster finality".to_string(),
-            "Benchmarks show 5s is safe".to_string(),
-            7,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer,
+                ProposalType::ParameterChange {
+                    parameter: ProtocolParameter::BlockTime,
+                    current_value: "6s".to_string(),
+                    proposed_value: "5s".to_string(),
+                },
+                "Reduce Block Time".to_string(),
+                "Proposal to reduce block time for faster finality".to_string(),
+                "Benchmarks show 5s is safe".to_string(),
+                7,
+            )
+            .unwrap();
 
         assert!(dao.get_proposal(proposal_id).is_some());
     }
@@ -1506,18 +1601,20 @@ mod tests {
         dao.set_voting_power(voter1.clone(), 1000);
         dao.set_voting_power(voter2.clone(), 1500);
 
-        let proposal_id = dao.submit_proposal(
-            proposer,
-            ProposalType::ParameterChange {
-                parameter: ProtocolParameter::TransactionFee,
-                current_value: "100".to_string(),
-                proposed_value: "50".to_string(),
-            },
-            "Lower Fees".to_string(),
-            "Make the network more accessible".to_string(),
-            "Current fees are too high".to_string(),
-            7,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer,
+                ProposalType::ParameterChange {
+                    parameter: ProtocolParameter::TransactionFee,
+                    current_value: "100".to_string(),
+                    proposed_value: "50".to_string(),
+                },
+                "Lower Fees".to_string(),
+                "Make the network more accessible".to_string(),
+                "Current fees are too high".to_string(),
+                7,
+            )
+            .unwrap();
 
         // Activate proposal manually for testing
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
@@ -1526,7 +1623,8 @@ mod tests {
 
         // Cast votes
         dao.cast_vote(proposal_id, voter1, VoteType::For).unwrap();
-        dao.cast_vote(proposal_id, voter2, VoteType::Against).unwrap();
+        dao.cast_vote(proposal_id, voter2, VoteType::Against)
+            .unwrap();
 
         let proposal = dao.get_proposal(proposal_id).unwrap();
         assert!(proposal.voting.total_votes_for > 0);
@@ -1541,7 +1639,8 @@ mod tests {
 
         dao.set_voting_power(delegator.clone(), 1000);
 
-        dao.delegate_voting_power(delegator.clone(), delegate.clone(), Some(30)).unwrap();
+        dao.delegate_voting_power(delegator.clone(), delegate.clone(), Some(30))
+            .unwrap();
 
         let effective_power = dao.get_effective_voting_power(&delegate);
         assert_eq!(effective_power, 1000);
@@ -1558,21 +1657,23 @@ mod tests {
 
         let proposer = create_test_user();
         let recipient = create_test_user();
-        
+
         dao.set_voting_power(proposer.clone(), 2000);
 
-        let proposal_id = dao.submit_proposal(
-            proposer.clone(),
-            ProposalType::TreasuryAllocation {
-                amount: 1000,
-                recipient: recipient.clone(),
-                purpose: "Development grant".to_string(),
-            },
-            "Dev Grant".to_string(),
-            "Fund development work".to_string(),
-            "Need more developers".to_string(),
-            7,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer.clone(),
+                ProposalType::TreasuryAllocation {
+                    amount: 1000,
+                    recipient: recipient.clone(),
+                    purpose: "Development grant".to_string(),
+                },
+                "Dev Grant".to_string(),
+                "Fund development work".to_string(),
+                "Need more developers".to_string(),
+                7,
+            )
+            .unwrap();
 
         // Skip to passed status
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
@@ -1590,21 +1691,23 @@ mod tests {
 
         let proposer = create_test_user();
         let recipient = create_test_user();
-        
+
         dao.set_voting_power(proposer.clone(), 2000);
 
-        let proposal_id = dao.submit_proposal(
-            proposer.clone(),
-            ProposalType::TreasuryAllocation {
-                amount: 1000,
-                recipient: recipient.clone(),
-                purpose: "Development grant".to_string(),
-            },
-            "Dev Grant".to_string(),
-            "Fund development work".to_string(),
-            "Need more developers".to_string(),
-            7,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer.clone(),
+                ProposalType::TreasuryAllocation {
+                    amount: 1000,
+                    recipient: recipient.clone(),
+                    purpose: "Development grant".to_string(),
+                },
+                "Dev Grant".to_string(),
+                "Fund development work".to_string(),
+                "Need more developers".to_string(),
+                7,
+            )
+            .unwrap();
 
         // Skip to passed status
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
@@ -1619,20 +1722,22 @@ mod tests {
     async fn test_emergency_action() {
         let mut dao = ProtocolDaoManager::new(vec![]);
         let proposer = create_test_user();
-        
+
         dao.set_voting_power(proposer.clone(), 2000);
 
-        let proposal_id = dao.submit_proposal(
-            proposer.clone(),
-            ProposalType::EmergencyAction {
-                action_type: EmergencyActionType::PauseProtocol,
-                justification: "Security incident detected".to_string(),
-            },
-            "Emergency Pause".to_string(),
-            "Pause protocol due to security issue".to_string(),
-            "Active exploit detected".to_string(),
-            1,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer.clone(),
+                ProposalType::EmergencyAction {
+                    action_type: EmergencyActionType::PauseProtocol,
+                    justification: "Security incident detected".to_string(),
+                },
+                "Emergency Pause".to_string(),
+                "Pause protocol due to security issue".to_string(),
+                "Active exploit detected".to_string(),
+                1,
+            )
+            .unwrap();
 
         // Skip to passed status
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
@@ -1648,20 +1753,22 @@ mod tests {
     async fn test_feature_toggle() {
         let mut dao = ProtocolDaoManager::new(vec![]);
         let proposer = create_test_user();
-        
+
         dao.set_voting_power(proposer.clone(), 2000);
 
-        let proposal_id = dao.submit_proposal(
-            proposer.clone(),
-            ProposalType::FeatureToggle {
-                feature_name: "advanced_encryption".to_string(),
-                enable: true,
-            },
-            "Enable Advanced Encryption".to_string(),
-            "Enable the new encryption feature".to_string(),
-            "Testing complete".to_string(),
-            7,
-        ).unwrap();
+        let proposal_id = dao
+            .submit_proposal(
+                proposer.clone(),
+                ProposalType::FeatureToggle {
+                    feature_name: "advanced_encryption".to_string(),
+                    enable: true,
+                },
+                "Enable Advanced Encryption".to_string(),
+                "Enable the new encryption feature".to_string(),
+                "Testing complete".to_string(),
+                7,
+            )
+            .unwrap();
 
         // Skip to passed status
         let proposal = dao.proposals.get_mut(&proposal_id).unwrap();
@@ -1669,7 +1776,7 @@ mod tests {
 
         let result = dao.execute_proposal(proposal_id, proposer).await.unwrap();
         assert!(matches!(result, ExecutionResult::Success));
-        
+
         // Verify feature flag is set
         assert_eq!(dao.feature_flags.get("advanced_encryption"), Some(&true));
     }

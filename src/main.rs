@@ -10388,7 +10388,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                     "Votes: {} for, {} against",
                     proposal.votes_for, proposal.votes_against
                 );
-                println!("Quorum: {}%", proposal.quorum_percentage);
+                println!("Quorum: {:.2}%", proposal.quorum_bps as f64 / 100.0);
                 println!(
                     "Deadline: {}",
                     proposal.voting_deadline.format("%Y-%m-%d %H:%M:%S UTC")
@@ -10424,7 +10424,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                     println!("\nVoting:");
                     println!("  For: {}", proposal.votes_for);
                     println!("  Against: {}", proposal.votes_against);
-                    println!("  Quorum: {}%", proposal.quorum_percentage);
+                    println!("  Quorum: {:.2}%", proposal.quorum_bps as f64 / 100.0);
                     println!(
                         "  Deadline: {}",
                         proposal.voting_deadline.format("%Y-%m-%d %H:%M:%S UTC")
@@ -10580,7 +10580,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
             if let Some(proposal) = manager.get_proposal(&id) {
                 println!("Votes For: {}", proposal.votes_for);
                 println!("Votes Against: {}", proposal.votes_against);
-                println!("Quorum: {}%", proposal.quorum_percentage);
+                println!("Quorum: {:.2}%", proposal.quorum_bps as f64 / 100.0);
             }
 
             Ok(())
