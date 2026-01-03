@@ -32,12 +32,15 @@
 //! - Higher stake increases selection probability
 //! - Stake locked during active participation
 
+use crate::relay_network::StakingBackend;
 use dchat_core::error::{Error, Result};
+use dchat_core::types::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// Minimum stake required to participate as relay (in smallest units)
 pub const MIN_RELAY_STAKE: u64 = 10_000_000_000_000; // 10,000 DCHAT
@@ -294,6 +297,10 @@ pub struct RelayIncentivesManager {
     slashing_history: Arc<RwLock<VecDeque<SlashingEvent>>>,
     /// Region statistics
     region_stats: Arc<RwLock<HashMap<GeoRegion, usize>>>,
+    /// Staking backend for on-chain reward distribution
+    staking_backend: Option<Arc<dyn StakingBackend>>,
+    /// Mapping of relay_id bytes to operator UserId
+    operator_map: Arc<RwLock<HashMap<[u8; 32], UserId>>>,
 }
 
 impl RelayIncentivesManager {
@@ -306,7 +313,40 @@ impl RelayIncentivesManager {
             pending_rewards: Arc::new(RwLock::new(HashMap::new())),
             slashing_history: Arc::new(RwLock::new(VecDeque::new())),
             region_stats: Arc::new(RwLock::new(HashMap::new())),
+            staking_backend: None,
+            operator_map: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Create incentives manager with staking backend for on-chain distribution
+    pub fn with_staking_backend(staking_backend: Arc<dyn StakingBackend>) -> Self {
+        Self {
+            stakes: Arc::new(RwLock::new(HashMap::new())),
+            performance_history: Arc::new(RwLock::new(HashMap::new())),
+            reward_history: Arc::new(RwLock::new(HashMap::new())),
+            pending_rewards: Arc::new(RwLock::new(HashMap::new())),
+            slashing_history: Arc::new(RwLock::new(VecDeque::new())),
+            region_stats: Arc::new(RwLock::new(HashMap::new())),
+            staking_backend: Some(staking_backend),
+            operator_map: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Set the staking backend after construction
+    pub fn set_staking_backend(&mut self, staking_backend: Arc<dyn StakingBackend>) {
+        self.staking_backend = Some(staking_backend);
+    }
+
+    /// Register a relay's operator for reward distribution
+    pub async fn register_operator(&self, relay_id: [u8; 32], operator: UserId) {
+        let mut operators = self.operator_map.write().await;
+        operators.insert(relay_id, operator);
+    }
+
+    /// Get the operator for a relay
+    pub async fn get_operator(&self, relay_id: &[u8; 32]) -> Option<UserId> {
+        let operators = self.operator_map.read().await;
+        operators.get(relay_id).cloned()
     }
 
     /// Register a relay stake
@@ -431,12 +471,16 @@ impl RelayIncentivesManager {
     }
 
     /// Process rewards for completed epoch
+    ///
+    /// If a staking backend is configured, rewards are distributed on-chain
+    /// to each relay operator. Otherwise, rewards are just tracked internally.
     pub async fn process_epoch_rewards(&self, epoch_id: u64) -> Result<Vec<EpochReward>> {
         let stakes = self.stakes.read().await;
         let relay_ids: Vec<_> = stakes.keys().copied().collect();
         drop(stakes);
 
         let mut rewards = Vec::new();
+        let mut distribution_results = Vec::new();
 
         for relay_id in relay_ids {
             let reward = self.calculate_epoch_reward(relay_id, epoch_id).await?;
@@ -455,8 +499,58 @@ impl RelayIncentivesManager {
                     stake.total_rewards += reward.total;
                 }
 
+                // Distribute on-chain if staking backend is configured
+                if let Some(ref backend) = self.staking_backend {
+                    if let Some(operator) = self.get_operator(&relay_id).await {
+                        match backend
+                            .distribute_reward(&operator, reward.total, epoch_id)
+                            .await
+                        {
+                            Ok(tx_id) => {
+                                tracing::info!(
+                                    "💰 Epoch {} reward distributed: {} tokens to {} (tx: {})",
+                                    epoch_id,
+                                    reward.total,
+                                    operator,
+                                    tx_id
+                                );
+                                distribution_results.push((relay_id, Ok(tx_id)));
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to distribute epoch {} reward to {}: {}",
+                                    epoch_id,
+                                    operator,
+                                    e
+                                );
+                                distribution_results.push((relay_id, Err(e.to_string())));
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            "No operator registered for relay {:?}, skipping reward distribution",
+                            hex::encode(&relay_id[..8])
+                        );
+                    }
+                }
+
                 rewards.push(reward);
             }
+        }
+
+        // Log distribution summary
+        if !distribution_results.is_empty() {
+            let successful = distribution_results
+                .iter()
+                .filter(|(_, r)| r.is_ok())
+                .count();
+            let failed = distribution_results.len() - successful;
+            tracing::info!(
+                "📊 Epoch {} reward distribution complete: {} successful, {} failed",
+                epoch_id,
+                successful,
+                failed
+            );
         }
 
         Ok(rewards)

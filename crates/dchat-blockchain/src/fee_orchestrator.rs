@@ -189,6 +189,48 @@ pub enum OperationState {
 }
 
 // =============================================================================
+// ESCROW SUPPORT
+// =============================================================================
+
+/// Status of an escrow hold
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EscrowStatus {
+    /// Funds are held, pending successful operation
+    Held,
+    /// Funds were released to the recipient
+    Released,
+    /// Funds were refunded to the payer
+    Refunded,
+}
+
+/// Escrow record for held funds (e.g., message fees to relays)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscrowRecord {
+    /// Unique escrow ID (derived from operation_id)
+    pub escrow_id: [u8; 32],
+    /// Associated operation ID
+    pub operation_id: [u8; 32],
+    /// Payer who funded the escrow
+    pub payer: UserId,
+    /// Intended recipient (e.g., relay)
+    pub recipient: UserId,
+    /// Amount held
+    pub amount: u64,
+    /// Escrow transaction ID (debit from payer to escrow account)
+    pub escrow_tx_id: Uuid,
+    /// Current status
+    pub status: EscrowStatus,
+    /// Created timestamp
+    pub created_at: DateTime<Utc>,
+    /// Settlement timestamp
+    pub settled_at: Option<DateTime<Utc>>,
+    /// Settlement transaction ID (release or refund)
+    pub settlement_tx_id: Option<Uuid>,
+    /// Context label for logging
+    pub context: String,
+}
+
+// =============================================================================
 // FEE ORCHESTRATOR
 // =============================================================================
 
@@ -209,6 +251,8 @@ pub struct FeeOrchestrator {
     config: FeeConfig,
     /// Idempotency state (operation_id -> state)
     idempotency_state: Arc<RwLock<HashMap<[u8; 32], OperationState>>>,
+    /// Escrow state (escrow_id -> record)
+    escrow_state: Arc<RwLock<HashMap<[u8; 32], EscrowRecord>>>,
     /// Protocol sinks for pool addresses
     sinks: ProtocolSinks,
 }
@@ -225,6 +269,7 @@ impl FeeOrchestrator {
             fee_distribution,
             config,
             idempotency_state: Arc::new(RwLock::new(HashMap::new())),
+            escrow_state: Arc::new(RwLock::new(HashMap::new())),
             sinks: ProtocolSinks::default(),
         }
     }
@@ -621,6 +666,205 @@ impl FeeOrchestrator {
                 OperationState::Refunded { refunded_at, .. } => *refunded_at,
             };
             now.signed_duration_since(timestamp) < max_age
+        });
+    }
+
+    // =========================================================================
+    // ESCROW MANAGEMENT
+    // =========================================================================
+
+    /// Create an escrow hold for a pending operation
+    ///
+    /// This debits the payer and holds funds until the operation completes.
+    /// On success, call `release_escrow` to pay the recipient.
+    /// On failure, call `refund_escrow` to return funds to payer.
+    pub fn create_escrow(
+        &self,
+        operation_id: [u8; 32],
+        payer: &UserId,
+        recipient: &UserId,
+        amount: u64,
+        context: &str,
+    ) -> Result<EscrowRecord> {
+        // Generate deterministic escrow ID
+        let escrow_id = Self::compute_escrow_id(&operation_id, payer, recipient);
+
+        // Check for existing escrow (idempotency)
+        {
+            let escrows = self.escrow_state.read().unwrap();
+            if let Some(existing) = escrows.get(&escrow_id) {
+                tracing::info!(
+                    "Escrow {} already exists, returning cached record",
+                    hex::encode(&escrow_id[..8])
+                );
+                return Ok(existing.clone());
+            }
+        }
+
+        // Debit payer (transfer to protocol escrow account)
+        let escrow_account = UserId::default(); // Protocol escrow account
+        let escrow_tx_id = self
+            .currency_chain
+            .transfer(payer, &escrow_account, amount)
+            .map_err(|e| Error::network(format!("Escrow debit failed: {}", e)))?;
+
+        let record = EscrowRecord {
+            escrow_id,
+            operation_id,
+            payer: payer.clone(),
+            recipient: recipient.clone(),
+            amount,
+            escrow_tx_id,
+            status: EscrowStatus::Held,
+            created_at: Utc::now(),
+            settled_at: None,
+            settlement_tx_id: None,
+            context: context.to_string(),
+        };
+
+        // Store escrow
+        {
+            let mut escrows = self.escrow_state.write().unwrap();
+            escrows.insert(escrow_id, record.clone());
+        }
+
+        tracing::info!(
+            "💰 Created escrow {}: {} tokens from {} for {} ({})",
+            hex::encode(&escrow_id[..8]),
+            amount,
+            payer,
+            recipient,
+            context
+        );
+
+        Ok(record)
+    }
+
+    /// Release escrow funds to the recipient
+    pub fn release_escrow(&self, escrow_id: &[u8; 32]) -> Result<EscrowRecord> {
+        let mut escrows = self.escrow_state.write().unwrap();
+        let record = escrows.get_mut(escrow_id).ok_or_else(|| {
+            Error::NotFound(format!(
+                "Escrow not found: {:?}",
+                hex::encode(&escrow_id[..8])
+            ))
+        })?;
+
+        if record.status != EscrowStatus::Held {
+            return Err(Error::validation(format!(
+                "Escrow {} is not held (status: {:?})",
+                hex::encode(&escrow_id[..8]),
+                record.status
+            )));
+        }
+
+        // Transfer from escrow account to recipient
+        let escrow_account = UserId::default();
+        let settlement_tx_id = self
+            .currency_chain
+            .transfer(&escrow_account, &record.recipient, record.amount)
+            .map_err(|e| Error::network(format!("Escrow release failed: {}", e)))?;
+
+        record.status = EscrowStatus::Released;
+        record.settled_at = Some(Utc::now());
+        record.settlement_tx_id = Some(settlement_tx_id);
+
+        tracing::info!(
+            "✅ Released escrow {}: {} tokens to {} (tx: {})",
+            hex::encode(&escrow_id[..8]),
+            record.amount,
+            record.recipient,
+            settlement_tx_id
+        );
+
+        Ok(record.clone())
+    }
+
+    /// Refund escrow funds to the payer
+    pub fn refund_escrow(&self, escrow_id: &[u8; 32], reason: &str) -> Result<EscrowRecord> {
+        let mut escrows = self.escrow_state.write().unwrap();
+        let record = escrows.get_mut(escrow_id).ok_or_else(|| {
+            Error::NotFound(format!(
+                "Escrow not found: {:?}",
+                hex::encode(&escrow_id[..8])
+            ))
+        })?;
+
+        if record.status != EscrowStatus::Held {
+            return Err(Error::validation(format!(
+                "Escrow {} is not held (status: {:?})",
+                hex::encode(&escrow_id[..8]),
+                record.status
+            )));
+        }
+
+        // Transfer from escrow account back to payer
+        let escrow_account = UserId::default();
+        let settlement_tx_id = self
+            .currency_chain
+            .transfer(&escrow_account, &record.payer, record.amount)
+            .map_err(|e| Error::network(format!("Escrow refund failed: {}", e)))?;
+
+        record.status = EscrowStatus::Refunded;
+        record.settled_at = Some(Utc::now());
+        record.settlement_tx_id = Some(settlement_tx_id);
+
+        tracing::info!(
+            "↩️ Refunded escrow {}: {} tokens to {} (reason: {}, tx: {})",
+            hex::encode(&escrow_id[..8]),
+            record.amount,
+            record.payer,
+            reason,
+            settlement_tx_id
+        );
+
+        Ok(record.clone())
+    }
+
+    /// Get an escrow record by ID
+    pub fn get_escrow(&self, escrow_id: &[u8; 32]) -> Option<EscrowRecord> {
+        self.escrow_state.read().unwrap().get(escrow_id).cloned()
+    }
+
+    /// Get all escrows for an operation
+    pub fn get_escrows_for_operation(&self, operation_id: &[u8; 32]) -> Vec<EscrowRecord> {
+        self.escrow_state
+            .read()
+            .unwrap()
+            .values()
+            .filter(|e| &e.operation_id == operation_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Compute deterministic escrow ID from operation parameters
+    pub fn compute_escrow_id(
+        operation_id: &[u8; 32],
+        payer: &UserId,
+        recipient: &UserId,
+    ) -> [u8; 32] {
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(operation_id);
+        data.extend_from_slice(payer.0.as_bytes());
+        data.extend_from_slice(recipient.0.as_bytes());
+        *blake3::hash(&data).as_bytes()
+    }
+
+    /// Cleanup settled escrows older than max_age
+    pub fn cleanup_expired_escrows(&self, max_age: chrono::Duration) {
+        let now = Utc::now();
+        let mut escrows = self.escrow_state.write().unwrap();
+        escrows.retain(|_, record| {
+            // Keep held escrows regardless of age
+            if record.status == EscrowStatus::Held {
+                return true;
+            }
+            // Remove settled escrows older than max_age
+            if let Some(settled_at) = record.settled_at {
+                now.signed_duration_since(settled_at) < max_age
+            } else {
+                true
+            }
         });
     }
 }

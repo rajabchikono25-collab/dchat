@@ -1,14 +1,19 @@
 use crate::{ClientConfig, NetworkEvent, NetworkManager, Result, SdkError};
+use blake3;
 use dchat_blockchain::client::{BlockchainClient, BlockchainConfig};
+use dchat_blockchain::currency_chain::CurrencyChainClient;
+use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionManager};
+use dchat_blockchain::fee_orchestrator::{FeeConfig, FeeOrchestrator};
+use dchat_chain::TransactionType;
 use dchat_crypto::keys::KeyPair;
 use dchat_identity::Identity;
 use dchat_messaging::types::Message;
 use dchat_storage::{Database, DatabaseConfig, MessageRow};
 use libp2p::Multiaddr;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use blake3;
 use x25519_dalek;
 
 /// High-level dchat client
@@ -21,6 +26,10 @@ pub struct Client {
     network: Arc<RwLock<Option<NetworkManager>>>,
     noise_keypair: Arc<snow::Keypair>,
     blockchain_client: Arc<BlockchainClient>,
+    /// Fee orchestrator for fee-gated operations (None = fees disabled/testing mode)
+    fee_orchestrator: Option<Arc<FeeOrchestrator>>,
+    /// Nonce counter for deterministic operation IDs
+    client_nonce: Arc<AtomicU64>,
 }
 
 impl Client {
@@ -76,7 +85,7 @@ impl Client {
             tx_timeout_seconds: 60,
             max_retries: 3,
         };
-        
+
         let blockchain_client = BlockchainClient::new(blockchain_config)
             .map_err(|e| SdkError::Network(format!("Failed to create blockchain client: {}", e)))?;
 
@@ -89,11 +98,50 @@ impl Client {
             network: Arc::new(RwLock::new(None)),
             noise_keypair,
             blockchain_client: Arc::new(blockchain_client),
+            fee_orchestrator: None, // Fees disabled by default, can be enabled via set_fee_orchestrator
+            client_nonce: Arc::new(AtomicU64::new(0)),
         })
     }
 
+    /// Set the fee orchestrator for fee-gated operations
+    ///
+    /// When set, all message sends will go through the fee orchestrator
+    /// which ensures fees are charged before blockchain submission.
+    /// This is required for production usage.
+    pub fn set_fee_orchestrator(&mut self, orchestrator: Arc<FeeOrchestrator>) {
+        self.fee_orchestrator = Some(orchestrator);
+    }
+
+    /// Create a default fee orchestrator using the provided currency chain client
+    ///
+    /// This is a convenience method for production setups where you have
+    /// a currency chain client already configured.
+    pub fn create_fee_orchestrator(
+        currency_chain: Arc<CurrencyChainClient>,
+    ) -> Arc<FeeOrchestrator> {
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+        fee_distribution.start_block(1, 1_000_000_000);
+
+        Arc::new(FeeOrchestrator::new(
+            currency_chain,
+            fee_distribution,
+            FeeConfig::default(),
+        ))
+    }
+
+    /// Check if fee orchestration is enabled
+    pub fn is_fee_gated(&self) -> bool {
+        self.fee_orchestrator.is_some()
+    }
+
+    /// Get the next nonce for operation ID generation
+    fn next_nonce(&self) -> u64 {
+        self.client_nonce.fetch_add(1, Ordering::SeqCst)
+    }
+
     /// Connect to the dchat network
-    /// 
+    ///
     /// Initializes the libp2p network stack with:
     /// - Kademlia DHT for peer discovery
     /// - Noise Protocol for encryption
@@ -108,7 +156,7 @@ impl Client {
 
         // Initialize NetworkManager with our keypair
         let network_manager = NetworkManager::new(&self.keypair).await?;
-        
+
         tracing::info!("Local peer ID: {}", network_manager.local_peer_id());
         tracing::debug!(
             "X25519 public key: {}",
@@ -116,11 +164,14 @@ impl Client {
         );
 
         // Parse bootstrap peers from config
-        let bootstrap_addrs: Vec<Multiaddr> = self.config.network.bootstrap_peers
+        let bootstrap_addrs: Vec<Multiaddr> = self
+            .config
+            .network
+            .bootstrap_peers
             .iter()
             .filter_map(|s| Multiaddr::from_str(s).ok())
             .collect();
-        
+
         tracing::debug!(
             "Bootstrap peers: {} configured, {} valid",
             self.config.network.bootstrap_peers.len(),
@@ -129,21 +180,19 @@ impl Client {
 
         // Connect to network
         network_manager.connect(bootstrap_addrs).await?;
-        
+
         // Store network manager
         *self.network.write().await = Some(network_manager);
 
         tracing::info!("Successfully connected to dchat network");
-        tracing::info!(
-            "DHT bootstrap in progress (may take ~30s for full connectivity)"
-        );
+        tracing::info!("DHT bootstrap in progress (may take ~30s for full connectivity)");
 
         *connected = true;
         Ok(())
     }
 
     /// Disconnect from the network
-    /// 
+    ///
     /// Performs graceful shutdown with timeout to ensure proper cleanup of:
     /// - libp2p swarm (when integrated)
     /// - Active connections
@@ -158,10 +207,8 @@ impl Client {
         tracing::info!("Disconnecting from dchat network");
 
         // Perform graceful shutdown with 30-second timeout
-        let shutdown_result = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            self.perform_shutdown()
-        ).await;
+        let shutdown_result =
+            tokio::time::timeout(std::time::Duration::from_secs(30), self.perform_shutdown()).await;
 
         match shutdown_result {
             Ok(Ok(())) => {
@@ -201,14 +248,14 @@ impl Client {
         // The Noise keypair contains our X25519 private key material
         // Since noise_keypair is Arc<snow::Keypair>, we clone the inner data for zeroing
         tracing::debug!("Zeroing sensitive session data from memory");
-        
+
         // Zero out Noise private key if we have exclusive access
         // Note: Arc prevents direct mutation, but the underlying snow session keys
         // are zeroed when the session is dropped. For additional security,
         // we ensure no references remain by dropping them explicitly.
         // In production, snow::Keypair private key material should be wrapped
         // in a zeroizing container. For now, we document the security requirement.
-        // 
+        //
         // The keypair field is not mutated here because KeyPair uses Ed25519
         // which may be needed for reconnection. Session-specific keys like
         // Noise handshake ephemeral keys are zeroed automatically by snow.
@@ -231,7 +278,7 @@ impl Client {
     }
 
     /// Poll for network events
-    /// 
+    ///
     /// Returns the next network event if available
     pub async fn poll_network_event(&self) -> Option<NetworkEvent> {
         if let Some(network) = self.network.read().await.as_ref() {
@@ -243,15 +290,157 @@ impl Client {
 
     /// Get the local peer ID (if connected)
     pub async fn local_peer_id(&self) -> Option<libp2p::PeerId> {
-        self.network.read().await.as_ref().map(|n| n.local_peer_id())
+        self.network
+            .read()
+            .await
+            .as_ref()
+            .map(|n| n.local_peer_id())
     }
 
     /// Send a text message to a specific recipient
-    /// 
+    ///
     /// # Arguments
     /// * `recipient` - The UserId of the message recipient
     /// * `content` - The message content to send
-    pub async fn send_message(&self, recipient: dchat_core::types::UserId, content: impl Into<String>) -> Result<()> {
+    ///
+    /// # Fee Gating
+    /// When a fee orchestrator is configured, fees are charged before blockchain submission.
+    /// If fee charging fails, the message is not sent.
+    pub async fn send_message(
+        &self,
+        recipient: dchat_core::types::UserId,
+        content: impl Into<String>,
+    ) -> Result<()> {
+        if self.is_fee_gated() {
+            self.send_message_fee_gated(recipient, content).await
+        } else {
+            self.send_message_direct(recipient, content).await
+        }
+    }
+
+    /// Send a message with fee gating (production path)
+    async fn send_message_fee_gated(
+        &self,
+        recipient: dchat_core::types::UserId,
+        content: impl Into<String>,
+    ) -> Result<()> {
+        if !self.is_connected().await {
+            return Err(SdkError::NotConnected);
+        }
+
+        let content = content.into();
+        let orchestrator = self
+            .fee_orchestrator
+            .as_ref()
+            .ok_or_else(|| SdkError::Message("Fee orchestrator not configured".to_string()))?;
+
+        let message = dchat_messaging::types::Message {
+            id: dchat_core::types::MessageId::new(),
+            message_type: dchat_messaging::types::MessageType::Direct {
+                sender: self.identity.user_id.clone(),
+                recipient: recipient.clone(),
+            },
+            content: dchat_core::types::MessageContent::Text(content.clone()),
+            encrypted_payload: Vec::new(),
+            timestamp: std::time::SystemTime::now(),
+            sequence: None,
+            status: dchat_messaging::types::MessageStatus::Created,
+            expires_at: None,
+            size: content.len(),
+        };
+
+        tracing::info!("Sending fee-gated message to recipient: {}", recipient);
+
+        // Encrypt message using Noise Protocol
+        let payload = serde_json::to_vec(&message.content)
+            .map_err(|e| SdkError::Message(format!("Serialization error: {}", e)))?;
+
+        let builder = snow::Builder::new("Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
+        let mut noise = builder
+            .local_private_key(&self.noise_keypair.private)
+            .build_initiator()
+            .map_err(|e| SdkError::Crypto(format!("Noise init failed: {}", e)))?;
+
+        let mut encrypted_payload = vec![0u8; payload.len() + 1024];
+        let len = noise
+            .write_message(&payload, &mut encrypted_payload)
+            .map_err(|e| SdkError::Crypto(format!("Encryption failed: {}", e)))?;
+        encrypted_payload.truncate(len);
+
+        // Compute deterministic operation ID
+        let payload_hash: [u8; 32] = blake3::hash(&payload).into();
+        let nonce = self.next_nonce();
+        let operation_id = FeeOrchestrator::compute_operation_id(
+            &self.identity.user_id,
+            TransactionType::SendDirectMessage,
+            &payload_hash,
+            nonce,
+        );
+
+        // Charge fee before blockchain submission
+        let fee_receipt = orchestrator
+            .charge_gas_fee(
+                &self.identity.user_id,
+                TransactionType::SendDirectMessage,
+                payload.len(),
+                operation_id,
+            )
+            .map_err(|e| SdkError::Network(format!("Fee charge failed: {}", e)))?;
+
+        tracing::info!(
+            "Fee charged: {} units (tx_id: {})",
+            fee_receipt.gross_amount,
+            fee_receipt.fee_tx_id
+        );
+
+        // Attempt P2P delivery via DHT
+        let _ = self
+            .attempt_p2p_delivery(&recipient, &encrypted_payload)
+            .await;
+
+        // Submit to blockchain
+        let message_hash = blake3::hash(&payload);
+        let blockchain_result = self
+            .blockchain_client
+            .send_direct_message(
+                message.id.clone(),
+                self.identity.user_id.clone(),
+                recipient.clone(),
+                &message_hash.to_hex().to_string(),
+                encrypted_payload.len(),
+                None,
+            )
+            .await;
+
+        match blockchain_result {
+            Ok(tx_id) => {
+                // Mark fee as committed
+                let _ = orchestrator.mark_committed(operation_id, tx_id);
+                tracing::info!("Message submitted to blockchain: tx_id={}", tx_id);
+
+                // Store locally
+                self.store_sent_message(&message, &recipient, &encrypted_payload)
+                    .await?;
+                Ok(())
+            }
+            Err(e) => {
+                // Refund the fee on failure
+                let _ =
+                    orchestrator.refund_fee(operation_id, &format!("Blockchain tx failed: {}", e));
+                Err(SdkError::Network(format!(
+                    "Blockchain submission failed: {}",
+                    e
+                )))
+            }
+        }
+    }
+
+    /// Send a message without fee gating (testing/development path)
+    async fn send_message_direct(
+        &self,
+        recipient: dchat_core::types::UserId,
+        content: impl Into<String>,
+    ) -> Result<()> {
         if !self.is_connected().await {
             return Err(SdkError::NotConnected);
         }
@@ -296,14 +485,15 @@ impl Client {
 
         // 2. Perform DHT lookup for recipient via NetworkManager
         tracing::debug!("Looking up recipient in DHT: {}", recipient);
-        
+
         let network_guard = self.network.read().await;
-        let network = network_guard.as_ref()
+        let network = network_guard
+            .as_ref()
             .ok_or_else(|| SdkError::NotConnected)?;
-        
+
         // Use recipient's UUID as the DHT key for peer discovery
         let recipient_key = recipient.to_string().as_bytes().to_vec();
-        
+
         match network.find_peers(recipient_key).await {
             Ok(peers) => {
                 if peers.is_empty() {
@@ -311,13 +501,16 @@ impl Client {
                     // Continue anyway - message will be stored locally and may be delivered via relay
                 } else {
                     tracing::debug!("Found {} peers via DHT for recipient", peers.len());
-                    
+
                     // Try to send to the first available peer
                     let mut delivery_success = false;
                     for peer_id in peers.iter().take(3) {
                         tracing::debug!("Attempting delivery to peer: {}", peer_id);
-                        
-                        match network.send_message(*peer_id, encrypted_payload.clone()).await {
+
+                        match network
+                            .send_message(*peer_id, encrypted_payload.clone())
+                            .await
+                        {
                             Ok(()) => {
                                 tracing::info!("Message delivered to peer: {}", peer_id);
                                 delivery_success = true;
@@ -328,33 +521,40 @@ impl Client {
                             }
                         }
                     }
-                    
+
                     if !delivery_success {
                         tracing::warn!("Direct delivery failed, message queued for relay delivery");
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("DHT lookup failed: {}, continuing with blockchain submission", e);
+                tracing::warn!(
+                    "DHT lookup failed: {}, continuing with blockchain submission",
+                    e
+                );
             }
         }
-        
+
         drop(network_guard);
 
         // 3. Submit message hash to blockchain for ordering
         let message_hash = blake3::hash(&payload);
         tracing::debug!("Submitting message to blockchain: hash={}", message_hash);
-        
+
         // Submit to blockchain via real RPC client
-        let tx_id = self.blockchain_client.send_direct_message(
-            message.id.clone(),
-            self.identity.user_id.clone(),
-            recipient.clone(),
-            &message_hash.to_hex().to_string(),
-            encrypted_payload.len(),
-            None, // relay_node_id
-        ).await.map_err(|e| SdkError::Network(format!("Blockchain submission failed: {}", e)))?;
-        
+        let tx_id = self
+            .blockchain_client
+            .send_direct_message(
+                message.id.clone(),
+                self.identity.user_id.clone(),
+                recipient.clone(),
+                &message_hash.to_hex().to_string(),
+                encrypted_payload.len(),
+                None, // relay_node_id
+            )
+            .await
+            .map_err(|e| SdkError::Network(format!("Blockchain submission failed: {}", e)))?;
+
         tracing::info!("Message submitted to blockchain: tx_id={}", tx_id);
 
         // 4. Delivery confirmation via relay proof-of-delivery
@@ -404,8 +604,100 @@ impl Client {
         Ok(())
     }
 
+    /// Attempt P2P delivery via DHT lookup
+    async fn attempt_p2p_delivery(
+        &self,
+        recipient: &dchat_core::types::UserId,
+        encrypted_payload: &[u8],
+    ) -> Result<bool> {
+        let network_guard = self.network.read().await;
+        let network = match network_guard.as_ref() {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+
+        let recipient_key = recipient.to_string().as_bytes().to_vec();
+
+        match network.find_peers(recipient_key).await {
+            Ok(peers) => {
+                if peers.is_empty() {
+                    tracing::warn!("No peers found in DHT for recipient {}", recipient);
+                    return Ok(false);
+                }
+
+                for peer_id in peers.iter().take(3) {
+                    match network
+                        .send_message(*peer_id, encrypted_payload.to_vec())
+                        .await
+                    {
+                        Ok(()) => {
+                            tracing::info!("Message delivered to peer: {}", peer_id);
+                            return Ok(true);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to deliver to peer {}: {}", peer_id, e);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("DHT lookup failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Store a sent message in the local database
+    async fn store_sent_message(
+        &self,
+        message: &dchat_messaging::types::Message,
+        recipient: &dchat_core::types::UserId,
+        _encrypted_payload: &[u8],
+    ) -> Result<()> {
+        let db = self.database.read().await;
+
+        let _ = db
+            .insert_user(
+                &self.identity.user_id.to_string(),
+                &self.identity.username,
+                self.identity.public_key.as_bytes(),
+            )
+            .await;
+
+        let message_row = MessageRow {
+            id: message.id.to_string(),
+            sender_id: self.identity.user_id.to_string(),
+            recipient_id: Some(recipient.to_string()),
+            channel_id: None,
+            content_type: "text".to_string(),
+            content: serde_json::to_string(&message.content).unwrap_or_default(),
+            encrypted_payload: Vec::new(),
+            timestamp: message
+                .timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            sequence_num: message.sequence.map(|s| s as i64),
+            status: format!("{:?}", message.status),
+            expires_at: message.expires_at.map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            }),
+            size: message.size,
+            content_hash: None,
+        };
+
+        db.insert_message(&message_row)
+            .await
+            .map_err(|e| SdkError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
     /// Send a text message (convenience method with auto-generated recipient)
-    /// 
+    ///
     /// This method is for testing or broadcast scenarios where no specific
     /// recipient is targeted. For production use, prefer `send_message()`.
     pub async fn send_broadcast_message(&self, content: impl Into<String>) -> Result<()> {
@@ -414,7 +706,7 @@ impl Client {
     }
 
     /// Receive messages (async iterator)
-    /// 
+    ///
     /// This method returns messages from the local database.
     /// Incoming messages are processed by the background receiver task
     /// started with `start_message_receiver()`.
@@ -479,7 +771,7 @@ impl Client {
     }
 
     /// Start background task for processing incoming messages
-    /// 
+    ///
     /// This spawns a tokio task that continuously polls network events
     /// and processes incoming messages with:
     /// - Noise Protocol decryption
@@ -493,7 +785,7 @@ impl Client {
 
         tokio::spawn(async move {
             tracing::info!("Starting message receiver background task");
-            
+
             loop {
                 // Check if network is still available
                 let network_guard = network.read().await;
@@ -509,32 +801,38 @@ impl Client {
                 match network_manager.poll_event().await {
                     Some(NetworkEvent::MessageReceived { from, payload }) => {
                         tracing::debug!("Received message from peer: {}", from);
-                        
+
                         // Decrypt using Noise Protocol
                         let builder = snow::Builder::new(
-                            "Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap()
+                            "Noise_NN_25519_ChaChaPoly_BLAKE2s".parse().unwrap(),
                         );
-                        
+
                         let noise_result = builder
                             .local_private_key(&noise_keypair.private)
                             .build_responder();
-                        
+
                         match noise_result {
                             Ok(mut noise) => {
                                 let mut plaintext = vec![0u8; payload.len() + 1024];
-                                
+
                                 match noise.read_message(&payload, &mut plaintext) {
                                     Ok(len) => {
                                         plaintext.truncate(len);
-                                        
+
                                         // Parse the decrypted message content
-                                        match serde_json::from_slice::<dchat_core::types::MessageContent>(&plaintext) {
+                                        match serde_json::from_slice::<
+                                            dchat_core::types::MessageContent,
+                                        >(&plaintext)
+                                        {
                                             Ok(content) => {
-                                                tracing::info!("Successfully decrypted message from {}", from);
-                                                
+                                                tracing::info!(
+                                                    "Successfully decrypted message from {}",
+                                                    from
+                                                );
+
                                                 // Compute message hash for blockchain verification
                                                 let message_hash = blake3::hash(&plaintext);
-                                                
+
                                                 // Log message hash for future blockchain verification
                                                 // The sender should have submitted this hash to the blockchain
                                                 // Verification can be done asynchronously by querying the chain
@@ -542,39 +840,55 @@ impl Client {
                                                     "Message hash for verification: {}",
                                                     message_hash.to_hex()
                                                 );
-                                                
+
                                                 // Generate message ID and store in database
-                                                let message_id = dchat_core::types::MessageId::new();
+                                                let message_id =
+                                                    dchat_core::types::MessageId::new();
                                                 let timestamp = std::time::SystemTime::now();
-                                                
+
                                                 let message_row = MessageRow {
                                                     id: message_id.to_string(),
                                                     sender_id: from.to_string(),
                                                     recipient_id: Some(user_id.to_string()),
                                                     channel_id: None,
                                                     content_type: "text".to_string(),
-                                                    content: serde_json::to_string(&content).unwrap_or_default(),
+                                                    content: serde_json::to_string(&content)
+                                                        .unwrap_or_default(),
                                                     encrypted_payload: payload.clone(),
                                                     timestamp: timestamp
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap_or_default()
-                                                        .as_secs() as i64,
+                                                        .as_secs()
+                                                        as i64,
                                                     sequence_num: None,
                                                     status: "Received".to_string(),
                                                     expires_at: None,
                                                     size: plaintext.len(),
-                                                    content_hash: Some(message_hash.to_hex().to_string()),
+                                                    content_hash: Some(
+                                                        message_hash.to_hex().to_string(),
+                                                    ),
                                                 };
-                                                
+
                                                 let db = database.read().await;
-                                                if let Err(e) = db.insert_message(&message_row).await {
-                                                    tracing::error!("Failed to store message: {}", e);
+                                                if let Err(e) =
+                                                    db.insert_message(&message_row).await
+                                                {
+                                                    tracing::error!(
+                                                        "Failed to store message: {}",
+                                                        e
+                                                    );
                                                 } else {
-                                                    tracing::debug!("Message stored successfully: {}", message_id);
+                                                    tracing::debug!(
+                                                        "Message stored successfully: {}",
+                                                        message_id
+                                                    );
                                                 }
                                             }
                                             Err(e) => {
-                                                tracing::warn!("Failed to parse message content: {}", e);
+                                                tracing::warn!(
+                                                    "Failed to parse message content: {}",
+                                                    e
+                                                );
                                             }
                                         }
                                     }
@@ -609,10 +923,10 @@ impl Client {
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                 }
-                
+
                 drop(network_guard);
             }
-            
+
             tracing::info!("Message receiver background task stopped");
         })
     }
@@ -760,7 +1074,10 @@ mod tests {
         client.connect().await.unwrap();
 
         let recipient = dchat_core::types::UserId::new();
-        client.send_message(recipient, "Hello, dchat!").await.unwrap();
+        client
+            .send_message(recipient, "Hello, dchat!")
+            .await
+            .unwrap();
 
         let messages = client.receive_messages().await.unwrap();
         assert_eq!(messages.len(), 1);

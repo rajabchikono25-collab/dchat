@@ -138,8 +138,9 @@ pub use storage_routed_user_management::{StorageRoutedUserManager, StorageStats,
 
 // Re-export fee gateway for production-grade fee enforcement
 pub use fee_gateway::{
-    ChatChainTxDetails, EscrowStatus, FeeGatedRequest, FeeGatedResponse, FeeGateway, GasFeeReceipt,
-    MessageFeeReceipt, OperationMapping, OperationPayload, OperationStatus, StoragePaymentReceipt,
+    ChatChainTxDetails, EscrowRecordExport as EscrowRecord, EscrowStatusExport as EscrowStatus,
+    FeeGatedRequest, FeeGatedResponse, FeeGateway, GasFeeReceipt, MessageFeeReceipt,
+    OperationMapping, OperationPayload, OperationStatus, StoragePaymentReceipt,
 };
 
 /// Commonly used types and traits

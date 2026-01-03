@@ -10,12 +10,15 @@
 use crate::prelude::*;
 use dchat_blockchain::{ChatChainClient, CrossChainBridge, CurrencyChainClient};
 use dchat_core::error::{Error, Result};
-use dchat_core::types::{ChannelId, MessageId, UserId};
+use dchat_core::types::{ChannelId, UserId};
 use dchat_crypto::keys::KeyPair;
 use dchat_identity::Identity;
-use dchat_storage::{Database, MessageRow};
+use dchat_storage::Database;
+#[cfg(feature = "test-bypass")]
+use dchat_storage::MessageRow;
 use hex;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "test-bypass")]
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tracing::{error, info};
@@ -257,6 +260,12 @@ impl UserManager {
     ///
     /// This bypass will be removed before mainnet. Any code path calling this method
     /// directly allows unpaid message storage, which is a critical security issue.
+    ///
+    /// # Availability
+    ///
+    /// This method is only available when the `test-bypass` feature is enabled.
+    /// Production builds MUST NOT enable this feature.
+    #[cfg(feature = "test-bypass")]
     #[deprecated(
         since = "0.1.0",
         note = "Use FeeGateway::send_direct_message() to enforce fee payment. This bypass will be removed."
@@ -409,6 +418,12 @@ impl UserManager {
     ///
     /// This bypass will be removed before mainnet. Any code path calling this method
     /// directly allows unpaid message storage, which is a critical security issue.
+    ///
+    /// # Availability
+    ///
+    /// This method is only available when the `test-bypass` feature is enabled.
+    /// Production builds MUST NOT enable this feature.
+    #[cfg(feature = "test-bypass")]
     #[deprecated(
         since = "0.1.0",
         note = "Use FeeGateway::post_to_channel() to enforce fee payment. This bypass will be removed."

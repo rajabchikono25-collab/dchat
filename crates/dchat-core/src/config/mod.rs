@@ -186,6 +186,31 @@ pub struct RelayConfig {
     pub relay_reward_threshold: u64,
     pub uptime_reporting_interval_minutes: u32,
     pub stake_amount: u64,
+    /// Seed relay nodes for initial network bootstrap
+    /// Format: [{ relay_id, multiaddr, stake, continent }]
+    #[serde(default)]
+    pub seed_relays: Vec<SeedRelay>,
+}
+
+/// Configuration for a seed relay node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeedRelay {
+    /// Unique relay identifier
+    pub relay_id: String,
+    /// libp2p multiaddr for the relay
+    pub multiaddr: String,
+    /// Stake amount (in smallest token units)
+    pub stake: u64,
+    /// Geographic continent for diversity
+    #[serde(default = "default_continent")]
+    pub continent: String,
+    /// Optional operator user ID
+    #[serde(default)]
+    pub operator_id: Option<String>,
+}
+
+fn default_continent() -> String {
+    "Europe".to_string()
 }
 
 impl Default for Config {
@@ -234,6 +259,7 @@ impl Default for Config {
                 relay_reward_threshold: 100,
                 uptime_reporting_interval_minutes: 15,
                 stake_amount: 1000,
+                seed_relays: vec![],
             },
 
             rpc: RpcConfig::default(),

@@ -1,5 +1,6 @@
 //! Currency Chain client for payments, staking, rewards, and economics
 
+use base64::Engine as _;
 use chrono::Utc;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::UserId;
@@ -3234,6 +3235,147 @@ impl CurrencyChainClient {
             .call_rpc("rewards.setAutoCompound", params)
             .await?;
         Ok(())
+    }
+
+    /// Query program manifest from on-chain deployed miniapp
+    ///
+    /// Fetches the DPL manifest from a deployed program at the given program ID.
+    /// The manifest contains SDK version, capabilities, and ABI information.
+    pub async fn query_program_manifest(
+        &self,
+        program_id: &str,
+    ) -> Result<Option<dchat_programs::manifest::DplManifest>> {
+        let params = serde_json::json!({
+            "programId": program_id
+        });
+
+        match self
+            .rpc_client
+            .call_rpc("program.getManifest", params)
+            .await
+        {
+            Ok(result) => {
+                // Parse manifest bytes from RPC response
+                if let Some(manifest_b64) = result.get("manifest").and_then(|v| v.as_str()) {
+                    // Decode base64 manifest data
+                    match base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        manifest_b64,
+                    ) {
+                        Ok(manifest_bytes) => {
+                            match dchat_programs::manifest::DplManifest::from_bytes(&manifest_bytes)
+                            {
+                                Ok(manifest) => {
+                                    tracing::debug!(
+                                        "Fetched manifest for program {}: SDK v{}.{}.{}",
+                                        program_id,
+                                        manifest.sdk_major,
+                                        manifest.sdk_minor,
+                                        manifest.sdk_patch
+                                    );
+                                    return Ok(Some(manifest));
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to parse manifest for program {}: {}",
+                                        program_id,
+                                        e
+                                    );
+                                    return Err(Error::validation(format!(
+                                        "Invalid manifest format: {}",
+                                        e
+                                    )));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to decode manifest base64 for program {}: {}",
+                                program_id,
+                                e
+                            );
+                            return Err(Error::validation(format!(
+                                "Invalid manifest encoding: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+
+                // No manifest in response - program might not have one
+                if result.get("exists").and_then(|v| v.as_bool()) == Some(false) {
+                    return Err(Error::NotFound(format!(
+                        "Program not found: {}",
+                        program_id
+                    )));
+                }
+
+                Ok(None)
+            }
+            Err(e) => {
+                // Check for common RPC errors
+                let err_str = e.to_string();
+                if err_str.contains("not found") || err_str.contains("404") {
+                    return Err(Error::NotFound(format!(
+                        "Program not found: {}",
+                        program_id
+                    )));
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Query program bytecode from on-chain deployed miniapp
+    ///
+    /// Fetches the full WASM bytecode of a deployed program.
+    /// Use with caution - this can be large (several MB).
+    pub async fn query_program_bytecode(&self, program_id: &str) -> Result<Vec<u8>> {
+        let params = serde_json::json!({
+            "programId": program_id
+        });
+
+        let result = self
+            .rpc_client
+            .call_rpc("program.getBytecode", params)
+            .await?;
+
+        if let Some(bytecode_b64) = result.get("bytecode").and_then(|v| v.as_str()) {
+            let bytecode =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, bytecode_b64)
+                    .map_err(|e| Error::validation(format!("Invalid bytecode encoding: {}", e)))?;
+
+            tracing::debug!(
+                "Fetched bytecode for program {}: {} bytes",
+                program_id,
+                bytecode.len()
+            );
+            return Ok(bytecode);
+        }
+
+        if result.get("exists").and_then(|v| v.as_bool()) == Some(false) {
+            return Err(Error::NotFound(format!(
+                "Program not found: {}",
+                program_id
+            )));
+        }
+
+        Err(Error::validation("No bytecode in response"))
+    }
+
+    /// Check if a program exists on-chain
+    pub async fn program_exists(&self, program_id: &str) -> Result<bool> {
+        let params = serde_json::json!({
+            "programId": program_id
+        });
+
+        match self.rpc_client.call_rpc("program.exists", params).await {
+            Ok(result) => Ok(result
+                .get("exists")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)),
+            Err(_) => Ok(false),
+        }
     }
 }
 

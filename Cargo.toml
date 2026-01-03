@@ -234,6 +234,9 @@ tempfile = "3.8"
 default = []
 deployment = ["dchat-deployment"]
 dev-tools = []
+# DANGER: test-bypass enables fee-bypassing methods in UserManager.
+# NEVER enable in production builds. Only for integration tests.
+test-bypass = []
 
 [profile.release]
 opt-level = 3

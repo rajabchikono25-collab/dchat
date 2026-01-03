@@ -15,6 +15,7 @@ dchat-messaging = { path = "../dchat-messaging" }
 dchat-network = { path = "../dchat-network" }
 dchat-storage = { path = "../dchat-storage" }
 dchat-blockchain = { path = "../dchat-blockchain" }
+dchat-chain = { path = "../dchat-chain" }
 
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -31,7 +32,13 @@ hex = { workspace = true }
 x25519-dalek = { workspace = true }
 
 # Networking for libp2p swarm
-libp2p = { version = "0.54", features = ["kad", "noise", "tcp", "yamux", "dns"] }
+libp2p = { version = "0.54", features = [
+  "kad",
+  "noise",
+  "tcp",
+  "yamux",
+  "dns",
+] }
 futures = "0.3"
 
 # Noise Protocol for message encryption

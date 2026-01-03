@@ -132,6 +132,21 @@ uptime_reporting_interval_minutes = 60
 # Default: 5000
 stake_amount = 5000
 
+# Seed relay nodes for network bootstrap
+# These are pre-registered relays to connect to on startup
+# [[relay.seed_relays]]
+# relay_id = "relay-us-east-1"
+# multiaddr = "/dns4/relay1.dchat.io/tcp/7070/p2p/12D3KooWExamplePeerIdHere"
+# stake = 10000
+# continent = "NorthAmerica"
+# operator_id = "550e8400-e29b-41d4-a716-446655440000"  # Optional
+
+# [[relay.seed_relays]]
+# relay_id = "relay-eu-west-1"
+# multiaddr = "/dns4/relay2.dchat.io/tcp/7070/p2p/12D3KooWAnotherPeerIdHere"
+# stake = 10000
+# continent = "Europe"
+
 [rpc]
 # Chat chain JSON-RPC endpoint.
 # Required for most mainnet operations.

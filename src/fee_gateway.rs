@@ -39,17 +39,23 @@
 use crate::storage_routed_user_management::{StorageRoutedUserManager, StorageTier};
 use chrono::{DateTime, Utc};
 use dchat_blockchain::{
-    fee_orchestrator::{FeeOrchestrator, FeeReceipt, SinkAmounts},
+    fee_orchestrator::{EscrowRecord, EscrowStatus, FeeOrchestrator, FeeReceipt, SinkAmounts},
     ChatChainClient, CurrencyChainClient,
 };
 use dchat_chain::TransactionType;
 use dchat_core::error::{Error, Result};
 use dchat_core::types::{ChannelId, MessageId, UserId};
 use dchat_network::relay_network::RelayNetworkManager;
+use dchat_storage::Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, error, info, warn};
+
+// Re-export EscrowStatus and EscrowRecord for consumers of fee_gateway
+pub use dchat_blockchain::fee_orchestrator::{
+    EscrowRecord as EscrowRecordExport, EscrowStatus as EscrowStatusExport,
+};
 use uuid::Uuid;
 
 // =============================================================================
@@ -67,6 +73,10 @@ pub const DEFAULT_MESSAGE_FEE: u64 = 1_000_000; // 0.01 DCHAT
 
 /// Storage cost per MB (in smallest token unit)
 pub const STORAGE_COST_PER_MB: u64 = 10_000_000; // 0.1 DCHAT per MB
+
+// Database KV keys for persistent state
+const KV_OPERATION_MAPPINGS: &str = "fee_gateway.operation_mappings.v1";
+// Note: Escrow records are now persisted by FeeOrchestrator
 
 // =============================================================================
 // REQUEST/RESPONSE CONTRACTS
@@ -153,16 +163,7 @@ pub struct MessageFeeReceipt {
     pub charged_at: DateTime<Utc>,
 }
 
-/// Escrow status for message fees
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EscrowStatus {
-    /// Fee is held in escrow, pending successful delivery
-    Held,
-    /// Fee has been released to relay
-    Released,
-    /// Fee was refunded to payer
-    Refunded,
-}
+// Note: EscrowStatus is now imported from dchat_blockchain::fee_orchestrator
 
 /// Storage payment receipt for blob-tier content
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,37 +309,16 @@ pub struct OperationMapping {
 // FEE GATEWAY
 // =============================================================================
 
-/// Message fee escrow record
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageFeeEscrow {
-    /// Operation ID this escrow is for
-    pub operation_id: [u8; 32],
-    /// Payer who funded the escrow
-    pub payer: UserId,
-    /// Relay who will receive the fee on success
-    pub relay: UserId,
-    /// Amount held in escrow
-    pub amount: u64,
-    /// Escrow transaction ID (debit from payer)
-    pub escrow_tx_id: Uuid,
-    /// Current status
-    pub status: EscrowStatus,
-    /// Created timestamp
-    pub created_at: DateTime<Utc>,
-    /// Released/Refunded timestamp
-    pub settled_at: Option<DateTime<Utc>>,
-    /// Settlement transaction ID (release to relay or refund to payer)
-    pub settlement_tx_id: Option<Uuid>,
-}
+// Note: MessageFeeEscrow is now EscrowRecord from dchat_blockchain::fee_orchestrator
 
 /// Fee Gateway - Single entry point for all fee-gated operations
 ///
 /// This enforces pay-before-anchor for all storage/anchoring operations.
 /// No code path can store or anchor without going through this gateway.
 pub struct FeeGateway {
-    /// Fee orchestrator for gas fee charging
+    /// Fee orchestrator for gas fee charging AND escrow management
     fee_orchestrator: Arc<FeeOrchestrator>,
-    /// Currency chain client for escrow operations
+    /// Currency chain client for direct transfers
     currency_chain: Arc<CurrencyChainClient>,
     /// Chat chain client for transaction submission
     chat_chain: Arc<ChatChainClient>,
@@ -346,10 +326,10 @@ pub struct FeeGateway {
     storage_manager: Arc<StorageRoutedUserManager>,
     /// Relay network manager for proper relay selection
     relay_network: Arc<RwLock<RelayNetworkManager>>,
-    /// Operation mappings for audit trail
+    /// Operation mappings for audit trail (in-memory cache backed by database)
     operation_mappings: Arc<RwLock<HashMap<[u8; 32], OperationMapping>>>,
-    /// Message fee escrows (operation_id -> escrow record)
-    message_fee_escrows: Arc<RwLock<HashMap<[u8; 32], MessageFeeEscrow>>>,
+    /// Database for persistent state (optional - if None, state is in-memory only)
+    database: Option<Arc<Database>>,
     /// Default message fee
     default_message_fee: u64,
     /// Storage cost per MB
@@ -374,11 +354,22 @@ impl FeeGateway {
             storage_manager,
             relay_network,
             operation_mappings: Arc::new(RwLock::new(HashMap::new())),
-            message_fee_escrows: Arc::new(RwLock::new(HashMap::new())),
+            database: None,
             default_message_fee: DEFAULT_MESSAGE_FEE,
             storage_cost_per_mb: STORAGE_COST_PER_MB,
             min_finality_confirmations: MIN_FINALITY_CONFIRMATIONS,
         }
+    }
+
+    /// Configure database for persistent state
+    ///
+    /// When a database is configured, operation mappings and escrow records
+    /// are persisted to SQLite, ensuring that idempotency and escrow state
+    /// survives process restarts.
+    pub fn with_database(mut self, database: Arc<Database>) -> Self {
+        self.database = Some(database);
+        info!("✓ FeeGateway persistence enabled");
+        self
     }
 
     /// Configure message fee
@@ -391,6 +382,67 @@ impl FeeGateway {
     pub fn with_storage_cost(mut self, cost_per_mb: u64) -> Self {
         self.storage_cost_per_mb = cost_per_mb;
         self
+    }
+
+    /// Load persisted state from database (call after construction with database)
+    ///
+    /// This restores operation mappings and escrow records from SQLite.
+    /// Should be called once at startup before processing any operations.
+    pub async fn load_persisted_state(&self) -> Result<()> {
+        let db = match &self.database {
+            Some(db) => db,
+            None => {
+                debug!("No database configured, skipping state load");
+                return Ok(());
+            }
+        };
+
+        // Load operation mappings
+        if let Ok(Some(json)) = db.get_client_kv(KV_OPERATION_MAPPINGS).await {
+            match serde_json::from_str::<Vec<OperationMapping>>(&json) {
+                Ok(mappings) => {
+                    let mut cache = self.operation_mappings.write().unwrap();
+                    for mapping in mappings {
+                        cache.insert(mapping.operation_id, mapping);
+                    }
+                    info!("✓ Loaded {} operation mappings from database", cache.len());
+                }
+                Err(e) => {
+                    warn!("Failed to parse operation mappings: {}", e);
+                }
+            }
+        }
+
+        // Note: Escrow records are now managed by FeeOrchestrator
+
+        Ok(())
+    }
+
+    /// Persist current state to database
+    ///
+    /// Called after each operation completes to ensure durability.
+    async fn persist_state(&self) -> Result<()> {
+        let db = match &self.database {
+            Some(db) => db,
+            None => return Ok(()), // No-op if no database
+        };
+
+        // Persist operation mappings
+        let mappings: Vec<OperationMapping> = self
+            .operation_mappings
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        let mappings_json = serde_json::to_string(&mappings)?;
+        db.put_client_kv(KV_OPERATION_MAPPINGS, &mappings_json)
+            .await?;
+
+        // Note: Escrow records are now managed by FeeOrchestrator
+
+        debug!("Persisted {} operations", mappings.len());
+        Ok(())
     }
 
     /// Get operation mapping by ID
@@ -620,7 +672,7 @@ impl FeeGateway {
         };
 
         // Step 13: Release escrow to relay (success path)
-        let release_tx_id = self.release_escrow_to_relay(&operation_id)?;
+        let release_tx_id = self.release_escrow_to_relay(&operation_id, payer, &relay)?;
 
         info!(
             "💰 Escrow released to relay {} (tx: {})",
@@ -729,6 +781,11 @@ impl FeeGateway {
             message_id,
             chat_tx_id
         );
+
+        // Persist state to database (if configured)
+        if let Err(e) = self.persist_state().await {
+            warn!("Failed to persist FeeGateway state: {}", e);
+        }
 
         // Structured log for metrics
         self.log_operation_metrics(&response);
@@ -862,7 +919,7 @@ impl FeeGateway {
         };
 
         // Release escrow
-        let release_tx_id = self.release_escrow_to_relay(&operation_id)?;
+        let release_tx_id = self.release_escrow_to_relay(&operation_id, payer, &relay)?;
 
         // Store content
         let sender_bytes = uuid_to_bytes(&payer.0);
@@ -948,136 +1005,98 @@ impl FeeGateway {
             timestamp: now,
         };
 
+        // Persist state to database (if configured)
+        if let Err(e) = self.persist_state().await {
+            warn!("Failed to persist FeeGateway state: {}", e);
+        }
+
         self.log_operation_metrics(&response);
 
         Ok(response)
     }
 
     // =========================================================================
-    // ESCROW MANAGEMENT
+    // ESCROW MANAGEMENT (delegated to FeeOrchestrator)
     // =========================================================================
 
     /// Create message fee escrow (hold funds pending finality)
+    ///
+    /// Delegates to FeeOrchestrator.create_escrow for unified escrow management.
     fn create_message_fee_escrow(
         &self,
         operation_id: [u8; 32],
         payer: &UserId,
         relay: &UserId,
         amount: u64,
-    ) -> Result<MessageFeeEscrow> {
-        // Check for existing escrow (idempotency)
-        {
-            let escrows = self.message_fee_escrows.read().unwrap();
-            if let Some(existing) = escrows.get(&operation_id) {
-                if existing.status == EscrowStatus::Held {
-                    return Ok(existing.clone());
+    ) -> Result<EscrowRecord> {
+        self.fee_orchestrator
+            .create_escrow(operation_id, payer, relay, amount, "message_fee")
+    }
+
+    /// Release escrow to relay (success path)
+    ///
+    /// Delegates to FeeOrchestrator.release_escrow for unified escrow management.
+    fn release_escrow_to_relay(
+        &self,
+        operation_id: &[u8; 32],
+        payer: &UserId,
+        relay: &UserId,
+    ) -> Result<Uuid> {
+        let escrow_id = FeeOrchestrator::compute_escrow_id(operation_id, payer, relay);
+        let record = self.fee_orchestrator.release_escrow(&escrow_id)?;
+
+        info!(
+            "💰 Escrow released: {} to relay {} (tx: {})",
+            record.amount,
+            record.recipient,
+            record.settlement_tx_id.unwrap_or_default()
+        );
+
+        Ok(record.settlement_tx_id.unwrap_or_default())
+    }
+
+    /// Refund escrow to payer (failure path)
+    ///
+    /// Delegates to FeeOrchestrator.refund_escrow for unified escrow management.
+    fn refund_escrow_to_payer(&self, operation_id: &[u8; 32]) -> Result<Uuid> {
+        // Find escrows for this operation and refund them
+        let escrows = self
+            .fee_orchestrator
+            .get_escrows_for_operation(operation_id);
+
+        if escrows.is_empty() {
+            // No escrow found, might already be settled
+            return Ok(Uuid::nil());
+        }
+
+        let mut last_tx_id = Uuid::nil();
+        for escrow in escrows {
+            if escrow.status == EscrowStatus::Held {
+                match self
+                    .fee_orchestrator
+                    .refund_escrow(&escrow.escrow_id, "operation_failed")
+                {
+                    Ok(record) => {
+                        info!(
+                            "💸 Escrow refunded: {} to payer {} (tx: {})",
+                            record.amount,
+                            record.payer,
+                            record.settlement_tx_id.unwrap_or_default()
+                        );
+                        last_tx_id = record.settlement_tx_id.unwrap_or_default();
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to refund escrow {}: {}",
+                            hex::encode(&escrow.escrow_id[..8]),
+                            e
+                        );
+                    }
                 }
             }
         }
 
-        // Debit payer and hold in protocol escrow
-        // Use a separate operation ID suffix for escrow to distinguish from gas fee
-        let mut escrow_op_id = operation_id;
-        escrow_op_id[31] ^= 0xEE; // Distinguish escrow from gas fee
-
-        let escrow_tx_id = Uuid::new_v4();
-
-        // Debit payer
-        self.currency_chain
-            .debit_for_protocol_fee(payer, amount, escrow_tx_id)?;
-
-        // Note: Funds are now in limbo (debited from payer, not yet credited anywhere)
-        // This is the "hold" part of hold-and-release
-
-        let escrow = MessageFeeEscrow {
-            operation_id,
-            payer: payer.clone(),
-            relay: relay.clone(),
-            amount,
-            escrow_tx_id,
-            status: EscrowStatus::Held,
-            created_at: Utc::now(),
-            settled_at: None,
-            settlement_tx_id: None,
-        };
-
-        self.message_fee_escrows
-            .write()
-            .unwrap()
-            .insert(operation_id, escrow.clone());
-
-        debug!(
-            "Created escrow for operation {}: {} held for relay {}",
-            hex::encode(&operation_id[..8]),
-            amount,
-            relay
-        );
-
-        Ok(escrow)
-    }
-
-    /// Release escrow to relay (success path)
-    fn release_escrow_to_relay(&self, operation_id: &[u8; 32]) -> Result<Uuid> {
-        let mut escrows = self.message_fee_escrows.write().unwrap();
-        let escrow = escrows
-            .get_mut(operation_id)
-            .ok_or_else(|| Error::NotFound("Escrow not found".to_string()))?;
-
-        if escrow.status != EscrowStatus::Held {
-            return Err(Error::validation(format!(
-                "Escrow not in Held state: {:?}",
-                escrow.status
-            )));
-        }
-
-        // Credit relay with the escrowed amount
-        let release_tx_id = self.currency_chain.credit_direct_recipient(
-            &escrow.relay,
-            escrow.amount,
-            "message_fee_release",
-        )?;
-
-        escrow.status = EscrowStatus::Released;
-        escrow.settled_at = Some(Utc::now());
-        escrow.settlement_tx_id = Some(release_tx_id);
-
-        info!(
-            "💰 Escrow released: {} to relay {} (tx: {})",
-            escrow.amount, escrow.relay, release_tx_id
-        );
-
-        Ok(release_tx_id)
-    }
-
-    /// Refund escrow to payer (failure path)
-    fn refund_escrow_to_payer(&self, operation_id: &[u8; 32]) -> Result<Uuid> {
-        let mut escrows = self.message_fee_escrows.write().unwrap();
-        let escrow = escrows
-            .get_mut(operation_id)
-            .ok_or_else(|| Error::NotFound("Escrow not found".to_string()))?;
-
-        if escrow.status != EscrowStatus::Held {
-            // Already settled, nothing to do
-            return Ok(Uuid::nil());
-        }
-
-        // Refund payer
-        let refund_tx_id = self.currency_chain.credit_direct_recipient(
-            &escrow.payer,
-            escrow.amount,
-            "escrow_refund",
-        )?;
-
-        escrow.status = EscrowStatus::Refunded;
-        escrow.settled_at = Some(Utc::now());
-        escrow.settlement_tx_id = Some(refund_tx_id);
-
-        info!(
-            "💸 Escrow refunded: {} to payer {} (tx: {})",
-            escrow.amount, escrow.payer, refund_tx_id
-        );
-
-        Ok(refund_tx_id)
+        Ok(last_tx_id)
     }
 
     /// Refund all fees for an operation (failure path)
@@ -1304,13 +1323,24 @@ impl FeeGateway {
 
     /// Log operation metrics (structured logging for observability)
     fn log_operation_metrics(&self, response: &FeeGatedResponse) {
+        // Look up actual payer from operation mapping
+        let payer = self
+            .operation_mappings
+            .read()
+            .unwrap()
+            .get(&response.operation_id)
+            .map(|m| m.payer.clone())
+            .unwrap_or_else(|| UserId::default());
+
         // Structured log with all required fields
         info!(
             target: "fee_gateway_metrics",
             operation_id = %hex::encode(&response.operation_id[..8]),
-            payer = %response.message_fee_receipt.relay_id, // Placeholder - should be actual payer
+            payer = %payer,
             message_id = %response.message_id,
+            gas_fee_amount = response.gas_fee_receipt.amount,
             gas_fee_tx_id = %response.gas_fee_receipt.fee_tx_id,
+            message_fee_amount = response.message_fee_receipt.amount,
             message_fee_tx_id = %response.message_fee_receipt.fee_tx_id,
             relay_id = %response.message_fee_receipt.relay_id,
             chat_tx_id = %response.chat_tx.tx_id,
@@ -1319,7 +1349,7 @@ impl FeeGateway {
             storage_receipt_id = ?response.storage_receipt.as_ref().map(|r| r.payment_tx_id),
             outcome = ?response.status,
             finality_confirmations = response.chat_tx.confirmations,
-            "Operation completed"
+            "fee_gateway.operation_completed"
         );
     }
 }
@@ -1531,21 +1561,24 @@ mod tests {
     }
 
     #[test]
-    fn test_message_fee_escrow_lifecycle() {
+    fn test_escrow_record_lifecycle() {
         let op_id = [0xAB; 32];
         let payer = UserId(Uuid::new_v4());
         let relay = UserId(Uuid::new_v4());
 
-        let escrow = MessageFeeEscrow {
+        // Use EscrowRecord from fee_orchestrator instead of local MessageFeeEscrow
+        let escrow = EscrowRecord {
+            escrow_id: [0xCD; 32],
             operation_id: op_id,
             payer: payer.clone(),
-            relay: relay.clone(),
+            recipient: relay.clone(),
             amount: 1000,
             escrow_tx_id: Uuid::new_v4(),
             status: EscrowStatus::Held,
             created_at: Utc::now(),
             settled_at: None,
             settlement_tx_id: None,
+            context: "test_escrow".to_string(),
         };
 
         // Initial state is Held
@@ -1553,9 +1586,9 @@ mod tests {
         assert!(escrow.settled_at.is_none());
         assert!(escrow.settlement_tx_id.is_none());
 
-        // Verify payer and relay are preserved
+        // Verify payer and recipient are preserved
         assert_eq!(escrow.payer, payer);
-        assert_eq!(escrow.relay, relay);
+        assert_eq!(escrow.recipient, relay);
     }
 
     #[test]

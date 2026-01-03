@@ -100,8 +100,8 @@ pub use fee_distribution::{
 
 // Fee orchestrator for end-to-end fee charging pipeline (mainnet production)
 pub use fee_orchestrator::{
-    FeeConfig, FeeGatedChatChain, FeeGatedResult, FeeOrchestrator, FeeReceipt, OperationState,
-    RefundReceipt, SinkAmounts,
+    EscrowRecord, EscrowStatus, FeeConfig, FeeGatedChatChain, FeeGatedResult, FeeOrchestrator,
+    FeeReceipt, OperationState, RefundReceipt, SinkAmounts,
 };
 
 // Relay eligibility for epoch-based reward distribution

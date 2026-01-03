@@ -12,7 +12,7 @@
 use base64::{engine::general_purpose, Engine as _};
 use chrono::TimeZone;
 use dchat_core::error::{Error, Result};
-use dchat_core::types::{MessageId, UserId};
+use dchat_core::types::{ChannelId, MessageId, UserId};
 use dchat_crypto::keys::{KeyPair, PrivateKey};
 use dchat_crypto::{
     decrypt_with_key, decrypt_with_password, encrypt_with_key, encrypt_with_password,
@@ -30,6 +30,9 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+
+// Fee gateway for mainnet economics
+use crate::fee_gateway::{FeeGatedRequest, FeeGateway, OperationPayload};
 
 // ============================================================================
 // CONFIGURATION
@@ -334,6 +337,10 @@ pub struct LightClient {
     net_handle: Option<tokio::task::JoinHandle<()>>,
     /// Background sync task handle
     sync_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Fee gateway for mainnet economics (optional, enables fee-gated mode)
+    fee_gateway: Option<Arc<FeeGateway>>,
+    /// Client nonce counter for idempotent operations
+    client_nonce: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl LightClient {
@@ -394,6 +401,13 @@ impl LightClient {
             shutdown_tx,
             net_handle: None,
             sync_handle: None,
+            fee_gateway: None,
+            client_nonce: Arc::new(std::sync::atomic::AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64,
+            )),
         })
     }
 
@@ -405,6 +419,27 @@ impl LightClient {
     /// Get the identity signing keypair
     pub fn identity_keypair(&self) -> &KeyPair {
         &self.identity_keypair
+    }
+
+    /// Set the fee gateway for mainnet economics
+    ///
+    /// When set, all outbound operations (DMs, channel posts) will go through
+    /// the fee gateway for proper fee enforcement before anchoring to chain.
+    /// This is required for mainnet operation.
+    pub fn set_fee_gateway(&mut self, gateway: Arc<FeeGateway>) {
+        self.fee_gateway = Some(gateway);
+        info!("✓ FeeGateway attached - fee-gated mode enabled");
+    }
+
+    /// Check if fee-gated mode is active
+    pub fn is_fee_gated(&self) -> bool {
+        self.config.fee_gated && self.fee_gateway.is_some()
+    }
+
+    /// Get next client nonce for idempotent operations
+    fn next_nonce(&self) -> u64 {
+        self.client_nonce
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Get current connection state
@@ -694,6 +729,16 @@ impl LightClient {
     }
 
     /// Send a message to a channel
+    ///
+    /// When fee-gated mode is enabled (mainnet), this will:
+    /// 1. Charge gas + message fees via FeeGateway
+    /// 2. Submit ordering tx to chat chain
+    /// 3. Wait for finality
+    /// 4. Store message content
+    /// 5. Broadcast via gossipsub for real-time delivery
+    ///
+    /// In dev mode (fee_gated=false or no FeeGateway), messages are sent
+    /// directly via gossipsub without fee enforcement.
     pub async fn send_channel_message(&self, channel_id: &str, content: &str) -> Result<MessageId> {
         if *self.state.read().await != ConnectionState::Ready {
             // Queue for later
@@ -707,6 +752,106 @@ impl LightClient {
                 .await;
         }
 
+        // Use fee-gated path for mainnet economics
+        if self.is_fee_gated() {
+            return self
+                .send_channel_message_fee_gated(channel_id, content)
+                .await;
+        }
+
+        // Dev mode: direct gossipsub without fee enforcement
+        self.send_channel_message_direct(channel_id, content).await
+    }
+
+    /// Send channel message via FeeGateway (production path)
+    async fn send_channel_message_fee_gated(
+        &self,
+        channel_id: &str,
+        content: &str,
+    ) -> Result<MessageId> {
+        let fee_gateway = self
+            .fee_gateway
+            .as_ref()
+            .ok_or_else(|| Error::internal("FeeGateway not configured but fee_gated=true"))?;
+
+        // Create deterministic ChannelId from channel name using UUID v5
+        let channel_uuid = channel_name_to_uuid(channel_id);
+
+        let request = FeeGatedRequest {
+            payer: self.identity.user_id.clone(),
+            client_nonce: self.next_nonce(),
+            payload: OperationPayload::ChannelPost {
+                channel_id: ChannelId(channel_uuid),
+                content: content.as_bytes().to_vec(),
+                encrypted: false,
+                encryption_key_id: None,
+            },
+            preferred_relay: None,
+        };
+
+        info!(
+            "📤 Sending fee-gated channel message to #{} (nonce: {})",
+            channel_id, request.client_nonce
+        );
+
+        let response = fee_gateway.post_to_channel(request).await?;
+
+        info!(
+            "✓ Channel message sent: {} (gas: {}, msg fee: {}, storage: {:?})",
+            response.message_id,
+            response.gas_fee_receipt.amount,
+            response.message_fee_receipt.amount,
+            response.storage_tier
+        );
+
+        // Also broadcast via gossipsub for real-time delivery
+        if let Some(cmd_tx) = &self.cmd_tx {
+            let timestamp = chrono::Utc::now().timestamp();
+            let payload = content.as_bytes().to_vec();
+            let message_id = dchat_network::behavior::compute_channel_message_id(
+                &self.identity.user_id,
+                channel_id,
+                &payload,
+                timestamp,
+            );
+
+            let message = DchatMessage::ChannelMessage {
+                message_id,
+                sender: self.identity.user_id.clone(),
+                channel_id: channel_id.to_string(),
+                encrypted_payload: payload,
+                timestamp,
+            };
+
+            let (resp_tx, _resp_rx) = oneshot::channel();
+            // Fire-and-forget gossipsub broadcast (chain is source of truth)
+            let _ = cmd_tx
+                .send(NetCommand::Publish {
+                    channel_id: channel_id.to_string(),
+                    message,
+                    resp: resp_tx,
+                })
+                .await;
+        }
+
+        // Emit success event
+        let _ = self
+            .event_tx
+            .send(LightClientEvent::MessageSent {
+                message_id: response.message_id.to_string(),
+                channel_id: Some(channel_id.to_string()),
+            })
+            .await;
+
+        Ok(response.message_id)
+    }
+
+    /// Send channel message directly via gossipsub (dev mode)
+    async fn send_channel_message_direct(
+        &self,
+        channel_id: &str,
+        content: &str,
+    ) -> Result<MessageId> {
         let cmd_tx = self
             .cmd_tx
             .as_ref()
@@ -785,6 +930,77 @@ impl LightClient {
         info!("✓ Subscribed to #{}", channel_id);
 
         Ok(())
+    }
+
+    /// Send a direct message to a recipient
+    ///
+    /// Requires fee-gated mode to be enabled (FeeGateway attached).
+    /// DMs are fee-gated to prevent spam and ensure economic sustainability.
+    pub async fn send_direct_message(
+        &self,
+        recipient: &UserId,
+        content: &str,
+    ) -> Result<MessageId> {
+        if *self.state.read().await != ConnectionState::Ready {
+            // Queue for later
+            return self
+                .queue_operation(OutboundOperation::DirectMessage {
+                    recipient_id: recipient.clone(),
+                    content: content.as_bytes().to_vec(),
+                    encrypted: false,
+                })
+                .await;
+        }
+
+        // DMs require fee-gated mode
+        if !self.is_fee_gated() {
+            return Err(Error::validation(
+                "Direct messages require fee-gated mode. Call set_fee_gateway() first.",
+            ));
+        }
+
+        let fee_gateway = self
+            .fee_gateway
+            .as_ref()
+            .ok_or_else(|| Error::internal("FeeGateway not configured"))?;
+
+        let request = FeeGatedRequest {
+            payer: self.identity.user_id.clone(),
+            client_nonce: self.next_nonce(),
+            payload: OperationPayload::DirectMessage {
+                recipient: recipient.clone(),
+                content: content.as_bytes().to_vec(),
+                encrypted: false,
+                encryption_key_id: None,
+            },
+            preferred_relay: None,
+        };
+
+        info!(
+            "📤 Sending fee-gated DM to {} (nonce: {})",
+            recipient, request.client_nonce
+        );
+
+        let response = fee_gateway.send_direct_message(request).await?;
+
+        info!(
+            "✓ DM sent: {} (gas: {}, msg fee: {}, relay: {})",
+            response.message_id,
+            response.gas_fee_receipt.amount,
+            response.message_fee_receipt.amount,
+            response.message_fee_receipt.relay_id
+        );
+
+        // Emit success event
+        let _ = self
+            .event_tx
+            .send(LightClientEvent::MessageSent {
+                message_id: response.message_id.to_string(),
+                channel_id: None,
+            })
+            .await;
+
+        Ok(response.message_id)
     }
 
     /// Unsubscribe from a channel
@@ -946,10 +1162,12 @@ impl LightClient {
         let mut failures = VecDeque::new();
 
         while let Some(mut op) = queue.pop_front() {
-            if matches!(op.operation, OutboundOperation::DirectMessage { .. }) {
-                // DM send path is not wired yet (fee-gated + key agreement).
-                // Fail immediately to avoid retry loops and confusing UX.
-                op.retry_count = 4;
+            // Skip DM operations if fee gateway is not available
+            if matches!(op.operation, OutboundOperation::DirectMessage { .. })
+                && !self.is_fee_gated()
+            {
+                // DM send path requires fee gateway
+                op.retry_count = 4; // Mark as failing to avoid retry loops
             }
 
             let result = match &op.operation {
@@ -967,13 +1185,30 @@ impl LightClient {
                     queue = self.offline_queue.write().await;
                     res.map(|_| ())
                 }
-                OutboundOperation::DirectMessage { recipient_id, .. } => {
-                    // DM sending requires FeeGateway integration for production
-                    // For now, log and skip (DMs queued for when FeeGateway is wired)
-                    warn!("DM to {} queued but not yet implemented", recipient_id);
-                    Err(Error::internal(
-                        "DM sending requires FeeGateway integration",
-                    ))
+                OutboundOperation::DirectMessage {
+                    recipient_id,
+                    content,
+                    ..
+                } => {
+                    if self.is_fee_gated() {
+                        // Fee gateway available - send via fee-gated path
+                        drop(queue);
+
+                        let content_str = String::from_utf8_lossy(content);
+                        let res = self.send_direct_message(recipient_id, &content_str).await;
+
+                        queue = self.offline_queue.write().await;
+                        res.map(|_| ())
+                    } else {
+                        // No fee gateway - fail with clear error
+                        warn!(
+                            "DM to {} cannot be sent: FeeGateway not configured",
+                            recipient_id
+                        );
+                        Err(Error::internal(
+                            "DM sending requires FeeGateway. Call set_fee_gateway() first.",
+                        ))
+                    }
                 }
             };
 
@@ -1037,6 +1272,21 @@ impl LightClient {
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/// Convert a channel name string to a deterministic UUID using UUID v5 (SHA-1 namespace)
+///
+/// This allows using human-readable channel names (like "global") while
+/// maintaining compatibility with the ChannelId(Uuid) type.
+fn channel_name_to_uuid(channel_name: &str) -> Uuid {
+    // Use a fixed namespace UUID for dchat channels
+    // Generated once: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, b"dchat.channels")
+    const DCHAT_CHANNEL_NAMESPACE: Uuid = Uuid::from_bytes([
+        0x9e, 0x1c, 0x4a, 0x8b, 0x3d, 0x2f, 0x5e, 0x7a, 0x8c, 0x9d, 0x0e, 0x1f, 0x2a, 0x3b, 0x4c,
+        0x5d,
+    ]);
+
+    Uuid::new_v5(&DCHAT_CHANNEL_NAMESPACE, channel_name.as_bytes())
+}
 
 fn generate_identity_with_keypair(display_name: &str) -> Result<(Identity, KeyPair)> {
     let keypair = KeyPair::try_generate()

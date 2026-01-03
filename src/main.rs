@@ -3423,16 +3423,20 @@ fn validate_config(config: &Config) -> Result<()> {
         ));
     }
 
-    if config.governance.quorum_threshold < 0.0 || config.governance.quorum_threshold > 1.0 {
+    // Quorum threshold validation (0-10000 bps, where 10000 = 100%)
+    if config.governance.quorum_threshold_bps > 10000 {
         return Err(Error::Config(
-            "quorum_threshold must be between 0.0 and 1.0".to_string(),
+            "quorum_threshold_bps must be between 0 and 10000 (basis points)".to_string(),
         ));
     }
 
     // MAINNET GOVERNANCE: Require reasonable quorum (minimum 33%, maximum 80%)
-    if config.governance.quorum_threshold < 0.33 || config.governance.quorum_threshold > 0.80 {
+    // 33% = 3300 bps, 80% = 8000 bps
+    if config.governance.quorum_threshold_bps < 3300
+        || config.governance.quorum_threshold_bps > 8000
+    {
         return Err(Error::Config(
-            "quorum_threshold must be between 0.33 and 0.80 for production governance".to_string(),
+            "quorum_threshold_bps must be between 3300 and 8000 (33%-80%) for production governance".to_string(),
         ));
     }
 
@@ -8847,6 +8851,55 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         RelayNetworkConfig::default(),
     )));
 
+    // Populate relay network from config seed relays
+    if !_config.relay.seed_relays.is_empty() {
+        use dchat_core::types::UserId;
+        use dchat_network::relay_network::{Continent, RelayInfo};
+        use uuid::Uuid;
+
+        let mut relay_mgr = relay_network.write().unwrap();
+        for seed in &_config.relay.seed_relays {
+            let continent = match seed.continent.to_lowercase().as_str() {
+                "northamerica" | "north_america" | "na" => Continent::NorthAmerica,
+                "southamerica" | "south_america" | "sa" => Continent::SouthAmerica,
+                "europe" | "eu" => Continent::Europe,
+                "asia" => Continent::Asia,
+                "africa" | "af" => Continent::Africa,
+                "oceania" | "oc" | "australia" => Continent::Oceania,
+                _ => Continent::Europe, // Default
+            };
+
+            let operator = seed
+                .operator_id
+                .as_ref()
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .map(UserId)
+                .unwrap_or_else(UserId::new);
+
+            let relay_info = RelayInfo::new(
+                seed.relay_id.clone(),
+                operator,
+                seed.stake,
+                continent,
+                0, // ASN - can be enhanced later
+            );
+
+            if let Err(e) = relay_mgr.register_relay(relay_info) {
+                warn!("Failed to register seed relay {}: {}", seed.relay_id, e);
+            } else {
+                info!(
+                    "Registered seed relay: {} ({})",
+                    seed.relay_id, seed.multiaddr
+                );
+            }
+        }
+        drop(relay_mgr);
+        info!(
+            "Loaded {} seed relays from config",
+            _config.relay.seed_relays.len()
+        );
+    }
+
     // Initialize storage-routed user manager for message storage (offline mode)
     let storage_manager = Arc::new(
         StorageRoutedUserManager::offline(
@@ -10324,7 +10377,7 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                 title.clone(),
                 description.clone(),
                 voting_days,
-                quorum,
+                quorum as u16 * 100, // Convert percentage to bps (60% = 6000 bps)
             )?;
 
             if let Some(url) = spec_url {

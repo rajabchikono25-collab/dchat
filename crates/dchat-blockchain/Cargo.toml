@@ -20,6 +20,7 @@ dchat-core = { path = "../dchat-core" }
 dchat-crypto = { path = "../dchat-crypto" }
 dchat-network = { path = "../dchat-network" }
 dchat-privacy = { path = "../dchat-privacy" }
+dchat-programs = { path = "../dchat-programs" }
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
 hex = "0.4"
 
