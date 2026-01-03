@@ -2,6 +2,7 @@
 //!
 //! This crate provides on-chain functionality including:
 //! - On-chain transaction types for user operations
+//! - Governance transactions (proposals, voting, execution)
 //! - Channel sharding and state partitioning
 //! - Cryptographic dispute resolution
 //! - Fork arbitration and consensus recovery
@@ -19,6 +20,7 @@ pub mod currency_chain_client;
 pub mod currency_transaction_parser;
 pub mod currency_transactions;
 pub mod dispute_resolution;
+pub mod governance_transactions;
 pub mod insurance_fund;
 pub mod pruning;
 pub mod sharding;
@@ -46,6 +48,14 @@ pub use currency_transactions::{
 pub use dispute_resolution::{
     CurrencyChainClient, DisputeClaim, DisputeResolver, DisputeStatus, DisputeType, SlashingConfig,
     SlashingEvent,
+};
+pub use governance_transactions::{
+    compute_vote_commitment, hash_finalization, hash_proposal, verify_vote_reveal,
+    ExecutionResult as GovernanceExecutionResult, GovernanceCancelTx, GovernanceDelegateTx,
+    GovernanceExecuteTx, GovernanceFinalizeTx, GovernanceProposalTx, GovernanceProposalType,
+    GovernanceRevokeDelegationTx, GovernanceStateSnapshot, GovernanceTransaction,
+    GovernanceTransactionType, GovernanceVoteCommitTx, GovernanceVoteRevealTx, ProposalOutcome,
+    VoteChoice,
 };
 pub use guardians::{
     GuardianChainState, InitiateRecoveryTx, RegisterGuardianTx, SubmitGuardianSignatureTx,

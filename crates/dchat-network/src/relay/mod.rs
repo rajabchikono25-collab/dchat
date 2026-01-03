@@ -65,10 +65,10 @@ pub use relay_incentives::{
 };
 pub use reputation::{RelayMetrics, RelayReputationScore, RelayReputationScorer, ReputationTier};
 pub use revocation::{
-    verify_frost_signature_async, RevocationAuthority, RevocationCheckResult, RevocationChecker,
-    RevocationEntry, RevocationId, RevocationReason, RevocationStats, RevocationStore,
-    RevocationType, MAX_ACTIVE_REVOCATIONS, REVOCATION_ARCHIVE_AGE_SECS, REVOCATION_ENTRY_VERSION,
-    REVOCATION_PROPAGATION_GRACE_SECS,
+    verify_frost_signature_async, GovernanceRootValidator, RevocationAuthority,
+    RevocationCheckResult, RevocationChecker, RevocationEntry, RevocationId, RevocationReason,
+    RevocationStats, RevocationStore, RevocationType, MAX_ACTIVE_REVOCATIONS,
+    REVOCATION_ARCHIVE_AGE_SECS, REVOCATION_ENTRY_VERSION, REVOCATION_PROPAGATION_GRACE_SECS,
 };
 pub use revocation_propagation::{
     BloomFilter, GossipMessageType, PropagationConfig, PropagationPriority, PropagationStats,

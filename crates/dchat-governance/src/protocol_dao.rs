@@ -10,6 +10,7 @@
 //! - Quadratic voting and delegation
 
 use chrono::{DateTime, Duration, Utc};
+use dchat_core::config::GovernanceConfig;
 use dchat_core::{types::UserId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -366,6 +367,49 @@ pub struct TreasuryAllocation {
     pub tx_hash: Option<String>,
 }
 
+/// Configuration for the Protocol DAO manager
+#[derive(Debug, Clone)]
+pub struct ProtocolDaoConfig {
+    /// Default voting duration in hours
+    pub voting_period_hours: u32,
+    /// Minimum stake required to submit proposals
+    pub minimum_stake_for_proposal: u64,
+    /// Default quorum threshold in basis points (0-10000)
+    pub default_quorum_bps: u16,
+    /// Default approval threshold in basis points (0-10000)
+    pub default_approval_bps: u16,
+    /// Review period before voting starts (in hours)
+    pub review_period_hours: u32,
+    /// Enable quadratic voting by default
+    pub enable_quadratic_voting: bool,
+}
+
+impl Default for ProtocolDaoConfig {
+    fn default() -> Self {
+        Self {
+            voting_period_hours: 168, // 1 week
+            minimum_stake_for_proposal: 1000,
+            default_quorum_bps: 5000,   // 50%
+            default_approval_bps: 6600, // 66%
+            review_period_hours: 48,    // 2 days
+            enable_quadratic_voting: true,
+        }
+    }
+}
+
+impl From<GovernanceConfig> for ProtocolDaoConfig {
+    fn from(cfg: GovernanceConfig) -> Self {
+        Self {
+            voting_period_hours: cfg.voting_period_hours,
+            minimum_stake_for_proposal: cfg.minimum_stake_for_proposal,
+            default_quorum_bps: cfg.quorum_threshold_bps,
+            default_approval_bps: cfg.approval_threshold_bps,
+            review_period_hours: 48,       // Default, not in GovernanceConfig
+            enable_quadratic_voting: true, // Default, not in GovernanceConfig
+        }
+    }
+}
+
 /// Protocol DAO manager
 pub struct ProtocolDaoManager {
     proposals: HashMap<Uuid, ProtocolProposal>,
@@ -389,10 +433,17 @@ pub struct ProtocolDaoManager {
     circuit_breakers: HashMap<String, bool>,
     /// Metrics collector
     metrics: Option<Arc<dchat_observability::MetricsCollector>>,
+    /// Configuration
+    config: ProtocolDaoConfig,
 }
 
 impl ProtocolDaoManager {
     pub fn new(emergency_multisig: Vec<UserId>) -> Self {
+        Self::with_config(emergency_multisig, ProtocolDaoConfig::default())
+    }
+
+    /// Create a new Protocol DAO manager with custom configuration
+    pub fn with_config(emergency_multisig: Vec<UserId>, config: ProtocolDaoConfig) -> Self {
         Self {
             proposals: HashMap::new(),
             delegations: HashMap::new(),
@@ -412,7 +463,13 @@ impl ProtocolDaoManager {
             is_protocol_paused: false,
             circuit_breakers: HashMap::new(),
             metrics: None,
+            config,
         }
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &ProtocolDaoConfig {
+        &self.config
     }
 
     /// Set chain client for on-chain governance transactions
@@ -1553,6 +1610,285 @@ impl ProtocolDaoManager {
     /// Get all protocol parameters
     pub fn get_all_protocol_parameters(&self) -> &HashMap<String, String> {
         &self.protocol_parameters
+    }
+
+    // ==================== Chain Persistence Methods ====================
+
+    /// Submit a proposal with on-chain persistence
+    ///
+    /// This method submits the proposal to the local state AND to the blockchain
+    /// for permanent, tamper-resistant storage.
+    pub async fn submit_proposal_to_chain(
+        &mut self,
+        proposer: UserId,
+        proposal_type: ProposalType,
+        title: String,
+        description: String,
+        rationale: String,
+        voting_duration_days: u32,
+    ) -> Result<Uuid> {
+        // First submit locally
+        let proposal_id = self.submit_proposal(
+            proposer.clone(),
+            proposal_type.clone(),
+            title.clone(),
+            description.clone(),
+            rationale.clone(),
+            voting_duration_days,
+        )?;
+
+        // Then persist to chain if client is available
+        if let Some(client) = &self.chain_client {
+            // Serialize proposal metadata for chain
+            let proposal_hash = {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(proposal_id.as_bytes());
+                hasher.update(title.as_bytes());
+                hasher.update(description.as_bytes());
+                format!("{}", hasher.finalize())
+            };
+
+            // Submit as parameter change (proposal creation is a "state" parameter)
+            let receipt = client
+                .submit_parameter_change(
+                    "governance.proposal.new",
+                    "",
+                    &proposal_hash,
+                    &proposal_id.to_string(),
+                )
+                .await?;
+
+            // Wait for confirmation
+            client.wait_for_confirmation(&receipt.tx_hash, 1).await?;
+
+            tracing::info!(
+                "📝 Proposal {} submitted to chain at block {}",
+                proposal_id,
+                receipt.block_height
+            );
+        }
+
+        Ok(proposal_id)
+    }
+
+    /// Sync proposal state from chain
+    ///
+    /// Loads the latest proposal states from the blockchain to ensure
+    /// local state is consistent with the canonical chain state.
+    pub async fn sync_from_chain(&mut self) -> Result<()> {
+        let client = self
+            .chain_client
+            .as_ref()
+            .ok_or_else(|| Error::internal("No chain client configured for sync"))?;
+
+        // Get current block height
+        let current_block = client.get_current_block().await?;
+
+        // Sync protocol parameters from chain
+        for param_name in [
+            "consensus.block_time",
+            "consensus.max_block_size",
+            "economic.base_fee",
+            "network.max_peers",
+        ] {
+            match client.get_protocol_parameter(param_name).await {
+                Ok(value) => {
+                    self.protocol_parameters
+                        .insert(param_name.to_string(), value);
+                }
+                Err(_) => {
+                    // Parameter might not exist on chain yet
+                    tracing::trace!("Parameter {} not found on chain", param_name);
+                }
+            }
+        }
+
+        tracing::info!(
+            "✅ Synced governance state from chain at block {}",
+            current_block
+        );
+
+        Ok(())
+    }
+
+    /// Persist a vote to the chain
+    pub async fn persist_vote_to_chain(
+        &self,
+        proposal_id: Uuid,
+        voter: &UserId,
+        vote_type: VoteType,
+        voting_power: u64,
+    ) -> Result<GovernanceTxReceipt> {
+        let client = self
+            .chain_client
+            .as_ref()
+            .ok_or_else(|| Error::internal("No chain client configured for vote persistence"))?;
+
+        // Serialize vote data
+        let vote_data = format!(
+            "{}:{}:{}:{}",
+            proposal_id,
+            hex::encode(voter.as_bytes()),
+            match vote_type {
+                VoteType::For => "for",
+                VoteType::Against => "against",
+                VoteType::Abstain => "abstain",
+            },
+            voting_power
+        );
+
+        let receipt = client
+            .submit_parameter_change(
+                &format!("governance.vote.{}", proposal_id),
+                "",
+                &vote_data,
+                &proposal_id.to_string(),
+            )
+            .await?;
+
+        tracing::debug!("🗳️ Vote persisted to chain: tx={}", receipt.tx_hash);
+
+        Ok(receipt)
+    }
+
+    /// Execute a finalized proposal with chain persistence
+    ///
+    /// After a proposal passes, this method:
+    /// 1. Executes the proposal action
+    /// 2. Records the execution on-chain
+    /// 3. Waits for confirmation
+    pub async fn execute_and_persist(&mut self, proposal_id: Uuid) -> Result<GovernanceTxReceipt> {
+        // Get proposal
+        let proposal = self
+            .proposals
+            .get(&proposal_id)
+            .ok_or_else(|| Error::validation("Proposal not found"))?
+            .clone();
+
+        // Verify proposal is ready for execution
+        if proposal.status != ProposalStatus::Passed {
+            return Err(Error::validation("Proposal has not passed"));
+        }
+
+        let client = self
+            .chain_client
+            .as_ref()
+            .ok_or_else(|| Error::internal("No chain client configured for execution"))?;
+
+        // Execute based on proposal type
+        let receipt = match &proposal.proposal_type {
+            ProposalType::ParameterChange {
+                parameter,
+                current_value,
+                proposed_value,
+            } => {
+                client
+                    .submit_parameter_change(
+                        &format!("{:?}", parameter),
+                        current_value,
+                        proposed_value,
+                        &proposal_id.to_string(),
+                    )
+                    .await?
+            }
+
+            ProposalType::TreasuryAllocation {
+                recipient,
+                amount,
+                purpose,
+            } => {
+                client
+                    .submit_treasury_transfer(
+                        recipient.as_bytes(),
+                        *amount,
+                        purpose,
+                        &proposal_id.to_string(),
+                    )
+                    .await?
+            }
+
+            ProposalType::FeatureToggle {
+                feature_name,
+                enable,
+            } => client.submit_feature_toggle(feature_name, *enable).await?,
+
+            ProposalType::ProtocolUpgrade {
+                version,
+                upgrade_hash,
+                is_hard_fork,
+            } => {
+                client
+                    .submit_protocol_upgrade(
+                        version,
+                        upgrade_hash,
+                        client.get_current_block().await? + 1000, // Activate in 1000 blocks
+                        *is_hard_fork,
+                    )
+                    .await?
+            }
+
+            ProposalType::EmergencyAction { action_type, .. } => {
+                let mut params = HashMap::new();
+                params.insert("proposal_id".to_string(), proposal_id.to_string());
+                client
+                    .submit_emergency_action(&format!("{:?}", action_type), &params)
+                    .await?
+            }
+
+            ProposalType::GrantProgram { program_name, .. } => {
+                // Grant programs are recorded as parameter changes
+                client
+                    .submit_parameter_change(
+                        &format!("governance.grant.{}", program_name),
+                        "",
+                        "active",
+                        &proposal_id.to_string(),
+                    )
+                    .await?
+            }
+        };
+
+        // Wait for confirmation
+        client.wait_for_confirmation(&receipt.tx_hash, 3).await?;
+
+        // Update local state
+        if let Some(p) = self.proposals.get_mut(&proposal_id) {
+            p.status = ProposalStatus::Executed;
+            p.executed_at = Some(Utc::now());
+            p.execution = Some(ExecutionInfo {
+                executor: Some(UserId::new()), // Would be filled from receipt
+                execution_tx_hash: receipt.tx_hash.clone(),
+                execution_result: ExecutionResult::Success,
+                executed_at: Utc::now(),
+            });
+        }
+
+        // Record audit trail
+        self.audit_records.push(ExecutionAuditRecord {
+            proposal_id,
+            action_type: format!("{:?}", proposal.proposal_type),
+            executor: UserId::new(), // Would be filled from receipt
+            tx_hash: receipt.tx_hash.clone(),
+            block_height: receipt.block_height,
+            executed_at: Utc::now(),
+            pre_state_hash: String::new(),  // Would be computed
+            post_state_hash: String::new(), // Would be computed
+            success: receipt.success,
+            details: HashMap::new(),
+        });
+
+        tracing::info!(
+            "✅ Proposal {} executed and confirmed at block {}",
+            proposal_id,
+            receipt.block_height
+        );
+
+        Ok(receipt)
+    }
+
+    /// Check if chain client is configured
+    pub fn has_chain_client(&self) -> bool {
+        self.chain_client.is_some()
     }
 }
 

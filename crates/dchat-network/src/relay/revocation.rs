@@ -55,6 +55,27 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+/// Trait for validating governance merkle roots against block headers
+///
+/// This allows the revocation system to verify that governance roots
+/// used in channel governance revocations actually come from valid blocks.
+#[async_trait::async_trait]
+pub trait GovernanceRootValidator: Send + Sync {
+    /// Validate that the governance root exists in the block at the given height
+    ///
+    /// Returns Ok(true) if the root matches the block's governance_merkle_root,
+    /// Ok(false) if the block exists but has a different root,
+    /// or Err if the block cannot be retrieved.
+    async fn validate_governance_root(
+        &self,
+        block_height: u64,
+        governance_root: &[u8; 32],
+    ) -> Result<bool>;
+
+    /// Get the current block height for determining if a governance action is finalized
+    async fn get_current_block_height(&self) -> Result<u64>;
+}
+
 /// Serde helper for [u8; 64] arrays (signatures)
 mod signature_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -264,6 +285,8 @@ impl RevocationAuthority {
                     ));
                 }
 
+                // Note: This verification only checks merkle proof consistency.
+                // Use verify_with_chain() for full chain-validated verification.
                 Ok(())
             }
             RevocationAuthority::RelayQuorum {
@@ -294,6 +317,56 @@ impl RevocationAuthority {
                 Ok(())
             }
         }
+    }
+
+    /// Verify the authority's signature/proof with chain validation
+    ///
+    /// This is the full verification method that validates governance roots
+    /// against actual block headers on the chain.
+    pub async fn verify_with_chain<V: GovernanceRootValidator>(
+        &self,
+        revocation: &RevocationEntry,
+        validator: &V,
+    ) -> Result<()> {
+        // First do the basic verification
+        self.verify(revocation)?;
+
+        // For channel governance, also validate the governance root against the chain
+        if let RevocationAuthority::ChannelGovernance {
+            channel_id: _,
+            vote_block,
+            vote_proof,
+        } = self
+        {
+            // Extract governance root from proof
+            let governance_root: [u8; 32] = vote_proof[0..32]
+                .try_into()
+                .map_err(|_| Error::validation("Invalid governance root in proof"))?;
+
+            // Validate against the chain
+            let is_valid = validator
+                .validate_governance_root(*vote_block, &governance_root)
+                .await?;
+
+            if !is_valid {
+                return Err(Error::validation(
+                    "Governance root does not match block header",
+                ));
+            }
+
+            // Ensure the block is finalized (not too recent)
+            let current_height = validator.get_current_block_height().await?;
+            const MIN_CONFIRMATIONS: u64 = 6;
+            if current_height < *vote_block + MIN_CONFIRMATIONS {
+                return Err(Error::validation(format!(
+                    "Governance block not yet finalized: {} confirmations required, got {}",
+                    MIN_CONFIRMATIONS,
+                    current_height.saturating_sub(*vote_block)
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -625,6 +698,67 @@ impl RevocationStore {
     pub fn add(&mut self, mut entry: RevocationEntry) -> Result<()> {
         // Validate authority signature
         entry.authority.verify(&entry)?;
+
+        // Assign sequence number
+        self.current_sequence += 1;
+        entry.sequence = self.current_sequence;
+
+        // Update previous hash for merkle chain
+        if let Some((&_last_seq, last_id)) = self.by_sequence.last_key_value() {
+            if let Some(last_entry) = self.by_id.get(last_id) {
+                entry.previous_hash = last_entry.id;
+            }
+        }
+
+        // Recompute ID with sequence
+        entry.id = entry.compute_id();
+
+        // Add to appropriate index
+        match entry.revocation_type {
+            RevocationType::Device => {
+                self.device_revocations
+                    .insert(entry.target_id, entry.clone());
+            }
+            RevocationType::User => {
+                self.user_revocations.insert(entry.target_id, entry.clone());
+            }
+            RevocationType::Membership => {
+                if let Some(scope_id) = entry.scope_id {
+                    self.membership_revocations
+                        .insert((entry.target_id, scope_id), entry.clone());
+                }
+            }
+            RevocationType::Emergency => {
+                self.emergency_revocations
+                    .insert(entry.target_id, entry.clone());
+            }
+        }
+
+        // Add to global indexes
+        self.by_id.insert(entry.id, entry.clone());
+        self.by_sequence.insert(entry.sequence, entry.id);
+
+        // Update merkle root
+        self.update_merkle_root();
+        self.last_updated = current_timestamp();
+
+        // Enforce memory limits
+        self.enforce_limits();
+
+        Ok(())
+    }
+
+    /// Add a revocation entry with chain validation for governance proofs
+    ///
+    /// This method performs full chain validation for channel governance revocations,
+    /// ensuring the governance root matches the actual block header.
+    pub async fn add_with_chain_validation<V: GovernanceRootValidator>(
+        &mut self,
+        mut entry: RevocationEntry,
+        validator: &V,
+    ) -> Result<()> {
+        // Validate authority with chain validation
+        entry.authority.verify_with_chain(&entry, validator).await?;
 
         // Assign sequence number
         self.current_sequence += 1;

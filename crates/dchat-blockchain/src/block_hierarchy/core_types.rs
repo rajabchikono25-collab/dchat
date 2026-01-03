@@ -658,6 +658,10 @@ pub struct Block {
     pub finality_proof: FinalityProof,
     /// Data availability commitment
     pub da_commitment: Option<super::DataAvailabilityCommitment>,
+    /// Merkle root of governance state (finalized proposals, vote tallies)
+    /// Commits governance decisions to the blockchain for verification.
+    #[serde(default)]
+    pub governance_merkle_root: Option<Hash>,
 }
 
 impl Block {
@@ -677,6 +681,7 @@ impl Block {
             relay_votes: Vec::new(),
             finality_proof: FinalityProof::default(),
             da_commitment: None,
+            governance_merkle_root: None,
         }
     }
 
@@ -751,6 +756,7 @@ impl Block {
             subblock_count: self.subblocks.len() as u8,
             transaction_count: self.transaction_count() as u32,
             da_commitment: self.da_commitment.clone(),
+            governance_merkle_root: self.governance_merkle_root,
         }
     }
 }
@@ -765,6 +771,11 @@ pub struct BlockHeader {
     pub subblock_count: u8,
     pub transaction_count: u32,
     pub da_commitment: Option<super::DataAvailabilityCommitment>,
+    /// Merkle root of governance state (finalized proposals, vote tallies)
+    /// This commits the governance state to the block, enabling verification
+    /// of governance-based revocations and on-chain governance proofs.
+    #[serde(default)]
+    pub governance_merkle_root: Option<Hash>,
 }
 
 impl BlockHeader {

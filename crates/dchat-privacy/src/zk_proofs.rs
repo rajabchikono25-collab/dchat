@@ -872,6 +872,184 @@ impl Groth16Keys {
         Groth16::<Bn254>::verify_with_processed_vk(pvk, public_inputs, &groth16_proof)
             .map_err(|e| Error::crypto(format!("Proof verification failed: {:?}", e)))
     }
+
+    /// Load keys from separate proving and verifying key files
+    ///
+    /// This method loads keys from external files, useful for:
+    /// - Development environments without embedded ceremony artifacts
+    /// - Custom key distributions
+    /// - Testing with different key sets
+    ///
+    /// # File Format
+    /// Both files should contain keys in compressed binary format as produced
+    /// by `save_to_files()`.
+    ///
+    /// # Security
+    /// Always verify the source and integrity of key files.
+    /// Never use keys from untrusted sources in production.
+    pub fn load_from_files(
+        proving_key_path: &std::path::Path,
+        verifying_key_path: &std::path::Path,
+    ) -> Result<Self> {
+        use std::fs::File;
+        use std::io::Read;
+
+        // Read proving key file
+        let mut pk_bytes = Vec::new();
+        File::open(proving_key_path)
+            .and_then(|mut f| f.read_to_end(&mut pk_bytes))
+            .map_err(|e| {
+                Error::internal(format!(
+                    "Failed to read proving key from {}: {}",
+                    proving_key_path.display(),
+                    e
+                ))
+            })?;
+
+        // Read verifying key file
+        let mut vk_bytes = Vec::new();
+        File::open(verifying_key_path)
+            .and_then(|mut f| f.read_to_end(&mut vk_bytes))
+            .map_err(|e| {
+                Error::internal(format!(
+                    "Failed to read verifying key from {}: {}",
+                    verifying_key_path.display(),
+                    e
+                ))
+            })?;
+
+        // Parse file format: [contact_pk_len(4)][contact_pk][contact_vk_len(4)][contact_vk][reputation_pk_len(4)][reputation_pk][reputation_vk_len(4)][reputation_vk]
+        let mut cursor = 0;
+
+        // Helper to read length-prefixed data
+        fn read_key_data<'a>(bytes: &'a [u8], cursor: &mut usize) -> Result<&'a [u8]> {
+            if *cursor + 4 > bytes.len() {
+                return Err(Error::crypto("Key file too short for length prefix"));
+            }
+            let len = u32::from_le_bytes(
+                bytes[*cursor..*cursor + 4]
+                    .try_into()
+                    .map_err(|_| Error::crypto("Invalid length prefix"))?,
+            ) as usize;
+            *cursor += 4;
+
+            if *cursor + len > bytes.len() {
+                return Err(Error::crypto("Key file too short for key data"));
+            }
+            let data = &bytes[*cursor..*cursor + len];
+            *cursor += len;
+            Ok(data)
+        }
+
+        let contact_pk_data = read_key_data(&pk_bytes, &mut cursor)?;
+        let contact_vk_data = read_key_data(&pk_bytes, &mut cursor)?;
+        let reputation_pk_data = read_key_data(&pk_bytes, &mut cursor)?;
+        let reputation_vk_data = read_key_data(&pk_bytes, &mut cursor)?;
+
+        // Deserialize keys
+        let contact_pk = ProvingKey::deserialize_compressed(contact_pk_data)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize contact_pk: {}", e)))?;
+        let contact_vk = VerifyingKey::deserialize_compressed(contact_vk_data)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize contact_vk: {}", e)))?;
+        let reputation_pk = ProvingKey::deserialize_compressed(reputation_pk_data)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize reputation_pk: {}", e)))?;
+        let reputation_vk = VerifyingKey::deserialize_compressed(reputation_vk_data)
+            .map_err(|e| Error::crypto(format!("Failed to deserialize reputation_vk: {}", e)))?;
+
+        // Prepare verifying keys
+        let contact_pvk = prepare_verifying_key(&contact_vk);
+        let reputation_pvk = prepare_verifying_key(&reputation_vk);
+
+        let poseidon_config = get_poseidon_config();
+
+        tracing::info!(
+            "Loaded ZK keys from files: pk={}, vk={}",
+            proving_key_path.display(),
+            verifying_key_path.display()
+        );
+
+        Ok(Self {
+            poseidon_config,
+            contact_pk,
+            contact_vk,
+            contact_pvk,
+            reputation_pk,
+            reputation_vk,
+            reputation_pvk,
+        })
+    }
+
+    /// Save keys to separate proving and verifying key files
+    ///
+    /// This method saves keys to external files for later loading with `load_from_files()`.
+    ///
+    /// # File Format
+    /// Keys are stored in compressed binary format with length prefixes.
+    ///
+    /// # Security
+    /// Proving keys should be kept secure. Leaking proving keys doesn't compromise
+    /// soundness but may allow unauthorized proof generation.
+    pub fn save_to_files(
+        &self,
+        proving_key_path: &std::path::Path,
+        verifying_key_path: &std::path::Path,
+    ) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let mut pk_bytes = Vec::new();
+
+        // Helper to write length-prefixed key
+        fn write_key<W: Write, S: CanonicalSerialize>(writer: &mut W, key: &S) -> Result<()> {
+            let mut key_bytes = Vec::new();
+            key.serialize_compressed(&mut key_bytes)
+                .map_err(|e| Error::crypto(format!("Failed to serialize key: {}", e)))?;
+
+            writer
+                .write_all(&(key_bytes.len() as u32).to_le_bytes())
+                .map_err(|e| Error::internal(format!("Failed to write length: {}", e)))?;
+            writer
+                .write_all(&key_bytes)
+                .map_err(|e| Error::internal(format!("Failed to write key: {}", e)))?;
+            Ok(())
+        }
+
+        // Write all keys to proving key file
+        write_key(&mut pk_bytes, &self.contact_pk)?;
+        write_key(&mut pk_bytes, &self.contact_vk)?;
+        write_key(&mut pk_bytes, &self.reputation_pk)?;
+        write_key(&mut pk_bytes, &self.reputation_vk)?;
+
+        // Write proving keys file
+        File::create(proving_key_path)
+            .and_then(|mut f| f.write_all(&pk_bytes))
+            .map_err(|e| {
+                Error::internal(format!(
+                    "Failed to write proving key to {}: {}",
+                    proving_key_path.display(),
+                    e
+                ))
+            })?;
+
+        // Write verifying key file (same content for simplicity in this format)
+        File::create(verifying_key_path)
+            .and_then(|mut f| f.write_all(&pk_bytes))
+            .map_err(|e| {
+                Error::internal(format!(
+                    "Failed to write verifying key to {}: {}",
+                    verifying_key_path.display(),
+                    e
+                ))
+            })?;
+
+        tracing::info!(
+            "Saved ZK keys to files: pk={}, vk={}",
+            proving_key_path.display(),
+            verifying_key_path.display()
+        );
+
+        Ok(())
+    }
 }
 
 /// Circuit type for proof verification

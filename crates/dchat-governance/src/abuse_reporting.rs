@@ -7,6 +7,7 @@
 // - Appeal mechanisms protect against abuse
 //
 // Security: Uses AES-256-GCM for evidence encryption (NIST-approved AEAD)
+// ZK keys are loaded from files for production security.
 
 use chrono::{DateTime, Utc};
 use dchat_core::{Error, Result, UserId};
@@ -17,31 +18,141 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::RwLock;
 use uuid::Uuid;
 
-/// Global ZK keys for abuse reporting (setup once, used by all)
+/// Environment variable for ZK keys directory
+pub const ZK_KEYS_DIR_ENV: &str = "DCHAT_ZK_KEYS_DIR";
+
+/// Default ZK keys directory (relative to data directory)
+pub const DEFAULT_ZK_KEYS_DIR: &str = "zk_keys";
+
+/// Filename for the proving key
+pub const PROVING_KEY_FILENAME: &str = "abuse_reporting_proving.key";
+
+/// Filename for the verifying key
+pub const VERIFYING_KEY_FILENAME: &str = "abuse_reporting_verifying.key";
+
+/// ZK key provider configuration
+#[derive(Debug, Clone)]
+pub struct ZkKeyConfig {
+    /// Directory containing ZK key files
+    pub keys_directory: PathBuf,
+    /// Whether to generate keys if not found (only for development)
+    pub allow_key_generation: bool,
+}
+
+impl Default for ZkKeyConfig {
+    fn default() -> Self {
+        Self {
+            keys_directory: PathBuf::from(DEFAULT_ZK_KEYS_DIR),
+            allow_key_generation: cfg!(debug_assertions), // Only in debug builds
+        }
+    }
+}
+
+impl ZkKeyConfig {
+    /// Create config from environment or use defaults
+    pub fn from_env() -> Self {
+        let keys_directory = std::env::var(ZK_KEYS_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_ZK_KEYS_DIR));
+
+        Self {
+            keys_directory,
+            allow_key_generation: cfg!(debug_assertions),
+        }
+    }
+}
+
+/// Load ZK keys from files or generate if allowed
+fn load_or_generate_zk_keys(config: &ZkKeyConfig) -> Result<Groth16Keys> {
+    let proving_key_path = config.keys_directory.join(PROVING_KEY_FILENAME);
+    let verifying_key_path = config.keys_directory.join(VERIFYING_KEY_FILENAME);
+
+    // Try to load from files first
+    if proving_key_path.exists() && verifying_key_path.exists() {
+        tracing::info!("Loading ZK keys from {}", config.keys_directory.display());
+        match Groth16Keys::load_from_files(&proving_key_path, &verifying_key_path) {
+            Ok(keys) => return Ok(keys),
+            Err(e) => {
+                tracing::warn!("Failed to load ZK keys from files: {:?}", e);
+                if !config.allow_key_generation {
+                    return Err(Error::internal(format!(
+                        "Failed to load ZK keys and generation is disabled: {:?}",
+                        e
+                    )));
+                }
+            }
+        }
+    }
+
+    // Generate new keys if allowed
+    if config.allow_key_generation {
+        tracing::warn!("Generating new ZK keys (this should only happen in development)");
+
+        // Use cryptographically secure random seed
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill(&mut seed);
+        let mut rng = ChaCha20Rng::from_seed(seed);
+
+        let keys = Groth16Keys::setup(&mut rng)?;
+
+        // Attempt to save keys for future use
+        if let Err(e) = std::fs::create_dir_all(&config.keys_directory) {
+            tracing::warn!("Failed to create ZK keys directory: {:?}", e);
+        } else if let Err(e) = keys.save_to_files(&proving_key_path, &verifying_key_path) {
+            tracing::warn!("Failed to save generated ZK keys: {:?}", e);
+        } else {
+            tracing::info!(
+                "Saved generated ZK keys to {}",
+                config.keys_directory.display()
+            );
+        }
+
+        return Ok(keys);
+    }
+
+    Err(Error::internal(format!(
+        "ZK keys not found at {} and generation is disabled. \
+         Set {} environment variable or generate keys with setup tool.",
+        config.keys_directory.display(),
+        ZK_KEYS_DIR_ENV
+    )))
+}
+
+/// Global ZK keys for abuse reporting (loaded from files or generated)
 ///
 /// # Panics
-/// This will panic at startup if ZK key generation fails. This is intentional
-/// because the abuse reporting system cannot function without valid ZK keys,
-/// and catching this at startup is safer than runtime failures.
+/// This will panic at startup if ZK key loading fails and generation is disabled.
+/// This is intentional because the abuse reporting system cannot function without
+/// valid ZK keys, and catching this at startup is safer than runtime failures.
 static ABUSE_REPORTING_ZK_KEYS: Lazy<Groth16Keys> = Lazy::new(|| {
-    // Use deterministic seed for reproducible keys
-    let mut rng = ChaCha20Rng::from_seed([42u8; 32]);
-    match Groth16Keys::setup(&mut rng) {
+    let config = ZkKeyConfig::from_env();
+    match load_or_generate_zk_keys(&config) {
         Ok(keys) => keys,
         Err(e) => {
             // Log critical error before panicking
             eprintln!(
-                "CRITICAL: Failed to setup ZK keys for abuse reporting: {:?}",
+                "CRITICAL: Failed to load ZK keys for abuse reporting: {:?}",
                 e
             );
             eprintln!("The abuse reporting system cannot function without valid ZK keys.");
-            eprintln!("This is a fatal configuration error that must be resolved before launch.");
-            panic!("Failed to setup ZK keys for abuse reporting: {:?}", e);
+            eprintln!(
+                "Either set {} environment variable pointing to key files,",
+                ZK_KEYS_DIR_ENV
+            );
+            eprintln!("or generate keys using the setup tool: dchat-keygen --zk-keys");
+            panic!("Failed to load ZK keys for abuse reporting: {:?}", e);
         }
     }
 });
+
+/// Get a reference to the global ZK keys
+pub fn get_zk_keys() -> &'static Groth16Keys {
+    &ABUSE_REPORTING_ZK_KEYS
+}
 
 /// Type of abuse being reported
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
