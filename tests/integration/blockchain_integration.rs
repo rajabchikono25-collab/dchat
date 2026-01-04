@@ -1,10 +1,9 @@
+use crate::integration::mock_blockchain::{MockBlockchain, TransactionStatus, TransactionType};
 /// Blockchain Integration Tests
-/// 
+///
 /// Validates blockchain transaction submission, confirmation,
 /// and state management across all SDKs.
-
 use std::collections::HashMap;
-use crate::integration::mock_blockchain::{MockBlockchain, TransactionType, TransactionStatus};
 
 #[cfg(test)]
 mod tests {
@@ -38,11 +37,19 @@ mod tests {
         // Register both users first
         let mut alice_data = HashMap::new();
         alice_data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), alice_data).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                alice_data,
+            )
+            .unwrap();
 
         let mut bob_data = HashMap::new();
         bob_data.insert("user_id".to_string(), "bob-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data)
+            .unwrap();
 
         // Send message
         let mut msg_data = HashMap::new();
@@ -50,7 +57,11 @@ mod tests {
         msg_data.insert("content_hash".to_string(), "msg-hash-123".to_string());
 
         let tx_id = blockchain
-            .submit_transaction(TransactionType::SendDirectMessage, "alice".to_string(), msg_data)
+            .submit_transaction(
+                TransactionType::SendDirectMessage,
+                "alice".to_string(),
+                msg_data,
+            )
             .expect("Failed to submit message transaction");
 
         let tx = blockchain.get_transaction(&tx_id).unwrap();
@@ -65,7 +76,13 @@ mod tests {
         // Register user first
         let mut alice_data = HashMap::new();
         alice_data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), alice_data).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                alice_data,
+            )
+            .unwrap();
 
         // Create channel
         let mut channel_data = HashMap::new();
@@ -73,7 +90,11 @@ mod tests {
         channel_data.insert("description".to_string(), "General discussion".to_string());
 
         let tx_id = blockchain
-            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), channel_data)
+            .submit_transaction(
+                TransactionType::CreateChannel,
+                "alice".to_string(),
+                channel_data,
+            )
             .expect("Failed to submit channel creation transaction");
 
         let tx = blockchain.get_transaction(&tx_id).unwrap();
@@ -119,7 +140,7 @@ mod tests {
 
         // Advance blocks and submit another
         blockchain.advance_blocks(3);
-        
+
         let mut data2 = HashMap::new();
         data2.insert("user_id".to_string(), "bob-1".to_string());
         let tx_id2 = blockchain
@@ -137,15 +158,25 @@ mod tests {
         // Create mix of transaction types
         let mut data = HashMap::new();
         data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data.clone()).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                data.clone(),
+            )
+            .unwrap();
 
         let mut data2 = HashMap::new();
         data2.insert("user_id".to_string(), "bob-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data2).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data2)
+            .unwrap();
 
         let mut data3 = HashMap::new();
         data3.insert("channel_name".to_string(), "general".to_string());
-        blockchain.submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data3).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data3)
+            .unwrap();
 
         // Filter by type
         let reg_txs = blockchain.get_transactions_by_type(TransactionType::RegisterUser);
@@ -162,16 +193,26 @@ mod tests {
         // Alice creates multiple transactions
         let mut data = HashMap::new();
         data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data.clone()).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                data.clone(),
+            )
+            .unwrap();
 
         let mut data2 = HashMap::new();
         data2.insert("channel_name".to_string(), "general".to_string());
-        blockchain.submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data2).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data2)
+            .unwrap();
 
         // Bob creates one
         let mut bob_data = HashMap::new();
         bob_data.insert("user_id".to_string(), "bob-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data)
+            .unwrap();
 
         // Filter by sender
         let alice_txs = blockchain.get_transactions_by_sender("alice");
@@ -188,25 +229,45 @@ mod tests {
         // Create various transactions
         let mut data1 = HashMap::new();
         data1.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data1).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data1)
+            .unwrap();
 
         let mut data2 = HashMap::new();
         data2.insert("user_id".to_string(), "bob-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data2).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data2)
+            .unwrap();
 
         let mut data3 = HashMap::new();
         data3.insert("channel_name".to_string(), "general".to_string());
-        blockchain.submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data3).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), data3)
+            .unwrap();
 
         let stats = blockchain.get_stats();
         assert_eq!(stats.total_transactions, 3);
         assert_eq!(stats.confirmed_transactions, 3);
         assert_eq!(stats.pending_transactions, 0);
         assert_eq!(stats.current_block_height, 1);
-        
+
         // Check transaction type breakdown
-        assert_eq!(stats.transactions_by_type.get("RegisterUser").copied().unwrap_or(0), 2);
-        assert_eq!(stats.transactions_by_type.get("CreateChannel").copied().unwrap_or(0), 1);
+        assert_eq!(
+            stats
+                .transactions_by_type
+                .get("RegisterUser")
+                .copied()
+                .unwrap_or(0),
+            2
+        );
+        assert_eq!(
+            stats
+                .transactions_by_type
+                .get("CreateChannel")
+                .copied()
+                .unwrap_or(0),
+            1
+        );
     }
 
     #[test]

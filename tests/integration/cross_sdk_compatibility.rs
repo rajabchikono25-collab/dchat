@@ -1,8 +1,7 @@
 /// Cross-SDK Compatibility Tests
-/// 
+///
 /// Validates that all SDKs (Dart, TypeScript, Python, Rust)
 /// produce identical transaction formats and data structures.
-
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -75,7 +74,10 @@ mod tests {
         channel_data.insert("channel_id".to_string(), "channel-abc123".to_string());
         channel_data.insert("channel_name".to_string(), "general".to_string());
         channel_data.insert("creator_id".to_string(), "alice-id".to_string());
-        channel_data.insert("description".to_string(), "General discussion channel".to_string());
+        channel_data.insert(
+            "description".to_string(),
+            "General discussion channel".to_string(),
+        );
         channel_data.insert("is_public".to_string(), "true".to_string());
         channel_data.insert("timestamp".to_string(), "2025-10-29T10:02:00Z".to_string());
 
@@ -201,7 +203,7 @@ mod tests {
             // Validate UUID format
             let parts: Vec<&str> = uuid.split('-').collect();
             assert_eq!(parts.len(), 5);
-            
+
             // Verify hex format
             for part in parts {
                 for c in part.chars() {
@@ -214,10 +216,7 @@ mod tests {
     /// Test that timestamp format is consistent (ISO 8601)
     #[test]
     fn test_timestamp_format_consistency() {
-        let test_timestamps = vec![
-            "2025-10-29T10:00:00Z",
-            "2025-10-29T10:00:00+00:00",
-        ];
+        let test_timestamps = vec!["2025-10-29T10:00:00Z", "2025-10-29T10:00:00+00:00"];
 
         for ts in test_timestamps {
             // Verify contains ISO 8601 components
@@ -269,11 +268,7 @@ mod tests {
     /// Test that status codes are standardized
     #[test]
     fn test_standardized_status_codes() {
-        let statuses = vec![
-            "Pending",
-            "Confirmed",
-            "Failed",
-        ];
+        let statuses = vec!["Pending", "Confirmed", "Failed"];
 
         // All SDKs must support these exact status strings
         assert_eq!(statuses.len(), 3);

@@ -1,5 +1,5 @@
 /// Messaging Flow Integration Tests
-/// 
+///
 /// Validates P2P messaging encryption, DHT routing, peer discovery,
 /// and proof-of-delivery tracking for Dart and other SDKs.
 
@@ -17,9 +17,9 @@ mod tests {
         }
 
         let noise_state = NoiseState {
-            send_key: vec![0; 32],      // 32-byte ChaCha key
-            recv_key: vec![0; 32],      // 32-byte ChaCha key
-            nonce: vec![0; 24],         // 24-byte nonce (XChaCha20)
+            send_key: vec![0; 32], // 32-byte ChaCha key
+            recv_key: vec![0; 32], // 32-byte ChaCha key
+            nonce: vec![0; 24],    // 24-byte nonce (XChaCha20)
             key_rotation_count: 0,
         };
 
@@ -39,8 +39,8 @@ mod tests {
 
         let cipher = CipherText {
             ciphertext: vec![0; 100],
-            auth_tag: vec![0; 16],      // Poly1305 produces 16-byte tags
-            nonce: vec![0; 24],         // XChaCha20 uses 24-byte nonces
+            auth_tag: vec![0; 16], // Poly1305 produces 16-byte tags
+            nonce: vec![0; 24],    // XChaCha20 uses 24-byte nonces
         };
 
         assert_eq!(cipher.auth_tag.len(), 16);
@@ -51,7 +51,7 @@ mod tests {
     fn test_key_rotation_schedule() {
         // Keys should rotate every N messages (default: 100)
         const KEY_ROTATION_INTERVAL: u32 = 100;
-        
+
         let mut message_count = 0;
         let mut rotations = 0;
 
@@ -71,7 +71,7 @@ mod tests {
         // Kademlia DHT standard parameters
         const K_BUCKET_SIZE: usize = 20;
         const MAX_BUCKETS: usize = 160; // 160 buckets for 160-bit keyspace
-        const ALPHA: usize = 3;         // Concurrency parameter
+        const ALPHA: usize = 3; // Concurrency parameter
 
         assert_eq!(K_BUCKET_SIZE, 20);
         assert_eq!(MAX_BUCKETS, 160);
@@ -108,10 +108,22 @@ mod tests {
         }
 
         let nodes = vec![
-            DHTNode { id: "node-1".to_string(), distance: 5 },
-            DHTNode { id: "node-2".to_string(), distance: 2 },
-            DHTNode { id: "node-3".to_string(), distance: 8 },
-            DHTNode { id: "node-4".to_string(), distance: 1 },
+            DHTNode {
+                id: "node-1".to_string(),
+                distance: 5,
+            },
+            DHTNode {
+                id: "node-2".to_string(),
+                distance: 2,
+            },
+            DHTNode {
+                id: "node-3".to_string(),
+                distance: 8,
+            },
+            DHTNode {
+                id: "node-4".to_string(),
+                distance: 1,
+            },
         ];
 
         let k = 3;
@@ -256,7 +268,7 @@ mod tests {
     fn test_peer_eviction_policy() {
         // Max peers: 100, evict LRU when full
         const MAX_PEERS: usize = 100;
-        
+
         let mut peers: Vec<(String, u64)> = Vec::new(); // (id, last_seen)
 
         // Fill to max
@@ -293,10 +305,10 @@ mod tests {
     fn test_message_uuid_format() {
         // Message IDs are RFC 4122 v4 UUIDs
         let message_id = "550e8400-e29b-41d4-a716-446655440000";
-        
+
         let parts: Vec<&str> = message_id.split('-').collect();
         assert_eq!(parts.len(), 5);
-        
+
         // Format: 8-4-4-4-12 hex digits
         assert_eq!(parts[0].len(), 8);
         assert_eq!(parts[1].len(), 4);
@@ -375,9 +387,21 @@ mod tests {
         }
 
         let messages = vec![
-            Message { id: "m1".to_string(), seq_num: 1, timestamp: 1000 },
-            Message { id: "m3".to_string(), seq_num: 3, timestamp: 1020 },
-            Message { id: "m2".to_string(), seq_num: 2, timestamp: 1010 },
+            Message {
+                id: "m1".to_string(),
+                seq_num: 1,
+                timestamp: 1000,
+            },
+            Message {
+                id: "m3".to_string(),
+                seq_num: 3,
+                timestamp: 1020,
+            },
+            Message {
+                id: "m2".to_string(),
+                seq_num: 2,
+                timestamp: 1010,
+            },
         ];
 
         let mut sorted = messages;

@@ -1,7 +1,6 @@
 /// Performance Benchmarks for Integration Tests
-/// 
+///
 /// Establishes baseline performance metrics for all SDK operations.
-
 use std::time::Instant;
 
 #[cfg(test)]
@@ -9,11 +8,11 @@ mod tests {
     use super::*;
 
     // Performance baseline thresholds
-    const ENCRYPTION_MS_THRESHOLD: u128 = 10;          // < 10ms per message
-    const DHT_LOOKUP_MS_THRESHOLD: u128 = 100;         // < 100ms for peer lookup
-    const TX_SUBMISSION_MS_THRESHOLD: u128 = 50;       // < 50ms to submit TX
-    const CONFIRMATION_CHECK_MS_THRESHOLD: u128 = 20;  // < 20ms to check confirmation
-    const PEER_DISCOVERY_MS_THRESHOLD: u128 = 200;     // < 200ms for peer discovery
+    const ENCRYPTION_MS_THRESHOLD: u128 = 10; // < 10ms per message
+    const DHT_LOOKUP_MS_THRESHOLD: u128 = 100; // < 100ms for peer lookup
+    const TX_SUBMISSION_MS_THRESHOLD: u128 = 50; // < 50ms to submit TX
+    const CONFIRMATION_CHECK_MS_THRESHOLD: u128 = 20; // < 20ms to check confirmation
+    const PEER_DISCOVERY_MS_THRESHOLD: u128 = 200; // < 200ms for peer discovery
 
     #[test]
     fn benchmark_noise_protocol_encryption() {
@@ -175,7 +174,7 @@ mod tests {
     fn benchmark_memory_per_peer() {
         // Measure memory overhead per peer connection
         const PEERS_TO_TRACK: usize = 100;
-        
+
         struct Peer {
             id: String,
             address: String,

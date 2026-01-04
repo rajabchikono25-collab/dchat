@@ -1,8 +1,7 @@
 /// User Management Flow Integration Tests
-/// 
+///
 /// Validates user creation, updates, and operations work correctly
 /// with on-chain state management across all SDKs.
-
 use crate::integration::mock_blockchain::{MockBlockchain, TransactionType};
 use std::collections::HashMap;
 
@@ -47,7 +46,11 @@ mod tests {
     #[test]
     fn test_multiple_users_creation() {
         let blockchain = MockBlockchain::new();
-        let users = vec![("alice", "alice-12345"), ("bob", "bob-67890"), ("charlie", "charlie-11111")];
+        let users = vec![
+            ("alice", "alice-12345"),
+            ("bob", "bob-67890"),
+            ("charlie", "charlie-11111"),
+        ];
 
         let mut tx_ids = Vec::new();
 
@@ -83,7 +86,11 @@ mod tests {
         alice_data.insert("user_id".to_string(), "alice-1".to_string());
         alice_data.insert("username".to_string(), "alice".to_string());
         let alice_tx = blockchain
-            .submit_transaction(TransactionType::RegisterUser, "alice".to_string(), alice_data)
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                alice_data,
+            )
             .unwrap();
 
         // Step 2: Create bob
@@ -102,9 +109,13 @@ mod tests {
         let mut msg_data = HashMap::new();
         msg_data.insert("recipient_id".to_string(), "bob-1".to_string());
         msg_data.insert("content_hash".to_string(), "msg-abc123".to_string());
-        
+
         let msg_tx = blockchain
-            .submit_transaction(TransactionType::SendDirectMessage, "alice".to_string(), msg_data)
+            .submit_transaction(
+                TransactionType::SendDirectMessage,
+                "alice".to_string(),
+                msg_data,
+            )
             .unwrap();
 
         let msg = blockchain.get_transaction(&msg_tx).unwrap();
@@ -120,7 +131,11 @@ mod tests {
         let mut user_data = HashMap::new();
         user_data.insert("user_id".to_string(), "alice-1".to_string());
         let user_tx = blockchain
-            .submit_transaction(TransactionType::RegisterUser, "alice".to_string(), user_data)
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                user_data,
+            )
             .unwrap();
 
         assert!(blockchain.get_transaction(&user_tx).is_some());
@@ -132,7 +147,11 @@ mod tests {
         channel_data.insert("description".to_string(), "General discussion".to_string());
 
         let channel_tx = blockchain
-            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), channel_data)
+            .submit_transaction(
+                TransactionType::CreateChannel,
+                "alice".to_string(),
+                channel_data,
+            )
             .unwrap();
 
         let channel = blockchain.get_transaction(&channel_tx).unwrap();
@@ -148,7 +167,11 @@ mod tests {
         let mut user_data = HashMap::new();
         user_data.insert("user_id".to_string(), "alice-1".to_string());
         blockchain
-            .submit_transaction(TransactionType::RegisterUser, "alice".to_string(), user_data)
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                user_data,
+            )
             .unwrap();
 
         // Step 2: Create channel
@@ -156,7 +179,11 @@ mod tests {
         channel_data.insert("channel_id".to_string(), "channel-1".to_string());
         channel_data.insert("channel_name".to_string(), "general".to_string());
         blockchain
-            .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), channel_data)
+            .submit_transaction(
+                TransactionType::CreateChannel,
+                "alice".to_string(),
+                channel_data,
+            )
             .unwrap();
 
         // Step 3: Post to channel
@@ -165,7 +192,11 @@ mod tests {
         post_data.insert("content_hash".to_string(), "post-hash-123".to_string());
 
         let post_tx = blockchain
-            .submit_transaction(TransactionType::PostToChannel, "alice".to_string(), post_data)
+            .submit_transaction(
+                TransactionType::PostToChannel,
+                "alice".to_string(),
+                post_data,
+            )
             .unwrap();
 
         let post = blockchain.get_transaction(&post_tx).unwrap();
@@ -238,18 +269,30 @@ mod tests {
         // Create two users
         let mut alice_data = HashMap::new();
         alice_data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), alice_data).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                alice_data,
+            )
+            .unwrap();
 
         let mut bob_data = HashMap::new();
         bob_data.insert("user_id".to_string(), "bob-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), bob_data)
+            .unwrap();
 
         // Alice sends message to Bob
         let mut msg1_data = HashMap::new();
         msg1_data.insert("recipient".to_string(), "bob-1".to_string());
         msg1_data.insert("content".to_string(), "Hello Bob".to_string());
         let msg1_tx = blockchain
-            .submit_transaction(TransactionType::SendDirectMessage, "alice".to_string(), msg1_data)
+            .submit_transaction(
+                TransactionType::SendDirectMessage,
+                "alice".to_string(),
+                msg1_data,
+            )
             .unwrap();
 
         // Bob sends message to Alice
@@ -257,7 +300,11 @@ mod tests {
         msg2_data.insert("recipient".to_string(), "alice-1".to_string());
         msg2_data.insert("content".to_string(), "Hi Alice".to_string());
         let msg2_tx = blockchain
-            .submit_transaction(TransactionType::SendDirectMessage, "bob".to_string(), msg2_data)
+            .submit_transaction(
+                TransactionType::SendDirectMessage,
+                "bob".to_string(),
+                msg2_data,
+            )
             .unwrap();
 
         // Verify messages
@@ -290,7 +337,13 @@ mod tests {
         // Create user
         let mut user_data = HashMap::new();
         user_data.insert("user_id".to_string(), "alice-1".to_string());
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), user_data).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                user_data,
+            )
+            .unwrap();
 
         // Create multiple channels
         for i in 0..3 {
@@ -298,7 +351,11 @@ mod tests {
             channel_data.insert("channel_id".to_string(), format!("channel-{}", i));
             channel_data.insert("channel_name".to_string(), format!("Channel {}", i));
             blockchain
-                .submit_transaction(TransactionType::CreateChannel, "alice".to_string(), channel_data)
+                .submit_transaction(
+                    TransactionType::CreateChannel,
+                    "alice".to_string(),
+                    channel_data,
+                )
                 .unwrap();
         }
 
@@ -308,14 +365,24 @@ mod tests {
             post_data.insert("channel_id".to_string(), format!("channel-{}", i));
             post_data.insert("content".to_string(), format!("Post {}", i));
             blockchain
-                .submit_transaction(TransactionType::PostToChannel, "alice".to_string(), post_data)
+                .submit_transaction(
+                    TransactionType::PostToChannel,
+                    "alice".to_string(),
+                    post_data,
+                )
                 .unwrap();
         }
 
         // Verify activity
         let alice_txs = blockchain.get_transactions_by_sender("alice");
-        let channel_creates = alice_txs.iter().filter(|tx| tx.tx_type == TransactionType::CreateChannel).count();
-        let posts = alice_txs.iter().filter(|tx| tx.tx_type == TransactionType::PostToChannel).count();
+        let channel_creates = alice_txs
+            .iter()
+            .filter(|tx| tx.tx_type == TransactionType::CreateChannel)
+            .count();
+        let posts = alice_txs
+            .iter()
+            .filter(|tx| tx.tx_type == TransactionType::PostToChannel)
+            .count();
 
         assert_eq!(channel_creates, 3);
         assert_eq!(posts, 3);
@@ -353,7 +420,10 @@ mod tests {
 
             let mut data = HashMap::new();
             data.insert("recipient".to_string(), format!("{}-id", recipient));
-            data.insert("content".to_string(), format!("{} -> {}", sender, recipient));
+            data.insert(
+                "content".to_string(),
+                format!("{} -> {}", sender, recipient),
+            );
             blockchain
                 .submit_transaction(TransactionType::SendDirectMessage, sender.to_string(), data)
                 .unwrap();

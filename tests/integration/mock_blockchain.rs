@@ -1,12 +1,11 @@
+use chrono::{DateTime, Utc};
 /// Mock Blockchain for Testing
-/// 
+///
 /// Provides a simulated blockchain for integration tests
 /// without requiring actual chain nodes.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TransactionType {
@@ -91,7 +90,11 @@ impl MockBlockchain {
             } else {
                 TransactionStatus::Pending
             },
-            confirmations: if self.auto_confirm { self.confirmation_threshold } else { 0 },
+            confirmations: if self.auto_confirm {
+                self.confirmation_threshold
+            } else {
+                0
+            },
         };
 
         {
@@ -161,7 +164,7 @@ impl MockBlockchain {
     /// Confirm a pending transaction
     pub fn confirm_transaction(&self, tx_id: &str) -> Result<(), String> {
         let mut tx_map = self.tx_by_id.lock().unwrap();
-        
+
         if let Some(tx) = tx_map.get_mut(tx_id) {
             tx.status = TransactionStatus::Confirmed;
             tx.confirmations = self.confirmation_threshold;
@@ -265,8 +268,16 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("user".to_string(), "alice".to_string());
 
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data.clone()).unwrap();
-        blockchain.submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data).unwrap();
+        blockchain
+            .submit_transaction(
+                TransactionType::RegisterUser,
+                "alice".to_string(),
+                data.clone(),
+            )
+            .unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "bob".to_string(), data)
+            .unwrap();
 
         let txs = blockchain.get_transactions_by_type(TransactionType::RegisterUser);
         assert_eq!(txs.len(), 2);
@@ -287,7 +298,9 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("user".to_string(), "alice".to_string());
 
-        blockchain.submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data).unwrap();
+        blockchain
+            .submit_transaction(TransactionType::RegisterUser, "alice".to_string(), data)
+            .unwrap();
 
         let stats = blockchain.get_stats();
         assert_eq!(stats.total_transactions, 1);
