@@ -19,13 +19,13 @@ pub async fn handle_network_status(config: &Config) -> Result<()> {
     // Try to fetch real metrics from running node first
     // Default endpoints for metrics and health
     let health_url = "http://127.0.0.1:9616/health";
-    
+
     // Try to fetch from health endpoint for real-time status
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
-    
+
     match client.get(health_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(body) = resp.text().await {
@@ -33,11 +33,11 @@ pub async fn handle_network_status(config: &Config) -> Result<()> {
                     // Display real metrics from running node
                     println!("Status: 🟢 Node is running");
                     println!();
-                    
+
                     if let Some(peer_id) = health.get("peer_id").and_then(|v| v.as_str()) {
                         println!("Local Peer ID: {}", peer_id);
                     }
-                    
+
                     println!("Protocol Version: {}", VERSION);
                     println!(
                         "Network: {}",
@@ -48,29 +48,37 @@ pub async fn handle_network_status(config: &Config) -> Result<()> {
                         }
                     );
                     println!();
-                    
+
                     // Show peer counts from health endpoint
                     if let Some(peers) = health.get("peer_count") {
                         println!("Connected Peers: {}", peers);
                     }
-                    
+
                     if let Some(currency_ready) = health.get("currency_chain_ready") {
-                        let status = if currency_ready.as_bool().unwrap_or(false) { "🟢 Connected" } else { "🔴 Disconnected" };
+                        let status = if currency_ready.as_bool().unwrap_or(false) {
+                            "🟢 Connected"
+                        } else {
+                            "🔴 Disconnected"
+                        };
                         println!("Currency Chain: {}", status);
                     }
-                    
+
                     if let Some(chat_ready) = health.get("chat_chain_ready") {
-                        let status = if chat_ready.as_bool().unwrap_or(false) { "🟢 Connected" } else { "🔴 Disconnected" };
+                        let status = if chat_ready.as_bool().unwrap_or(false) {
+                            "🟢 Connected"
+                        } else {
+                            "🔴 Disconnected"
+                        };
                         println!("Chat Chain: {}", status);
                     }
-                    
+
                     if let Some(uptime) = health.get("uptime_secs") {
                         let secs = uptime.as_u64().unwrap_or(0);
                         let hours = secs / 3600;
                         let mins = (secs % 3600) / 60;
                         println!("Uptime: {}h {}m", hours, mins);
                     }
-                    
+
                     println!();
                     println!("Listen Addresses:");
                     for addr in &config.network.listen_addresses {
@@ -79,7 +87,7 @@ pub async fn handle_network_status(config: &Config) -> Result<()> {
                     println!();
                     println!("Bootstrap Peers: {}", config.network.bootstrap_peers.len());
                     println!("Max Connections: {}", config.network.max_connections);
-                    
+
                     return Ok(());
                 }
             }
@@ -92,7 +100,7 @@ pub async fn handle_network_status(config: &Config) -> Result<()> {
     // Fallback: Initialize network to get status (node not running)
     println!("Status: 🔴 Node not running (showing config)");
     println!();
-    
+
     let network_config = NetworkConfig::default();
     let network = NetworkManager::new(network_config).await?;
     let peer_id = network.peer_id();
@@ -132,12 +140,12 @@ pub async fn handle_network_peers(config: &Config, node_type: Option<String>) ->
 
     // Try to fetch real peer data from running node's metrics endpoint
     let metrics_url = "http://127.0.0.1:9615/metrics";
-    
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .map_err(|e| Error::network(format!("Failed to create HTTP client: {}", e)))?;
-    
+
     if let Ok(resp) = client.get(metrics_url).send().await {
         if resp.status().is_success() {
             if let Ok(body) = resp.text().await {
@@ -147,7 +155,7 @@ pub async fn handle_network_peers(config: &Config, node_type: Option<String>) ->
                 let mut clients = 0u64;
                 let mut total_rtt = 0.0f64;
                 let mut total_quality = 0.0f64;
-                
+
                 for line in body.lines() {
                     if line.starts_with("dchat_peer_count{type=\"validator\"}") {
                         if let Some(val) = line.split_whitespace().last() {
@@ -171,16 +179,16 @@ pub async fn handle_network_peers(config: &Config, node_type: Option<String>) ->
                         }
                     }
                 }
-                
+
                 let total = validators + relays + clients;
                 if total > 0 {
                     println!("📊 Live Peer Statistics (from running node):");
                     println!();
-                    
+
                     let filter = node_type.as_deref();
                     println!("{:<20} {:>10}", "Type", "Count");
                     println!("{}", "-".repeat(32));
-                    
+
                     if filter.is_none() || filter == Some("validator") {
                         println!("{:<20} {:>10}", "Validators", validators);
                     }
@@ -190,18 +198,18 @@ pub async fn handle_network_peers(config: &Config, node_type: Option<String>) ->
                     if filter.is_none() || filter == Some("client") {
                         println!("{:<20} {:>10}", "Clients", clients);
                     }
-                    
+
                     println!("{}", "-".repeat(32));
                     println!("{:<20} {:>10}", "Total", total);
                     println!();
-                    
+
                     if total_rtt > 0.0 {
                         println!("Average RTT: {:.1}ms", total_rtt);
                     }
                     if total_quality > 0.0 {
                         println!("Connection Quality: {:.0}%", total_quality * 100.0);
                     }
-                    
+
                     return Ok(());
                 }
             }
@@ -211,7 +219,7 @@ pub async fn handle_network_peers(config: &Config, node_type: Option<String>) ->
     // Fallback: show bootstrap peers from config
     println!("(Node not running - showing configured bootstrap peers)");
     println!();
-    
+
     let peers = &config.network.bootstrap_peers;
 
     if peers.is_empty() {
@@ -377,7 +385,9 @@ pub async fn handle_network_peer_record(
     })?;
 
     // Load validator key from file
-    let contents = tokio::fs::read_to_string(&key_path).await.map_err(Error::Io)?;
+    let contents = tokio::fs::read_to_string(&key_path)
+        .await
+        .map_err(Error::Io)?;
     let key_json: serde_json::Value = serde_json::from_str(&contents)
         .map_err(|e| Error::Crypto(format!("Invalid key file: {}", e)))?;
 

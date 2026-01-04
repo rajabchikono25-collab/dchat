@@ -176,9 +176,10 @@ pub async fn handle_program_deploy(
 
     match response {
         Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.map_err(|e| {
-                Error::network(format!("Failed to read RPC response: {}", e))
-            })?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| Error::network(format!("Failed to read RPC response: {}", e)))?;
 
             let result: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
                 Error::network(format!(
@@ -196,9 +197,7 @@ pub async fn handle_program_deploy(
             println!("   Step 2/3: Uploading bytecode... ✅");
             println!("   Step 3/3: Finalizing deployment... ✅");
 
-            println!(
-                "\n══════════════════════════════════════════════════════════════════"
-            );
+            println!("\n══════════════════════════════════════════════════════════════════");
             println!("✅ PROGRAM DEPLOYED SUCCESSFULLY!");
             println!("══════════════════════════════════════════════════════════════════");
             println!();
@@ -256,8 +255,8 @@ pub async fn handle_program_upgrade(
         )));
     }
 
-    let wasm_bytes = std::fs::read(&wasm)
-        .map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
+    let wasm_bytes =
+        std::fs::read(&wasm).map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
 
     println!("New WASM: {:?} ({} bytes)", wasm, wasm_bytes.len());
 
@@ -329,10 +328,7 @@ pub async fn handle_program_freeze(
 }
 
 /// Handle `dchat program info` command
-pub async fn handle_program_info(
-    program_id: String,
-    _rpc_url: Option<String>,
-) -> Result<()> {
+pub async fn handle_program_info(program_id: String, _rpc_url: Option<String>) -> Result<()> {
     println!("\n📋 PROGRAM INFORMATION");
     println!("══════════════════════════════════════════════════════════════════");
     println!();
@@ -426,8 +422,8 @@ pub async fn handle_program_validate(
         )));
     }
 
-    let wasm_bytes = std::fs::read(&wasm)
-        .map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
+    let wasm_bytes =
+        std::fs::read(&wasm).map_err(|e| Error::storage(format!("Failed to read WASM: {}", e)))?;
 
     println!("File: {:?}", wasm);
     println!(
@@ -475,13 +471,9 @@ pub async fn handle_program_validate(
 
             if verbose {
                 println!();
-                println!(
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                );
+                println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                 println!("Detailed Analysis:");
-                println!(
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                );
+                println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
                 // Parse module for detailed info using wasmi
                 let engine = wasmi::Engine::default();

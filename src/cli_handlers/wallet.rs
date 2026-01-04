@@ -3,10 +3,10 @@
 // Dedicated handler functions for wallet subcommands.
 // Extracted from main.rs for better maintainability.
 
-use dchat_core::error::{Error, Result};
-use dchat_core::UserId;
 use dchat_blockchain::currency_chain::{CurrencyChainClient, CurrencyChainConfig};
 use dchat_blockchain::wallet::{Wallet, WalletConfig};
+use dchat_core::error::{Error, Result};
+use dchat_core::UserId;
 use dchat_crypto::MnemonicLength;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -19,7 +19,9 @@ fn format_tokens(amount: u64) -> String {
     if frac == 0 {
         format!("{}", whole)
     } else {
-        format!("{}.{:06}", whole, frac).trim_end_matches('0').to_string()
+        format!("{}.{:06}", whole, frac)
+            .trim_end_matches('0')
+            .to_string()
     }
 }
 
@@ -91,9 +93,7 @@ pub async fn handle_wallet_create(name: String, output: PathBuf) -> Result<()> {
 
 /// Handle `dchat wallet balance` command
 pub async fn handle_wallet_balance(user_id: String) -> Result<()> {
-    let uid = UserId(
-        Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
-    );
+    let uid = UserId(Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?);
 
     println!("\n💰 Wallet Balance:");
     println!("══════════════════════════════════════════════════════════");
@@ -161,9 +161,7 @@ pub async fn handle_wallet_export(
     output: PathBuf,
     password: Option<String>,
 ) -> Result<()> {
-    let uid = UserId(
-        Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
-    );
+    let uid = UserId(Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?);
 
     // Get password if not provided
     let pass = match password {
@@ -320,7 +318,9 @@ pub async fn handle_wallet_import(file: PathBuf, password: Option<String>) -> Re
         if let Some(user_id) = data.get("user_id") {
             println!("✅ Wallet imported successfully!");
             println!("User ID: {}", user_id);
-            println!("⚠️  This is a legacy v1.0 wallet file. Consider re-exporting with encryption.");
+            println!(
+                "⚠️  This is a legacy v1.0 wallet file. Consider re-exporting with encryption."
+            );
         } else {
             return Err(Error::validation("Invalid wallet file format"));
         }
@@ -331,9 +331,7 @@ pub async fn handle_wallet_import(file: PathBuf, password: Option<String>) -> Re
 
 /// Handle `dchat wallet history` command
 pub async fn handle_wallet_history(user_id: String, limit: usize) -> Result<()> {
-    let uid = UserId(
-        Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
-    );
+    let uid = UserId(Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?);
 
     println!("\n📜 Transaction History (last {}):", limit);
     println!("══════════════════════════════════════════════════════════");
@@ -386,9 +384,7 @@ pub async fn handle_wallet_history(user_id: String, limit: usize) -> Result<()> 
 
 /// Handle `dchat wallet new-address` command
 pub async fn handle_wallet_new_address(user_id: String) -> Result<()> {
-    let uid = UserId(
-        Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?,
-    );
+    let uid = UserId(Uuid::parse_str(&user_id).map_err(|_| Error::validation("Invalid user ID"))?);
 
     // Query blockchain to get current address index for this user
     let rpc_url = std::env::var("DCHAT_CURRENCY_RPC_URL")

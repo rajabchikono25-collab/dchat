@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
-import path from "path";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
-  outputFileTracingRoot: path.join(__dirname, "../"),
+  // Use standalone output only for Docker deployments, not Vercel
+  // output: "standalone",
 };
 
 export default nextConfig;
