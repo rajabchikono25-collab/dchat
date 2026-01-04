@@ -130,6 +130,30 @@ impl ChatChainClient {
         }
     }
 
+    /// Submit transaction with retry logic for transient failures
+    async fn submit_with_retry(&self, payload: Vec<u8>) -> Result<String> {
+        use dchat_core::retry::{with_retry, RetryConfig};
+
+        let config = RetryConfig {
+            max_retries: self.config.max_retries,
+            initial_delay: std::time::Duration::from_millis(200),
+            max_delay: std::time::Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        };
+
+        with_retry(config, || {
+            let rpc = self.rpc_client.clone();
+            let p = payload.clone();
+            async move {
+                rpc.submit_transaction(p)
+                    .await
+                    .map_err(|e| Error::Chain(format!("RPC error: {}", e)))
+            }
+        })
+        .await
+    }
+
     /// Register user identity on chat chain
     pub async fn register_user(&self, user_id: &UserId, public_key: Vec<u8>) -> Result<Uuid> {
         let tx_id = Uuid::new_v4();
@@ -150,12 +174,8 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        // Submit to blockchain via RPC
-        let tx_hash = self
-            .rpc_client
-            .submit_transaction(payload)
-            .await
-            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+        // Submit to blockchain via RPC with retry logic
+        let tx_hash = self.submit_with_retry(payload).await?;
 
         // Store transaction with hash
         self.transactions
@@ -206,12 +226,8 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        // Submit to blockchain via RPC
-        let tx_hash = self
-            .rpc_client
-            .submit_transaction(payload)
-            .await
-            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+        // Submit to blockchain via RPC with retry logic
+        let tx_hash = self.submit_with_retry(payload).await?;
 
         // Store transaction with hash
         self.transactions
@@ -247,12 +263,8 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        // Submit to blockchain via RPC
-        let tx_hash = self
-            .rpc_client
-            .submit_transaction(payload)
-            .await
-            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+        // Submit to blockchain via RPC with retry logic
+        let tx_hash = self.submit_with_retry(payload).await?;
 
         // Store transaction with hash
         self.transactions
@@ -300,12 +312,8 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        // Submit to blockchain via RPC
-        let tx_hash = self
-            .rpc_client
-            .submit_transaction(payload)
-            .await
-            .map_err(|e| Error::Chain(format!("Failed to submit transaction: {}", e)))?;
+        // Submit to blockchain via RPC with retry logic
+        let tx_hash = self.submit_with_retry(payload).await?;
 
         // Store transaction with hash
         self.transactions
@@ -399,12 +407,8 @@ impl ChatChainClient {
             fee_paid: 0,
         };
 
-        // Submit to blockchain via RPC
-        let tx_hash = self
-            .rpc_client
-            .submit_transaction(envelope_bytes)
-            .await
-            .map_err(|e| Error::chain(format!("Failed to submit signed envelope: {}", e)))?;
+        // Submit to blockchain via RPC with retry logic
+        let tx_hash = self.submit_with_retry(envelope_bytes).await?;
 
         // Store transaction with hash
         self.transactions

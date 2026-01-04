@@ -107,6 +107,8 @@ pub mod light_client;
 pub mod relay_work_store;
 // Service context for shared lazy-initialized chain clients
 pub mod service_context;
+// CLI command handlers extracted from main.rs for maintainability
+pub mod cli_handlers;
 
 // Re-export all crate modules
 pub use dchat_accessibility as accessibility;

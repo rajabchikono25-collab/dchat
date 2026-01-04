@@ -319,8 +319,43 @@ impl BlockchainClient {
             .map_err(|e| BlockchainError::InvalidResponse(e.to_string()))
     }
 
-    /// Submit a transaction to the blockchain
+    /// Submit a transaction to the blockchain with retry logic
     async fn submit_transaction(&self, method: &str, params: &impl serde::Serialize) -> Result<String> {
+        let mut attempts = 0;
+        let mut delay = Duration::from_millis(100);
+        let max_delay = Duration::from_secs(10);
+        let backoff_multiplier = 2.0;
+
+        loop {
+            attempts += 1;
+
+            match self.try_submit_transaction(method, params).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Check if error is retryable
+                    let is_retryable = matches!(
+                        &e,
+                        BlockchainError::NetworkError(_) | BlockchainError::RequestError(_)
+                    ) || (matches!(&e, BlockchainError::RpcError(msg) if 
+                        msg.contains("timeout") || 
+                        msg.contains("unavailable") || 
+                        msg.contains("rate limit")));
+
+                    if !is_retryable || attempts > self.config.max_retries {
+                        return Err(e);
+                    }
+
+                    tokio::time::sleep(delay).await;
+                    delay = Duration::from_secs_f64(
+                        (delay.as_secs_f64() * backoff_multiplier).min(max_delay.as_secs_f64()),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Single attempt to submit a transaction
+    async fn try_submit_transaction(&self, method: &str, params: &impl serde::Serialize) -> Result<String> {
         let response = self
             .http_client
             .post(&self.config.rpc_url)
