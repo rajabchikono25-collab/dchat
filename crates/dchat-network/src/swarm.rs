@@ -3,6 +3,7 @@
 use crate::{
     behavior::{DchatBehavior, DchatMessage},
     discovery::{Discovery, DiscoveryConfig},
+    gossip::FloodControl,
     nat::{NatConfig, NatTraversal},
     routing::Router,
     transport::build_transport_with_relay,
@@ -15,6 +16,8 @@ use libp2p::{
     swarm::{Swarm, SwarmEvent},
     Multiaddr, PeerId,
 };
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Network manager configuration
 #[derive(Debug, Clone)]
@@ -31,6 +34,9 @@ pub struct NetworkConfig {
     /// External/public address to announce (bypasses NAT detection)
     /// Format: "/ip4/<public_ip>/tcp/<port>"
     pub external_address: Option<Multiaddr>,
+
+    /// Network-level rate limiting and connection limits
+    pub rate_limits: RateLimitConfig,
 }
 
 impl Default for NetworkConfig {
@@ -43,6 +49,34 @@ impl Default for NetworkConfig {
             discovery: DiscoveryConfig::default(),
             nat: NatConfig::default(),
             external_address: None,
+            rate_limits: RateLimitConfig::default(),
+        }
+    }
+}
+
+/// Rate limiting configuration for network-level protections
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Global message rate (messages/sec). 0 disables.
+    pub max_messages_per_second: u32,
+    /// Per-peer message rate (messages/sec). 0 disables.
+    pub max_messages_per_peer_per_second: u32,
+    /// Maximum concurrent peer connections. 0 disables.
+    pub max_connections: usize,
+    /// Maximum concurrent connections per IP. 0 disables.
+    pub max_connections_per_ip: u32,
+    /// Maximum aggregate inbound bandwidth per second (bytes). 0 disables.
+    pub max_bandwidth_bytes_per_sec: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_messages_per_second: 0,
+            max_messages_per_peer_per_second: 0,
+            max_connections: 0,
+            max_connections_per_ip: 0,
+            max_bandwidth_bytes_per_sec: 0,
         }
     }
 }
@@ -79,6 +113,22 @@ pub struct NetworkManager {
     router: Router,
 
     pending_kad_bootstrap: bool,
+
+    // Rate limiting state
+    flood_control: FloodControl,
+    rate_limits: RateLimitConfig,
+    bandwidth_window: BandwidthWindow,
+
+    // Connection accounting
+    connected_peers: usize,
+    connections_per_ip: HashMap<String, u32>,
+    peer_ip_index: HashMap<PeerId, String>,
+}
+
+#[derive(Debug, Clone)]
+struct BandwidthWindow {
+    bytes: u64,
+    window_start: Instant,
 }
 
 impl NetworkManager {
@@ -93,6 +143,19 @@ impl NetworkManager {
         mut config: NetworkConfig,
         keypair: Option<libp2p::identity::Keypair>,
     ) -> Result<Self> {
+        // Prepare rate limit configuration (0 values disable the guard)
+        let rate_limits = config.rate_limits.clone();
+        let per_peer_limit = if rate_limits.max_messages_per_peer_per_second == 0 {
+            u32::MAX
+        } else {
+            rate_limits.max_messages_per_peer_per_second
+        };
+        let global_limit = if rate_limits.max_messages_per_second == 0 {
+            u32::MAX
+        } else {
+            rate_limits.max_messages_per_second
+        };
+
         // Use provided keypair or generate a random one
         let local_key = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
         let local_peer_id = local_key.public().to_peer_id();
@@ -126,6 +189,11 @@ impl NetworkManager {
         let discovery = Discovery::new(config.discovery.clone()).await?;
         let nat = NatTraversal::new(config.nat.clone()).await?;
         let router = Router::new();
+        let flood_control = FloodControl::new(per_peer_limit, global_limit);
+        let bandwidth_window = BandwidthWindow {
+            bytes: 0,
+            window_start: Instant::now(),
+        };
 
         Ok(Self {
             swarm,
@@ -134,6 +202,12 @@ impl NetworkManager {
             nat,
             router,
             pending_kad_bootstrap: false,
+            flood_control,
+            rate_limits,
+            bandwidth_window,
+            connected_peers: 0,
+            connections_per_ip: HashMap::new(),
+            peer_ip_index: HashMap::new(),
         })
     }
 
@@ -155,6 +229,119 @@ impl NetworkManager {
             out.push(p);
         }
         out
+    }
+
+    fn extract_ip(addr: &Multiaddr) -> Option<String> {
+        for proto in addr.iter() {
+            match proto {
+                Protocol::Ip4(ip) => return Some(ip.to_string()),
+                Protocol::Ip6(ip) => return Some(ip.to_string()),
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    fn allow_and_record_bandwidth(&mut self, bytes: u64) -> bool {
+        if self.rate_limits.max_bandwidth_bytes_per_sec == 0 {
+            return true;
+        }
+
+        let now = Instant::now();
+        if now.duration_since(self.bandwidth_window.window_start) >= Duration::from_secs(1) {
+            self.bandwidth_window.bytes = 0;
+            self.bandwidth_window.window_start = now;
+        }
+
+        if self.bandwidth_window.bytes + bytes > self.rate_limits.max_bandwidth_bytes_per_sec {
+            tracing::warn!(
+                "⚠️ Bandwidth cap exceeded: {} bytes in current window (limit {} bytes)",
+                self.bandwidth_window.bytes,
+                self.rate_limits.max_bandwidth_bytes_per_sec
+            );
+            return false;
+        }
+
+        self.bandwidth_window.bytes += bytes;
+        true
+    }
+
+    fn accept_connection(&mut self, peer_id: &PeerId, addr: Option<&Multiaddr>) -> bool {
+        if self.rate_limits.max_connections > 0
+            && self.connected_peers >= self.rate_limits.max_connections
+        {
+            tracing::warn!(
+                "🚫 Rejecting peer {}: max connections reached ({})",
+                peer_id,
+                self.rate_limits.max_connections
+            );
+            return false;
+        }
+
+        if let Some(addr) = addr.and_then(Self::extract_ip) {
+            let counter = self.connections_per_ip.entry(addr.clone()).or_insert(0);
+            if self.rate_limits.max_connections_per_ip > 0
+                && *counter >= self.rate_limits.max_connections_per_ip
+            {
+                tracing::warn!(
+                    "🚫 Rejecting peer {} from {}: per-IP connection cap {} reached",
+                    peer_id,
+                    addr,
+                    self.rate_limits.max_connections_per_ip
+                );
+                return false;
+            }
+
+            *counter += 1;
+            self.peer_ip_index.insert(*peer_id, addr);
+        }
+
+        self.connected_peers += 1;
+        true
+    }
+
+    fn on_disconnect(&mut self, peer_id: &PeerId) {
+        if self.connected_peers > 0 {
+            self.connected_peers -= 1;
+        }
+
+        if let Some(ip) = self.peer_ip_index.remove(peer_id) {
+            if let Some(count) = self.connections_per_ip.get_mut(&ip) {
+                if *count > 0 {
+                    *count -= 1;
+                }
+                if *count == 0 {
+                    self.connections_per_ip.remove(&ip);
+                }
+            }
+        }
+    }
+
+    fn message_allowed(&mut self, peer_id: &PeerId, payload_len: u64) -> bool {
+        if !self.allow_and_record_bandwidth(payload_len) {
+            tracing::warn!(
+                "Dropping message from {}: bandwidth limit exceeded ({} bytes)",
+                peer_id,
+                payload_len
+            );
+            return false;
+        }
+
+        let rate_limits_disabled = self.rate_limits.max_messages_per_second == 0
+            && self.rate_limits.max_messages_per_peer_per_second == 0;
+
+        if rate_limits_disabled {
+            return true;
+        }
+
+        // Rate limit disabled if limits are zero (set to u32::MAX on init)
+        if !self.flood_control.check_rate_limit(peer_id) {
+            tracing::warn!("Dropping message from {}: rate limit exceeded", peer_id);
+            return false;
+        }
+
+        self.flood_control.record_message(peer_id);
+        true
     }
 
     fn try_kad_bootstrap(&mut self, reason: &'static str) {
@@ -449,6 +636,12 @@ impl NetworkManager {
                 SwarmEvent::ConnectionEstablished {
                     peer_id, endpoint, ..
                 } => {
+                    let remote_addr = endpoint.get_remote_address().clone();
+                    if !self.accept_connection(&peer_id, Some(&remote_addr)) {
+                        let _ = self.swarm.disconnect_peer_id(peer_id);
+                        continue;
+                    }
+
                     tracing::info!(
                         "🔗 Connection established with peer: {} via {:?}",
                         peer_id,
@@ -460,15 +653,14 @@ impl NetworkManager {
                         self.try_kad_bootstrap("post-connect");
                     }
 
-                    // Extract the remote address from the endpoint
-                    let remote_addr = Some(endpoint.get_remote_address().clone());
                     return Some(NetworkEvent::PeerConnected {
                         peer_id,
-                        endpoint: remote_addr,
+                        endpoint: Some(remote_addr),
                     });
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
                     tracing::info!("🔌 Connection closed with peer: {}", peer_id);
+                    self.on_disconnect(&peer_id);
                     self.discovery.peer_disconnected(&peer_id);
                     return Some(NetworkEvent::PeerDisconnected(peer_id));
                 }
@@ -519,6 +711,10 @@ impl NetworkManager {
                 message,
                 ..
             }) => {
+                if !self.message_allowed(&propagation_source, message.data.len() as u64) {
+                    return None;
+                }
+
                 match crate::behavior::decode_wire_message(&message.data) {
                     Ok(dchat_msg) => Some(NetworkEvent::MessageReceived {
                         // Never fabricate identities. Use the peer that forwarded the message.
@@ -582,6 +778,10 @@ impl NetworkManager {
                             channel,
                             request_id: _,
                         } => {
+                            if !self.message_allowed(&peer, request.data.len() as u64) {
+                                return None;
+                            }
+
                             // Always respond so the remote peer doesn't time out.
                             let response = HandshakeData { data: Vec::new() };
                             if let Err(e) = self

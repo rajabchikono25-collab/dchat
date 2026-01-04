@@ -75,14 +75,19 @@ use parking_lot::RwLock as ParkingRwLock;
 
 use clap::{Parser, Subcommand};
 use dchat_accessibility::Color;
+use dchat_blockchain::staking_backend::CurrencyChainStakingBackend;
 use dchat_core::motes::MOTES_PER_DCHAT;
 use dchat_core::{Config, Error, Result, UserId};
 use dchat_crypto::kms::Ed25519KmsWrapper;
 use dchat_crypto::signatures::Signature as CryptoSignature;
 use dchat_crypto::{KeyPair, PrivateKey};
 use dchat_identity::{BurnerIdentity, Identity};
+use dchat_network::keystore::{default_keystore_path, RelayKeystore};
+use dchat_network::relay::staking::RelayStakingValidator;
+use dchat_network::relay_network::{MIN_STAKE_CONFIRMATIONS, RELAY_LOCK_DURATION};
 use dchat_network::{DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId};
 use dchat_storage::{BackupManager, Database, DatabaseConfig};
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -3608,6 +3613,51 @@ fn get_geographic_region() -> Option<String> {
     std::env::var("DCHAT_REGION").ok()
 }
 
+/// Derive libp2p Ed25519 keypair from an ed25519-dalek signing key
+fn libp2p_keypair_from_signing_key(signing_key: &SigningKey) -> Result<libp2p::identity::Keypair> {
+    use libp2p::identity::ed25519;
+
+    let secret = ed25519::SecretKey::from(signing_key.to_bytes());
+    let kp: ed25519::Keypair = secret.into();
+    Ok(libp2p::identity::Keypair::from(kp))
+}
+
+/// Load or create a persistent relay keystore and return the libp2p keypair
+fn load_or_create_relay_identity(
+    keystore_path: Option<PathBuf>,
+) -> Result<(RelayKeystore, libp2p::identity::Keypair)> {
+    use rand::rngs::OsRng;
+
+    let path = keystore_path.unwrap_or_else(default_keystore_path);
+
+    if path.exists() {
+        info!("Loading relay keystore from {:?}", path);
+        let keystore = RelayKeystore::load(&path)?;
+        let signing_key = keystore.ed25519_signing_key()?;
+        let libp2p_kp = libp2p_keypair_from_signing_key(&signing_key)?;
+        Ok((keystore, libp2p_kp))
+    } else {
+        info!(
+            "No relay keystore found at {:?} - generating new identity",
+            path
+        );
+
+        // Require passphrase before generating to avoid writing unprotected keys
+        if std::env::var("DCHAT_RELAY_KEYSTORE_PASSPHRASE").is_err() {
+            return Err(Error::crypto(
+                "DCHAT_RELAY_KEYSTORE_PASSPHRASE must be set to create relay keystore".into(),
+            ));
+        }
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let keystore = RelayKeystore::from_ed25519(&signing_key)?;
+        keystore.save(&path)?;
+        let libp2p_kp = libp2p_keypair_from_signing_key(&signing_key)?;
+        info!("✓ New relay keystore created at {:?}", path);
+        Ok((keystore, libp2p_kp))
+    }
+}
+
 /// Run as relay node
 /// Run relay node with professional peer discovery and management
 async fn run_relay_node(
@@ -3623,6 +3673,19 @@ async fn run_relay_node(
     info!("╔═══════════════════════════════════════════════════════════╗");
     info!("║            dchat Relay Node - Mainnet Mode               ║");
     info!("╚═══════════════════════════════════════════════════════════╝");
+
+    if use_hsm {
+        warn!("Relay HSM/KMS mode is not yet supported; proceeding with software keystore");
+    }
+
+    // Load or create persistent relay identity (libp2p PeerId derived from keystore)
+    let keystore_path = std::env::var("DCHAT_RELAY_KEYSTORE_PATH")
+        .ok()
+        .map(PathBuf::from);
+    let (relay_keystore, libp2p_keypair) = load_or_create_relay_identity(keystore_path)?;
+    let relay_peer_id = libp2p_keypair.public().to_peer_id();
+    info!("🔑 Relay peer ID: {}", relay_peer_id);
+    let geographic_region = get_geographic_region();
 
     // MAINNET SECURITY: Validate production environment
     validate_mainnet_environment(&config, NodeType::Relay).await?;
@@ -3912,7 +3975,7 @@ async fn run_relay_node(
     let network_config = NetworkConfig {
         listen_addrs: vec![listen_multiaddr.clone()],
         discovery: dchat_network::DiscoveryConfig {
-            local_peer_id: PeerId::random(),
+            local_peer_id: relay_peer_id,
             bootstrap_nodes,
             enable_mdns: false, // Disabled for production
             min_peers: 5,       // Connect to at least 5 peers (validators + other relays)
@@ -3934,11 +3997,18 @@ async fn run_relay_node(
             port_range: (49152, 65535),
         },
         external_address,
+        rate_limits: dchat_network::RateLimitConfig {
+            max_messages_per_second: MAX_MESSAGES_PER_SECOND,
+            max_messages_per_peer_per_second: MAX_MESSAGE_RATE_PER_SECOND as u32,
+            max_connections: MAX_CONCURRENT_CONNECTIONS,
+            max_connections_per_ip: MAX_CONNECTIONS_PER_IP,
+            max_bandwidth_bytes_per_sec: MAX_BANDWIDTH_BYTES_PER_SEC,
+        },
     };
 
     info!("Network will listen on: {:?}", network_config.listen_addrs);
 
-    let mut network = NetworkManager::new(network_config).await?;
+    let mut network = NetworkManager::with_keypair(network_config, Some(libp2p_keypair)).await?;
     let peer_id = network.peer_id();
 
     // Start network manager
@@ -4102,7 +4172,7 @@ async fn run_relay_node(
     let connection_deadline =
         tokio::time::Instant::now() + tokio::time::Duration::from_secs(CONNECTION_TIMEOUT_SECONDS);
     let mut connected_peers = 0;
-    let geographic_region = std::env::var("DCHAT_REGION").ok();
+    let geographic_region = geographic_region.clone();
 
     while tokio::time::Instant::now() < connection_deadline {
         match tokio::time::timeout(
@@ -4278,6 +4348,57 @@ async fn run_relay_node(
         payment_processor.run().await;
     });
     info!("   ✓ Payment processor started (5-minute intervals)");
+
+    // Phase 6c: Enforce relay staking on currency chain
+    let relay_signing_key = relay_keystore.ed25519_signing_key()?;
+    let relay_verifying_key = relay_signing_key.verifying_key();
+
+    let staking_validator = RelayStakingValidator::new(currency_rpc_url.clone());
+    let operator_id = std::env::var("DCHAT_OPERATOR_ID")
+        .map_err(|_| {
+            Error::Config(
+                "DCHAT_OPERATOR_ID must be set to the relay operator UUID for staking".into(),
+            )
+        })
+        .and_then(|s| {
+            Uuid::parse_str(&s)
+                .map(UserId)
+                .map_err(|e| Error::Config(format!("Invalid DCHAT_OPERATOR_ID: {}", e)))
+        })?;
+
+    match staking_validator
+        .verify_relay_stake(&relay_verifying_key)
+        .await
+    {
+        Ok(true) => {
+            info!("   ✓ Relay stake already active on currency chain");
+        }
+        Ok(false) | Err(_) => {
+            info!(
+                "🔒 Submitting relay stake of {} tokens for operator {}...",
+                stake_amount, operator_id
+            );
+
+            let staking_backend =
+                Arc::new(CurrencyChainStakingBackend::new(currency_chain.clone()));
+            let stake_tx_id = staking_backend
+                .stake(&operator_id, stake_amount, RELAY_LOCK_DURATION)
+                .await?;
+
+            info!("   ⏳ Awaiting stake confirmation (tx: {})", stake_tx_id);
+            let confirmed = staking_backend
+                .wait_for_confirmation(&stake_tx_id, MIN_STAKE_CONFIRMATIONS)
+                .await?;
+
+            if !confirmed {
+                return Err(Error::network(
+                    "Relay stake transaction not confirmed; aborting startup".into(),
+                ));
+            }
+
+            info!("   ✓ Relay stake confirmed (tx: {})", stake_tx_id);
+        }
+    }
 
     // Phase 7: Enter Main Event Loop
     info!("╔═══════════════════════════════════════════════════════════╗");
@@ -4906,7 +5027,7 @@ async fn run_user_node(
 
     // Initialize lightweight peer registry for clients
     let peer_registry = PeerRegistry::new();
-    let geographic_region = std::env::var("DCHAT_REGION").ok();
+    let geographic_region = get_geographic_region();
 
     // Register bootstrap peers
     for (pid, multiaddr) in &bootstrap_nodes {
@@ -6682,6 +6803,13 @@ async fn run_validator_node(
             port_range: (49152, 65535),
         },
         external_address,
+        rate_limits: dchat_network::RateLimitConfig {
+            max_messages_per_second: MAX_MESSAGES_PER_SECOND,
+            max_messages_per_peer_per_second: MAX_MESSAGE_RATE_PER_SECOND as u32,
+            max_connections: MAX_CONCURRENT_CONNECTIONS,
+            max_connections_per_ip: MAX_CONNECTIONS_PER_IP,
+            max_bandwidth_bytes_per_sec: MAX_BANDWIDTH_BYTES_PER_SEC,
+        },
     };
 
     // Initialize network manager with persistent keypair if available
@@ -6862,7 +6990,7 @@ async fn run_validator_node(
     let connection_deadline = tokio::time::Instant::now()
         + tokio::time::Duration::from_secs(VALIDATOR_CONNECTION_TIMEOUT_SECONDS);
     let mut connected_validators = 0;
-    let geographic_region = std::env::var("DCHAT_REGION").ok();
+    let geographic_region = get_geographic_region();
 
     // Minimum peers needed (don't count self, need required_signatures - 1 peers)
     let min_peers_needed = required_signatures.saturating_sub(1);

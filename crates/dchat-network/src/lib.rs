@@ -83,7 +83,7 @@ pub use relay_network::{
     MIN_STAKE_CONFIRMATIONS,
 };
 pub use routing::{Router, RoutingTable};
-pub use swarm::{NetworkConfig, NetworkEvent, NetworkManager};
+pub use swarm::{NetworkConfig, NetworkEvent, NetworkManager, RateLimitConfig};
 pub use transport::build_transport;
 
 // Re-export libp2p types for convenience
