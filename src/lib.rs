@@ -103,6 +103,10 @@ pub mod fee_gateway;
 pub mod onboarding;
 // Light client core for mobile/desktop apps
 pub mod light_client;
+// Relay work event and registry stores for validator epoch rewards
+pub mod relay_work_store;
+// Service context for shared lazy-initialized chain clients
+pub mod service_context;
 
 // Re-export all crate modules
 pub use dchat_accessibility as accessibility;
@@ -142,6 +146,12 @@ pub use fee_gateway::{
     FeeGatedRequest, FeeGatedResponse, FeeGateway, GasFeeReceipt, MessageFeeReceipt,
     OperationMapping, OperationPayload, OperationStatus, StoragePaymentReceipt,
 };
+
+// Re-export relay work stores for validator epoch rewards
+pub use relay_work_store::{RelayRegistryStore, RelayWorkEventStore, RelayWorkStoreStats};
+
+// Re-export service context for shared lazy-initialized chain clients
+pub use service_context::{ChainClientConfig, GlobalServiceContext, ServiceContext};
 
 /// Commonly used types and traits
 pub mod prelude {

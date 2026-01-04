@@ -3069,6 +3069,67 @@ impl CurrencyChainClient {
         }
     }
 
+    /// Get registered relay operators from the blockchain for epoch reward distribution
+    ///
+    /// Returns a list of tuples: (relay_id, operator_user_id, stake, registered_block, is_suspended)
+    pub async fn get_registered_relay_operators(
+        &self,
+    ) -> Result<Vec<(String, UserId, u64, u64, bool)>> {
+        let params = serde_json::json!([]);
+
+        match self.rpc_client.call_rpc("relays.list", params).await {
+            Ok(result) => {
+                // Parse relay registrations from RPC response
+                if let Some(relays) = result.as_array() {
+                    let mut operators = Vec::new();
+                    for relay in relays {
+                        let relay_id = relay
+                            .get("relay_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        let operator_str =
+                            relay.get("operator").and_then(|v| v.as_str()).unwrap_or("");
+
+                        let operator = uuid::Uuid::parse_str(operator_str)
+                            .map(|u| UserId(u))
+                            .unwrap_or_else(|_| UserId(uuid::Uuid::nil()));
+
+                        let stake = relay.get("stake").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                        let registered_block = relay
+                            .get("registered_block")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+
+                        let is_suspended = relay
+                            .get("is_suspended")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        if !relay_id.is_empty() {
+                            operators.push((
+                                relay_id,
+                                operator,
+                                stake,
+                                registered_block,
+                                is_suspended,
+                            ));
+                        }
+                    }
+                    return Ok(operators);
+                }
+                tracing::warn!("Could not parse relay operator response from RPC");
+                Ok(Vec::new())
+            }
+            Err(e) => {
+                tracing::warn!("Failed to query relay operators from RPC: {}", e);
+                Ok(Vec::new())
+            }
+        }
+    }
+
     /// Delegate stake to a validator
     pub async fn delegate_stake(
         &self,
