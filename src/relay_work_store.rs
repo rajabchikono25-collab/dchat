@@ -3,12 +3,23 @@
 //! Tracks relay work events (Proof of Delivery, Proof of Relay Work, Proof of Transit)
 //! for epoch-based reward distribution. Events are accumulated during each epoch
 //! and consumed when rewards are distributed.
+//!
+//! ## Persistence
+//!
+//! The store supports optional persistence to disk via JSON serialization.
+//! When a persistence path is configured, state is automatically saved on:
+//! - Epoch transitions
+//! - Explicit flush calls
+//!
+//! State is loaded automatically on construction if the persistence file exists.
 
 use dchat_blockchain::{RegisteredRelay, RelayWorkEvent, WorkEventType};
 use dchat_core::types::UserId;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Genesis timestamp for block height calculations (placeholder - should come from chain config)
 /// This is approximately Jan 1, 2025 00:00:00 UTC
@@ -21,6 +32,11 @@ pub const DEFAULT_BLOCK_TIME_SECS: u64 = 6;
 ///
 /// Validators use this to track relay activity for reward distribution.
 /// Events are deduplicated by event_id to prevent double-counting.
+///
+/// ## Persistence
+///
+/// Configure a persistence path with `with_persistence()` to enable
+/// automatic state saving/loading across process restarts.
 pub struct RelayWorkEventStore {
     /// Work events indexed by epoch
     events_by_epoch: RwLock<HashMap<u64, Vec<RelayWorkEvent>>>,
@@ -30,30 +46,161 @@ pub struct RelayWorkEventStore {
     current_epoch: RwLock<u64>,
     /// Maximum epochs to retain (for memory management)
     max_retained_epochs: u64,
+    /// Optional persistence path for durable storage
+    persistence_path: Option<PathBuf>,
+}
+
+/// Serializable state for persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedState {
+    /// Current epoch
+    current_epoch: u64,
+    /// Events by epoch (flattened for serialization)
+    events: Vec<(u64, Vec<RelayWorkEvent>)>,
+    /// Seen event IDs by epoch (hex-encoded for JSON compatibility)
+    seen_events: Vec<(u64, Vec<String>)>,
 }
 
 impl RelayWorkEventStore {
-    /// Create a new work event store
+    /// Create a new work event store (in-memory only)
     pub fn new() -> Self {
         Self {
             events_by_epoch: RwLock::new(HashMap::new()),
             seen_events: RwLock::new(HashMap::new()),
             current_epoch: RwLock::new(0),
             max_retained_epochs: 5,
+            persistence_path: None,
         }
     }
 
-    /// Create a work event store with custom retention
+    /// Create a work event store with custom retention (in-memory only)
     pub fn with_retention(max_retained_epochs: u64) -> Self {
         Self {
             events_by_epoch: RwLock::new(HashMap::new()),
             seen_events: RwLock::new(HashMap::new()),
             current_epoch: RwLock::new(0),
             max_retained_epochs,
+            persistence_path: None,
         }
     }
 
+    /// Configure persistence path and load existing state if available
+    ///
+    /// When persistence is enabled, state is automatically saved on epoch
+    /// transitions and can be manually flushed with `flush()`.
+    pub fn with_persistence(mut self, path: PathBuf) -> Self {
+        self.persistence_path = Some(path.clone());
+
+        // Try to load existing state
+        if path.exists() {
+            match self.load_state() {
+                Ok(()) => info!("✓ Loaded relay work store state from {:?}", path),
+                Err(e) => warn!("Failed to load relay work store state: {}", e),
+            }
+        } else {
+            info!("No existing relay work store state at {:?}", path);
+        }
+
+        self
+    }
+
+    /// Load state from persistence file
+    fn load_state(&self) -> Result<(), String> {
+        let path = self
+            .persistence_path
+            .as_ref()
+            .ok_or("No persistence path configured")?;
+
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read state file: {}", e))?;
+
+        let state: PersistedState = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse state JSON: {}", e))?;
+
+        // Restore current epoch
+        *self.current_epoch.write().unwrap() = state.current_epoch;
+
+        // Restore events
+        let mut events = self.events_by_epoch.write().unwrap();
+        events.clear();
+        for (epoch, epoch_events) in state.events {
+            events.insert(epoch, epoch_events);
+        }
+
+        // Restore seen event IDs
+        let mut seen = self.seen_events.write().unwrap();
+        seen.clear();
+        for (epoch, event_ids) in state.seen_events {
+            let mut epoch_seen = HashSet::new();
+            for id_hex in event_ids {
+                if let Ok(bytes) = hex::decode(&id_hex) {
+                    if bytes.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&bytes);
+                        epoch_seen.insert(arr);
+                    }
+                }
+            }
+            seen.insert(epoch, epoch_seen);
+        }
+
+        let total_events: usize = events.values().map(|e| e.len()).sum();
+        info!(
+            "Restored {} events across {} epochs (current epoch: {})",
+            total_events,
+            events.len(),
+            state.current_epoch
+        );
+
+        Ok(())
+    }
+
+    /// Save current state to persistence file
+    fn save_state(&self) -> Result<(), String> {
+        let path = match &self.persistence_path {
+            Some(p) => p,
+            None => return Ok(()), // No-op if persistence not configured
+        };
+
+        let events = self.events_by_epoch.read().unwrap();
+        let seen = self.seen_events.read().unwrap();
+        let current_epoch = *self.current_epoch.read().unwrap();
+
+        let state = PersistedState {
+            current_epoch,
+            events: events.iter().map(|(k, v)| (*k, v.clone())).collect(),
+            seen_events: seen
+                .iter()
+                .map(|(epoch, ids)| {
+                    let id_hexes: Vec<String> = ids.iter().map(|id| hex::encode(id)).collect();
+                    (*epoch, id_hexes)
+                })
+                .collect(),
+        };
+
+        // Write to temp file first, then rename for atomic update
+        let temp_path = path.with_extension("tmp");
+        let json = serde_json::to_string_pretty(&state)
+            .map_err(|e| format!("Failed to serialize state: {}", e))?;
+
+        std::fs::write(&temp_path, &json)
+            .map_err(|e| format!("Failed to write temp state file: {}", e))?;
+
+        std::fs::rename(&temp_path, path)
+            .map_err(|e| format!("Failed to rename state file: {}", e))?;
+
+        debug!("Persisted relay work store state to {:?}", path);
+        Ok(())
+    }
+
+    /// Flush current state to disk (if persistence is configured)
+    pub fn flush(&self) -> Result<(), String> {
+        self.save_state()
+    }
+
     /// Set the current epoch (called on epoch transitions)
+    ///
+    /// This also triggers state persistence if configured and cleanup of old epochs.
     pub fn set_current_epoch(&self, epoch: u64) {
         let mut current = self.current_epoch.write().unwrap();
         if epoch > *current {
@@ -64,6 +211,14 @@ impl RelayWorkEventStore {
             *current = epoch;
             drop(current);
             self.cleanup_old_epochs(epoch);
+
+            // Persist state on epoch transition
+            if let Err(e) = self.save_state() {
+                error!(
+                    "Failed to persist relay work store on epoch transition: {}",
+                    e
+                );
+            }
         }
     }
 

@@ -109,6 +109,10 @@ pub mod relay_work_store;
 pub mod service_context;
 // CLI command handlers extracted from main.rs for maintainability
 pub mod cli_handlers;
+// CLI error handling with exit codes
+pub mod cli_error;
+// Node runners and shared context
+pub mod nodes;
 
 // Re-export all crate modules
 pub use dchat_accessibility as accessibility;
@@ -153,7 +157,17 @@ pub use fee_gateway::{
 pub use relay_work_store::{RelayRegistryStore, RelayWorkEventStore, RelayWorkStoreStats};
 
 // Re-export service context for shared lazy-initialized chain clients
-pub use service_context::{ChainClientConfig, GlobalServiceContext, ServiceContext};
+pub use service_context::{
+    allow_localhost_chain_rpc_defaults, resolve_chain_rpc, resolve_chat_chain_rpc,
+    resolve_currency_chain_rpc, ChainClientConfig, ChainType, GlobalServiceContext, ResolvedRpcUrl,
+    RpcUrlSource, ServiceContext, ServiceContextBuilder,
+};
+
+// Re-export CLI error handling for standardized error management
+pub use cli_error::{handle_cli_error, CliError, CliResult, CliResultExt, ExitCodeKind};
+
+// Re-export node context and shared types
+pub use nodes::{NodeContext, NodeType, ReadinessState};
 
 /// Commonly used types and traits
 pub mod prelude {

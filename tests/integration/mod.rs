@@ -8,6 +8,7 @@
 //! - DHT routing and peer discovery (Kademlia)
 //! - Proof-of-delivery tracking with on-chain anchoring
 //! - Performance benchmarks and baselines
+//! - Node startup sequences and chain client integration
 //!
 //! Test Coverage:
 //! - 15+ blockchain integration tests
@@ -15,15 +16,17 @@
 //! - 12+ user management flow tests
 //! - 16+ messaging protocol tests
 //! - 12+ performance benchmarks
+//! - 15+ node startup integration tests
 //!
-//! Total: 75+ integration test cases covering ~2,000+ LOC
+//! Total: 90+ integration test cases covering ~2,500+ LOC
 
 pub mod blockchain_integration;
 pub mod cross_sdk_compatibility;
-pub mod user_management_flows;
 pub mod messaging_flows;
-pub mod performance_benchmarks;
 pub mod mock_blockchain;
+pub mod node_startup_tests;
+pub mod performance_benchmarks;
+pub mod user_management_flows;
 
 #[cfg(test)]
 mod tests {
@@ -39,6 +42,7 @@ mod tests {
         println!("  - messaging_flows module");
         println!("  - performance_benchmarks module");
         println!("  - mock_blockchain module");
+        println!("  - node_startup_tests module");
     }
 
     #[test]

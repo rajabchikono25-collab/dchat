@@ -3,24 +3,11 @@
 // Dedicated handler functions for program subcommands.
 // Extracted from main.rs for better maintainability.
 
+use crate::service_context::resolve_chat_chain_rpc;
 use dchat_core::config::Config;
 use dchat_core::error::{Error, Result};
 use std::io::{self, Write};
 use std::path::PathBuf;
-
-/// Resolve the required chat chain RPC URL from config or environment
-fn resolve_required_chat_chain_rpc_url(config: &Config) -> Result<String> {
-    // Check environment variable first
-    if let Ok(url) = std::env::var("DCHAT_CHAT_CHAIN_RPC_URL") {
-        return Ok(url);
-    }
-    // Then check config
-    if let Some(url) = config.rpc.resolved_chat_chain_rpc_url() {
-        return Ok(url);
-    }
-    // Default for development/testing
-    Ok("http://localhost:8546/rpc".to_string())
-}
 
 /// Handle `dchat program deploy` command
 pub async fn handle_program_deploy(
@@ -32,7 +19,7 @@ pub async fn handle_program_deploy(
     max_data_len: Option<usize>,
     yes: bool,
 ) -> Result<()> {
-    let rpc_url = rpc_url.unwrap_or(resolve_required_chat_chain_rpc_url(config)?);
+    let rpc_url = rpc_url.unwrap_or(resolve_chat_chain_rpc(Some(config), None)?);
     println!("\n🚀 DCHAT PROGRAM DEPLOYMENT");
     println!("══════════════════════════════════════════════════════════════════");
 

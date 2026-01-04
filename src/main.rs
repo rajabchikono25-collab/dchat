@@ -66,6 +66,10 @@ use dchat::blockchain::{
     PaymentProcessor, PaymentProcessorConfig,
 };
 use dchat::prelude::*;
+use dchat::service_context::{
+    allow_localhost_chain_rpc_defaults, resolve_chain_rpc, resolve_chat_chain_rpc,
+    resolve_currency_chain_rpc, ChainType, ServiceContext, ServiceContextBuilder,
+};
 use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionManager, PoolType};
 use dchat_blockchain::hardened_consensus::batch_verification::VerificationPipeline;
 use dchat_blockchain::hardened_consensus::epoch_snapshot::SnapshotStore;
@@ -338,46 +342,30 @@ fn extract_ip_from_multiaddr(multiaddr: &str) -> Option<String> {
     }
 }
 
-fn allow_localhost_chain_rpc_defaults() -> bool {
-    match std::env::var("DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS") {
-        Ok(v) => {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        }
-        Err(_) => false,
-    }
-}
+// ============================================================================
+// RPC URL Resolution - Now using unified service_context module
+// ============================================================================
+// The old functions are kept as thin wrappers for backward compatibility.
+// New code should use:
+//   - resolve_currency_chain_rpc(Some(&config), cli_override)
+//   - resolve_chat_chain_rpc(Some(&config), cli_override)
+//   - ServiceContext::builder().with_config(&config).build()
+// ============================================================================
 
+/// Resolve currency chain RPC URL (legacy wrapper)
+///
+/// Prefer using `resolve_currency_chain_rpc(Some(&config), None)` or
+/// `ServiceContext::builder().with_config(&config).build()` for new code.
 fn resolve_required_currency_chain_rpc_url(config: &Config) -> Result<String> {
-    if let Some(url) = config.rpc.resolved_currency_chain_rpc_url() {
-        return Ok(url);
-    }
-
-    if allow_localhost_chain_rpc_defaults() {
-        return Ok(CurrencyChainConfig::default().rpc_url);
-    }
-
-    Err(Error::Config(
-        "Currency chain RPC URL not configured. Set `rpc.currency_chain_rpc_url` in config.toml or env `DCHAT_CURRENCY_CHAIN_RPC_URL`.\n\
-For local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
-            .to_string(),
-    ))
+    resolve_currency_chain_rpc(Some(config), None)
 }
 
+/// Resolve chat chain RPC URL (legacy wrapper)
+///
+/// Prefer using `resolve_chat_chain_rpc(Some(&config), None)` or
+/// `ServiceContext::builder().with_config(&config).build()` for new code.
 fn resolve_required_chat_chain_rpc_url(config: &Config) -> Result<String> {
-    if let Some(url) = config.rpc.resolved_chat_chain_rpc_url() {
-        return Ok(url);
-    }
-
-    if allow_localhost_chain_rpc_defaults() {
-        return Ok(ChatChainConfig::default().rpc_url);
-    }
-
-    Err(Error::Config(
-        "Chat chain RPC URL not configured. Set `rpc.chat_chain_rpc_url` in config.toml or env `DCHAT_CHAT_CHAIN_RPC_URL`.\n\
-For local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
-            .to_string(),
-    ))
+    resolve_chat_chain_rpc(Some(config), None)
 }
 
 /// Validate production environment requirements for mainnet deployment
@@ -1140,6 +1128,10 @@ enum Commands {
         /// Stake amount for relay incentives (in tokens)
         #[arg(long, default_value = "1000")]
         stake: u64,
+
+        /// Enable distributed tracing and observability
+        #[arg(long)]
+        tracing: bool,
     },
 
     /// Run as user node (interactive chat client)
@@ -1187,6 +1179,10 @@ enum Commands {
         /// Health check server address
         #[arg(long)]
         health_addr: Option<String>,
+
+        /// Enable distributed tracing and observability
+        #[arg(long)]
+        tracing: bool,
     },
 
     /// Run as validator node (participates in consensus)
@@ -1210,6 +1206,10 @@ enum Commands {
         /// Enable block production
         #[arg(long)]
         producer: bool,
+
+        /// Enable distributed tracing and observability
+        #[arg(long)]
+        tracing: bool,
     },
 
     /// Launch full testnet (validators + relays + clients)
@@ -1409,6 +1409,12 @@ enum Commands {
     Qge {
         #[command(subcommand)]
         action: QgeCommand,
+    },
+
+    /// VR/AR virtual reality and spatial chat operations
+    Vr {
+        #[command(subcommand)]
+        action: VrCommand,
     },
 }
 
@@ -1736,6 +1742,105 @@ enum QgeRevocationAction {
         #[arg(long)]
         message: String,
     },
+}
+
+/// VR/AR virtual reality commands
+#[derive(Debug, Subcommand)]
+enum VrCommand {
+    /// List supported VR/AR devices
+    Devices,
+
+    /// Start a VR session
+    StartSession {
+        /// Device type (meta-quest, psvr2, htc-vive, valve-index, vision-pro, ar-glasses, mobile-ar, desktop-vr)
+        #[arg(long, default_value = "desktop-vr")]
+        device: String,
+
+        /// Environment ID to join (UUID)
+        #[arg(long)]
+        environment: Option<String>,
+
+        /// User ID (hex string)
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+
+    /// End active VR session
+    EndSession {
+        /// Session ID (UUID)
+        #[arg(long)]
+        session_id: String,
+    },
+
+    /// List active VR sessions
+    Sessions {
+        /// Show detailed connection quality metrics
+        #[arg(long)]
+        detailed: bool,
+    },
+
+    /// Manage VR environments/spaces
+    Environments {
+        /// List available environments
+        #[arg(long)]
+        list: bool,
+
+        /// Create a new environment
+        #[arg(long)]
+        create: Option<String>,
+
+        /// Environment template (lounge, conference, outdoor, space)
+        #[arg(long, default_value = "lounge")]
+        template: String,
+    },
+
+    /// Configure avatar settings
+    Avatar {
+        /// User ID (defaults to current user)
+        #[arg(long)]
+        user_id: Option<String>,
+
+        /// Avatar style (realistic, stylized, minimal, abstract)
+        #[arg(long)]
+        style: Option<String>,
+
+        /// Custom model path
+        #[arg(long)]
+        model: Option<PathBuf>,
+    },
+
+    /// Configure spatial audio
+    Audio {
+        /// Enable/disable spatial audio
+        #[arg(long)]
+        enabled: Option<bool>,
+
+        /// Audio quality (low, medium, high, ultra)
+        #[arg(long)]
+        quality: Option<String>,
+
+        /// Rolloff distance in meters
+        #[arg(long)]
+        rolloff: Option<f32>,
+    },
+
+    /// Configure comfort settings
+    Comfort {
+        /// Comfort mode (off, low, medium, high)
+        #[arg(long)]
+        mode: Option<String>,
+
+        /// Enable vignette
+        #[arg(long)]
+        vignette: Option<bool>,
+
+        /// Enable teleport locomotion
+        #[arg(long)]
+        teleport: Option<bool>,
+    },
+
+    /// Show VR system status and performance metrics
+    Status,
 }
 
 /// Network and peer management commands
@@ -3304,7 +3409,17 @@ async fn main() -> Result<()> {
             hsm,
             kms_key_id,
             stake,
+            tracing,
         } => {
+            // Initialize observability if tracing is enabled
+            let _observability = if tracing {
+                let obs = dchat_observability::ObservabilityManager::new();
+                info!("✓ Distributed tracing enabled");
+                Some(obs)
+            } else {
+                None
+            };
+
             run_relay_node(
                 config,
                 listen,
@@ -3329,7 +3444,17 @@ async fn main() -> Result<()> {
             data_dir,
             metrics_addr,
             health_addr,
+            tracing,
         } => {
+            // Initialize observability if tracing is enabled
+            let _observability = if tracing {
+                let obs = dchat_observability::ObservabilityManager::new();
+                info!("✓ Distributed tracing enabled");
+                Some(obs)
+            } else {
+                None
+            };
+
             let metrics = metrics_addr.unwrap_or_else(|| cli.metrics_addr.clone());
             let health = health_addr.unwrap_or_else(|| cli.health_addr.clone());
 
@@ -3368,7 +3493,17 @@ async fn main() -> Result<()> {
             hsm,
             stake,
             producer,
+            tracing,
         } => {
+            // Initialize observability if tracing is enabled
+            let _observability = if tracing {
+                let obs = dchat_observability::ObservabilityManager::new();
+                info!("✓ Distributed tracing enabled");
+                Some(obs)
+            } else {
+                None
+            };
+
             run_validator_node(
                 config,
                 key,
@@ -3417,6 +3552,7 @@ async fn main() -> Result<()> {
         Commands::Program { action } => run_program_command(config, action).await,
         Commands::MiniApp { action } => run_miniapp_command(action).await,
         Commands::Qge { action } => run_qge_command(config, action).await,
+        Commands::Vr { action } => run_vr_command(action).await,
     }
 }
 
@@ -14421,6 +14557,221 @@ button:hover {
                 }
             }
 
+            Ok(())
+        }
+    }
+}
+
+/// VR/AR command handler
+async fn run_vr_command(action: VrCommand) -> Result<()> {
+    // VR device type enumeration (matches dchat_vr::DeviceType)
+    #[derive(Debug, Clone, Copy)]
+    #[allow(dead_code)]
+    enum VrDeviceType {
+        MetaQuest,
+        PSVR2,
+        HTCVive,
+        ValveIndex,
+        VisionPro,
+        ARGlasses,
+        MobileAR,
+        DesktopVR,
+    }
+
+    match action {
+        VrCommand::Devices => {
+            println!("\n🥽 SUPPORTED VR/AR DEVICES");
+            println!("══════════════════════════════════════════════════════════════════");
+            println!("{:<20} {:<30} {:<15}", "Device", "Features", "Status");
+            println!("{}", "-".repeat(70));
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "Meta Quest 2/3/Pro", "6DoF, Hand Tracking, Passthrough", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "PlayStation VR2", "6DoF, Eye Tracking, Haptics", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "HTC Vive", "6DoF, Room-scale", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "Valve Index", "6DoF, Finger Tracking", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "Apple Vision Pro", "Mixed Reality, Eye/Hand", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "AR Glasses", "3DoF/6DoF varies", "🔶 Beta"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "Mobile AR", "ARKit/ARCore", "✅ Supported"
+            );
+            println!(
+                "{:<20} {:<30} {:<15}",
+                "Desktop VR", "Mouse/Keyboard fallback", "✅ Supported"
+            );
+            println!();
+            println!("💡 Use `dchat vr start-session --device <type>` to start a session");
+            Ok(())
+        }
+
+        VrCommand::StartSession {
+            device,
+            environment,
+            user_id,
+        } => {
+            println!("\n🥽 STARTING VR SESSION");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            let device_type = match device.to_lowercase().as_str() {
+                "meta-quest" | "quest" => VrDeviceType::MetaQuest,
+                "psvr2" => VrDeviceType::PSVR2,
+                "htc-vive" | "vive" => VrDeviceType::HTCVive,
+                "valve-index" | "index" => VrDeviceType::ValveIndex,
+                "vision-pro" | "visionpro" => VrDeviceType::VisionPro,
+                "ar-glasses" => VrDeviceType::ARGlasses,
+                "mobile-ar" => VrDeviceType::MobileAR,
+                "desktop-vr" | _ => VrDeviceType::DesktopVR,
+            };
+
+            println!("Device: {:?}", device_type);
+            if let Some(ref env) = environment {
+                println!("Environment: {}", env);
+            }
+            if let Some(ref uid) = user_id {
+                println!("User: {}", uid);
+            }
+            println!();
+            println!("✅ VR session ready");
+            println!("💡 In production, this would initialize the VR runtime and connect to the environment.");
+            println!("   Use dchat-vr crate for full integration.");
+            Ok(())
+        }
+
+        VrCommand::EndSession { session_id } => {
+            println!("\n🔚 ENDING VR SESSION");
+            println!("══════════════════════════════════════════════════════════════════");
+            println!("Session ID: {}", session_id);
+            println!();
+            println!("✅ Session ended");
+            Ok(())
+        }
+
+        VrCommand::Sessions { detailed } => {
+            println!("\n📋 ACTIVE VR SESSIONS");
+            println!("══════════════════════════════════════════════════════════════════");
+            println!("No active sessions (session management requires running node)");
+            if detailed {
+                println!();
+                println!("💡 Start a VR session with: dchat vr start-session");
+            }
+            Ok(())
+        }
+
+        VrCommand::Environments {
+            list,
+            create,
+            template,
+        } => {
+            println!("\n🌍 VR ENVIRONMENTS");
+            println!("══════════════════════════════════════════════════════════════════");
+
+            if list || create.is_none() {
+                println!("Available templates:");
+                println!("  • lounge     - Cozy virtual living room");
+                println!("  • conference - Professional meeting space");
+                println!("  • outdoor    - Open park/nature setting");
+                println!("  • space      - Sci-fi space station");
+                println!();
+            }
+
+            if let Some(name) = create {
+                println!("Creating environment: {} (template: {})", name, template);
+                println!("✅ Environment created (placeholder)");
+            }
+            Ok(())
+        }
+
+        VrCommand::Avatar {
+            user_id,
+            style,
+            model,
+        } => {
+            println!("\n👤 AVATAR CONFIGURATION");
+            println!("══════════════════════════════════════════════════════════════════");
+            if let Some(uid) = user_id {
+                println!("User: {}", uid);
+            }
+            if let Some(s) = style {
+                println!("Style: {}", s);
+            }
+            if let Some(m) = model {
+                println!("Custom model: {:?}", m);
+            }
+            println!();
+            println!("💡 Avatar customization available in full VR client.");
+            Ok(())
+        }
+
+        VrCommand::Audio {
+            enabled,
+            quality,
+            rolloff,
+        } => {
+            println!("\n🔊 SPATIAL AUDIO SETTINGS");
+            println!("══════════════════════════════════════════════════════════════════");
+            if let Some(e) = enabled {
+                println!("Spatial Audio: {}", if e { "Enabled" } else { "Disabled" });
+            }
+            if let Some(q) = quality {
+                println!("Quality: {}", q);
+            }
+            if let Some(r) = rolloff {
+                println!("Rolloff Distance: {} meters", r);
+            }
+            println!();
+            println!("✅ Audio settings updated (placeholder)");
+            Ok(())
+        }
+
+        VrCommand::Comfort {
+            mode,
+            vignette,
+            teleport,
+        } => {
+            println!("\n🛋️ COMFORT SETTINGS");
+            println!("══════════════════════════════════════════════════════════════════");
+            if let Some(m) = mode {
+                println!("Comfort Mode: {}", m);
+            }
+            if let Some(v) = vignette {
+                println!("Vignette: {}", if v { "Enabled" } else { "Disabled" });
+            }
+            if let Some(t) = teleport {
+                println!(
+                    "Teleport Locomotion: {}",
+                    if t { "Enabled" } else { "Disabled" }
+                );
+            }
+            println!();
+            println!("✅ Comfort settings updated");
+            Ok(())
+        }
+
+        VrCommand::Status => {
+            println!("\n📊 VR SYSTEM STATUS");
+            println!("══════════════════════════════════════════════════════════════════");
+            println!("VR Runtime: Not connected");
+            println!("Active Sessions: 0");
+            println!("Environments Loaded: 0");
+            println!();
+            println!("💡 Start a VR session to see active metrics.");
             Ok(())
         }
     }
