@@ -453,6 +453,23 @@ impl StorageRouter {
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS users (
+                id BYTEA PRIMARY KEY,
+                username TEXT NOT NULL,
+                public_key BYTEA NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                on_chain_confirmed BOOLEAN NOT NULL DEFAULT false,
+                chain_tx_id TEXT,
+                INDEX idx_username (username)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
         info!("CockroachDB schema initialized");
         Ok(())
     }
@@ -494,6 +511,32 @@ impl StorageRouter {
         sqlx::query(
             r#"
             CREATE INDEX IF NOT EXISTS idx_cached_recipient ON cached_messages(recipient_id)
+            "#,
+        )
+        .execute(pool)
+        .await
+        .ok();
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS cached_users (
+                id BLOB PRIMARY KEY,
+                username TEXT NOT NULL,
+                public_key BLOB NOT NULL,
+                created_at TEXT NOT NULL,
+                on_chain_confirmed INTEGER NOT NULL DEFAULT 0,
+                chain_tx_id TEXT,
+                synced INTEGER NOT NULL DEFAULT 0
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_cached_users_username ON cached_users(username)
             "#,
         )
         .execute(pool)
@@ -1869,6 +1912,239 @@ impl StorageRouter {
             total_storage_size: total_blob_size + inline_size,
         })
     }
+
+    /// Store a new user with tiered replication
+    ///
+    /// This writes to CockroachDB (primary) and caches in SQLite for offline access.
+    /// On-chain confirmation status is tracked separately.
+    pub async fn store_user(&self, user: &StoredUser) -> StorageResult<()> {
+        // Write to CockroachDB if available (primary storage)
+        if let Some(pool) = &self.cockroach_pool {
+            sqlx::query(
+                r#"
+                INSERT INTO users (id, username, public_key, created_at, on_chain_confirmed, chain_tx_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    public_key = EXCLUDED.public_key,
+                    on_chain_confirmed = EXCLUDED.on_chain_confirmed,
+                    chain_tx_id = EXCLUDED.chain_tx_id
+                "#,
+            )
+            .bind(&user.id[..])
+            .bind(&user.username)
+            .bind(&user.public_key)
+            .bind(user.created_at)
+            .bind(user.on_chain_confirmed)
+            .bind(&user.chain_tx_id)
+            .execute(pool)
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to store user in CockroachDB: {}", e)))?;
+
+            tracing::debug!(
+                user_id = hex::encode(&user.id),
+                username = %user.username,
+                "User stored in CockroachDB"
+            );
+        }
+
+        // Cache in SQLite for offline access
+        if let Some(pool) = &self.sqlite_pool {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO cached_users 
+                (id, username, public_key, created_at, on_chain_confirmed, chain_tx_id, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                "#,
+            )
+            .bind(&user.id[..])
+            .bind(&user.username)
+            .bind(&user.public_key)
+            .bind(user.created_at.timestamp())
+            .bind(user.on_chain_confirmed)
+            .bind(&user.chain_tx_id)
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                StorageError::Database(format!("Failed to cache user in SQLite: {}", e))
+            })?;
+
+            tracing::trace!(user_id = hex::encode(&user.id), "User cached in SQLite");
+        }
+
+        // Write-through to Redis for hot cache (if available)
+        if let Some(client) = &self.redis_client {
+            let cache_key = format!("user:{}", hex::encode(&user.id));
+            let user_json = serde_json::json!({
+                "id": hex::encode(&user.id),
+                "username": &user.username,
+                "public_key": hex::encode(&user.public_key),
+                "created_at": user.created_at.to_rfc3339(),
+                "on_chain_confirmed": user.on_chain_confirmed,
+                "chain_tx_id": &user.chain_tx_id,
+            });
+
+            if let Ok(mut conn) = client.get_connection() {
+                let _: Result<(), _> = redis::cmd("SETEX")
+                    .arg(&cache_key)
+                    .arg(3600) // 1 hour TTL
+                    .arg(user_json.to_string())
+                    .query(&mut conn);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Retrieve a user by ID with tiered lookup
+    ///
+    /// Lookup order: Redis (hot cache) → SQLite (offline cache) → CockroachDB (primary)
+    pub async fn get_user(&self, user_id: &[u8; 32]) -> StorageResult<Option<StoredUser>> {
+        // Try Redis hot cache first
+        if let Some(client) = &self.redis_client {
+            let cache_key = format!("user:{}", hex::encode(user_id));
+            if let Ok(mut conn) = client.get_connection() {
+                let result: Result<String, _> = redis::cmd("GET").arg(&cache_key).query(&mut conn);
+                if let Ok(cached) = result {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&cached) {
+                        if let Some(user) = self.parse_user_from_json(&json, user_id) {
+                            tracing::trace!(
+                                user_id = hex::encode(user_id),
+                                "User found in Redis cache"
+                            );
+                            return Ok(Some(user));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try SQLite offline cache (fast local lookup)
+        if let Some(pool) = &self.sqlite_pool {
+            let row = sqlx::query(
+                "SELECT username, public_key, created_at, on_chain_confirmed, chain_tx_id FROM cached_users WHERE id = ?"
+            )
+            .bind(&user_id[..])
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| StorageError::Database(format!("SQLite query error: {}", e)))?;
+
+            if let Some(row) = row {
+                let user = StoredUser {
+                    id: *user_id,
+                    username: row.get("username"),
+                    public_key: row.get("public_key"),
+                    created_at: chrono::DateTime::from_timestamp(
+                        row.get::<i64, _>("created_at"),
+                        0,
+                    )
+                    .unwrap_or_else(chrono::Utc::now),
+                    on_chain_confirmed: row.get("on_chain_confirmed"),
+                    chain_tx_id: row.get("chain_tx_id"),
+                };
+                tracing::trace!(user_id = hex::encode(user_id), "User found in SQLite cache");
+                return Ok(Some(user));
+            }
+        }
+
+        // Fall back to CockroachDB primary storage
+        if let Some(pool) = &self.cockroach_pool {
+            let row = sqlx::query(
+                "SELECT username, public_key, created_at, on_chain_confirmed, chain_tx_id FROM users WHERE id = $1"
+            )
+            .bind(&user_id[..])
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| StorageError::Database(format!("CockroachDB query error: {}", e)))?;
+
+            if let Some(row) = row {
+                let user = StoredUser {
+                    id: *user_id,
+                    username: row.get("username"),
+                    public_key: row.get("public_key"),
+                    created_at: row.get("created_at"),
+                    on_chain_confirmed: row.get("on_chain_confirmed"),
+                    chain_tx_id: row.get("chain_tx_id"),
+                };
+
+                // Backfill SQLite cache
+                if self.sqlite_pool.is_some() {
+                    let _ = self.store_user(&user).await; // Ignore cache write errors
+                }
+
+                tracing::trace!(user_id = hex::encode(user_id), "User found in CockroachDB");
+                return Ok(Some(user));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Update user's on-chain confirmation status
+    pub async fn confirm_user_on_chain(
+        &self,
+        user_id: &[u8; 32],
+        tx_id: &str,
+    ) -> StorageResult<()> {
+        if let Some(pool) = &self.cockroach_pool {
+            sqlx::query(
+                "UPDATE users SET on_chain_confirmed = true, chain_tx_id = $2 WHERE id = $1",
+            )
+            .bind(&user_id[..])
+            .bind(tx_id)
+            .execute(pool)
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to confirm user: {}", e)))?;
+        }
+
+        // Update SQLite cache
+        if let Some(pool) = &self.sqlite_pool {
+            sqlx::query(
+                "UPDATE cached_users SET on_chain_confirmed = 1, chain_tx_id = ? WHERE id = ?",
+            )
+            .bind(tx_id)
+            .bind(&user_id[..])
+            .execute(pool)
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to update cache: {}", e)))?;
+        }
+
+        // Invalidate Redis cache to force re-read
+        if let Some(client) = &self.redis_client {
+            let cache_key = format!("user:{}", hex::encode(user_id));
+            if let Ok(mut conn) = client.get_connection() {
+                let _: Result<(), _> = redis::cmd("DEL").arg(&cache_key).query(&mut conn);
+            }
+        }
+
+        tracing::info!(
+            user_id = hex::encode(user_id),
+            tx_id = %tx_id,
+            "User on-chain registration confirmed"
+        );
+
+        Ok(())
+    }
+
+    /// Helper to parse user from cached JSON
+    fn parse_user_from_json(
+        &self,
+        json: &serde_json::Value,
+        user_id: &[u8; 32],
+    ) -> Option<StoredUser> {
+        Some(StoredUser {
+            id: *user_id,
+            username: json.get("username")?.as_str()?.to_string(),
+            public_key: hex::decode(json.get("public_key")?.as_str()?).ok()?,
+            created_at: chrono::DateTime::parse_from_rfc3339(json.get("created_at")?.as_str()?)
+                .ok()?
+                .with_timezone(&chrono::Utc),
+            on_chain_confirmed: json.get("on_chain_confirmed")?.as_bool()?,
+            chain_tx_id: json
+                .get("chain_tx_id")
+                .and_then(|v| v.as_str().map(String::from)),
+        })
+    }
 }
 
 /// User storage statistics
@@ -1886,6 +2162,23 @@ pub struct UserStorageStats {
     pub inline_content_size: u64,
     /// Combined storage size
     pub total_storage_size: u64,
+}
+
+/// Stored user record
+#[derive(Debug, Clone)]
+pub struct StoredUser {
+    /// User ID (32 bytes)
+    pub id: [u8; 32],
+    /// Username
+    pub username: String,
+    /// Public key bytes
+    pub public_key: Vec<u8>,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Whether on-chain registration is confirmed
+    pub on_chain_confirmed: bool,
+    /// Chain transaction ID (if confirmed)
+    pub chain_tx_id: Option<String>,
 }
 
 #[cfg(test)]

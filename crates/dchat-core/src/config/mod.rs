@@ -19,6 +19,40 @@ pub struct Config {
 
     #[serde(default)]
     pub rpc: RpcConfig,
+
+    #[serde(default)]
+    pub chain: ChainConfig,
+}
+
+/// Chain timing configuration for epoch calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainConfig {
+    /// Genesis timestamp (Unix seconds) for block height calculations.
+    /// Default: 1735689600 (Jan 1, 2025 00:00:00 UTC)
+    #[serde(default = "default_genesis_timestamp")]
+    pub genesis_timestamp: u64,
+
+    /// Block time in seconds.
+    /// Default: 6 seconds
+    #[serde(default = "default_block_time_secs")]
+    pub block_time_secs: u64,
+}
+
+fn default_genesis_timestamp() -> u64 {
+    1735689600 // Jan 1, 2025 00:00:00 UTC
+}
+
+fn default_block_time_secs() -> u64 {
+    6
+}
+
+impl Default for ChainConfig {
+    fn default() -> Self {
+        Self {
+            genesis_timestamp: default_genesis_timestamp(),
+            block_time_secs: default_block_time_secs(),
+        }
+    }
 }
 
 /// RPC configuration for external chain dependencies
@@ -263,6 +297,7 @@ impl Default for Config {
             },
 
             rpc: RpcConfig::default(),
+            chain: ChainConfig::default(),
         }
     }
 }

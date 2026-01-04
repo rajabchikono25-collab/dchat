@@ -443,6 +443,11 @@ impl ChatChainClient {
         self.chain_id
     }
 
+    /// Get the current block height from the RPC endpoint
+    pub async fn get_current_height(&self) -> Result<u64> {
+        self.rpc_client.get_current_height().await
+    }
+
     /// Get reputation score
     pub fn get_reputation(&self, user_id: &UserId) -> Result<u32> {
         Ok(self

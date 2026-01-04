@@ -23,7 +23,7 @@ use dchat_core::types::{ChannelId, MessageId, UserId};
 use dchat_crypto::keys::KeyPair;
 use dchat_identity::Identity;
 use dchat_storage::provider::{
-    BlobRef, MessageMetadata, MessageType, StorageRouter, StorageRouterConfig,
+    BlobRef, MessageMetadata, MessageType, StorageRouter, StorageRouterConfig, StoredUser,
 };
 use dchat_storage::Database;
 use rand::RngCore;
@@ -156,14 +156,29 @@ impl StorageRoutedUserManager {
             return Err(Error::chain("Transaction failed to achieve finality"));
         }
 
-        // Store user in database (will migrate to router later)
-        self.database
-            .insert_user(&identity.user_id.to_string(), username, public_key_bytes)
-            .await
-            .map_err(|e| {
-                error!("Failed to store user in database: {}", e);
-                e
-            })?;
+        // Convert user ID to 32-byte array for StorageRouter
+        let user_id_bytes: [u8; 32] = {
+            let mut bytes = [0u8; 32];
+            let id_bytes = identity.user_id.as_bytes();
+            bytes[..id_bytes.len().min(32)].copy_from_slice(&id_bytes[..id_bytes.len().min(32)]);
+            bytes
+        };
+
+        // Create StoredUser record for tiered storage
+        let stored_user = StoredUser {
+            id: user_id_bytes,
+            username: username.to_string(),
+            public_key: public_key_bytes.to_vec(),
+            created_at: chrono::Utc::now(),
+            on_chain_confirmed,
+            chain_tx_id: Some(tx_id.to_string()),
+        };
+
+        // Store user via StorageRouter (tiered: CockroachDB → SQLite → Redis)
+        self.router.store_user(&stored_user).await.map_err(|e| {
+            error!("Failed to store user via StorageRouter: {}", e);
+            Error::storage(format!("Storage router error: {}", e))
+        })?;
 
         info!(
             "✓ User created successfully: {} ({})",
@@ -183,26 +198,34 @@ impl StorageRoutedUserManager {
         })
     }
 
-    /// Get user profile (delegates to database)
+    /// Get user profile (uses StorageRouter with tiered lookup)
     pub async fn get_user_profile(&self, user_id: &str) -> Result<UserProfile> {
+        // Convert user_id string to 32-byte array
+        let user_id_bytes: [u8; 32] = {
+            let mut bytes = [0u8; 32];
+            let id_bytes = user_id.as_bytes();
+            bytes[..id_bytes.len().min(32)].copy_from_slice(&id_bytes[..id_bytes.len().min(32)]);
+            bytes
+        };
+
+        // Use StorageRouter for tiered lookup: Redis → SQLite → CockroachDB
         let user = self
-            .database
-            .get_user(user_id)
-            .await?
+            .router
+            .get_user(&user_id_bytes)
+            .await
+            .map_err(|e| Error::storage(format!("Failed to query user: {}", e)))?
             .ok_or_else(|| Error::storage(format!("User not found: {}", user_id)))?;
 
         let public_key_hex = hex::encode(&user.public_key);
-        let created_at_rfc3339 = chrono::DateTime::from_timestamp(user.created_at, 0)
-            .map(|dt| dt.to_rfc3339())
-            .ok_or_else(|| Error::internal("Invalid timestamp in user data"))?;
+        let created_at_rfc3339 = user.created_at.to_rfc3339();
 
         Ok(UserProfile {
-            user_id: user.id,
+            user_id: user_id.to_string(),
             username: user.username.clone(),
             display_name: Some(format!("@{}", user.username)),
             public_key: public_key_hex,
             reputation_score: 0,
-            verified: false,
+            verified: user.on_chain_confirmed,
             created_at: created_at_rfc3339,
             badges: vec![],
         })
@@ -299,6 +322,8 @@ impl StorageRoutedUserManager {
     ///
     /// Attachments are always stored as blobs in S3/IPFS regardless of size,
     /// with BlobRef stored in message metadata.
+    ///
+    /// Storage billing: Checks balance before storing and pays provider after upload.
     pub async fn send_message_with_attachment(
         &self,
         sender_id: &str,
@@ -317,6 +342,29 @@ impl StorageRoutedUserManager {
             attachment.len()
         );
 
+        // Check storage balance before storing blob
+        let balance = self.check_storage_balance(sender_id).await?;
+        if !balance.has_sufficient_balance {
+            return Err(Error::validation(format!(
+                "Insufficient storage balance: {} < {} required. Please top up your account.",
+                balance.available_balance, balance.minimum_required
+            )));
+        }
+
+        // Calculate storage cost for this attachment (1 DCHAT per GB with 8 decimals)
+        let attachment_size = attachment.len() as u64;
+        let cost_per_gb: u64 = 1_0000_0000; // 1 DCHAT
+        let storage_cost =
+            ((attachment_size as f64 / (1024.0 * 1024.0 * 1024.0)) * cost_per_gb as f64) as u64;
+        let storage_cost = storage_cost.max(1000); // Minimum 0.00001 DCHAT per blob
+
+        if balance.available_balance < storage_cost {
+            return Err(Error::validation(format!(
+                "Insufficient balance for attachment: {} < {} required for {} bytes",
+                balance.available_balance, storage_cost, attachment_size
+            )));
+        }
+
         // First, store the attachment as a blob
         let blob_ref = self
             .router
@@ -332,6 +380,30 @@ impl StorageRoutedUserManager {
             blob_ref.hash_hex(),
             blob_ref.locations.len()
         );
+
+        // Pay storage provider for the blob
+        if let Some(primary_location) = blob_ref.locations.first() {
+            match self
+                .pay_for_storage(sender_id, storage_cost, &primary_location.provider_id)
+                .await
+            {
+                Ok(tx_id) => {
+                    debug!(
+                        "Storage payment submitted: {} for {} bytes (tx: {})",
+                        storage_cost, attachment_size, tx_id
+                    );
+                }
+                Err(e) => {
+                    // Log warning but don't fail - the blob is already stored
+                    // In production, this would trigger a retry queue or escrow
+                    error!(
+                        "Failed to pay storage provider: {}. Blob {} stored but unpaid.",
+                        e,
+                        blob_ref.hash_hex()
+                    );
+                }
+            }
+        }
 
         // Build combined content: text + blob reference
         let combined_content = serde_json::json!({
@@ -666,7 +738,7 @@ impl StorageRoutedUserManager {
         );
 
         // Get current block heights from each chain
-        let chat_chain_height = 0u64; // Chat chain doesn't expose height directly
+        let chat_chain_height = self.chat_chain.get_current_height().await.unwrap_or(0);
 
         let currency_chain_height = self.currency_chain.get_current_height().await.unwrap_or(0);
 

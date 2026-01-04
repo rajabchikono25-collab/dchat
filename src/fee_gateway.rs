@@ -1256,11 +1256,18 @@ impl FeeGateway {
     /// behavior during network bootstrap or temporary relay unavailability.
     /// In production, this should rarely be used as the relay network should
     /// always have active relays.
+    ///
+    /// IMPORTANT: This must be fully deterministic - the same inputs must always
+    /// produce the same output for consensus-critical relay assignment.
     fn deterministic_relay_fallback(&self, input1: &[u8], input2: &[u8]) -> UserId {
+        // Use a fixed domain separator to prevent cross-protocol hash collisions
+        const DOMAIN_SEPARATOR: &[u8] = b"dchat-relay-fallback-v1";
+
         let mut hasher = blake3::Hasher::new();
+        hasher.update(DOMAIN_SEPARATOR);
         hasher.update(input1);
         hasher.update(input2);
-        hasher.update(&Utc::now().timestamp().to_le_bytes());
+        // No timestamp - must be fully deterministic for consensus
         let hash: [u8; 32] = hasher.finalize().into();
 
         let mut uuid_bytes = [0u8; 16];

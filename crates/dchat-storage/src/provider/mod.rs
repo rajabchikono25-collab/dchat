@@ -32,5 +32,5 @@ pub use facade::{
     UserStorageQuota,
 };
 pub use registry::{ProviderRegistry, ProviderRegistryConfig, RegisteredProvider};
-pub use router::{MessageMetadata, MessageType, StorageRouter, StorageRouterConfig};
+pub use router::{MessageMetadata, MessageType, StorageRouter, StorageRouterConfig, StoredUser};
 pub use selection::{ProviderSelection, ProviderSelector, ReplicationConfig, SelectionCriteria};

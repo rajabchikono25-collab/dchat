@@ -89,7 +89,10 @@ use dchat_identity::{BurnerIdentity, Identity};
 use dchat_network::keystore::{default_keystore_path, RelayKeystore};
 use dchat_network::relay::staking::RelayStakingValidator;
 use dchat_network::relay_network::{MIN_STAKE_CONFIRMATIONS, RELAY_LOCK_DURATION};
-use dchat_network::{DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId};
+use dchat_network::swarm::RateLimitConfig as SwarmRateLimitConfig;
+use dchat_network::{
+    DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId, StakingBackend,
+};
 use dchat_storage::{BackupManager, Database, DatabaseConfig};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
@@ -3792,11 +3795,12 @@ fn get_geographic_region() -> Option<String> {
 
 /// Derive libp2p Ed25519 keypair from an ed25519-dalek signing key
 fn libp2p_keypair_from_signing_key(signing_key: &SigningKey) -> Result<libp2p::identity::Keypair> {
-    use libp2p::identity::ed25519;
-
-    let secret = ed25519::SecretKey::from(signing_key.to_bytes());
-    let kp: ed25519::Keypair = secret.into();
-    Ok(libp2p::identity::Keypair::from(kp))
+    libp2p::identity::Keypair::ed25519_from_bytes(signing_key.to_bytes()).map_err(|e| {
+        Error::crypto(format!(
+            "Failed to create libp2p keypair from signing key: {}",
+            e
+        ))
+    })
 }
 
 /// Load or create a persistent relay keystore and return the libp2p keypair
@@ -3822,7 +3826,7 @@ fn load_or_create_relay_identity(
         // Require passphrase before generating to avoid writing unprotected keys
         if std::env::var("DCHAT_RELAY_KEYSTORE_PASSPHRASE").is_err() {
             return Err(Error::crypto(
-                "DCHAT_RELAY_KEYSTORE_PASSPHRASE must be set to create relay keystore".into(),
+                "DCHAT_RELAY_KEYSTORE_PASSPHRASE must be set to create relay keystore",
             ));
         }
 
@@ -4174,7 +4178,7 @@ async fn run_relay_node(
             port_range: (49152, 65535),
         },
         external_address,
-        rate_limits: dchat_network::RateLimitConfig {
+        rate_limits: SwarmRateLimitConfig {
             max_messages_per_second: MAX_MESSAGES_PER_SECOND,
             max_messages_per_peer_per_second: MAX_MESSAGE_RATE_PER_SECOND as u32,
             max_connections: MAX_CONCURRENT_CONNECTIONS,
@@ -4504,7 +4508,7 @@ async fn run_relay_node(
             "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
         );
     }
-    currency_chain_config.rpc_url = currency_rpc_url;
+    currency_chain_config.rpc_url = currency_rpc_url.clone();
     let currency_chain = Arc::new(
         CurrencyChainClient::new(currency_chain_config).map_err(|e| {
             Error::internal(format!("Failed to create currency chain client: {}", e))
@@ -4569,7 +4573,7 @@ async fn run_relay_node(
 
             if !confirmed {
                 return Err(Error::network(
-                    "Relay stake transaction not confirmed; aborting startup".into(),
+                    "Relay stake transaction not confirmed; aborting startup",
                 ));
             }
 
@@ -4923,7 +4927,22 @@ async fn run_light_client(
             max_lifetime_secs: config.storage.db_max_lifetime_secs,
             enable_wal: config.storage.db_enable_wal,
         };
+
+        // Primary DB handle for storage + light client state
         let database = dchat_storage::Database::new(db_config).await?;
+
+        // Separate handle for FeeGateway persistence so escrow/idempotency survives restarts
+        let fee_gateway_db = Arc::new(
+            dchat_storage::Database::new(DatabaseConfig {
+                path: config.storage.data_dir.join("light_client.db"),
+                max_connections: 5,
+                connection_timeout_secs: config.storage.db_connection_timeout_secs,
+                idle_timeout_secs: config.storage.db_idle_timeout_secs,
+                max_lifetime_secs: config.storage.db_max_lifetime_secs,
+                enable_wal: config.storage.db_enable_wal,
+            })
+            .await?,
+        );
 
         // Initialize chain clients
         let chat_rpc_url = resolve_required_chat_chain_rpc_url(&config)?;
@@ -5008,13 +5027,21 @@ async fn run_light_client(
         );
 
         // Create FeeGateway
-        Arc::new(FeeGateway::new(
-            fee_orchestrator,
-            currency_chain,
-            chat_chain,
-            storage_manager,
-            relay_network,
-        ))
+        let gateway = Arc::new(
+            FeeGateway::new(
+                fee_orchestrator,
+                currency_chain,
+                chat_chain,
+                storage_manager,
+                relay_network,
+            )
+            .with_database(Arc::clone(&fee_gateway_db)),
+        );
+
+        // Load persisted fee/escrow state to preserve idempotency across restarts
+        gateway.load_persisted_state().await?;
+
+        gateway
     };
 
     info!("✓ FeeGateway initialized for light client");
@@ -7126,7 +7153,7 @@ async fn run_validator_node(
             port_range: (49152, 65535),
         },
         external_address,
-        rate_limits: dchat_network::RateLimitConfig {
+        rate_limits: SwarmRateLimitConfig {
             max_messages_per_second: MAX_MESSAGES_PER_SECOND,
             max_messages_per_peer_per_second: MAX_MESSAGE_RATE_PER_SECOND as u32,
             max_connections: MAX_CONCURRENT_CONNECTIONS,
@@ -7608,7 +7635,10 @@ async fn run_validator_node(
     // Initialize relay registry and work event stores for epoch reward distribution
     // These are shared across consensus loop and network event handler
     use dchat::relay_work_store::{RelayRegistryStore, RelayWorkEventStore};
-    let relay_registry_store = Arc::new(RelayRegistryStore::new());
+    let relay_registry_store = Arc::new(RelayRegistryStore::with_genesis(
+        config.chain.genesis_timestamp,
+        config.chain.block_time_secs,
+    ));
     let relay_work_store = Arc::new(RelayWorkEventStore::new());
 
     let consensus_handle = {
@@ -8434,6 +8464,8 @@ async fn run_validator_node(
                                 match client.get_registered_relay_operators().await {
                                     Ok(relay_operators) => {
                                         for (relay_id, operator, stake, registered_block, is_suspended) in relay_operators {
+                                            let relay_id_for_suspend = relay_id.clone();
+
                                             relay_registry_store.register_relay(
                                                 relay_id,
                                                 operator,
@@ -8441,7 +8473,7 @@ async fn run_validator_node(
                                                 registered_block,
                                             );
                                             if is_suspended {
-                                                relay_registry_store.suspend_relay(&relay_id);
+                                                relay_registry_store.suspend_relay(&relay_id_for_suspend);
                                             }
                                         }
                                         let stats = relay_registry_store.relay_count();
@@ -8692,8 +8724,8 @@ async fn save_identity_to_file(
     let identity_json = json!({
         "user_id": identity.user_id.to_string(),
         "username": identity.username,
-        "public_key": hex::encode(keypair.public_key_bytes()),
-        "private_key": hex::encode(keypair.private_key_bytes()),
+        "public_key": hex::encode(keypair.public_key().as_bytes()),
+        "private_key": hex::encode(keypair.private_key().as_bytes()),
         "created_at": chrono::Utc::now().to_rfc3339(),
     });
 
@@ -12436,7 +12468,16 @@ async fn run_network_command(config: Config, action: NetworkCommand) -> Result<(
             peer_id,
             duration_hours,
             reason,
-        } => network::handle_network_ban(peer_id, duration_hours, reason).await,
+        } => {
+            let duration_hours_u32 = u32::try_from(duration_hours).map_err(|_| {
+                Error::validation(format!(
+                    "Ban duration {} hours exceeds maximum supported value (u32::MAX)",
+                    duration_hours
+                ))
+            })?;
+
+            network::handle_network_ban(peer_id, duration_hours_u32, reason).await
+        }
         NetworkCommand::Unban { peer_id } => network::handle_network_unban(peer_id).await,
         NetworkCommand::Banned => network::handle_network_banned().await,
         NetworkCommand::PeerRecord {
