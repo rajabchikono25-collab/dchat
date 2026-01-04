@@ -110,6 +110,8 @@ pub const MIN_RELAY_CONNECTIONS: usize = 5;
 pub const PEER_LIST_SYNC_INTERVAL: Duration = Duration::from_secs(60);
 /// Maximum acceptable peer disconnection rate (30%)
 pub const MAX_PEER_DISCONNECTION_RATE: f64 = 0.3;
+/// Channel ID for peer discovery advertisements
+pub const PEER_DISCOVERY_CHANNEL: &str = "dchat/peer-discovery/1.0.0";
 
 // MAINNET SECURITY: Rate limiting and DoS protection
 /// Maximum messages per second allowed
@@ -126,8 +128,12 @@ pub const SLASHING_PENALTY_PERCENTAGE: f64 = 0.1;
 pub const MAX_CONCURRENT_CONNECTIONS: usize = 1_000;
 /// Maximum messages per second per peer
 pub const MAX_MESSAGE_RATE_PER_SECOND: u64 = 100;
-/// Connection timeout for peer handshake in seconds
+/// Connection timeout for peer handshake in seconds (relay nodes)
 pub const CONNECTION_TIMEOUT_SECONDS: u64 = 30;
+/// Connection timeout for validator peer discovery in seconds
+pub const VALIDATOR_CONNECTION_TIMEOUT_SECONDS: u64 = 60;
+/// Shutdown grace period in seconds
+pub const SHUTDOWN_TIMEOUT_SECONDS: u64 = 30;
 /// Peer heartbeat interval in seconds
 pub const HEARTBEAT_INTERVAL_SECONDS: u64 = 60;
 
@@ -198,6 +204,70 @@ fn is_private_network(ip: &std::net::IpAddr) -> bool {
             // fc00::/7 (unique local addresses) or ::1 (localhost)
             segments[0] & 0xfe00 == 0xfc00 || *ipv6 == std::net::Ipv6Addr::LOCALHOST
         }
+    }
+}
+
+/// Shared readiness state for the /ready endpoint
+/// This tracks whether the node is fully initialized and ready to serve traffic
+#[derive(Debug, Clone)]
+pub struct ReadinessState {
+    /// Whether the network layer is initialized and connected to peers
+    pub network_ready: Arc<std::sync::atomic::AtomicBool>,
+    /// Minimum number of peers required for readiness
+    pub min_peers_required: usize,
+    /// Current peer count
+    pub peer_count: Arc<std::sync::atomic::AtomicUsize>,
+    /// Whether the database is initialized
+    pub database_ready: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ReadinessState {
+    pub fn new(min_peers: usize) -> Self {
+        Self {
+            network_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            min_peers_required: min_peers,
+            peer_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            database_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.network_ready.load(Ordering::Relaxed)
+            && self.database_ready.load(Ordering::Relaxed)
+            && self.peer_count.load(Ordering::Relaxed) >= self.min_peers_required
+    }
+
+    pub fn set_network_ready(&self, ready: bool) {
+        self.network_ready
+            .store(ready, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_database_ready(&self, ready: bool) {
+        self.database_ready
+            .store(ready, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn update_peer_count(&self, count: usize) {
+        self.peer_count
+            .store(count, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        use std::sync::atomic::Ordering;
+        serde_json::json!({
+            "ready": self.is_ready(),
+            "network_ready": self.network_ready.load(Ordering::Relaxed),
+            "database_ready": self.database_ready.load(Ordering::Relaxed),
+            "peer_count": self.peer_count.load(Ordering::Relaxed),
+            "min_peers_required": self.min_peers_required,
+        })
+    }
+}
+
+impl Default for ReadinessState {
+    fn default() -> Self {
+        Self::new(1) // Default to requiring at least 1 peer
     }
 }
 
@@ -911,20 +981,10 @@ pub async fn handle_peer_discovery_advertisement(
     }
 
     info!(
-        "✓ Processed peer advertisement from {} ({} peers, {} new)",
+        "✓ Processed peer advertisement from {} ({} peers advertised, {} newly added)",
         from,
         advertisement.known_peers.len(),
         new_peers_count
-    );
-
-    info!(
-        "✓ Processed peer advertisement from {} ({} peers, {} new)",
-        from,
-        advertisement.known_peers.len(),
-        advertisement
-            .known_peers
-            .len()
-            .saturating_sub(peer_registry.get_all_peers().await.len())
     );
 }
 
@@ -3315,22 +3375,57 @@ async fn main() -> Result<()> {
 }
 
 /// Initialize logging with tracing-subscriber
+/// When `json` is true, outputs structured JSON logs suitable for log aggregators.
+/// When Sentry is enabled (via DCHAT_SENTRY_DSN), also attaches a Sentry layer for
+/// breadcrumbs and error event forwarding.
 fn init_logging(log_level: &str, json: bool) -> Result<()> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
 
+    // Check if Sentry is configured
+    let sentry_enabled = std::env::var("DCHAT_SENTRY_DSN").is_ok();
+
     if json {
-        // JSON structured logging for production
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().compact())
-            .init();
+        // JSON structured logging for production with consistent fields
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_file(true)
+            .with_line_number(true)
+            .with_thread_ids(true)
+            .with_target(true)
+            .with_span_list(true);
+
+        if sentry_enabled {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .with(sentry_tracing::layer())
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .init();
+        }
     } else {
         // Pretty logging for development
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().pretty())
-            .init();
+        let fmt_layer = tracing_subscriber::fmt::layer().pretty();
+
+        if sentry_enabled {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .with(sentry_tracing::layer())
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .init();
+        }
     }
 
     Ok(())
@@ -3457,6 +3552,62 @@ fn validate_config(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Create a DatabaseConfig from the application Config
+/// Ensures consistent DB settings across all node types (relay, user, validator)
+fn create_db_config(config: &Config, db_name: &str) -> DatabaseConfig {
+    DatabaseConfig {
+        path: config.storage.data_dir.join(db_name),
+        max_connections: config.storage.db_pool_size,
+        connection_timeout_secs: config.storage.db_connection_timeout_secs,
+        idle_timeout_secs: config.storage.db_idle_timeout_secs,
+        max_lifetime_secs: config.storage.db_max_lifetime_secs,
+        enable_wal: config.storage.db_enable_wal,
+    }
+}
+
+/// Parse a list of multiaddr strings into (PeerId, Multiaddr) pairs.
+/// Only includes addresses that contain a valid /p2p/<PeerId> component.
+/// Returns a Vec of successfully parsed bootstrap nodes.
+fn parse_bootstrap_peers(peer_strings: &[String]) -> Vec<(PeerId, Multiaddr)> {
+    let mut bootstrap_nodes = Vec::new();
+
+    for peer_str in peer_strings {
+        if let Ok(multiaddr) = peer_str.parse::<Multiaddr>() {
+            let multiaddr_str = multiaddr.to_string();
+
+            if let Some(peer_id_part) = multiaddr_str.split("/p2p/").nth(1) {
+                // Take only the peer ID portion (before any additional path components)
+                let peer_id_str = peer_id_part.split('/').next().unwrap_or(peer_id_part);
+                match peer_id_str.parse::<PeerId>() {
+                    Ok(peer_id) => {
+                        bootstrap_nodes.push((peer_id, multiaddr));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse PeerID from bootstrap peer {}: {}",
+                            multiaddr, e
+                        );
+                    }
+                }
+            } else {
+                debug!(
+                    "Bootstrap peer multiaddr missing /p2p/<PeerId> component: {}",
+                    multiaddr
+                );
+            }
+        } else {
+            warn!("Failed to parse bootstrap peer multiaddr: {}", peer_str);
+        }
+    }
+
+    bootstrap_nodes
+}
+
+/// Get the geographic region from environment or config
+fn get_geographic_region() -> Option<String> {
+    std::env::var("DCHAT_REGION").ok()
+}
+
 /// Run as relay node
 /// Run relay node with professional peer discovery and management
 async fn run_relay_node(
@@ -3550,12 +3701,19 @@ async fn run_relay_node(
     let peer_metrics = Arc::new(PeerMetrics::new());
     info!("✓ Peer metrics initialized");
 
+    // Initialize readiness state for health checks (relay needs at least 1 peer)
+    let readiness_state = Arc::new(ReadinessState::new(1));
+
     // Create shutdown channel for graceful termination
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
 
     // Start observability stack
     info!("🔍 Starting observability services...");
-    let health_handle = start_health_server(&health_addr, shutdown_tx.subscribe())?;
+    let health_handle = start_health_server_with_readiness(
+        &health_addr,
+        shutdown_tx.subscribe(),
+        Some(readiness_state.clone()),
+    )?;
     info!("   ✓ Health endpoint: http://{}/health", health_addr);
 
     let metrics_handle =
@@ -3787,6 +3945,9 @@ async fn run_relay_node(
     network.start().await?;
     info!("✓ Relay network initialized (peer_id: {})", peer_id);
 
+    // Mark network as ready
+    readiness_state.set_network_ready(true);
+
     // Dial DNS-discovered peers even if they lack /p2p/<PeerId>. Identify will learn the PeerId
     // and the swarm event handler will feed addresses into Kademlia.
     for validator in &discovered_validators {
@@ -3938,7 +4099,8 @@ async fn run_relay_node(
 
     // Phase 4: Wait for Initial Peer Connections with Handshaking
     info!("🤝 Phase 4: Establishing initial peer connections");
-    let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
+    let connection_deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(CONNECTION_TIMEOUT_SECONDS);
     let mut connected_peers = 0;
     let geographic_region = std::env::var("DCHAT_REGION").ok();
 
@@ -3949,11 +4111,14 @@ async fn run_relay_node(
         )
         .await
         {
-            Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
+            Ok(Some(NetworkEvent::PeerConnected {
+                peer_id: connected_peer_id,
+                endpoint,
+            })) => {
                 connected_peers += 1;
                 info!(
-                    "✓ Peer connected: {} (total: {})",
-                    connected_peer_id, connected_peers
+                    "✓ Peer connected: {} at {:?} (total: {})",
+                    connected_peer_id, endpoint, connected_peers
                 );
 
                 // Update peer registry
@@ -3966,21 +4131,15 @@ async fn run_relay_node(
                         .update_peer_quality(&connected_peer_id, 1.0)
                         .await;
                 } else {
-                    // New peer not in bootstrap list
+                    // New peer not in bootstrap list - use endpoint if available
+                    let multiaddr = endpoint.unwrap_or_else(|| {
+                        FALLBACK_LISTEN_ADDR
+                            .parse()
+                            .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+                    });
                     let peer_info = PeerInfo {
                         peer_id: connected_peer_id,
-                        multiaddr: network_arc
-                            .lock()
-                            .await
-                            .listeners()
-                            .first()
-                            .cloned()
-                            // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-                            .unwrap_or_else(|| {
-                                FALLBACK_LISTEN_ADDR
-                                    .parse()
-                                    .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
-                            }),
+                        multiaddr,
                         node_type: NodeType::Relay,
                         geographic_region: None,
                         last_seen: SystemTime::now(),
@@ -4078,9 +4237,13 @@ async fn run_relay_node(
 
     // Phase 6: Initialize Database and Relay Services
     info!("💾 Phase 6: Initializing storage and relay services");
-    let db_config = DatabaseConfig::default();
+    let db_config = create_db_config(&config, "dchat_relay.db");
     let database = Database::new(db_config).await?;
     info!("   ✓ Database initialized");
+
+    // Mark database as ready
+    readiness_state.set_database_ready(true);
+
     info!("   ✓ Relay staked with {} tokens", stake_amount);
 
     // Phase 6b: Initialize Currency Chain and Payment Processor
@@ -4145,8 +4308,8 @@ async fn run_relay_node(
                 if let Some(evt) = event {
                     event_count += 1;
                     match evt {
-                        NetworkEvent::PeerConnected(peer) => {
-                            info!("🆕 New peer joined: {}", peer);
+                        NetworkEvent::PeerConnected { peer_id: peer, endpoint } => {
+                            info!("🆕 New peer joined: {} at {:?}", peer, endpoint);
 
                             // Check if peer is already registered (e.g., as a bootstrap validator)
                             let existing_peer = peer_registry_arc.get_peer(&peer).await;
@@ -4160,12 +4323,10 @@ async fn run_relay_node(
                                 });
                                 peer_registry_arc.update_peer_quality(&peer, 1.0).await;
                             } else {
-                                // New peer - add to registry (default to Relay, will be updated by handshake)
-                                let multiaddr = {
-                                    let net = network_arc.lock().await;
-                                    // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-                                    net.listeners().first().cloned().unwrap_or_else(|| FALLBACK_LISTEN_ADDR.parse().expect("FALLBACK_LISTEN_ADDR is a valid multiaddr"))
-                                };
+                                // New peer - add to registry using endpoint if available
+                                let multiaddr = endpoint.unwrap_or_else(|| {
+                                    FALLBACK_LISTEN_ADDR.parse().expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+                                });
 
                                 let peer_info = PeerInfo {
                                     peer_id: peer,
@@ -4213,6 +4374,9 @@ async fn run_relay_node(
                             peer_metrics.update_peer_count("validator", validators.len()).await;
                             peer_metrics.update_peer_count("relay", relays.len()).await;
                             peer_metrics.update_peer_count("client", clients.len()).await;
+
+                            // Update readiness state peer count
+                            readiness_state.update_peer_count(validators.len() + relays.len() + clients.len());
                         }
                         NetworkEvent::PeerDisconnected(peer) => {
                             info!("👋 Peer left: {}", peer);
@@ -4225,6 +4389,9 @@ async fn run_relay_node(
                             peer_metrics.update_peer_count("validator", validators.len()).await;
                             peer_metrics.update_peer_count("relay", relays.len()).await;
                             peer_metrics.update_peer_count("client", clients.len()).await;
+
+                            // Update readiness state peer count
+                            readiness_state.update_peer_count(validators.len() + relays.len() + clients.len());
                         }
                         NetworkEvent::MessageReceived { from, message } => {
                             debug!("📨 Message from {}", from);
@@ -4233,13 +4400,48 @@ async fn run_relay_node(
                             peer_registry_arc.record_message_received(&from).await;
 
                             // Message is already a DchatMessage enum, match on it directly
-                            // Match on the DchatMessage enum
                             match message {
-                                DchatMessage::ChannelMessage { sender, channel_id, .. } => {
-                                    debug!("📨 Relay forwarding message from {} to channel {}", sender, channel_id);
-                                    // Forward message to channel subscribers
-                                    // Generate proof-of-delivery for relay incentives
-                                    info!("✓ Message relayed and proof-of-delivery recorded");
+                                DchatMessage::ChannelMessage { sender, channel_id, encrypted_payload, .. } => {
+                                    // Check if this is a peer discovery advertisement
+                                    if channel_id == PEER_DISCOVERY_CHANNEL {
+                                        // Parse and handle peer discovery advertisement
+                                        match serde_json::from_slice::<PeerDiscoveryAdvertisement>(&encrypted_payload) {
+                                            Ok(advertisement) => {
+                                                handle_peer_discovery_advertisement(
+                                                    advertisement,
+                                                    from,
+                                                    &peer_registry_arc,
+                                                ).await;
+                                            }
+                                            Err(e) => {
+                                                debug!("⚠️  Failed to parse peer discovery advertisement from {}: {}", from, e);
+                                            }
+                                        }
+                                    } else {
+                                        debug!("📨 Relay forwarding message from {} to channel {}", sender, channel_id);
+                                        // Forward message to channel subscribers
+                                        // Generate proof-of-delivery for relay incentives
+                                        info!("✓ Message relayed and proof-of-delivery recorded");
+                                    }
+                                }
+                                DchatMessage::PeerHandshake { payload } => {
+                                    // Deserialize the handshake payload and process it
+                                    match serde_json::from_slice::<PeerHandshake>(&payload) {
+                                        Ok(handshake) => {
+                                            let mut network = network_arc.lock().await;
+                                            if let Err(e) = handle_peer_handshake(
+                                                from,
+                                                handshake,
+                                                &peer_registry_arc,
+                                                &mut network,
+                                            ).await {
+                                                warn!("⚠️  Failed to handle peer handshake from {}: {}", from, e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("⚠️  Failed to deserialize handshake from {}: {}", from, e);
+                                        }
+                                    }
                                 }
                                 _ => {
                                     debug!("📨 Other relay message type received");
@@ -4284,15 +4486,18 @@ async fn run_relay_node(
 
     // Wait for background tasks to complete
     info!("⏳ Waiting for background tasks to complete...");
-    let shutdown_result = tokio::time::timeout(tokio::time::Duration::from_secs(30), async {
-        let _ = tokio::join!(
-            health_handle,
-            metrics_handle,
-            health_monitor_handle,
-            sync_handle,
-            payment_processor_handle
-        );
-    })
+    let shutdown_result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECONDS),
+        async {
+            let _ = tokio::join!(
+                health_handle,
+                metrics_handle,
+                health_monitor_handle,
+                sync_handle,
+                payment_processor_handle
+            );
+        },
+    )
     .await;
 
     match shutdown_result {
@@ -4737,11 +4942,14 @@ async fn run_user_node(
             match tokio::time::timeout(tokio::time::Duration::from_secs(1), network.next_event())
                 .await
             {
-                Ok(Some(NetworkEvent::PeerConnected(connected_peer))) => {
+                Ok(Some(NetworkEvent::PeerConnected {
+                    peer_id: connected_peer,
+                    endpoint,
+                })) => {
                     peer_count += 1;
                     info!(
-                        "✓ Relay connected: {} (total: {})",
-                        connected_peer, peer_count
+                        "✓ Relay connected: {} at {:?} (total: {})",
+                        connected_peer, endpoint, peer_count
                     );
 
                     // Update peer registry
@@ -4779,12 +4987,19 @@ async fn run_user_node(
     }
 
     // Subscribe to channels
-    network.subscribe_to_channel("global").ok();
-    info!("✓ Subscribed to #global channel");
+    if let Err(e) = network.subscribe_to_channel("global") {
+        warn!("⚠️  Failed to subscribe to #global channel: {}", e);
+    } else {
+        info!("✓ Subscribed to #global channel");
+    }
 
     // Process network events during subscription exchange (gossipsub needs active event loop)
-    info!("Waiting 30s for gossipsub subscription exchange and mesh formation...");
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(30);
+    info!(
+        "Waiting {}s for gossipsub subscription exchange and mesh formation...",
+        CONNECTION_TIMEOUT_SECONDS
+    );
+    let deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(CONNECTION_TIMEOUT_SECONDS);
     let mut last_log = tokio::time::Instant::now();
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(tokio::time::Duration::from_secs(1), network.next_event()).await
@@ -4809,7 +5024,7 @@ async fn run_user_node(
     );
 
     // Initialize storage
-    let db_config = DatabaseConfig::default();
+    let db_config = create_db_config(&config, "dchat_user.db");
     let database = Database::new(db_config).await?;
     info!("✓ Database initialized");
 
@@ -6401,24 +6616,25 @@ async fn run_validator_node(
     }
 
     // Derive libp2p keypair from validator key for persistent peer ID
-    let libp2p_keypair = if let Some(private_key_bytes) = validator_key.private_key_bytes() {
-        info!("🔑 Deriving persistent libp2p keypair from validator key...");
-        match libp2p::identity::Keypair::ed25519_from_bytes(private_key_bytes.to_vec()) {
-            Ok(kp) => {
-                let peer_id = kp.public().to_peer_id();
-                info!("✓ Derived persistent peer ID: {}", peer_id);
-                Some(kp)
+    let (libp2p_keypair, derived_peer_id) =
+        if let Some(private_key_bytes) = validator_key.private_key_bytes() {
+            info!("🔑 Deriving persistent libp2p keypair from validator key...");
+            match libp2p::identity::Keypair::ed25519_from_bytes(private_key_bytes.to_vec()) {
+                Ok(kp) => {
+                    let peer_id = kp.public().to_peer_id();
+                    info!("✓ Derived persistent peer ID: {}", peer_id);
+                    (Some(kp), Some(peer_id))
+                }
+                Err(e) => {
+                    warn!("Failed to derive libp2p keypair from validator key: {}", e);
+                    warn!("Falling back to random keypair (peer ID will change on restart)");
+                    (None, None)
+                }
             }
-            Err(e) => {
-                warn!("Failed to derive libp2p keypair from validator key: {}", e);
-                warn!("Falling back to random keypair (peer ID will change on restart)");
-                None
-            }
-        }
-    } else {
-        warn!("KMS keys do not expose private key - using random libp2p keypair");
-        None
-    };
+        } else {
+            warn!("KMS keys do not expose private key - using random libp2p keypair");
+            (None, None)
+        };
 
     // Parse listen addresses
     let mut listen_addrs = Vec::new();
@@ -6444,7 +6660,7 @@ async fn run_validator_node(
     let network_config = dchat_network::NetworkConfig {
         listen_addrs,
         discovery: dchat_network::DiscoveryConfig {
-            local_peer_id: PeerId::random(),
+            local_peer_id: derived_peer_id.unwrap_or_else(PeerId::random),
             bootstrap_nodes,
             enable_mdns: config.network.enable_mdns,
             min_peers: 6, // Expect 6 other validators
@@ -6643,7 +6859,8 @@ async fn run_validator_node(
     // Wait for initial peer connections (critical for consensus)
     // Need at least 2f+1 validators connected for consensus
     info!("🤝 Waiting for validator peer connections...");
-    let connection_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(60);
+    let connection_deadline = tokio::time::Instant::now()
+        + tokio::time::Duration::from_secs(VALIDATOR_CONNECTION_TIMEOUT_SECONDS);
     let mut connected_validators = 0;
     let geographic_region = std::env::var("DCHAT_REGION").ok();
 
@@ -6657,11 +6874,15 @@ async fn run_validator_node(
         )
         .await
         {
-            Ok(Some(NetworkEvent::PeerConnected(connected_peer_id))) => {
+            Ok(Some(NetworkEvent::PeerConnected {
+                peer_id: connected_peer_id,
+                endpoint,
+            })) => {
                 connected_validators += 1;
                 info!(
-                    "✓ Validator peer connected: {} ({}/{} required for consensus)",
+                    "✓ Validator peer connected: {} at {:?} ({}/{} required for consensus)",
                     connected_peer_id,
+                    endpoint,
                     connected_validators + 1,
                     required_signatures
                 );
@@ -6738,7 +6959,7 @@ async fn run_validator_node(
     );
 
     // Initialize storage
-    let db_config = DatabaseConfig::default();
+    let db_config = create_db_config(&config, "dchat_validator.db");
     let database = Database::new(db_config).await?;
     info!("✓ Database initialized");
 
@@ -6926,6 +7147,9 @@ async fn run_validator_node(
         Arc::new(tokio::sync::Mutex::new(StateValidator::new()));
     info!("✓ State validator initialized for Byzantine fault detection");
 
+    // Resolve currency chain RPC URL before spawning consensus task (avoid panic inside task)
+    let consensus_currency_rpc_url = resolve_required_currency_chain_rpc_url(&config)?;
+
     // Get public key bytes for signing in consensus (validator_key is moved into Arc for sharing)
     let validator_public_key_bytes = validator_key.public_key_bytes();
     let validator_key_arc = Arc::new(tokio::sync::Mutex::new(validator_key));
@@ -6936,6 +7160,7 @@ async fn run_validator_node(
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone = state_validator.clone();
         let staking_manager_consensus = staking_manager.clone();
+        let currency_rpc_url_for_consensus = consensus_currency_rpc_url.clone();
 
         tokio::spawn(async move {
             info!("Starting consensus engine with BFT verification and FULL state validation...");
@@ -6946,30 +7171,14 @@ async fn run_validator_node(
             let hardened_consensus =
                 HardenedPoRW::new(snapshot_store.clone(), batch_verifier.clone());
 
-            let currency_chain_rpc_url = match std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
-                .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    if allow_localhost_chain_rpc_defaults() {
-                        warn!(
-                            "Using localhost currency chain RPC default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1). This is unsafe for production."
-                        );
-                        "http://localhost:8545".to_string()
-                    } else {
-                        panic!(
-                            "Currency chain RPC URL not configured. Set `rpc.currency_chain_rpc_url` in config.toml or env `DCHAT_CURRENCY_CHAIN_RPC_URL`.\nFor local development only, you can opt into localhost defaults by setting `DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1`."
-                        );
-                    }
-                }
-            };
-
+            // Use the pre-resolved currency chain RPC URL (resolved before spawn to avoid panic)
             let currency_chain_config = CurrencyChainConfig {
-                rpc_url: currency_chain_rpc_url,
+                rpc_url: currency_rpc_url_for_consensus,
                 ..Default::default()
             };
             let currency_client = Arc::new(
                 CurrencyChainClient::new(currency_chain_config).unwrap_or_else(|e| {
+                    error!("Failed to create currency client: {}", e);
                     panic!("Failed to create currency client: {}", e);
                 }),
             );
@@ -7380,6 +7589,7 @@ async fn run_validator_node(
         let validator_public_key_bytes_clone = validator_public_key_bytes;
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone2 = state_validator.clone();
+        let peer_registry_arc_clone = peer_registry_arc.clone();
         let mut shutdown = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
@@ -7396,7 +7606,7 @@ async fn run_validator_node(
                         let mut network_guard = network_arc_clone.lock().await;
                         network_guard.next_event().await
                     } => {
-                        if let Some(NetworkEvent::MessageReceived { from: _, message }) = event {
+                        if let Some(NetworkEvent::MessageReceived { from, message }) = event {
                             match message {
                                 DchatMessage::ValidatorBlock {
                                     height,
@@ -7653,6 +7863,26 @@ async fn run_validator_node(
                                     }
                                 }
 
+                                DchatMessage::PeerHandshake { payload } => {
+                                    // Deserialize the handshake payload and process it
+                                    match serde_json::from_slice::<PeerHandshake>(&payload) {
+                                        Ok(handshake) => {
+                                            let mut network = network_arc_clone.lock().await;
+                                            if let Err(e) = handle_peer_handshake(
+                                                from,
+                                                handshake,
+                                                &peer_registry_arc_clone,
+                                                &mut network,
+                                            ).await {
+                                                warn!("⚠️  Failed to handle peer handshake from {}: {}", from, e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("⚠️  Failed to deserialize handshake from {}: {}", from, e);
+                                        }
+                                    }
+                                }
+
                                 _ => {
                                     // Other message types handled elsewhere
                                 }
@@ -7710,18 +7940,15 @@ async fn run_validator_node(
     info!("Closing database connections...");
     // Database closes automatically on drop
     drop(database);
-    Ok::<(), Error>(())
-        .map_err(|e| {
-            warn!("Database shutdown warning: {}", e);
-            e
-        })
-        .ok();
     info!("✓ Database closed successfully");
 
     // Wait for tasks to complete
-    tokio::time::timeout(tokio::time::Duration::from_secs(30), async {
-        let _ = tokio::join!(health_handle, metrics_handle);
-    })
+    tokio::time::timeout(
+        tokio::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECONDS),
+        async {
+            let _ = tokio::join!(health_handle, metrics_handle);
+        },
+    )
     .await
     .map_err(|_| Error::network("Shutdown timeout".to_string()))?;
 
@@ -8749,6 +8976,15 @@ fn start_health_server(
     addr: &str,
     mut shutdown: broadcast::Receiver<()>,
 ) -> Result<tokio::task::JoinHandle<()>> {
+    // Default readiness state for backward compatibility
+    start_health_server_with_readiness(addr, shutdown, None)
+}
+
+fn start_health_server_with_readiness(
+    addr: &str,
+    mut shutdown: broadcast::Receiver<()>,
+    readiness: Option<Arc<ReadinessState>>,
+) -> Result<tokio::task::JoinHandle<()>> {
     use warp::Filter;
 
     let health = warp::path("health").map(|| {
@@ -8759,10 +8995,32 @@ fn start_health_server(
         }))
     });
 
-    let ready = warp::path("ready").map(|| {
-        warp::reply::json(&serde_json::json!({
-            "ready": true,
-        }))
+    // Clone readiness for the closure
+    let readiness_for_route = readiness.clone();
+    let ready = warp::path("ready").map(move || {
+        match &readiness_for_route {
+            Some(state) => {
+                let response = state.to_json();
+                if state.is_ready() {
+                    warp::reply::with_status(
+                        warp::reply::json(&response),
+                        warp::http::StatusCode::OK,
+                    )
+                } else {
+                    warp::reply::with_status(
+                        warp::reply::json(&response),
+                        warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                    )
+                }
+            }
+            None => {
+                // Legacy mode: always report ready
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"ready": true})),
+                    warp::http::StatusCode::OK,
+                )
+            }
+        }
     });
 
     let routes = health.or(ready);
@@ -10287,7 +10545,9 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
     info!("Loading upgrade manager state from database...");
 
     let db_path = PathBuf::from("./data/governance.db");
-    std::fs::create_dir_all("./data").ok();
+    if let Err(e) = std::fs::create_dir_all("./data") {
+        warn!("⚠️  Failed to create ./data directory: {}", e);
+    }
 
     let mut manager = if db_path.exists() {
         // Load upgrade manager state from JSON file
@@ -10810,7 +11070,9 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
 
     // Production: Load tokenomics state from database for persistent supply tracking
     let tokenomics_db_path = PathBuf::from("./data/tokenomics.db");
-    std::fs::create_dir_all("./data").ok();
+    if let Err(e) = std::fs::create_dir_all("./data") {
+        warn!("⚠️  Failed to create ./data directory: {}", e);
+    }
 
     // Initialize database for tokenomics tracking
     let db_config = DatabaseConfig {

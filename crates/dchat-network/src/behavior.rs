@@ -137,6 +137,11 @@ pub enum DchatMessage {
         validator_id: Vec<u8>,
         signature: Vec<u8>,
     },
+    /// Peer handshake for exchanging node information and known peers
+    PeerHandshake {
+        /// JSON-serialized handshake data (for forward compatibility)
+        payload: Vec<u8>,
+    },
 }
 
 /// Handshake request/response for peer exchange
@@ -311,8 +316,15 @@ impl DchatBehavior {
     }
 
     /// Send a handshake request to a peer
+    ///
+    /// The handshake data is wrapped in a DchatMessage::PeerHandshake envelope
+    /// so it can be properly decoded on the receiving end.
     pub fn send_handshake(&mut self, peer_id: PeerId, data: Vec<u8>) -> OutboundRequestId {
-        self.req_resp.send_request(&peer_id, HandshakeData { data })
+        // Wrap the raw handshake bytes in a DchatMessage envelope
+        let handshake_msg = DchatMessage::PeerHandshake { payload: data };
+        let wrapped_data = encode_wire_message(&handshake_msg).unwrap_or_else(|_| Vec::new()); // Fallback to empty on encode failure
+        self.req_resp
+            .send_request(&peer_id, HandshakeData { data: wrapped_data })
     }
 }
 

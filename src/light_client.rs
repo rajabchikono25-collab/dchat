@@ -647,8 +647,8 @@ impl LightClient {
 
                         // Emit connection events
                         match &event {
-                            NetworkEvent::PeerConnected(peer) => {
-                                let _ = event_tx.send(LightClientEvent::PeerConnected(peer.to_string())).await;
+                            NetworkEvent::PeerConnected { peer_id, endpoint: _ } => {
+                                let _ = event_tx.send(LightClientEvent::PeerConnected(peer_id.to_string())).await;
                             }
                             NetworkEvent::PeerDisconnected(peer) => {
                                 let _ = event_tx.send(LightClientEvent::PeerDisconnected(peer.to_string())).await;

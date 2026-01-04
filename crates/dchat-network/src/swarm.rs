@@ -53,8 +53,12 @@ pub enum NetworkEvent {
     /// New peer discovered
     PeerDiscovered(PeerId),
 
-    /// Peer connected
-    PeerConnected(PeerId),
+    /// Peer connected with optional remote address
+    PeerConnected {
+        peer_id: PeerId,
+        /// Remote address of the peer (if known)
+        endpoint: Option<Multiaddr>,
+    },
 
     /// Peer disconnected
     PeerDisconnected(PeerId),
@@ -442,14 +446,26 @@ impl NetworkManager {
                         return Some(net_event);
                     }
                 }
-                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    tracing::info!("🔗 Connection established with peer: {}", peer_id);
+                SwarmEvent::ConnectionEstablished {
+                    peer_id, endpoint, ..
+                } => {
+                    tracing::info!(
+                        "🔗 Connection established with peer: {} via {:?}",
+                        peer_id,
+                        endpoint
+                    );
                     self.discovery.peer_connected(peer_id);
 
                     if self.pending_kad_bootstrap {
                         self.try_kad_bootstrap("post-connect");
                     }
-                    return Some(NetworkEvent::PeerConnected(peer_id));
+
+                    // Extract the remote address from the endpoint
+                    let remote_addr = Some(endpoint.get_remote_address().clone());
+                    return Some(NetworkEvent::PeerConnected {
+                        peer_id,
+                        endpoint: remote_addr,
+                    });
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
                     tracing::info!("🔌 Connection closed with peer: {}", peer_id);
