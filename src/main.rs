@@ -1235,9 +1235,9 @@ enum Commands {
         #[arg(long)]
         key: String,
 
-        /// Chain RPC endpoint
+        /// Chain RPC endpoint (optional when using --genesis-dir)
         #[arg(long)]
-        chain_rpc: String,
+        chain_rpc: Option<String>,
 
         /// Enable HSM/KMS
         #[arg(long)]
@@ -6925,7 +6925,7 @@ async fn run_testnet(
 async fn run_validator_node(
     config: Config,
     key_path: String,
-    chain_rpc: String,
+    chain_rpc: Option<String>,
     use_hsm: bool,
     stake_amount: u64,
     is_producer: bool,
@@ -6939,7 +6939,15 @@ async fn run_validator_node(
     // MAINNET SECURITY: Validate production environment
     validate_mainnet_environment(&config, NodeType::Validator).await?;
 
-    info!("Chain RPC: {}", chain_rpc);
+    // Validate chain_rpc requirement
+    if chain_rpc.is_none() && genesis_dir.is_none() {
+        return Err(Error::validation(
+            "Either --chain-rpc or --genesis-dir must be specified".to_string(),
+        ));
+    }
+
+    let chain_rpc_display = chain_rpc.as_deref().unwrap_or("N/A (using genesis)");
+    info!("Chain RPC: {}", chain_rpc_display);
     info!("HSM enabled: {}", use_hsm);
     info!("Stake: {} tokens", stake_amount);
     info!("Block producer: {}", is_producer);
