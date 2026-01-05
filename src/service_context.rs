@@ -107,6 +107,27 @@ pub fn allow_localhost_chain_rpc_defaults() -> bool {
     }
 }
 
+/// Log a warning if the RPC URL is using HTTP over a non-localhost network.
+///
+/// This is a security check to alert operators when RPC credentials or
+/// sensitive blockchain data may be transmitted in plaintext over public networks.
+/// Localhost URLs (127.0.0.1, localhost, [::1]) are considered safe without HTTPS.
+fn warn_insecure_rpc_url(url: &str, chain_type: ChainType) {
+    if !url.starts_with("https://") {
+        // Check if it's localhost (which is safe without HTTPS)
+        let is_localhost =
+            url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]");
+
+        if !is_localhost {
+            warn!(
+                "⚠️  {} chain RPC URL '{}' is using HTTP instead of HTTPS. \
+                 This is insecure for production use over public networks.",
+                chain_type, url
+            );
+        }
+    }
+}
+
 /// Resolve RPC URL with priority: CLI override > env var > config > localhost default
 ///
 /// Returns the resolved URL and its source for debugging.
@@ -123,6 +144,7 @@ pub fn resolve_chain_rpc(
                 "{} chain RPC URL resolved from CLI override: {}",
                 chain_type, url
             );
+            warn_insecure_rpc_url(url, chain_type);
             return Ok(ResolvedRpcUrl {
                 url: url.to_string(),
                 source: RpcUrlSource::CliOverride,
@@ -153,6 +175,7 @@ pub fn resolve_chain_rpc(
                     "{} chain RPC URL resolved from env var {}: {}",
                     chain_type, env_var, url
                 );
+                warn_insecure_rpc_url(url, chain_type);
                 return Ok(ResolvedRpcUrl {
                     url: url.to_string(),
                     source: RpcUrlSource::EnvironmentVariable,
@@ -175,6 +198,7 @@ pub fn resolve_chain_rpc(
                     "{} chain RPC URL resolved from config file: {}",
                     chain_type, url
                 );
+                warn_insecure_rpc_url(url, chain_type);
                 return Ok(ResolvedRpcUrl {
                     url: url.to_string(),
                     source: RpcUrlSource::ConfigFile,
@@ -194,6 +218,8 @@ pub fn resolve_chain_rpc(
             "{} chain RPC URL using localhost default (DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS=1): {}",
             chain_type, default_url
         );
+        // Note: localhost defaults are inherently safe for HTTP, but we still validate for consistency
+        warn_insecure_rpc_url(&default_url, chain_type);
         return Ok(ResolvedRpcUrl {
             url: default_url,
             source: RpcUrlSource::LocalhostDefault,
@@ -302,6 +328,7 @@ impl ServiceContext {
     /// Create from main Config struct (legacy method, prefer builder())
     ///
     /// Extracts chain RPC URLs from the config, validating required values.
+    /// Fails fast at startup if RPC URLs are missing or empty.
     pub fn from_config(
         currency_rpc_url: Option<String>,
         chat_rpc_url: Option<String>,
@@ -313,11 +340,25 @@ impl ServiceContext {
             )
         })?;
 
+        // Validate currency RPC URL is not empty
+        if currency_rpc.trim().is_empty() {
+            return Err(Error::Config(
+                "Currency chain RPC URL cannot be empty. Set via config or DCHAT_CURRENCY_CHAIN_RPC_URL environment variable.".to_string()
+            ));
+        }
+
         let chat_rpc = chat_rpc_url.ok_or_else(|| {
             Error::validation(
                 "Chat chain RPC URL not configured. Set via config or DCHAT_CHAT_CHAIN_RPC_URL environment variable."
             )
         })?;
+
+        // Validate chat RPC URL is not empty
+        if chat_rpc.trim().is_empty() {
+            return Err(Error::Config(
+                "Chat chain RPC URL cannot be empty. Set via config or DCHAT_CHAT_CHAIN_RPC_URL environment variable.".to_string()
+            ));
+        }
 
         Ok(Self::new(ChainClientConfig {
             currency_rpc_url: currency_rpc,

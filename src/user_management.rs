@@ -716,7 +716,9 @@ impl UserManager {
             .await
             .map_err(|e| Error::storage(format!("Failed to create keys directory: {}", e)))?;
 
-        tokio::fs::write(&key_file, serde_json::to_string_pretty(&key_data).unwrap())
+        let key_json = serde_json::to_string_pretty(&key_data)
+            .map_err(|e| Error::storage(format!("Failed to serialize key data: {}", e)))?;
+        tokio::fs::write(&key_file, key_json)
             .await
             .map_err(|e| Error::storage(format!("Failed to write key file: {}", e)))?;
 

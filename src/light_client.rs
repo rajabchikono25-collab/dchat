@@ -345,8 +345,30 @@ pub struct LightClient {
 
 impl LightClient {
     /// Create a new light client
-    pub async fn new(config: LightClientConfig) -> Result<Self> {
+    ///
+    /// # Arguments
+    /// * `config` - Light client configuration
+    /// * `fee_gateway` - FeeGateway for production fee enforcement. Required when `config.fee_gated` is true.
+    ///                   Pass `None` only for development/testing when `config.fee_gated` is false.
+    ///
+    /// # Errors
+    /// Returns an error if `config.fee_gated` is true but `fee_gateway` is `None`.
+    pub async fn new(
+        config: LightClientConfig,
+        fee_gateway: Option<Arc<FeeGateway>>,
+    ) -> Result<Self> {
+        // Validate fee gateway requirement for production
+        if config.fee_gated && fee_gateway.is_none() {
+            return Err(Error::Config(
+                "fee_gated=true requires FeeGateway. Provide fee_gateway parameter or set fee_gated=false for dev mode.".to_string()
+            ));
+        }
+
         info!("🔧 Initializing light client: {}", config.display_name);
+
+        if fee_gateway.is_some() {
+            info!("✓ FeeGateway attached - fee-gated mode enabled");
+        }
 
         // Create data directory
         tokio::fs::create_dir_all(&config.data_dir)
@@ -401,7 +423,7 @@ impl LightClient {
             shutdown_tx,
             net_handle: None,
             sync_handle: None,
-            fee_gateway: None,
+            fee_gateway,
             client_nonce: Arc::new(std::sync::atomic::AtomicU64::new(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -419,16 +441,6 @@ impl LightClient {
     /// Get the identity signing keypair
     pub fn identity_keypair(&self) -> &KeyPair {
         &self.identity_keypair
-    }
-
-    /// Set the fee gateway for mainnet economics
-    ///
-    /// When set, all outbound operations (DMs, channel posts) will go through
-    /// the fee gateway for proper fee enforcement before anchoring to chain.
-    /// This is required for mainnet operation.
-    pub fn set_fee_gateway(&mut self, gateway: Arc<FeeGateway>) {
-        self.fee_gateway = Some(gateway);
-        info!("✓ FeeGateway attached - fee-gated mode enabled");
     }
 
     /// Check if fee-gated mode is active
@@ -460,7 +472,7 @@ impl LightClient {
 
         if self.config.fee_gated && self.fee_gateway.is_none() {
             return Err(Error::Config(
-                "fee_gated=true requires FeeGateway. Call set_fee_gateway() before connect()."
+                "fee_gated=true requires FeeGateway. Pass fee_gateway to LightClient::new()."
                     .to_string(),
             ));
         }
@@ -778,7 +790,8 @@ impl LightClient {
     ) -> Result<MessageId> {
         let fee_gateway = self.fee_gateway.as_ref().ok_or_else(|| {
             Error::Config(
-                "fee_gated=true requires FeeGateway. Call set_fee_gateway() first.".to_string(),
+                "fee_gated=true requires FeeGateway. Pass fee_gateway to LightClient::new()."
+                    .to_string(),
             )
         })?;
 
@@ -963,7 +976,7 @@ impl LightClient {
         // DMs require fee-gated mode
         if !self.is_fee_gated() {
             return Err(Error::validation(
-                "Direct messages require fee-gated mode. Call set_fee_gateway() first.",
+                "Direct messages require fee-gated mode. Pass fee_gateway to LightClient::new().",
             ));
         }
 
@@ -1214,7 +1227,7 @@ impl LightClient {
                             recipient_id
                         );
                         Err(Error::internal(
-                            "DM sending requires FeeGateway. Call set_fee_gateway() first.",
+                            "DM sending requires FeeGateway. Pass fee_gateway to LightClient::new().",
                         ))
                     }
                 }
@@ -1695,10 +1708,11 @@ mod tests {
         let config = LightClientConfig {
             data_dir: temp_dir.clone(),
             max_offline_queue: 10,
+            fee_gated: false, // Disable fee-gating for test
             ..Default::default()
         };
 
-        let client = LightClient::new(config).await.unwrap();
+        let client = LightClient::new(config, None).await.unwrap();
 
         // Queue should work when disconnected
         let result = client
@@ -1726,14 +1740,15 @@ mod tests {
             display_name: "alice".to_string(),
             health_addr: None,
             metrics_addr: None,
+            fee_gated: false, // Disable fee-gating for test
             ..Default::default()
         };
 
-        let client1 = LightClient::new(config.clone()).await.unwrap();
+        let client1 = LightClient::new(config.clone(), None).await.unwrap();
         let identity1 = client1.identity().clone();
         let pk1 = client1.identity_keypair().public_key().to_core_public_key();
 
-        let client2 = LightClient::new(config).await.unwrap();
+        let client2 = LightClient::new(config, None).await.unwrap();
         let identity2 = client2.identity().clone();
         let pk2 = client2.identity_keypair().public_key().to_core_public_key();
 
@@ -1756,14 +1771,15 @@ mod tests {
             display_name: "alice".to_string(),
             health_addr: None,
             metrics_addr: None,
+            fee_gated: false, // Disable fee-gating for test
             ..Default::default()
         };
 
         set_identity_passphrase(Some("correct"));
-        let _client1 = LightClient::new(config.clone()).await.unwrap();
+        let _client1 = LightClient::new(config.clone(), None).await.unwrap();
 
         set_identity_passphrase(Some("wrong"));
-        let err = match LightClient::new(config).await {
+        let err = match LightClient::new(config, None).await {
             Ok(_) => panic!("expected identity key decryption to fail"),
             Err(e) => e,
         };

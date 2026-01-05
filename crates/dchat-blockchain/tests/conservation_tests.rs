@@ -594,7 +594,8 @@ fn create_test_fee_orchestrator() -> (FeeOrchestrator, UserId) {
         .create_wallet(&payer, 100_000_000_000) // 100 DCHAT
         .unwrap();
 
-    let orchestrator = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+    let orchestrator = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config)
+        .expect("Default FeeConfig should be valid");
 
     (orchestrator, payer)
 }

@@ -771,9 +771,9 @@ impl CommitteeRegistration {
     ///
     /// This creates a canonical committee ID from the sorted set of relay IDs.
     /// Used when forming a new committee to derive its ID.
+    /// Uses BLAKE3 for consistency with the project's hash standard.
     pub fn compute_committee_id(relay_ids: &[[u8; 32]]) -> [u8; 32] {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"dchat-committee-id-v1");
 
         // Sort relay IDs for deterministic ordering
@@ -781,9 +781,9 @@ impl CommitteeRegistration {
         sorted_ids.sort();
 
         for id in sorted_ids {
-            hasher.update(id);
+            hasher.update(&id);
         }
-        hasher.finalize().into()
+        *hasher.finalize().as_bytes()
     }
 
     /// Verify that a set of relay IDs matches this committee

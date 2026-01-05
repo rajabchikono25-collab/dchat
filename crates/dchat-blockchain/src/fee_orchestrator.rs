@@ -259,19 +259,56 @@ pub struct FeeOrchestrator {
 
 impl FeeOrchestrator {
     /// Create new fee orchestrator
+    ///
+    /// # Errors
+    /// Returns an error if the configuration is invalid:
+    /// - `max_fee_cap` must be greater than 0
+    /// - `base_fees` must not be empty
+    /// - All base fees must be less than or equal to `max_fee_cap`
     pub fn new(
         currency_chain: Arc<CurrencyChainClient>,
         fee_distribution: Arc<FeeDistributionManager>,
         config: FeeConfig,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        // Validate configuration to prevent runtime panics
+        if config.max_fee_cap == 0 {
+            return Err(Error::Config(
+                "FeeOrchestrator requires max_fee_cap > 0".into(),
+            ));
+        }
+
+        if config.base_fees.is_empty() {
+            return Err(Error::Config(
+                "FeeOrchestrator requires at least one base fee entry".into(),
+            ));
+        }
+
+        // Validate all base fees are within cap
+        for (tx_type, fee) in &config.base_fees {
+            if *fee > config.max_fee_cap {
+                return Err(Error::Config(format!(
+                    "Base fee for {:?} ({}) exceeds max_fee_cap ({})",
+                    tx_type, fee, config.max_fee_cap
+                )));
+            }
+        }
+
+        // Validate channel_creation_fee is within cap
+        if config.channel_creation_fee > config.max_fee_cap {
+            return Err(Error::Config(format!(
+                "channel_creation_fee ({}) exceeds max_fee_cap ({})",
+                config.channel_creation_fee, config.max_fee_cap
+            )));
+        }
+
+        Ok(Self {
             currency_chain,
             fee_distribution,
             config,
             idempotency_state: Arc::new(RwLock::new(HashMap::new())),
             escrow_state: Arc::new(RwLock::new(HashMap::new())),
             sinks: ProtocolSinks::default(),
-        }
+        })
     }
 
     /// Get fee configuration
@@ -1015,7 +1052,8 @@ mod tests {
             .create_wallet(&payer, 100_000_000_000)
             .unwrap(); // 100 DCHAT
 
-        let orchestrator = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        let orchestrator = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config)
+            .expect("Default FeeConfig should be valid");
 
         (orchestrator, payer)
     }
@@ -1339,5 +1377,110 @@ mod tests {
         // Balance should be exactly restored (conservation)
         let final_balance = orchestrator.currency_chain.get_balance(&payer).unwrap();
         assert_eq!(initial_balance, final_balance);
+    }
+
+    // =============================================================================
+    // VALIDATION TESTS
+    // =============================================================================
+
+    #[test]
+    fn test_new_rejects_zero_max_fee_cap() {
+        let currency_config = CurrencyChainConfig::default();
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+
+        let mut fee_config = FeeConfig::default();
+        fee_config.max_fee_cap = 0;
+
+        let result = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("max_fee_cap"),
+                "Error should mention max_fee_cap: {}",
+                err
+            ),
+            Ok(_) => panic!("Expected error for zero max_fee_cap"),
+        }
+    }
+
+    #[test]
+    fn test_new_rejects_empty_base_fees() {
+        let currency_config = CurrencyChainConfig::default();
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+
+        let mut fee_config = FeeConfig::default();
+        fee_config.base_fees.clear();
+
+        let result = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("base fee"),
+                "Error should mention base fee: {}",
+                err
+            ),
+            Ok(_) => panic!("Expected error for empty base_fees"),
+        }
+    }
+
+    #[test]
+    fn test_new_rejects_base_fee_exceeding_cap() {
+        let currency_config = CurrencyChainConfig::default();
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+
+        let mut fee_config = FeeConfig::default();
+        fee_config.max_fee_cap = 1_000;
+        fee_config
+            .base_fees
+            .insert(TransactionType::RegisterUser, 5_000); // Exceeds cap
+
+        let result = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("exceeds max_fee_cap"),
+                "Error should mention exceeds max_fee_cap: {}",
+                err
+            ),
+            Ok(_) => panic!("Expected error for base fee exceeding cap"),
+        }
+    }
+
+    #[test]
+    fn test_new_rejects_channel_creation_fee_exceeding_cap() {
+        let currency_config = CurrencyChainConfig::default();
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+
+        let mut fee_config = FeeConfig::default();
+        fee_config.max_fee_cap = 500_000;
+        fee_config.channel_creation_fee = 1_000_000; // Exceeds cap
+
+        let result = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("channel_creation_fee"),
+                "Error should mention channel_creation_fee: {}",
+                err
+            ),
+            Ok(_) => panic!("Expected error for channel_creation_fee exceeding cap"),
+        }
+    }
+
+    #[test]
+    fn test_new_accepts_valid_config() {
+        let currency_config = CurrencyChainConfig::default();
+        let currency_chain = Arc::new(CurrencyChainClient::new_mock(currency_config));
+        let fee_distribution =
+            Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
+
+        let fee_config = FeeConfig::default();
+
+        let result = FeeOrchestrator::new(currency_chain, fee_distribution, fee_config);
+        assert!(result.is_ok(), "Default FeeConfig should be valid");
     }
 }

@@ -153,6 +153,17 @@ pub const HEARTBEAT_INTERVAL_SECONDS: u64 = 60;
 /// This is a valid multiaddr that always parses successfully.
 const FALLBACK_LISTEN_ADDR: &str = "/ip4/0.0.0.0/tcp/0";
 
+/// Parse the fallback listen address with proper error handling.
+/// Returns Error::Config if parsing fails (should never happen with valid constant).
+fn parse_fallback_listen_addr() -> Result<Multiaddr> {
+    FALLBACK_LISTEN_ADDR.parse().map_err(|e| {
+        Error::Config(format!(
+            "Invalid fallback listen address '{}': {}",
+            FALLBACK_LISTEN_ADDR, e
+        ))
+    })
+}
+
 /// Peer information stored in the global peer registry
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
@@ -1467,6 +1478,10 @@ enum MiniAppCommand {
         /// User ID for the session (hex string)
         #[arg(long)]
         user_id: Option<String>,
+
+        /// Developer public key for app identity (hex string, 32 bytes)
+        #[arg(long)]
+        developer_key: Option<String>,
 
         /// Theme (light or dark)
         #[arg(long, default_value = "light")]
@@ -4417,17 +4432,16 @@ async fn run_relay_node(
                         .await;
                 } else {
                     // New peer not in bootstrap list - use endpoint if available
-                    let multiaddr =
-                        endpoint.unwrap_or_else(|| match FALLBACK_LISTEN_ADDR.parse() {
+                    let multiaddr = match endpoint {
+                        Some(addr) => addr,
+                        None => match parse_fallback_listen_addr() {
                             Ok(addr) => addr,
                             Err(e) => {
-                                error!(
-                                    "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
-                                    FALLBACK_LISTEN_ADDR, e
-                                );
-                                Multiaddr::empty()
+                                error!("Cannot add peer {}: {}", connected_peer_id, e);
+                                continue; // Skip adding peer with invalid address
                             }
-                        });
+                        },
+                    };
                     let peer_info = PeerInfo {
                         peer_id: connected_peer_id,
                         multiaddr,
@@ -4666,18 +4680,16 @@ async fn run_relay_node(
                                 peer_registry_arc.update_peer_quality(&peer, 1.0).await;
                             } else {
                                 // New peer - add to registry using endpoint if available
-                                let multiaddr = endpoint.unwrap_or_else(|| {
-                                    match FALLBACK_LISTEN_ADDR.parse() {
+                                let multiaddr = match endpoint {
+                                    Some(addr) => addr,
+                                    None => match parse_fallback_listen_addr() {
                                         Ok(addr) => addr,
                                         Err(e) => {
-                                            error!(
-                                                "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
-                                                FALLBACK_LISTEN_ADDR, e
-                                            );
-                                            Multiaddr::empty()
+                                            error!("Cannot add peer {}: {}", peer, e);
+                                            return; // Skip adding peer with invalid address
                                         }
                                     }
-                                });
+                                };
 
                                 let peer_info = PeerInfo {
                                     peer_id: peer,
@@ -5016,7 +5028,7 @@ async fn run_light_client(
             Arc::clone(&currency_chain),
             fee_distribution,
             FeeConfig::default(),
-        ));
+        )?);
 
         // Initialize relay network manager
         let relay_network = Arc::new(RwLock::new(RelayNetworkManager::new(
@@ -5098,11 +5110,8 @@ async fn run_light_client(
 
     info!("✓ FeeGateway initialized for light client");
 
-    // Create light client
-    let mut client = LightClient::new(light_config).await?;
-
-    // Attach FeeGateway for production fee enforcement
-    client.set_fee_gateway(fee_gateway);
+    // Create light client with FeeGateway (required for production)
+    let mut client = LightClient::new(light_config, Some(fee_gateway)).await?;
 
     // Take event receiver before connecting
     let mut event_rx = client
@@ -6340,90 +6349,98 @@ async fn run_genesis_init(
     Ok(())
 }
 
-/// Get foundation validators from known server configurations
+/// Validator key file structure matching the JSON format
+#[derive(Debug, serde::Deserialize)]
+struct ValidatorKeyFile {
+    #[allow(dead_code)]
+    created_at: String,
+    #[allow(dead_code)]
+    key_type: String,
+    #[allow(dead_code)]
+    private_key: String,
+    public_key: String,
+}
+
+/// Foundation validator configuration with file path
+struct FoundationValidatorConfig {
+    name: String,
+    key_file: &'static str,
+    region: String,
+    stake_amount: u64,
+}
+
+/// Get foundation validators from genesis JSON key files
+///
+/// SAFETY: This function loads actual validator public keys from JSON files.
+/// It will fail startup if any key file is missing or malformed.
 async fn get_foundation_validators() -> Result<Vec<GenesisValidator>> {
-    // Known foundation servers - these are the initial validators
-    let foundation_servers = vec![
-        FoundationServer {
+    // Foundation validators with their key file paths
+    let foundation_validators = vec![
+        FoundationValidatorConfig {
             name: "validator-india".to_string(),
-            dns: "validator.india.schikuno.top".to_string(),
-            ip: "74.225.183.196".to_string(),
+            key_file: "validator-india.json",
             region: "asia-south".to_string(),
-            node_type: "validator".to_string(),
             stake_amount: 10_000_000,
         },
-        FoundationServer {
+        FoundationValidatorConfig {
             name: "validator-southafrica".to_string(),
-            dns: "validator.southafrica.schikuno.top".to_string(),
-            ip: "4.221.211.71".to_string(),
+            key_file: "validator-southafrica.json",
             region: "africa-south".to_string(),
-            node_type: "validator".to_string(),
             stake_amount: 10_000_000,
         },
-        FoundationServer {
+        FoundationValidatorConfig {
             name: "validator-uae".to_string(),
-            dns: "validator.uae.schikuno.top".to_string(),
-            ip: "4.161.34.228".to_string(),
+            key_file: "validator-uae.json",
             region: "me-central".to_string(),
-            node_type: "validator".to_string(),
             stake_amount: 10_000_000,
-        },
-        FoundationServer {
-            name: "relay-ohio".to_string(),
-            dns: "relay.ohio.schikuno.top".to_string(),
-            ip: "18.223.119.189".to_string(),
-            region: "us-east".to_string(),
-            node_type: "relay".to_string(),
-            stake_amount: 1_000_000,
-        },
-        FoundationServer {
-            name: "relay-saopaulo".to_string(),
-            dns: "relay.saopaulo.schikuno.top".to_string(),
-            ip: "18.231.117.182".to_string(),
-            region: "sa-east".to_string(),
-            node_type: "relay".to_string(),
-            stake_amount: 1_000_000,
-        },
-        FoundationServer {
-            name: "relay-stockholm".to_string(),
-            dns: "relay.stockholm.schikuno.top".to_string(),
-            ip: "13.50.105.166".to_string(),
-            region: "eu-north".to_string(),
-            node_type: "relay".to_string(),
-            stake_amount: 1_000_000,
-        },
-        FoundationServer {
-            name: "user-singapore".to_string(),
-            dns: "user.singapore.schikuno.top".to_string(),
-            ip: "18.140.247.242".to_string(),
-            region: "ap-southeast".to_string(),
-            node_type: "user".to_string(),
-            stake_amount: 0,
         },
     ];
 
-    // Generate placeholder public keys for foundation servers
-    // In production, these would be read from actual key files
-    let validators: Vec<GenesisValidator> = foundation_servers
-        .into_iter()
-        .filter(|s| s.node_type == "validator")
-        .map(|s| {
-            // Generate deterministic placeholder key from DNS name
-            let mut hasher = sha2::Sha256::new();
-            use sha2::Digest;
-            hasher.update(s.dns.as_bytes());
-            let hash = hasher.finalize();
-            let public_key_hex = hex::encode(&hash[..32]);
+    let mut validators = Vec::with_capacity(foundation_validators.len());
 
-            GenesisValidator {
-                name: s.name,
-                public_key: public_key_hex,
-                stake: s.stake_amount,
-                voting_power: 1,
-                region: s.region,
-            }
-        })
-        .collect();
+    for config in foundation_validators {
+        // Load the key file
+        let key_path = std::path::Path::new(config.key_file);
+
+        let key_contents = tokio::fs::read_to_string(&key_path).await.map_err(|e| {
+            Error::Config(format!(
+                "Failed to read foundation validator key file '{}': {}. \
+                 Ensure all validator key files are present before genesis initialization.",
+                config.key_file, e
+            ))
+        })?;
+
+        let key_file: ValidatorKeyFile = serde_json::from_str(&key_contents).map_err(|e| {
+            Error::Config(format!(
+                "Failed to parse foundation validator key file '{}': {}. \
+                 Expected JSON with 'public_key' field.",
+                config.key_file, e
+            ))
+        })?;
+
+        // Validate public key format (should be 64 hex characters for ed25519)
+        if key_file.public_key.len() != 64
+            || !key_file.public_key.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(Error::Config(format!(
+                "Invalid public key format in '{}': expected 64 hex characters, got '{}'",
+                config.key_file, key_file.public_key
+            )));
+        }
+
+        validators.push(GenesisValidator {
+            name: config.name,
+            public_key: key_file.public_key,
+            stake: config.stake_amount,
+            voting_power: 1,
+            region: config.region,
+        });
+    }
+
+    info!(
+        "✓ Loaded {} foundation validator public keys from genesis files",
+        validators.len()
+    );
 
     Ok(validators)
 }
@@ -7686,7 +7703,7 @@ async fn run_validator_node(
     // Initialize relay registry and work event stores for epoch reward distribution
     // These are shared across consensus loop and network event handler
     use dchat::relay_work_store::{RelayRegistryStore, RelayWorkEventStore};
-    let relay_registry_store = Arc::new(RelayRegistryStore::with_genesis(
+    let relay_registry_store = Arc::new(RelayRegistryStore::new(
         config.chain.genesis_timestamp,
         config.chain.block_time_secs,
     ));
@@ -7716,14 +7733,31 @@ async fn run_validator_node(
                 rpc_url: currency_rpc_url_for_consensus,
                 ..Default::default()
             };
-            let currency_client = match CurrencyChainClient::new(currency_chain_config) {
-                Ok(client) => Arc::new(client),
-                Err(e) => {
-                    error!(
-                        "Failed to create currency client for consensus task (stopping consensus loop): {}",
-                        e
-                    );
-                    return;
+
+            // Retry loop with exponential backoff for currency client creation
+            let mut attempts = 0;
+            let max_attempts = 5;
+            let mut delay = std::time::Duration::from_secs(1);
+
+            let currency_client = loop {
+                attempts += 1;
+                match CurrencyChainClient::new(currency_chain_config.clone()) {
+                    Ok(client) => break Arc::new(client),
+                    Err(e) if attempts < max_attempts => {
+                        warn!(
+                            "Currency client connection failed (attempt {}/{}): {}. Retrying in {:?}...",
+                            attempts, max_attempts, e, delay
+                        );
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to create currency client for consensus task after {} attempts: {} (stopping consensus loop)",
+                            max_attempts, e
+                        );
+                        return;
+                    }
                 }
             };
 
@@ -9375,23 +9409,16 @@ pub async fn handle_peer_handshake(
     }
 
     // Add peer to registry
+    let multiaddr = network
+        .listeners()
+        .first()
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(parse_fallback_listen_addr)?;
+
     let peer_info = PeerInfo {
         peer_id,
-        multiaddr: network
-            .listeners()
-            .first()
-            .cloned()
-            // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-            .unwrap_or_else(|| match FALLBACK_LISTEN_ADDR.parse() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    error!(
-                        "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
-                        FALLBACK_LISTEN_ADDR, e
-                    );
-                    Multiaddr::empty()
-                }
-            }),
+        multiaddr,
         node_type: match handshake.node_type.as_str() {
             "validator" => NodeType::Validator,
             "relay" => NodeType::Relay,
@@ -9806,7 +9833,7 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         Arc::clone(&currency_chain),
         fee_distribution,
         FeeConfig::default(),
-    ));
+    )?);
 
     // Initialize relay network manager
     let relay_network = Arc::new(RwLock::new(RelayNetworkManager::new(
@@ -12197,10 +12224,35 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
                     );
                 }
                 currency_config.rpc_url = currency_rpc_url;
-                currency_client = Some(CurrencyChainClient::with_tokenomics(
-                    currency_config,
-                    tokenomics_inner.clone(),
-                )?);
+
+                // Retry loop with exponential backoff for currency client creation
+                let mut attempts = 0;
+                let max_attempts = 5;
+                let mut delay = std::time::Duration::from_secs(1);
+
+                currency_client = Some(loop {
+                    attempts += 1;
+                    match CurrencyChainClient::with_tokenomics(
+                        currency_config.clone(),
+                        tokenomics_inner.clone(),
+                    ) {
+                        Ok(client) => break client,
+                        Err(e) if attempts < max_attempts => {
+                            warn!(
+                                "Currency client connection failed (attempt {}/{}): {}. Retrying in {:?}...",
+                                attempts, max_attempts, e, delay
+                            );
+                            std::thread::sleep(delay);
+                            delay *= 2;
+                        }
+                        Err(e) => {
+                            return Err(Error::Config(format!(
+                                "Failed to connect to currency chain after {} attempts: {}",
+                                max_attempts, e
+                            )));
+                        }
+                    }
+                });
             }
 
             let client = currency_client
@@ -12242,10 +12294,35 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
                     );
                 }
                 currency_config.rpc_url = currency_rpc_url;
-                currency_client = Some(CurrencyChainClient::with_tokenomics(
-                    currency_config,
-                    tokenomics_inner.clone(),
-                )?);
+
+                // Retry loop with exponential backoff for currency client creation
+                let mut attempts = 0;
+                let max_attempts = 5;
+                let mut delay = std::time::Duration::from_secs(1);
+
+                currency_client = Some(loop {
+                    attempts += 1;
+                    match CurrencyChainClient::with_tokenomics(
+                        currency_config.clone(),
+                        tokenomics_inner.clone(),
+                    ) {
+                        Ok(client) => break client,
+                        Err(e) if attempts < max_attempts => {
+                            warn!(
+                                "Currency client connection failed (attempt {}/{}): {}. Retrying in {:?}...",
+                                attempts, max_attempts, e, delay
+                            );
+                            std::thread::sleep(delay);
+                            delay *= 2;
+                        }
+                        Err(e) => {
+                            return Err(Error::Config(format!(
+                                "Failed to connect to currency chain after {} attempts: {}",
+                                max_attempts, e
+                            )));
+                        }
+                    }
+                });
             }
 
             let client = currency_client
@@ -14175,6 +14252,7 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
             manifest,
             app_id,
             user_id,
+            developer_key,
             theme,
             width,
             height,
@@ -14282,8 +14360,29 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
                 arr
             };
 
-            // Derive app ID from manifest
-            let developer_id = DeveloperId::from_bytes([0u8; 32]); // Placeholder
+            // Derive developer ID from public key
+            let developer_id = if let Some(ref key_hex) = developer_key {
+                let key_bytes = hex::decode(key_hex)
+                    .map_err(|e| Error::validation(format!("Invalid developer key hex: {}", e)))?;
+                if key_bytes.len() != 32 {
+                    return Err(Error::validation(
+                        "Developer key must be 32 bytes".to_string(),
+                    ));
+                }
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&key_bytes);
+                let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&arr).map_err(|e| {
+                    Error::validation(format!("Invalid developer public key: {}", e))
+                })?;
+                DeveloperId::from_public_key(&verifying_key)
+            } else {
+                // For local development without a key, derive deterministic ID from app name
+                // WARNING: This should only be used for local testing
+                println!("⚠️  No --developer-key provided. Using deterministic dev ID for local testing only.");
+                let dev_hash =
+                    blake3::hash(format!("dev::{}", app_manifest.metadata.name).as_bytes());
+                DeveloperId::from_bytes(*dev_hash.as_bytes())
+            };
             let derived_app_id = AppId::derive(&developer_id, &app_manifest.metadata.name);
 
             println!();

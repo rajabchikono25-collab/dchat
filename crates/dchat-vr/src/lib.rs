@@ -1,5 +1,7 @@
 //! VR/AR Interface Module for dchat
 //!
+//! ⚠️ **EXPERIMENTAL** - This crate is under active development and not production-ready.
+//!
 //! This crate provides virtual and augmented reality interfaces including:
 //! - Spatial audio chat with positional audio
 //! - 3D avatar rendering and animations
@@ -7,6 +9,31 @@
 //! - Gesture controls and hand tracking
 //! - VR headset integration (Quest, PSVR2, etc.)
 //! - AR overlay support for mobile devices
+//!
+//! # Production Warning
+//!
+//! VR features are experimental and must not be enabled in production builds.
+//! This crate should only be used with the `vr-experimental` feature flag during
+//! development and testing.
+//!
+//! # Safety
+//!
+//! The compile-time guard below ensures this crate cannot be accidentally
+//! included in release builds without explicitly acknowledging the experimental status.
+
+// ============================================================================
+// EXPERIMENTAL VR COMPILE GUARD
+// ============================================================================
+// This guard prevents VR features from being used in production builds.
+// To use VR features in development, enable the `vr-experimental` feature.
+// For release builds, this crate should not be included as a dependency.
+// ============================================================================
+#[cfg(all(not(feature = "vr-experimental"), not(debug_assertions)))]
+compile_error!(
+    "VR features are experimental and must not be enabled in production builds. \
+    If you need VR functionality in a release build, explicitly enable the \
+    'vr-experimental' feature and ensure proper testing has been completed."
+);
 
 pub mod accessibility;
 pub mod avatar;
@@ -22,11 +49,17 @@ pub mod vr_session;
 use serde::{Deserialize, Serialize};
 
 // Re-export key types from new modules
-pub use accessibility::{AccessibilityManager, AccessibilitySettings, ColorblindMode, Subtitle, TtsMessage, TtsPriority};
+pub use accessibility::{
+    AccessibilityManager, AccessibilitySettings, ColorblindMode, Subtitle, TtsMessage, TtsPriority,
+};
 pub use comfort::{ComfortMode, ComfortSettings, ComfortSystem};
 pub use haptics::{HapticEvent, HapticManager};
 pub use performance::{Frustum, LodLevel, PerformanceMetrics, PerformanceOptimizer};
-pub use platforms::{openxr::OpenXrPlatform, platform_trait::{PlatformCapabilities, PlatformError, VrPlatform}, visionos::VisionOsPlatform};
+pub use platforms::{
+    openxr::OpenXrPlatform,
+    platform_trait::{PlatformCapabilities, PlatformError, VrPlatform},
+    visionos::VisionOsPlatform,
+};
 
 /// VR/AR device types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

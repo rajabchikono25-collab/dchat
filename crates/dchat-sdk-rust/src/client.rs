@@ -116,18 +116,21 @@ impl Client {
     ///
     /// This is a convenience method for production setups where you have
     /// a currency chain client already configured.
+    ///
+    /// # Errors
+    /// Returns an error if the fee configuration is invalid.
     pub fn create_fee_orchestrator(
         currency_chain: Arc<CurrencyChainClient>,
-    ) -> Arc<FeeOrchestrator> {
+    ) -> std::result::Result<Arc<FeeOrchestrator>, dchat_core::error::Error> {
         let fee_distribution =
             Arc::new(FeeDistributionManager::new(FeeDistributionConfig::default()));
         fee_distribution.start_block(1, 1_000_000_000);
 
-        Arc::new(FeeOrchestrator::new(
+        Ok(Arc::new(FeeOrchestrator::new(
             currency_chain,
             fee_distribution,
             FeeConfig::default(),
-        ))
+        )?))
     }
 
     /// Check if fee orchestration is enabled

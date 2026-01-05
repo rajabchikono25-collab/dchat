@@ -238,6 +238,9 @@ dev-tools = []
 # DANGER: test-bypass enables fee-bypassing methods in UserManager.
 # NEVER enable in production builds. Only for integration tests.
 test-bypass = []
+# DANGER: mock-biometric enables environment-variable-based biometric simulation.
+# NEVER enable in production builds. Only for development and testing.
+mock-biometric = []
 
 [profile.release]
 opt-level = 3

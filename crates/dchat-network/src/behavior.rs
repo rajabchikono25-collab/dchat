@@ -21,20 +21,19 @@ use thiserror::Error;
 
 /// Compute a stable channel message ID.
 ///
-/// The ID is $\mathrm{SHA256}(sender || channel\_id || encrypted\_payload || timestamp\_le)$.
+/// The ID is $\mathrm{BLAKE3}(sender || channel\_id || encrypted\_payload || timestamp\_le)$.
 pub fn compute_channel_message_id(
     sender: &UserId,
     channel_id: &str,
     encrypted_payload: &[u8],
     timestamp: i64,
 ) -> [u8; 32] {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(sender.0.as_bytes());
     hasher.update(channel_id.as_bytes());
     hasher.update(encrypted_payload);
-    hasher.update(timestamp.to_le_bytes());
-    hasher.finalize().into()
+    hasher.update(&timestamp.to_le_bytes());
+    *hasher.finalize().as_bytes()
 }
 
 const DCHAT_WIRE_MAGIC: [u8; 4] = *b"DCHT";

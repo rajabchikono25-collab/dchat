@@ -575,6 +575,7 @@ mod tests {
             relay_votes: vec![],
             finality_proof: crate::block_hierarchy::FinalityProof::default(),
             da_commitment: None,
+            governance_merkle_root: None,
         };
 
         let result = validator.validate_block(&block);

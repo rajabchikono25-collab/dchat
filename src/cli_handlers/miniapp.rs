@@ -17,6 +17,7 @@ pub async fn handle_launch(
     manifest: Option<PathBuf>,
     app_id: Option<String>,
     user_id: Option<String>,
+    developer_key: Option<String>,
     theme: String,
     width: u32,
     height: u32,
@@ -118,8 +119,29 @@ pub async fn handle_launch(
         arr
     };
 
-    // Derive app ID from manifest
-    let developer_id = DeveloperId::from_bytes([0u8; 32]);
+    // Derive developer ID from public key
+    let developer_id = if let Some(ref key_hex) = developer_key {
+        let key_bytes = hex::decode(key_hex)
+            .map_err(|e| Error::validation(format!("Invalid developer key hex: {}", e)))?;
+        if key_bytes.len() != 32 {
+            return Err(Error::validation(
+                "Developer key must be 32 bytes".to_string(),
+            ));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&key_bytes);
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&arr)
+            .map_err(|e| Error::validation(format!("Invalid developer public key: {}", e)))?;
+        DeveloperId::from_public_key(&verifying_key)
+    } else {
+        // For local development without a key, derive deterministic ID from app name
+        // WARNING: This should only be used for local testing
+        println!(
+            "⚠️  No --developer-key provided. Using deterministic dev ID for local testing only."
+        );
+        let dev_hash = blake3::hash(format!("dev::{}", app_manifest.metadata.name).as_bytes());
+        DeveloperId::from_bytes(*dev_hash.as_bytes())
+    };
     let derived_app_id = AppId::derive(&developer_id, &app_manifest.metadata.name);
 
     println!();

@@ -21,11 +21,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-/// Genesis timestamp for block height calculations (placeholder - should come from chain config)
-/// This is approximately Jan 1, 2025 00:00:00 UTC
-pub const DEFAULT_GENESIS_TIMESTAMP: u64 = 1735689600;
-
-/// Default block time in seconds
+/// Default block time in seconds (can be overridden via config)
 pub const DEFAULT_BLOCK_TIME_SECS: u64 = 6;
 
 /// Store for relay work events during an epoch
@@ -410,17 +406,15 @@ pub struct RelayRegistryStore {
 }
 
 impl RelayRegistryStore {
-    /// Create a new relay registry store
-    pub fn new() -> Self {
-        Self {
-            relays: RwLock::new(HashMap::new()),
-            genesis_timestamp: DEFAULT_GENESIS_TIMESTAMP,
-            block_time_secs: DEFAULT_BLOCK_TIME_SECS,
-        }
-    }
-
-    /// Create with custom genesis parameters
-    pub fn with_genesis(genesis_timestamp: u64, block_time_secs: u64) -> Self {
+    /// Create a new relay registry store with explicit genesis parameters.
+    ///
+    /// Genesis timestamp is critical for epoch calculations and MUST come from configuration.
+    /// There is no default - callers must explicitly provide these values.
+    ///
+    /// # Arguments
+    /// * `genesis_timestamp` - Unix timestamp (seconds) of the genesis block
+    /// * `block_time_secs` - Target block time in seconds
+    pub fn new(genesis_timestamp: u64, block_time_secs: u64) -> Self {
         Self {
             relays: RwLock::new(HashMap::new()),
             genesis_timestamp,
@@ -546,11 +540,7 @@ impl RelayRegistryStore {
     }
 }
 
-impl Default for RelayRegistryStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: No Default impl for RelayRegistryStore - genesis_timestamp must be explicitly provided
 
 #[cfg(test)]
 mod tests {
@@ -577,7 +567,8 @@ mod tests {
 
     #[test]
     fn test_relay_registry() {
-        let store = RelayRegistryStore::new();
+        // Use explicit test values for genesis timestamp and block time
+        let store = RelayRegistryStore::new(1735689600, 6); // Jan 1, 2025, 6s blocks
         let operator = UserId(Uuid::new_v4());
 
         store.register_relay("relay1".to_string(), operator.clone(), 1000, 50);
@@ -601,8 +592,9 @@ mod tests {
         let store = RelayWorkEventStore::with_retention(2);
 
         // Record events in epochs 0, 1, 2
+        // EPOCH_LENGTH_BLOCKS = 1800, so use block_height = epoch * 1800
         for epoch in 0..3 {
-            let block_height = epoch * 14400; // EPOCH_LENGTH_BLOCKS
+            let block_height = epoch * 1800; // EPOCH_LENGTH_BLOCKS = 1800
             store.record_proof_of_delivery("relay1", block_height, [epoch as u8; 32]);
         }
 

@@ -11,7 +11,7 @@ serde_json = "1.0"
 tokio = { version = "1.32", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.4", features = ["v4", "serde"] }
-glam = "0.24" # 3D math library
+glam = "0.24"                                          # 3D math library
 tracing = "0.1"
 
 # OpenXR for cross-platform VR (optional, requires OpenXR runtime)
@@ -20,6 +20,10 @@ openxr = { version = "0.18", optional = true }
 
 [features]
 default = []
+# EXPERIMENTAL: VR/AR support - not for production use
+# This feature must be explicitly enabled to use VR functionality.
+# In release builds, the crate will fail to compile without this feature.
+vr-experimental = []
 openxr-runtime = ["openxr"]
 
 [dev-dependencies]
