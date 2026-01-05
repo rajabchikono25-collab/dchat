@@ -7306,6 +7306,10 @@ async fn run_validator_node(
         }
     }
 
+    // Remove self from the count (we'll add +1 for self below)
+    let self_peer_id = derived_peer_id.unwrap_or_else(PeerId::random);
+    unique_validator_peers.remove(&self_peer_id);
+
     // Compute dynamic BFT thresholds based on ALL validators (discovered + manual + self)
     let total_validators = unique_validator_peers.len() + 1; // +1 for this node
     use dchat_validator::BftConfig;
