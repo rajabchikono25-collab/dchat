@@ -7562,12 +7562,17 @@ async fn run_validator_node(
     let database = Database::new(db_config).await?;
     info!("✓ Database initialized");
 
-    // Connect to chain RPC
-    info!("Connecting to chain at {}...", chain_rpc);
+    // Connect to chain RPC (only if not using genesis mode)
+    let chain_rpc_url = chain_rpc
+        .clone()
+        .unwrap_or_else(|| "genesis-mode".to_string());
+    if genesis_dir.is_none() {
+        info!("Connecting to chain at {}...", chain_rpc_url);
+    }
 
-    // Production: Initialize actual chain client
+    // Production: Initialize chain client (skip for genesis mode)
     let chat_chain_config = ChatChainConfig {
-        rpc_url: chain_rpc.clone(),
+        rpc_url: chain_rpc_url.clone(),
         ..Default::default()
     };
     let _chat_chain = ChatChainClient::new(chat_chain_config);
