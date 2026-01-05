@@ -1258,6 +1258,10 @@ enum Commands {
         /// Genesis bootstrap mode - allow starting without bootstrap peers (for genesis validators)
         #[arg(long)]
         genesis_bootstrap: bool,
+
+        /// Genesis directory containing pre-stake genesis files (uses pre-staked validators, no RPC required)
+        #[arg(long)]
+        genesis_dir: Option<PathBuf>,
     },
 
     /// Launch full testnet (validators + relays + clients)
@@ -3559,6 +3563,7 @@ async fn main() -> Result<()> {
             producer,
             tracing,
             genesis_bootstrap,
+            genesis_dir,
         } => {
             // Initialize observability if tracing is enabled
             let _observability = if tracing {
@@ -3579,6 +3584,7 @@ async fn main() -> Result<()> {
                 cli.metrics_addr.clone(),
                 cli.health_addr.clone(),
                 genesis_bootstrap,
+                genesis_dir,
             )
             .await
         }
@@ -6926,6 +6932,7 @@ async fn run_validator_node(
     metrics_addr: String,
     health_addr: String,
     genesis_bootstrap: bool,
+    genesis_dir: Option<PathBuf>,
 ) -> Result<()> {
     info!("⚙️  Starting validator node...");
 
@@ -6938,6 +6945,12 @@ async fn run_validator_node(
     info!("Block producer: {}", is_producer);
     if genesis_bootstrap {
         warn!("⚠️  Genesis bootstrap mode: allowing start without bootstrap peers");
+    }
+    if genesis_dir.is_some() {
+        info!(
+            "🌱 Using pre-stake genesis from {:?}",
+            genesis_dir.as_ref().unwrap()
+        );
     }
 
     // Create shutdown channel
@@ -7588,58 +7601,126 @@ async fn run_validator_node(
     };
     let validator_user_id_clone = validator_user_id.clone(); // Clone for shutdown handler
 
-    // MAINNET PRODUCTION: Submit stake transaction to CURRENCY CHAIN via RPC
-    // This submits the actual on-chain staking transaction with finality confirmation
-    use dchat_chain::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
-
-    info!("📤 Submitting on-chain stake transaction to currency chain...");
-    info!(
-        "   Stake Amount: {} DCHAT ({} motes)",
-        stake_amount,
-        stake_amount * MOTES_PER_DCHAT
-    );
-    info!(
-        "   Validator Public Key: {}",
-        hex::encode(&public_key_bytes)
-    );
-    info!("   Lockup Period: 7 days (minimum validator requirement)");
-
+    // Check if using pre-stake genesis (no RPC required)
     let verifying_key = Ed25519VerifyingKey::from_bytes(&public_key_bytes)
         .map_err(|e| Error::crypto(format!("Failed to create verifying key: {}", e)))?;
 
-    let stake_request = StakeRequest {
-        validator_key: verifying_key,
-        amount: stake_amount * MOTES_PER_DCHAT, // Convert to motes (8 decimal places)
-        lockup_period_days: 7,                  // Minimum lockup for validators
+    let genesis_stake_amount = if let Some(ref genesis_path) = genesis_dir {
+        // Load pre-stake genesis and verify this validator is included
+        use dchat_chain::chain::genesis::CurrencyGenesisBlock;
+
+        let currency_genesis_path = genesis_path.join("currency_chain_genesis.json");
+        if !currency_genesis_path.exists() {
+            return Err(Error::config(format!(
+                "Currency genesis file not found at {:?}",
+                currency_genesis_path
+            )));
+        }
+
+        let genesis_json = std::fs::read_to_string(&currency_genesis_path)
+            .map_err(|e| Error::io(format!("Failed to read genesis file: {}", e)))?;
+        let currency_genesis: CurrencyGenesisBlock = serde_json::from_str(&genesis_json)
+            .map_err(|e| Error::serialization(format!("Failed to parse genesis: {}", e)))?;
+
+        // Find this validator in genesis
+        let validator_pubkey_hex = hex::encode(&public_key_bytes);
+        let genesis_validator = currency_genesis
+            .initial_validators
+            .iter()
+            .find(|v| v.public_key == validator_pubkey_hex);
+
+        match genesis_validator {
+            Some(v) => {
+                info!("🌱 PRE-STAKE GENESIS: Validator found in genesis!");
+                info!("   Public Key: {}", validator_pubkey_hex);
+                info!(
+                    "   Genesis Stake: {} motes ({} DCHAT)",
+                    v.stake_amount,
+                    v.stake_amount / MOTES_PER_DCHAT
+                );
+                info!("   Voting Power: {}", v.voting_power);
+                info!("   ✅ No RPC required - stake is embedded in genesis block");
+                Some(v.stake_amount)
+            }
+            None => {
+                error!("❌ Validator public key not found in genesis file!");
+                error!("   Your key: {}", validator_pubkey_hex);
+                error!("   Genesis validators:");
+                for v in &currency_genesis.initial_validators {
+                    error!("     - {}", v.public_key);
+                }
+                return Err(Error::validation(
+                    "Validator not in pre-stake genesis. Use --chain-rpc to stake via RPC."
+                        .to_string(),
+                ));
+            }
+        }
+    } else {
+        None
     };
 
-    let stake_receipt = match submit_validator_stake(&stake_request).await {
-        Ok(receipt) => {
-            info!("✅ On-chain stake transaction CONFIRMED!");
-            info!("   Transaction ID: {}", receipt.transaction_id);
-            info!("   Block Height: {}", receipt.block_height);
-            info!("   Activation Time: {:?}", receipt.activation_timestamp);
-            info!("   Unlock Time: {:?}", receipt.unlock_timestamp);
-            receipt
-        }
-        Err(e) => {
-            error!("❌ Currency chain stake submission FAILED: {}", e);
-            error!("   This is a mainnet blocker - validator cannot participate without on-chain stake");
-            error!("   Check:");
-            error!("     1. CURRENCY_CHAIN_RPC environment variable is set correctly");
-            error!(
-                "     2. Currency chain RPC endpoint is accessible: {}",
-                std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
-                    .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
-                    .unwrap_or_else(|_| "<unset>".to_string())
-            );
-            error!(
-                "     3. Validator wallet has sufficient balance (need {} tokens + gas)",
-                stake_amount
-            );
-            error!("     4. Currency chain is running and accepting transactions");
-            return Err(Error::chain(format!("On-chain staking failed: {}", e)));
-        }
+    // Either use genesis stake or submit via RPC
+    let effective_stake_motes = if let Some(genesis_motes) = genesis_stake_amount {
+        // Using pre-stake genesis - no RPC submission needed
+        info!(
+            "✅ Using pre-staked genesis amount: {} DCHAT",
+            genesis_motes / MOTES_PER_DCHAT
+        );
+        genesis_motes
+    } else {
+        // MAINNET PRODUCTION: Submit stake transaction to CURRENCY CHAIN via RPC
+        // This submits the actual on-chain staking transaction with finality confirmation
+        use dchat_chain::chain::currency_chain::staking::{submit_validator_stake, StakeRequest};
+
+        info!("📤 Submitting on-chain stake transaction to currency chain...");
+        info!(
+            "   Stake Amount: {} DCHAT ({} motes)",
+            stake_amount,
+            stake_amount * MOTES_PER_DCHAT
+        );
+        info!(
+            "   Validator Public Key: {}",
+            hex::encode(&public_key_bytes)
+        );
+        info!("   Lockup Period: 7 days (minimum validator requirement)");
+
+        let stake_request = StakeRequest {
+            validator_key: verifying_key,
+            amount: stake_amount * MOTES_PER_DCHAT, // Convert to motes (8 decimal places)
+            lockup_period_days: 7,                  // Minimum lockup for validators
+        };
+
+        let stake_receipt = match submit_validator_stake(&stake_request).await {
+            Ok(receipt) => {
+                info!("✅ On-chain stake transaction CONFIRMED!");
+                info!("   Transaction ID: {}", receipt.transaction_id);
+                info!("   Block Height: {}", receipt.block_height);
+                info!("   Activation Time: {:?}", receipt.activation_timestamp);
+                info!("   Unlock Time: {:?}", receipt.unlock_timestamp);
+                receipt
+            }
+            Err(e) => {
+                error!("❌ Currency chain stake submission FAILED: {}", e);
+                error!("   This is a mainnet blocker - validator cannot participate without on-chain stake");
+                error!("   Check:");
+                error!("     1. CURRENCY_CHAIN_RPC environment variable is set correctly");
+                error!(
+                    "     2. Currency chain RPC endpoint is accessible: {}",
+                    std::env::var("DCHAT_CURRENCY_CHAIN_RPC_URL")
+                        .or_else(|_| std::env::var("CURRENCY_CHAIN_RPC"))
+                        .unwrap_or_else(|_| "<unset>".to_string())
+                );
+                error!(
+                    "     3. Validator wallet has sufficient balance (need {} tokens + gas)",
+                    stake_amount
+                );
+                error!("     4. Currency chain is running and accepting transactions");
+                return Err(Error::chain(format!("On-chain staking failed: {}", e)));
+            }
+        };
+        let _ = stake_receipt; // Use the receipt (transaction ID logged above)
+
+        stake_amount * MOTES_PER_DCHAT
     };
 
     // Register stake in local staking manager (for tracking and consensus eligibility)
@@ -7647,7 +7728,7 @@ async fn run_validator_node(
     match staking_manager
         .submit_validator_stake(
             validator_user_id.clone(),
-            stake_amount * MOTES_PER_DCHAT, // Same amount as on-chain
+            effective_stake_motes, // Use effective stake (from genesis or RPC)
             ed25519_pubkey,
         )
         .await
@@ -7655,43 +7736,51 @@ async fn run_validator_node(
         Ok(local_tx_id) => {
             info!("✓ Local stake registration successful");
             info!("   Local TX ID: {}", local_tx_id);
-            info!("   On-chain TX ID: {}", stake_receipt.transaction_id);
+            info!(
+                "   Effective Stake: {} motes ({} DCHAT)",
+                effective_stake_motes,
+                effective_stake_motes / MOTES_PER_DCHAT
+            );
         }
         Err(e) => {
             error!("⚠️ Local stake registration failed (non-fatal): {}", e);
-            warn!("Continuing with on-chain stake confirmation only");
+            warn!("Continuing with genesis/on-chain stake confirmation only");
         }
     }
 
-    // Wait for chain finality (3 blocks at 6 seconds = 18 seconds)
-    info!("⏳ Waiting for chain finality (3 blocks ~18 seconds)...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(18)).await;
+    // Skip finality wait and RPC verification if using genesis stake
+    if genesis_dir.is_none() {
+        // Wait for chain finality (3 blocks at 6 seconds = 18 seconds)
+        info!("⏳ Waiting for chain finality (3 blocks ~18 seconds)...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(18)).await;
 
-    // Verify stake on currency chain
-    use dchat_chain::chain::currency_chain::staking::get_validator_stake;
-    match get_validator_stake(&verifying_key).await {
-        Ok(confirmed_stake) => {
-            if confirmed_stake >= stake_amount * MOTES_PER_DCHAT {
-                info!("✅ Stake FINALIZED on currency chain!");
-                info!(
-                    "   Confirmed Stake: {} motes ({} DCHAT)",
-                    confirmed_stake,
-                    confirmed_stake as f64 / MOTES_PER_DCHAT as f64
-                );
-            } else {
+        // Verify stake on currency chain
+        use dchat_chain::chain::currency_chain::staking::get_validator_stake;
+        match get_validator_stake(&verifying_key).await {
+            Ok(confirmed_stake) => {
+                if confirmed_stake >= effective_stake_motes {
+                    info!("✅ Stake FINALIZED on currency chain!");
+                    info!(
+                        "   Confirmed Stake: {} motes ({} DCHAT)",
+                        confirmed_stake,
+                        confirmed_stake as f64 / MOTES_PER_DCHAT as f64
+                    );
+                } else {
+                    warn!(
+                        "⚠️ Stake confirmation mismatch: expected {}, got {}",
+                        effective_stake_motes, confirmed_stake
+                    );
+                }
+            }
+            Err(e) => {
                 warn!(
-                    "⚠️ Stake confirmation mismatch: expected {}, got {}",
-                    stake_amount * MOTES_PER_DCHAT,
-                    confirmed_stake
+                    "⚠️ Failed to verify stake on-chain (continuing anyway): {}",
+                    e
                 );
             }
         }
-        Err(e) => {
-            warn!(
-                "⚠️ Failed to verify stake on-chain (continuing anyway): {}",
-                e
-            );
-        }
+    } else {
+        info!("✅ Using pre-stake genesis - skipping RPC finality wait");
     }
 
     // Activate validator in local state

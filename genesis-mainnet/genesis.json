@@ -1,0 +1,9 @@
+{
+  "chain_id": "dchat-mainnet-1",
+  "genesis_time": "2026-01-05T16:11:49.462670251Z",
+  "chat_genesis_hash": "1b4dfbb02948c4aa604466dbe5e2b5e8e3fec293264d6d7e50552a860ae46234",
+  "currency_genesis_hash": "9885fb01ae9172a1689d01dd2123e380d487f02e7abfa6352056d0b50c689da6",
+  "validator_count": 3,
+  "total_staked": 3000000000000000,
+  "initial_supply": 100000000000000000
+}
