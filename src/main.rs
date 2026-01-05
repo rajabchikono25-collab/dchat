@@ -7611,7 +7611,7 @@ async fn run_validator_node(
 
         let currency_genesis_path = genesis_path.join("currency_chain_genesis.json");
         if !currency_genesis_path.exists() {
-            return Err(Error::config(format!(
+            return Err(Error::validation(format!(
                 "Currency genesis file not found at {:?}",
                 currency_genesis_path
             )));
