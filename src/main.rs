@@ -1254,6 +1254,10 @@ enum Commands {
         /// Enable distributed tracing and observability
         #[arg(long)]
         tracing: bool,
+
+        /// Genesis bootstrap mode - allow starting without bootstrap peers (for genesis validators)
+        #[arg(long)]
+        genesis_bootstrap: bool,
     },
 
     /// Launch full testnet (validators + relays + clients)
@@ -3554,6 +3558,7 @@ async fn main() -> Result<()> {
             stake,
             producer,
             tracing,
+            genesis_bootstrap,
         } => {
             // Initialize observability if tracing is enabled
             let _observability = if tracing {
@@ -3573,6 +3578,7 @@ async fn main() -> Result<()> {
                 producer,
                 cli.metrics_addr.clone(),
                 cli.health_addr.clone(),
+                genesis_bootstrap,
             )
             .await
         }
@@ -6919,6 +6925,7 @@ async fn run_validator_node(
     is_producer: bool,
     metrics_addr: String,
     health_addr: String,
+    genesis_bootstrap: bool,
 ) -> Result<()> {
     info!("⚙️  Starting validator node...");
 
@@ -6929,6 +6936,9 @@ async fn run_validator_node(
     info!("HSM enabled: {}", use_hsm);
     info!("Stake: {} tokens", stake_amount);
     info!("Block producer: {}", is_producer);
+    if genesis_bootstrap {
+        warn!("⚠️  Genesis bootstrap mode: allowing start without bootstrap peers");
+    }
 
     // Create shutdown channel
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
@@ -7157,10 +7167,15 @@ async fn run_validator_node(
 
     info!("📡 Total bootstrap peers: {}", bootstrap_nodes.len());
 
-    if bootstrap_nodes.is_empty() {
+    if bootstrap_nodes.is_empty() && !genesis_bootstrap {
         return Err(Error::Config(
-            "No valid bootstrap peers configured for mainnet validator. Set [network].bootstrap_peers to multiaddrs including /p2p/<PeerId>.".to_string(),
+            "No valid bootstrap peers configured for mainnet validator. Set [network].bootstrap_peers to multiaddrs including /p2p/<PeerId>. Use --genesis-bootstrap for initial genesis validators.".to_string(),
         ));
+    }
+
+    if bootstrap_nodes.is_empty() && genesis_bootstrap {
+        info!("🌱 Genesis bootstrap mode: proceeding without bootstrap peers");
+        info!("   This validator will accept incoming connections from other genesis validators");
     }
 
     // Derive libp2p keypair from validator key for persistent peer ID
