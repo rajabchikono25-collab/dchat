@@ -151,10 +151,18 @@ impl EnvironmentManager {
             environment_type,
             skybox,
             lighting: LightingConfig {
-                ambient_color: Color { r: 0.2, g: 0.2, b: 0.2 },
+                ambient_color: Color {
+                    r: 0.2,
+                    g: 0.2,
+                    b: 0.2,
+                },
                 directional_lights: vec![DirectionalLight {
                     direction: Vector3::new(0.5, -1.0, 0.5),
-                    color: Color { r: 1.0, g: 1.0, b: 0.9 },
+                    color: Color {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 0.9,
+                    },
                     intensity: 1.0,
                 }],
                 point_lights: Vec::new(),
@@ -179,7 +187,9 @@ impl EnvironmentManager {
         transform: Transform,
         interaction_type: InteractionType,
     ) -> Result<Uuid> {
-        let env = self.environments.get_mut(&env_id)
+        let env = self
+            .environments
+            .get_mut(&env_id)
             .ok_or_else(|| dchat_core::Error::validation("Environment not found"))?;
 
         let obj = InteractiveObject {
@@ -204,7 +214,9 @@ impl EnvironmentManager {
         radius: f32,
         zone_type: ZoneType,
     ) -> Result<Uuid> {
-        let env = self.environments.get_mut(&env_id)
+        let env = self
+            .environments
+            .get_mut(&env_id)
             .ok_or_else(|| dchat_core::Error::validation("Environment not found"))?;
 
         let zone = SpatialZone {
@@ -229,8 +241,9 @@ impl EnvironmentManager {
     /// Check if position is in a zone
     pub fn get_zone_at_position(&self, env_id: Uuid, position: Vector3) -> Option<&SpatialZone> {
         let env = self.environments.get(&env_id)?;
-        
-        env.spatial_zones.iter()
+
+        env.spatial_zones
+            .iter()
             .find(|zone| zone.center.distance(&position) <= zone.radius)
     }
 }
@@ -248,12 +261,14 @@ mod tests {
     #[test]
     fn test_create_environment() {
         let mut manager = EnvironmentManager::new();
-        
-        let env_id = manager.create_environment(
-            "Test Room".to_string(),
-            EnvironmentType::MeetingRoom { capacity: 10 },
-            "sky_001".to_string(),
-        ).unwrap();
+
+        let env_id = manager
+            .create_environment(
+                "Test Room".to_string(),
+                EnvironmentType::MeetingRoom { capacity: 10 },
+                "sky_001".to_string(),
+            )
+            .unwrap();
 
         assert!(manager.get_environment(env_id).is_some());
     }
@@ -261,18 +276,22 @@ mod tests {
     #[test]
     fn test_add_object() {
         let mut manager = EnvironmentManager::new();
-        let env_id = manager.create_environment(
-            "Test".to_string(),
-            EnvironmentType::OpenSpace,
-            "sky".to_string(),
-        ).unwrap();
+        let env_id = manager
+            .create_environment(
+                "Test".to_string(),
+                EnvironmentType::OpenSpace,
+                "sky".to_string(),
+            )
+            .unwrap();
 
-        let obj_id = manager.add_object(
-            env_id,
-            ObjectType::Whiteboard,
-            Transform::identity(),
-            InteractionType::Touch,
-        ).unwrap();
+        let obj_id = manager
+            .add_object(
+                env_id,
+                ObjectType::Whiteboard,
+                Transform::identity(),
+                InteractionType::Touch,
+            )
+            .unwrap();
 
         let env = manager.get_environment(env_id).unwrap();
         assert_eq!(env.interactive_objects.len(), 1);
@@ -281,19 +300,23 @@ mod tests {
     #[test]
     fn test_add_zone() {
         let mut manager = EnvironmentManager::new();
-        let env_id = manager.create_environment(
-            "Test".to_string(),
-            EnvironmentType::OpenSpace,
-            "sky".to_string(),
-        ).unwrap();
+        let env_id = manager
+            .create_environment(
+                "Test".to_string(),
+                EnvironmentType::OpenSpace,
+                "sky".to_string(),
+            )
+            .unwrap();
 
-        manager.add_zone(
-            env_id,
-            "Stage".to_string(),
-            Vector3::zero(),
-            5.0,
-            ZoneType::Stage,
-        ).unwrap();
+        manager
+            .add_zone(
+                env_id,
+                "Stage".to_string(),
+                Vector3::zero(),
+                5.0,
+                ZoneType::Stage,
+            )
+            .unwrap();
 
         let env = manager.get_environment(env_id).unwrap();
         assert_eq!(env.spatial_zones.len(), 1);
@@ -302,19 +325,23 @@ mod tests {
     #[test]
     fn test_get_zone_at_position() {
         let mut manager = EnvironmentManager::new();
-        let env_id = manager.create_environment(
-            "Test".to_string(),
-            EnvironmentType::OpenSpace,
-            "sky".to_string(),
-        ).unwrap();
+        let env_id = manager
+            .create_environment(
+                "Test".to_string(),
+                EnvironmentType::OpenSpace,
+                "sky".to_string(),
+            )
+            .unwrap();
 
-        manager.add_zone(
-            env_id,
-            "Zone1".to_string(),
-            Vector3::new(10.0, 0.0, 0.0),
-            5.0,
-            ZoneType::Stage,
-        ).unwrap();
+        manager
+            .add_zone(
+                env_id,
+                "Zone1".to_string(),
+                Vector3::new(10.0, 0.0, 0.0),
+                5.0,
+                ZoneType::Stage,
+            )
+            .unwrap();
 
         let zone = manager.get_zone_at_position(env_id, Vector3::new(12.0, 0.0, 0.0));
         assert!(zone.is_some());

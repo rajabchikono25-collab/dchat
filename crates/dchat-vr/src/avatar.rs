@@ -150,7 +150,9 @@ impl AvatarManager {
 
     /// Update avatar position
     pub fn update_position(&mut self, user_id: &UserId, transform: Transform) -> Result<()> {
-        let avatar = self.avatars.get_mut(user_id)
+        let avatar = self
+            .avatars
+            .get_mut(user_id)
             .ok_or_else(|| dchat_core::Error::validation("Avatar not found"))?;
 
         avatar.transform = transform;
@@ -165,7 +167,9 @@ impl AvatarManager {
         duration_ms: u32,
         loop_animation: bool,
     ) -> Result<()> {
-        let avatar = self.avatars.get_mut(user_id)
+        let avatar = self
+            .avatars
+            .get_mut(user_id)
             .ok_or_else(|| dchat_core::Error::validation("Avatar not found"))?;
 
         avatar.current_animation = Some(AvatarAnimation {
@@ -184,12 +188,9 @@ impl AvatarManager {
     }
 
     /// Get all visible avatars in range
-    pub fn get_avatars_in_range(
-        &self,
-        center: Vector3,
-        radius: f32,
-    ) -> Vec<&Avatar> {
-        self.avatars.values()
+    pub fn get_avatars_in_range(&self, center: Vector3, radius: f32) -> Vec<&Avatar> {
+        self.avatars
+            .values()
             .filter(|a| a.visible)
             .filter(|a| a.transform.position.distance(&center) <= radius)
             .collect()
@@ -233,12 +234,14 @@ mod tests {
         let mut manager = AvatarManager::new();
         let user_id = create_test_user();
 
-        let avatar_id = manager.create_avatar(
-            user_id.clone(),
-            "TestUser".to_string(),
-            "model_default".to_string(),
-            default_customization(),
-        ).unwrap();
+        let avatar_id = manager
+            .create_avatar(
+                user_id.clone(),
+                "TestUser".to_string(),
+                "model_default".to_string(),
+                default_customization(),
+            )
+            .unwrap();
 
         assert!(manager.get_avatar(&user_id).is_some());
     }
@@ -248,12 +251,14 @@ mod tests {
         let mut manager = AvatarManager::new();
         let user_id = create_test_user();
 
-        manager.create_avatar(
-            user_id.clone(),
-            "TestUser".to_string(),
-            "model_default".to_string(),
-            default_customization(),
-        ).unwrap();
+        manager
+            .create_avatar(
+                user_id.clone(),
+                "TestUser".to_string(),
+                "model_default".to_string(),
+                default_customization(),
+            )
+            .unwrap();
 
         let mut transform = Transform::identity();
         transform.position = Vector3::new(5.0, 0.0, 10.0);
@@ -269,17 +274,24 @@ mod tests {
         let mut manager = AvatarManager::new();
         let user_id = create_test_user();
 
-        manager.create_avatar(
-            user_id.clone(),
-            "TestUser".to_string(),
-            "model_default".to_string(),
-            default_customization(),
-        ).unwrap();
+        manager
+            .create_avatar(
+                user_id.clone(),
+                "TestUser".to_string(),
+                "model_default".to_string(),
+                default_customization(),
+            )
+            .unwrap();
 
-        manager.play_animation(&user_id, AnimationType::Waving, 2000, false).unwrap();
+        manager
+            .play_animation(&user_id, AnimationType::Waving, 2000, false)
+            .unwrap();
 
         let avatar = manager.get_avatar(&user_id).unwrap();
-        assert_eq!(avatar.current_animation.as_ref().unwrap().animation_type, AnimationType::Waving);
+        assert_eq!(
+            avatar.current_animation.as_ref().unwrap().animation_type,
+            AnimationType::Waving
+        );
     }
 
     #[test]
@@ -288,8 +300,22 @@ mod tests {
         let user1 = create_test_user();
         let user2 = create_test_user();
 
-        manager.create_avatar(user1.clone(), "User1".to_string(), "model".to_string(), default_customization()).unwrap();
-        manager.create_avatar(user2.clone(), "User2".to_string(), "model".to_string(), default_customization()).unwrap();
+        manager
+            .create_avatar(
+                user1.clone(),
+                "User1".to_string(),
+                "model".to_string(),
+                default_customization(),
+            )
+            .unwrap();
+        manager
+            .create_avatar(
+                user2.clone(),
+                "User2".to_string(),
+                "model".to_string(),
+                default_customization(),
+            )
+            .unwrap();
 
         let mut transform = Transform::identity();
         transform.position = Vector3::new(100.0, 0.0, 0.0);

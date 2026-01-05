@@ -130,9 +130,10 @@ impl ComfortSystem {
         if self.settings.vignette_enabled && speed > self.settings.movement_threshold {
             let excess_speed = speed - self.settings.movement_threshold;
             let target_vignette = (excess_speed / 5.0).min(1.0) * self.settings.vignette_strength;
-            
+
             // Smooth transition
-            self.current_vignette = self.current_vignette + (target_vignette - self.current_vignette) * 0.1;
+            self.current_vignette =
+                self.current_vignette + (target_vignette - self.current_vignette) * 0.1;
         } else {
             // Fade out vignette
             self.current_vignette *= 0.9;
@@ -143,7 +144,8 @@ impl ComfortSystem {
             // Reduce FOV by up to 30%
             let excess_speed = speed - (self.settings.movement_threshold * 1.5);
             let target_fov_scale = 1.0 - (excess_speed / 10.0).min(0.3);
-            self.current_fov_scale = self.current_fov_scale + (target_fov_scale - self.current_fov_scale) * 0.1;
+            self.current_fov_scale =
+                self.current_fov_scale + (target_fov_scale - self.current_fov_scale) * 0.1;
         } else {
             // Restore FOV
             self.current_fov_scale = self.current_fov_scale + (1.0 - self.current_fov_scale) * 0.1;
@@ -207,11 +209,11 @@ mod tests {
     #[test]
     fn test_vignette_activation() {
         let mut system = ComfortSystem::new(ComfortSettings::default());
-        
+
         // Slow movement - no vignette
         system.update(Vector3::new(0.1, 0.0, 0.0), 0.1);
         assert!(system.get_vignette() < 0.1);
-        
+
         // Fast movement - activate vignette (need to move far enough to exceed threshold)
         // Default threshold is 2.0 m/s, so move 0.3m per 0.1s = 3.0 m/s
         let mut pos = Vector3::new(0.0, 0.0, 0.0);
@@ -225,11 +227,11 @@ mod tests {
     #[test]
     fn test_snap_turn() {
         let system = ComfortSystem::new(ComfortSettings::default());
-        
+
         let current = 0.0;
         let turned_right = system.snap_turn(current, 1);
         assert!((turned_right - 30.0f32.to_radians()).abs() < 0.01);
-        
+
         let turned_left = system.snap_turn(current, -1);
         assert!((turned_left + 30.0f32.to_radians()).abs() < 0.01);
     }
@@ -237,7 +239,7 @@ mod tests {
     #[test]
     fn test_teleport_validation() {
         let system = ComfortSystem::new(ComfortSettings::default());
-        
+
         assert!(system.can_teleport(5.0)); // Within max distance
         assert!(!system.can_teleport(15.0)); // Exceeds max distance
     }
@@ -245,12 +247,12 @@ mod tests {
     #[test]
     fn test_fov_reduction() {
         let mut system = ComfortSystem::new(ComfortSettings::default());
-        
+
         // Very fast movement
         for _ in 0..20 {
             system.update(Vector3::new(10.0, 0.0, 0.0), 0.1);
         }
-        
+
         assert!(system.get_fov_scale() < 1.0);
     }
 }

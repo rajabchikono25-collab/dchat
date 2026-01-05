@@ -7,4 +7,4 @@ pub mod openxr;
 pub mod platform_trait;
 pub mod visionos;
 
-pub use platform_trait::{VrPlatform, PlatformCapabilities, PlatformError};
+pub use platform_trait::{PlatformCapabilities, PlatformError, VrPlatform};

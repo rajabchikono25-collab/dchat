@@ -1,6 +1,9 @@
 //! Platform abstraction trait for VR/AR systems
 
-use crate::{DeviceType, Transform, gesture::{Hand, FingerPositions}};
+use crate::{
+    gesture::{FingerPositions, Hand},
+    DeviceType, Transform,
+};
 use async_trait::async_trait;
 use std::error::Error;
 use std::fmt;
@@ -74,7 +77,12 @@ pub trait VrPlatform: Send + Sync {
     fn get_hand_tracking(&self) -> Option<(Hand, FingerPositions)>;
 
     /// Trigger haptic feedback
-    fn trigger_haptic(&mut self, hand: Hand, intensity: f32, duration_ms: u32) -> Result<(), PlatformError>;
+    fn trigger_haptic(
+        &mut self,
+        hand: Hand,
+        intensity: f32,
+        duration_ms: u32,
+    ) -> Result<(), PlatformError>;
 
     /// Get frame timing info for performance optimization
     fn get_frame_time(&self) -> f32;

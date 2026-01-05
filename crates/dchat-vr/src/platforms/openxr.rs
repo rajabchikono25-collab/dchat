@@ -205,21 +205,32 @@ mod runtime {
                 return None;
             }
 
-            let create_finger =
-                |tip: &JointLocation, distal: &JointLocation, inter: &JointLocation, 
-                 prox: &JointLocation, meta: &JointLocation| -> Option<FingerJoints> {
-                    if !tip.is_valid || !meta.is_valid {
-                        return None;
-                    }
+            let create_finger = |tip: &JointLocation,
+                                 distal: &JointLocation,
+                                 inter: &JointLocation,
+                                 prox: &JointLocation,
+                                 meta: &JointLocation|
+             -> Option<FingerJoints> {
+                if !tip.is_valid || !meta.is_valid {
+                    return None;
+                }
 
-                    Some(FingerJoints {
-                        metacarpal: Vector3::new(meta.position[0], meta.position[1], meta.position[2]),
-                        proximal: Vector3::new(prox.position[0], prox.position[1], prox.position[2]),
-                        intermediate: Vector3::new(inter.position[0], inter.position[1], inter.position[2]),
-                        distal: Vector3::new(distal.position[0], distal.position[1], distal.position[2]),
-                        tip: Vector3::new(tip.position[0], tip.position[1], tip.position[2]),
-                    })
-                };
+                Some(FingerJoints {
+                    metacarpal: Vector3::new(meta.position[0], meta.position[1], meta.position[2]),
+                    proximal: Vector3::new(prox.position[0], prox.position[1], prox.position[2]),
+                    intermediate: Vector3::new(
+                        inter.position[0],
+                        inter.position[1],
+                        inter.position[2],
+                    ),
+                    distal: Vector3::new(
+                        distal.position[0],
+                        distal.position[1],
+                        distal.position[2],
+                    ),
+                    tip: Vector3::new(tip.position[0], tip.position[1], tip.position[2]),
+                })
+            };
 
             let thumb = create_finger(
                 &joints[hand_joints::THUMB_TIP],
@@ -268,9 +279,11 @@ mod runtime {
 
         /// Poll and update hand tracking data from OpenXR runtime
         pub fn poll_hand_tracking(&self, predicted_time: xr::Time) {
-            if let (Some(stage), Some(left_tracker), Some(right_tracker)) =
-                (&self.stage_space, &self.left_hand_tracker, &self.right_hand_tracker)
-            {
+            if let (Some(stage), Some(left_tracker), Some(right_tracker)) = (
+                &self.stage_space,
+                &self.left_hand_tracker,
+                &self.right_hand_tracker,
+            ) {
                 // Query left hand
                 if let Ok(locations) = left_tracker.locate_hand_joints(stage, predicted_time) {
                     let mut joints = self.left_hand_joints.lock().unwrap();
@@ -435,7 +448,8 @@ mod runtime {
 
             // Create headless session (no graphics binding for chat app)
             let (session, _frame_waiter, _frame_stream) = unsafe {
-                instance.create_session::<xr::Headless>(system_id, &xr::headless::SessionCreateInfo {})
+                instance
+                    .create_session::<xr::Headless>(system_id, &xr::headless::SessionCreateInfo {})
             }
             .map_err(|e| PlatformError::SessionFailed(format!("Session: {}", e)))?;
 
@@ -629,7 +643,7 @@ mod fallback {
             if !palm.is_valid {
                 return None;
             }
-            
+
             // Create default finger joints from available data
             let create_finger = |tip_idx: usize, meta_idx: usize| -> FingerJoints {
                 let tip = &joints[tip_idx];

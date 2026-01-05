@@ -36,12 +36,28 @@ pub struct ConnectionQuality {
 /// Session event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
-    UserJoined { user_id: UserId, environment_id: Uuid },
-    UserLeft { user_id: UserId },
-    UserMoved { user_id: UserId, new_position: Vector3 },
-    UserGesture { user_id: UserId, gesture: String },
-    UserSpoke { user_id: UserId },
-    EnvironmentChanged { old_env: Uuid, new_env: Uuid },
+    UserJoined {
+        user_id: UserId,
+        environment_id: Uuid,
+    },
+    UserLeft {
+        user_id: UserId,
+    },
+    UserMoved {
+        user_id: UserId,
+        new_position: Vector3,
+    },
+    UserGesture {
+        user_id: UserId,
+        gesture: String,
+    },
+    UserSpoke {
+        user_id: UserId,
+    },
+    EnvironmentChanged {
+        old_env: Uuid,
+        new_env: Uuid,
+    },
 }
 
 /// Session manager
@@ -124,7 +140,11 @@ impl VrSessionManager {
             .get_mut(user_id)
             .ok_or_else(|| dchat_core::Error::validation("Session not found"))?;
 
-        let position_changed = session.head_transform.position.distance(&transform.position) > 0.1;
+        let position_changed = session
+            .head_transform
+            .position
+            .distance(&transform.position)
+            > 0.1;
 
         session.head_transform = transform;
         session.last_activity = Utc::now();

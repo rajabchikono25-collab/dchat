@@ -49,8 +49,10 @@ impl PartialEq for GestureType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Point { direction: d1 }, Self::Point { direction: d2 }) => {
-                (d1.x - d2.x).abs() < 0.001 && (d1.y - d2.y).abs() < 0.001 && (d1.z - d2.z).abs() < 0.001
-            },
+                (d1.x - d2.x).abs() < 0.001
+                    && (d1.y - d2.y).abs() < 0.001
+                    && (d1.z - d2.z).abs() < 0.001
+            }
             (Self::ThumbsUp, Self::ThumbsUp) => true,
             (Self::ThumbsDown, Self::ThumbsDown) => true,
             (Self::Wave, Self::Wave) => true,
@@ -112,11 +114,11 @@ pub struct FingerPositions {
 /// Skeletal joints for a single finger
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerJoints {
-    pub metacarpal: Vector3, // Base joint (connects to palm)
-    pub proximal: Vector3, // First knuckle
+    pub metacarpal: Vector3,   // Base joint (connects to palm)
+    pub proximal: Vector3,     // First knuckle
     pub intermediate: Vector3, // Second knuckle
-    pub distal: Vector3, // Third knuckle
-    pub tip: Vector3, // Fingertip
+    pub distal: Vector3,       // Third knuckle
+    pub tip: Vector3,          // Fingertip
 }
 
 impl FingerJoints {
@@ -129,15 +131,14 @@ impl FingerJoints {
     pub fn is_extended(&self, palm_position: &Vector3) -> bool {
         // Calculate distance from palm to tip
         let total_distance = palm_position.distance(&self.tip);
-        
+
         // Calculate sum of joint distances (path length)
-        let joint_distance = 
-            palm_position.distance(&self.metacarpal) +
-            self.metacarpal.distance(&self.proximal) +
-            self.proximal.distance(&self.intermediate) +
-            self.intermediate.distance(&self.distal) +
-            self.distal.distance(&self.tip);
-        
+        let joint_distance = palm_position.distance(&self.metacarpal)
+            + self.metacarpal.distance(&self.proximal)
+            + self.proximal.distance(&self.intermediate)
+            + self.intermediate.distance(&self.distal)
+            + self.distal.distance(&self.tip);
+
         // If path length is similar to direct distance, finger is extended
         // Threshold: 1.3 (curled finger has longer path)
         (joint_distance / total_distance) < 1.3
@@ -149,7 +150,7 @@ impl FingerJoints {
         let angle1 = Self::calculate_angle(&self.metacarpal, &self.proximal, &self.intermediate);
         let angle2 = Self::calculate_angle(&self.proximal, &self.intermediate, &self.distal);
         let angle3 = Self::calculate_angle(&self.intermediate, &self.distal, &self.tip);
-        
+
         // Average of normalized angles (180° = 0.0 extended, 0° = 1.0 curled)
         let avg_angle = (angle1 + angle2 + angle3) / 3.0;
         (std::f32::consts::PI - avg_angle) / std::f32::consts::PI
@@ -167,15 +168,15 @@ impl FingerJoints {
             y: c.y - b.y,
             z: c.z - b.z,
         };
-        
+
         let dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
         let mag_ba = (ba.x * ba.x + ba.y * ba.y + ba.z * ba.z).sqrt();
         let mag_bc = (bc.x * bc.x + bc.y * bc.y + bc.z * bc.z).sqrt();
-        
+
         if mag_ba == 0.0 || mag_bc == 0.0 {
             return 0.0;
         }
-        
+
         (dot / (mag_ba * mag_bc)).clamp(-1.0, 1.0).acos()
     }
 }
@@ -251,7 +252,9 @@ impl GestureTemplate {
 
         Self {
             name: "point".to_string(),
-            gesture_type: GestureType::Point { direction: Vector3::zero() },
+            gesture_type: GestureType::Point {
+                direction: Vector3::zero(),
+            },
             finger_states,
             palm_orientation: Some(PalmOrientation::Forward),
             motion_pattern: None,
@@ -410,7 +413,11 @@ impl GestureTemplate {
         matches as f32 / total as f32
     }
 
-    fn finger_matches_state(finger: &FingerJoints, palm_position: &Vector3, state: &FingerState) -> bool {
+    fn finger_matches_state(
+        finger: &FingerJoints,
+        palm_position: &Vector3,
+        state: &FingerState,
+    ) -> bool {
         match state {
             FingerState::Any => true,
             FingerState::Extended => finger.is_extended(palm_position),
@@ -438,10 +445,10 @@ impl GestureTemplate {
                 };
 
                 // Calculate dot product (cosine similarity)
-                let dot = palm_normal.x * target_normal.x + 
-                         palm_normal.y * target_normal.y + 
-                         palm_normal.z * target_normal.z;
-                
+                let dot = palm_normal.x * target_normal.x
+                    + palm_normal.y * target_normal.y
+                    + palm_normal.z * target_normal.z;
+
                 // Convert to 0.0-1.0 range (allow 45° deviation)
                 ((dot + 1.0) / 2.0).clamp(0.0, 1.0)
             }
@@ -485,7 +492,8 @@ impl GestureRecognizer {
 
     /// Add a custom gesture template
     pub fn add_template(&mut self, template: GestureTemplate) {
-        self.gesture_templates.insert(template.name.clone(), template);
+        self.gesture_templates
+            .insert(template.name.clone(), template);
     }
 
     /// Remove a gesture template
@@ -501,7 +509,7 @@ impl GestureRecognizer {
     /// Update hand tracking data
     pub fn update_tracking(&mut self, tracking: HandTrackingData) {
         self.tracking_data.push(tracking);
-        
+
         // Keep only recent tracking data (last 100 frames)
         if self.tracking_data.len() > 100 {
             self.tracking_data.drain(0..self.tracking_data.len() - 100);
@@ -526,7 +534,7 @@ impl GestureRecognizer {
         for template in self.gesture_templates.values() {
             // Match finger states
             let finger_score = template.match_fingers(&finger_positions, &hand_position);
-            
+
             // Match palm orientation
             let orientation_score = template.match_orientation(&palm_normal);
 
@@ -557,7 +565,7 @@ impl GestureRecognizer {
                         z: finger_positions.index.tip.z - hand_position.z,
                     };
                     GestureType::Point { direction }
-                },
+                }
                 other => other.clone(),
             };
 
@@ -600,7 +608,7 @@ impl GestureRecognizer {
         for i in 1..history.len() {
             let (t1, p1) = &history[i - 1];
             let (t2, p2) = &history[i];
-            
+
             let dt = (t2.timestamp_millis() - t1.timestamp_millis()) as f32 / 1000.0;
             if dt > 0.0 {
                 let velocity = Vector3 {
@@ -627,7 +635,8 @@ impl GestureRecognizer {
         avg_velocity.y /= velocities.len() as f32;
         avg_velocity.z /= velocities.len() as f32;
 
-        let speed = (avg_velocity.x.powi(2) + avg_velocity.y.powi(2) + avg_velocity.z.powi(2)).sqrt();
+        let speed =
+            (avg_velocity.x.powi(2) + avg_velocity.y.powi(2) + avg_velocity.z.powi(2)).sqrt();
 
         // Check if speed meets threshold
         if speed < pattern.speed_threshold {
@@ -636,18 +645,19 @@ impl GestureRecognizer {
 
         // Calculate direction similarity (dot product with pattern direction)
         let velocity_magnitude = speed;
-        let pattern_magnitude = (pattern.direction.x.powi(2) + 
-                                pattern.direction.y.powi(2) + 
-                                pattern.direction.z.powi(2)).sqrt();
+        let pattern_magnitude = (pattern.direction.x.powi(2)
+            + pattern.direction.y.powi(2)
+            + pattern.direction.z.powi(2))
+        .sqrt();
 
         if velocity_magnitude == 0.0 || pattern_magnitude == 0.0 {
             return 0.0;
         }
 
-        let dot = (avg_velocity.x * pattern.direction.x +
-                  avg_velocity.y * pattern.direction.y +
-                  avg_velocity.z * pattern.direction.z) /
-                 (velocity_magnitude * pattern_magnitude);
+        let dot = (avg_velocity.x * pattern.direction.x
+            + avg_velocity.y * pattern.direction.y
+            + avg_velocity.z * pattern.direction.z)
+            / (velocity_magnitude * pattern_magnitude);
 
         // Convert to 0.0-1.0 range
         ((dot + 1.0) / 2.0).clamp(0.0, 1.0)
@@ -655,10 +665,7 @@ impl GestureRecognizer {
 
     /// Get recent gestures
     pub fn get_recent_gestures(&self, count: usize) -> Vec<&DetectedGesture> {
-        self.gesture_buffer.iter()
-            .rev()
-            .take(count)
-            .collect()
+        self.gesture_buffer.iter().rev().take(count).collect()
     }
 
     /// Clear old gestures
@@ -699,10 +706,10 @@ mod tests {
         // Each joint bends ~90 degrees to create high curl amount
         FingerJoints {
             metacarpal: Vector3::new(base_x, 0.0, 0.0),
-            proximal: Vector3::new(base_x + 0.025, 0.0, 0.0),    // First segment straight out
+            proximal: Vector3::new(base_x + 0.025, 0.0, 0.0), // First segment straight out
             intermediate: Vector3::new(base_x + 0.03, 0.025, 0.0), // Bend up 90°
-            distal: Vector3::new(base_x + 0.015, 0.03, 0.0),     // Bend back towards palm
-            tip: Vector3::new(base_x + 0.005, 0.015, 0.0),       // Curl down into palm
+            distal: Vector3::new(base_x + 0.015, 0.03, 0.0),  // Bend back towards palm
+            tip: Vector3::new(base_x + 0.005, 0.015, 0.0),    // Curl down into palm
         }
     }
 
@@ -731,8 +738,11 @@ mod tests {
         let extended_curl = extended.curl_amount();
         let curled_curl = curled.curl_amount();
 
-        println!("Extended curl: {}, Curled curl: {}", extended_curl, curled_curl);
-        
+        println!(
+            "Extended curl: {}, Curled curl: {}",
+            extended_curl, curled_curl
+        );
+
         assert!(extended_curl < 0.3); // Extended should have low curl
         assert!(curled_curl > 0.3); // Curled should have noticeably higher curl
         assert!(curled_curl > extended_curl); // Curled should be more than extended
@@ -742,10 +752,10 @@ mod tests {
     fn test_detect_point_gesture() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         let hand_pos = Vector3::zero();
         let palm_normal = Vector3::new(0.0, 0.0, -1.0);
-        
+
         // Point gesture: index extended, others curled
         let fingers = FingerPositions {
             thumb: create_curled_finger(0.01),
@@ -754,10 +764,11 @@ mod tests {
             ring: create_curled_finger(0.07),
             pinky: create_curled_finger(0.09),
         };
-        
-        let gesture = recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
+
+        let gesture =
+            recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
         assert!(gesture.is_some());
-        
+
         if let Some(g) = gesture {
             assert!(matches!(g.gesture_type, GestureType::Point { .. }));
             assert!(g.confidence > 0.7);
@@ -768,10 +779,10 @@ mod tests {
     fn test_detect_open_palm() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         let hand_pos = Vector3::zero();
         let palm_normal = Vector3::new(0.0, 1.0, 0.0);
-        
+
         // Open palm: all fingers extended
         let fingers = FingerPositions {
             thumb: create_extended_finger(0.01),
@@ -780,10 +791,11 @@ mod tests {
             ring: create_extended_finger(0.07),
             pinky: create_extended_finger(0.09),
         };
-        
-        let gesture = recognizer.detect_gesture(user_id, Hand::Left, hand_pos, palm_normal, fingers);
+
+        let gesture =
+            recognizer.detect_gesture(user_id, Hand::Left, hand_pos, palm_normal, fingers);
         assert!(gesture.is_some());
-        
+
         if let Some(g) = gesture {
             assert_eq!(g.gesture_type, GestureType::OpenPalm);
         }
@@ -793,10 +805,10 @@ mod tests {
     fn test_detect_fist() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         let hand_pos = Vector3::zero();
         let palm_normal = Vector3::new(0.0, 1.0, 0.0);
-        
+
         // Fist: all fingers curled
         let fingers = FingerPositions {
             thumb: create_curled_finger(0.01),
@@ -805,10 +817,11 @@ mod tests {
             ring: create_curled_finger(0.07),
             pinky: create_curled_finger(0.09),
         };
-        
-        let gesture = recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
+
+        let gesture =
+            recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
         assert!(gesture.is_some());
-        
+
         if let Some(g) = gesture {
             assert_eq!(g.gesture_type, GestureType::Fist);
         }
@@ -818,10 +831,10 @@ mod tests {
     fn test_detect_peace_sign() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         let hand_pos = Vector3::zero();
         let palm_normal = Vector3::new(0.0, 0.0, -1.0);
-        
+
         // Peace sign: index and middle extended, others curled
         let fingers = FingerPositions {
             thumb: create_curled_finger(0.01),
@@ -830,10 +843,11 @@ mod tests {
             ring: create_curled_finger(0.07),
             pinky: create_curled_finger(0.09),
         };
-        
-        let gesture = recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
+
+        let gesture =
+            recognizer.detect_gesture(user_id, Hand::Right, hand_pos, palm_normal, fingers);
         assert!(gesture.is_some());
-        
+
         if let Some(g) = gesture {
             assert_eq!(g.gesture_type, GestureType::PeaceSign);
         }
@@ -842,7 +856,7 @@ mod tests {
     #[test]
     fn test_custom_template() {
         let mut recognizer = GestureRecognizer::new(0.7);
-        
+
         // Create custom "gun" gesture template (index and thumb extended)
         let mut finger_states = HashMap::new();
         finger_states.insert("thumb".to_string(), FingerState::Extended);
@@ -853,7 +867,9 @@ mod tests {
 
         let custom_template = GestureTemplate {
             name: "gun".to_string(),
-            gesture_type: GestureType::Custom { name: "gun".to_string() },
+            gesture_type: GestureType::Custom {
+                name: "gun".to_string(),
+            },
             finger_states,
             palm_orientation: None,
             motion_pattern: None,
@@ -861,7 +877,7 @@ mod tests {
         };
 
         recognizer.add_template(custom_template);
-        
+
         let templates = recognizer.get_templates();
         assert!(templates.iter().any(|t| t.name == "gun"));
     }
@@ -870,7 +886,7 @@ mod tests {
     fn test_template_match_fingers() {
         let template = GestureTemplate::thumbs_up();
         let palm = Vector3::zero();
-        
+
         // Perfect match: thumb extended, others curled
         let matching_fingers = FingerPositions {
             thumb: create_extended_finger(0.01),
@@ -879,10 +895,10 @@ mod tests {
             ring: create_curled_finger(0.07),
             pinky: create_curled_finger(0.09),
         };
-        
+
         let score = template.match_fingers(&matching_fingers, &palm);
         assert!(score > 0.8); // Should be high match
-        
+
         // Poor match: all fingers extended
         let non_matching_fingers = FingerPositions {
             thumb: create_extended_finger(0.01),
@@ -891,7 +907,7 @@ mod tests {
             ring: create_extended_finger(0.07),
             pinky: create_extended_finger(0.09),
         };
-        
+
         let score = template.match_fingers(&non_matching_fingers, &palm);
         assert!(score < 0.5); // Should be low match
     }
@@ -899,12 +915,12 @@ mod tests {
     #[test]
     fn test_palm_orientation_matching() {
         let template = GestureTemplate::thumbs_up();
-        
+
         // Forward orientation (perfect match)
         let forward_normal = Vector3::new(0.0, 0.0, -1.0);
         let score_forward = template.match_orientation(&forward_normal);
         assert!(score_forward > 0.8);
-        
+
         // Backward orientation (poor match)
         let backward_normal = Vector3::new(0.0, 0.0, 1.0);
         let score_backward = template.match_orientation(&backward_normal);
@@ -915,7 +931,7 @@ mod tests {
     fn test_get_recent_gestures() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         recognizer.gesture_buffer.push(DetectedGesture {
             user_id: user_id.clone(),
             hand: Hand::Right,
@@ -924,7 +940,7 @@ mod tests {
             position: Vector3::zero(),
             detected_at: Utc::now(),
         });
-        
+
         let recent = recognizer.get_recent_gestures(1);
         assert_eq!(recent.len(), 1);
     }
@@ -933,7 +949,7 @@ mod tests {
     fn test_clear_old_gestures() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         // Add old gesture (1 hour ago)
         let old_time = Utc::now() - chrono::Duration::hours(1);
         recognizer.gesture_buffer.push(DetectedGesture {
@@ -944,7 +960,7 @@ mod tests {
             position: Vector3::zero(),
             detected_at: old_time,
         });
-        
+
         // Add recent gesture
         recognizer.gesture_buffer.push(DetectedGesture {
             user_id: user_id.clone(),
@@ -954,9 +970,9 @@ mod tests {
             position: Vector3::zero(),
             detected_at: Utc::now(),
         });
-        
+
         recognizer.clear_old_gestures(1800); // 30 minutes
-        
+
         assert_eq!(recognizer.gesture_buffer.len(), 1);
         assert_eq!(recognizer.gesture_buffer[0].gesture_type, GestureType::Fist);
     }
@@ -965,13 +981,13 @@ mod tests {
     fn test_motion_tracking() {
         let mut recognizer = GestureRecognizer::new(0.7);
         let user_id = create_test_user();
-        
+
         // Track motion over several frames
         for i in 0..10 {
             let position = Vector3::new(i as f32 * 0.1, 0.0, 0.0);
             recognizer.track_motion(user_id.clone(), position);
         }
-        
+
         let history = recognizer.motion_history.get(&user_id);
         assert!(history.is_some());
         assert_eq!(history.unwrap().len(), 10);

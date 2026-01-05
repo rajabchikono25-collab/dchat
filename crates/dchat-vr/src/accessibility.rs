@@ -115,7 +115,7 @@ impl AccessibilityManager {
         }
 
         let message = TtsMessage { text, priority };
-        
+
         // Insert based on priority
         let insert_pos = self.tts_queue.iter().position(|m| m.priority < priority);
         if let Some(pos) = insert_pos {
@@ -169,7 +169,7 @@ impl AccessibilityManager {
         // Adjust vertical position relative to seated eye height
         let standing_eye_height = 1.7; // Average standing eye height
         let height_offset = standing_eye_height - self.settings.seated_eye_height;
-        
+
         Vector3::new(position.x, position.y - height_offset, position.z)
     }
 
@@ -217,11 +217,11 @@ mod tests {
     fn test_tts_queue() {
         let mut manager = AccessibilityManager::default();
         manager.settings.tts_enabled = true;
-        
+
         manager.speak("Low priority".to_string(), TtsPriority::Low);
         manager.speak("High priority".to_string(), TtsPriority::High);
         manager.speak("Normal priority".to_string(), TtsPriority::Normal);
-        
+
         // Should get high priority first
         let msg = manager.next_tts_message().unwrap();
         assert_eq!(msg.priority, TtsPriority::High);
@@ -232,15 +232,11 @@ mod tests {
         let mut manager = AccessibilityManager::default();
         manager.settings.subtitles_enabled = true;
         manager.max_subtitle_history = 3;
-        
+
         for i in 0..5 {
-            manager.add_subtitle(
-                format!("User{}", i),
-                format!("Message {}", i),
-                None,
-            );
+            manager.add_subtitle(format!("User{}", i), format!("Message {}", i), None);
         }
-        
+
         assert_eq!(manager.get_subtitles().len(), 3);
     }
 
@@ -249,17 +245,17 @@ mod tests {
         let mut manager = AccessibilityManager::default();
         manager.settings.seated_mode = true;
         manager.settings.seated_eye_height = 1.2;
-        
+
         let position = Vector3::new(0.0, 1.7, 0.0);
         let adjusted = manager.adjust_for_seated(position);
-        
+
         assert!((adjusted.y - 1.2).abs() < 0.01);
     }
 
     #[test]
     fn test_colorblind_filter() {
         let manager = AccessibilityManager::default();
-        
+
         let red = (1.0, 0.0, 0.0);
         let filtered = manager.apply_colorblind_filter(red);
         assert_eq!(filtered, red); // No filter by default

@@ -82,18 +82,19 @@ impl Frustum {
         };
 
         let distance = to_point.distance(&Vector3::zero());
-        
+
         // Check near/far planes
         if distance < self.near || distance > self.far {
             return false;
         }
 
         // Check angle from forward vector
-        let dot = (to_point.x * self.forward.x + 
-                   to_point.y * self.forward.y + 
-                   to_point.z * self.forward.z) / distance;
+        let dot = (to_point.x * self.forward.x
+            + to_point.y * self.forward.y
+            + to_point.z * self.forward.z)
+            / distance;
         let angle = dot.acos();
-        
+
         angle < (self.fov / 2.0)
     }
 }
@@ -164,7 +165,7 @@ impl PerformanceOptimizer {
         }
 
         let metrics = self.get_metrics();
-        
+
         if metrics.fps < self.target_fps * 0.8 {
             LodLevel::Low
         } else if metrics.fps < self.target_fps * 0.95 {
@@ -226,10 +227,10 @@ mod tests {
 
         // Point in front should be visible
         assert!(frustum.contains(&Vector3::new(0.0, 0.0, 5.0)));
-        
+
         // Point behind should be culled
         assert!(!frustum.contains(&Vector3::new(0.0, 0.0, -5.0)));
-        
+
         // Point too far should be culled
         assert!(!frustum.contains(&Vector3::new(0.0, 0.0, 150.0)));
     }
@@ -237,12 +238,12 @@ mod tests {
     #[test]
     fn test_performance_tracking() {
         let mut optimizer = PerformanceOptimizer::new(90.0);
-        
+
         // Record good performance
         for _ in 0..10 {
             optimizer.record_frame(11.1); // 90fps
         }
-        
+
         let metrics = optimizer.get_metrics();
         assert!((metrics.fps - 90.0).abs() < 1.0);
         assert!(!optimizer.needs_optimization());
@@ -251,12 +252,12 @@ mod tests {
     #[test]
     fn test_adaptive_lod() {
         let mut optimizer = PerformanceOptimizer::new(90.0);
-        
+
         // Record poor performance
         for _ in 0..10 {
             optimizer.record_frame(20.0); // 50fps
         }
-        
+
         assert!(optimizer.needs_optimization());
         assert!(matches!(optimizer.get_recommended_lod(), LodLevel::Low));
     }

@@ -195,11 +195,7 @@ impl VisionOsPlatform {
                 let mut joints = self.left_hand_joints.lock().unwrap();
                 for i in 0..arkit_joints::JOINT_COUNT {
                     joints[i] = ArkitJoint {
-                        position: [
-                            positions[i * 3],
-                            positions[i * 3 + 1],
-                            positions[i * 3 + 2],
-                        ],
+                        position: [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]],
                         is_tracked: tracked[i],
                     };
                 }
@@ -219,11 +215,7 @@ impl VisionOsPlatform {
                 let mut joints = self.right_hand_joints.lock().unwrap();
                 for i in 0..arkit_joints::JOINT_COUNT {
                     joints[i] = ArkitJoint {
-                        position: [
-                            positions[i * 3],
-                            positions[i * 3 + 1],
-                            positions[i * 3 + 2],
-                        ],
+                        position: [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]],
                         is_tracked: tracked[i],
                     };
                 }
@@ -270,18 +262,42 @@ impl VisionOsPlatform {
                 Some(FingerJoints {
                     metacarpal: Vector3::new(base.position[0], base.position[1], base.position[2]),
                     proximal: Vector3::new(base.position[0], base.position[1], base.position[2]),
-                    intermediate: Vector3::new(intermediate.position[0], intermediate.position[1], intermediate.position[2]),
+                    intermediate: Vector3::new(
+                        intermediate.position[0],
+                        intermediate.position[1],
+                        intermediate.position[2],
+                    ),
                     distal: Vector3::new(tip.position[0], tip.position[1], tip.position[2]),
                     tip: Vector3::new(tip.position[0], tip.position[1], tip.position[2]),
                 })
             };
 
-        let thumb = create_finger(arkit_joints::THUMB_TIP, arkit_joints::THUMB_KNUCKLE, arkit_joints::THUMB_INTERMEDIATE_TIP)?;
-        let index = create_finger(arkit_joints::INDEX_TIP, arkit_joints::INDEX_METACARPAL, arkit_joints::INDEX_INTERMEDIATE_TIP)?;
-        let middle = create_finger(arkit_joints::MIDDLE_TIP, arkit_joints::MIDDLE_METACARPAL, arkit_joints::MIDDLE_INTERMEDIATE_TIP)?;
-        let ring = create_finger(arkit_joints::RING_TIP, arkit_joints::RING_METACARPAL, arkit_joints::RING_INTERMEDIATE_TIP)?;
-        let pinky = create_finger(arkit_joints::LITTLE_TIP, arkit_joints::LITTLE_METACARPAL, arkit_joints::LITTLE_INTERMEDIATE_TIP)?;
-        
+        let thumb = create_finger(
+            arkit_joints::THUMB_TIP,
+            arkit_joints::THUMB_KNUCKLE,
+            arkit_joints::THUMB_INTERMEDIATE_TIP,
+        )?;
+        let index = create_finger(
+            arkit_joints::INDEX_TIP,
+            arkit_joints::INDEX_METACARPAL,
+            arkit_joints::INDEX_INTERMEDIATE_TIP,
+        )?;
+        let middle = create_finger(
+            arkit_joints::MIDDLE_TIP,
+            arkit_joints::MIDDLE_METACARPAL,
+            arkit_joints::MIDDLE_INTERMEDIATE_TIP,
+        )?;
+        let ring = create_finger(
+            arkit_joints::RING_TIP,
+            arkit_joints::RING_METACARPAL,
+            arkit_joints::RING_INTERMEDIATE_TIP,
+        )?;
+        let pinky = create_finger(
+            arkit_joints::LITTLE_TIP,
+            arkit_joints::LITTLE_METACARPAL,
+            arkit_joints::LITTLE_INTERMEDIATE_TIP,
+        )?;
+
         Some(FingerPositions {
             thumb,
             index,
@@ -412,8 +428,9 @@ impl VrPlatform for VisionOsPlatform {
                 Hand::Left => 0,
                 Hand::Right => 1,
             };
-            let result =
-                unsafe { ffi::dchat_trigger_haptic(hand_id, intensity.clamp(0.0, 1.0), duration_ms) };
+            let result = unsafe {
+                ffi::dchat_trigger_haptic(hand_id, intensity.clamp(0.0, 1.0), duration_ms)
+            };
             if result != 0 {
                 return Err(PlatformError::HapticsUnsupported);
             }
@@ -503,4 +520,3 @@ mod tests {
         assert_eq!(platform.passthrough_opacity, 1.0);
     }
 }
-
