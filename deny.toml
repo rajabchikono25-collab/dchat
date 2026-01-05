@@ -16,11 +16,11 @@ feature-depth = 1
 # Reviewed: 2026-01-05 during OMEGA-AUDIT NEXUS deep analysis
 ignore = [
   # === Vulnerability advisories (transitive, low risk in our context) ===
-  "RUSTSEC-2025-0009", # ring 0.16.20 - via libp2p-tls (unused feature)
-  "RUSTSEC-2023-0071", # rsa 0.9.8 - via sqlx-mysql (unused backend)
+  "RUSTSEC-2025-0009", # ring 0.16.20 AES panic - via libp2p-tls (unused feature)
+  "RUSTSEC-2023-0071", # rsa timing attack - no upstream patch, local use only
   "RUSTSEC-2024-0421", # idna Punycode - via url crate, we validate URLs ourselves
   "RUSTSEC-2024-0437", # protobuf recursion - depth-limited in our gossip protocol
-  "RUSTSEC-2025-0055", # yansi ANSI escape - logs not exposed to untrusted input
+  "RUSTSEC-2025-0055", # tracing-subscriber ANSI - via ark-relations std feature
 
   # === Unmaintained crate advisories (waiting for upstream updates) ===
   "RUSTSEC-2024-0384", # instant unmaintained - via libp2p (waiting for update)
@@ -33,6 +33,7 @@ ignore = [
   "RUSTSEC-2025-0134", # rustls-pemfile - via rustls (awaiting migration)
   "RUSTSEC-2025-0017", # trust-dns -> hickory-dns - awaiting upstream migration
   "RUSTSEC-2024-0320", # yaml-rust - via serde_yaml (config parsing only)
+  "RUSTSEC-2025-0119", # number_prefix unmaintained - via indicatif (cosmetic only)
 ]
 
 [licenses]
