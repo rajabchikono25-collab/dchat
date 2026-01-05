@@ -2404,6 +2404,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hmac",
+ "hostname",
  "lazy_static",
  "libp2p",
  "once_cell",

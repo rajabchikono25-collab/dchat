@@ -1,0 +1,11 @@
+{
+  "validator_pubkey": "7d620b38a9b20206a7383db49f7c6351ab542dacaa1db96e7627245b72a7d954",
+  "stake_amount": 1000000000000000,
+  "validator_name": "validator-uae",
+  "network_address": "4.161.34.228:7070",
+  "region": "me-central",
+  "committed_at": "2026-01-05T16:13:47.422560782Z",
+  "lockup_days": 30,
+  "chain_id_hash": "a060eb92d289d02222c6fe0b5679cdeb8779fa9a9c607e6154073713d53a1b25",
+  "signature": "427e51625821840c71055f8f1e42feae032fdd0a1999c37dacb0b7cfb0b7bdbbbedcc588a19a1ffcd465e6bdffcec1f869d8e1fa54edaa74a4f29e426dfb8707"
+}

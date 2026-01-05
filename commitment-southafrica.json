@@ -1,0 +1,11 @@
+{
+  "validator_pubkey": "077c8f98eedc4a956d39be235b1d9aaa8a73e09444dd6ca60be65759ad2f28f0",
+  "stake_amount": 1000000000000000,
+  "validator_name": "validator-southafrica",
+  "network_address": "4.221.211.71:7070",
+  "region": "af-south",
+  "committed_at": "2026-01-05T16:13:36.813039032Z",
+  "lockup_days": 30,
+  "chain_id_hash": "a060eb92d289d02222c6fe0b5679cdeb8779fa9a9c607e6154073713d53a1b25",
+  "signature": "c7c157223755e076b36cd34993e63742bcf1703235e0c33363faeabafbd5d5fc5aa0f56a1afcc4ed74245fa0bf3b31fc025867c810170bcc703fe4a7fda57603"
+}
