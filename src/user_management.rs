@@ -24,6 +24,10 @@ use std::path::PathBuf;
 use tracing::{error, info};
 use uuid::Uuid;
 
+// Prevent enabling the dangerous test-bypass feature in release builds
+#[cfg(all(feature = "test-bypass", not(debug_assertions)))]
+compile_error!("The 'test-bypass' feature must never be enabled in production builds.");
+
 /// Response when creating a user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserResponse {
@@ -122,8 +126,8 @@ impl UserManager {
         info!("Creating new user: {}", username);
 
         // Generate new keypair
-        #[allow(deprecated)]
-        let keypair = KeyPair::generate();
+        let keypair = KeyPair::try_generate()
+            .map_err(|e| Error::crypto(format!("Key generation failed: {}", e)))?;
         let public_key_bytes = keypair.public_key().as_bytes();
         let public_key_hex = hex::encode(public_key_bytes);
         let private_key_bytes = keypair.private_key().as_bytes();

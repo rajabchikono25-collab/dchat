@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -119,8 +120,8 @@ impl StorageRoutedUserManager {
         info!("Creating new user: {}", username);
 
         // Generate new keypair
-        #[allow(deprecated)]
-        let keypair = KeyPair::generate();
+        let keypair = KeyPair::try_generate()
+            .map_err(|e| Error::crypto(format!("Key generation failed: {}", e)))?;
         let public_key_bytes = keypair.public_key().as_bytes();
         let public_key_hex = hex::encode(public_key_bytes);
         let private_key_bytes = keypair.private_key().as_bytes();
@@ -707,14 +708,38 @@ impl StorageRoutedUserManager {
         uuid_bytes.copy_from_slice(&provider_id[..16]);
         let provider_user_uuid = UserId(uuid::Uuid::from_bytes(uuid_bytes));
 
-        // Submit payment transaction via currency chain (sync method)
-        let tx_id = self
-            .currency_chain
-            .transfer(&user_uuid, &provider_user_uuid, amount)
-            .map_err(|e| {
-                error!("Storage payment failed: {}", e);
-                Error::chain(format!("Payment transaction failed: {}", e))
-            })?;
+        // Submit payment transaction via currency chain with limited retries
+        let retry_delays = [
+            Duration::from_millis(200),
+            Duration::from_millis(500),
+            Duration::from_millis(1000),
+        ];
+        let mut last_err: Option<Error> = None;
+        let tx_id = {
+            let mut result = None;
+            for (idx, delay) in retry_delays.iter().enumerate() {
+                match self
+                    .currency_chain
+                    .transfer(&user_uuid, &provider_user_uuid, amount)
+                {
+                    Ok(tx) => {
+                        result = Some(tx);
+                        break;
+                    }
+                    Err(e) => {
+                        let wrapped = Error::chain(format!("Payment transaction failed: {}", e));
+                        error!("Storage payment attempt {} failed: {}", idx + 1, wrapped);
+                        last_err = Some(wrapped);
+                        if idx + 1 < retry_delays.len() {
+                            tokio::time::sleep(*delay).await;
+                        }
+                    }
+                }
+            }
+            result.ok_or_else(|| {
+                last_err.unwrap_or_else(|| Error::chain("Payment transaction failed".to_string()))
+            })?
+        };
 
         info!(
             "Storage payment of {} submitted by {} to provider {} (tx: {})",
@@ -1003,13 +1028,18 @@ impl StorageRoutedUserManager {
     }
 
     /// Encrypt key material using user-derived key with ChaCha20-Poly1305 AEAD
+    /// Format v1: [0x01][16-byte salt][12-byte nonce][ciphertext+tag]
+    /// Legacy fallback (v0): [12-byte nonce][ciphertext+tag] using static salt
     fn encrypt_key_material(&self, user_id: &str, key_material: &[u8]) -> Result<Vec<u8>> {
-        // Derive 32-byte encryption key using HKDF-like construction
+        // Generate per-record salt to prevent rainbow-table style reuse across users/keys
+        let mut salt = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut salt);
+
+        // Derive 32-byte key = SHA256("dchat-key-encryption-v2:" || user_id || salt)
         let mut hasher = Sha256::new();
         hasher.update(b"dchat-key-encryption-v2:");
         hasher.update(user_id.as_bytes());
-        // Add a salt to prevent rainbow table attacks
-        hasher.update(b"\\x00dchat-salt-2025\\x00");
+        hasher.update(&salt);
         let derived_key: [u8; 32] = hasher.finalize().into();
 
         // Create cipher with derived key
@@ -1026,39 +1056,71 @@ impl StorageRoutedUserManager {
             .encrypt(nonce, key_material)
             .map_err(|e| Error::internal(format!("Encryption failed: {}", e)))?;
 
-        // Prepend nonce to ciphertext: [12-byte nonce][ciphertext+tag]
-        let mut encrypted = Vec::with_capacity(12 + ciphertext.len());
+        // Build v1 envelope: [version][salt][nonce][ciphertext]
+        let mut encrypted =
+            Vec::with_capacity(1 + salt.len() + nonce_bytes.len() + ciphertext.len());
+        encrypted.push(1);
+        encrypted.extend_from_slice(&salt);
         encrypted.extend_from_slice(&nonce_bytes);
         encrypted.extend_from_slice(&ciphertext);
 
         Ok(encrypted)
     }
 
-    /// Decrypt key material using ChaCha20-Poly1305 AEAD
+    /// Decrypt key material using ChaCha20-Poly1305 AEAD with backward compatibility
+    /// Supports v1 envelopes (preferred) and legacy v0 format for existing files.
     fn decrypt_key_material(&self, user_id: &str, encrypted: &[u8]) -> Result<Vec<u8>> {
-        // Minimum size: 12 (nonce) + 16 (auth tag) + 1 (at least 1 byte of data)
-        if encrypted.len() < 29 {
+        // v1 format requires 1 + 16 + 12 + 16(tag) + 1(data) minimum
+        const MIN_V1_LEN: usize = 1 + 16 + 12 + 16 + 1;
+        const MIN_V0_LEN: usize = 12 + 16 + 1;
+
+        if encrypted.len() < MIN_V0_LEN {
             return Err(Error::internal("Encrypted data too short"));
         }
 
-        // Derive same key as encryption
-        let mut hasher = Sha256::new();
-        hasher.update(b"dchat-key-encryption-v2:");
-        hasher.update(user_id.as_bytes());
-        hasher.update(b"\\x00dchat-salt-2025\\x00");
-        let derived_key: [u8; 32] = hasher.finalize().into();
+        let (derived_key, nonce_slice, ciphertext) = if encrypted.first() == Some(&1) {
+            if encrypted.len() < MIN_V1_LEN {
+                return Err(Error::internal("Encrypted data too short (v1)"));
+            }
+
+            let salt = &encrypted[1..1 + 16];
+            let nonce_start = 1 + 16;
+            let nonce_end = nonce_start + 12;
+            let nonce = &encrypted[nonce_start..nonce_end];
+            let ciphertext = &encrypted[nonce_end..];
+
+            let mut hasher = Sha256::new();
+            hasher.update(b"dchat-key-encryption-v2:");
+            hasher.update(user_id.as_bytes());
+            hasher.update(salt);
+            let derived_key: [u8; 32] = hasher.finalize().into();
+
+            (derived_key, nonce, ciphertext)
+        } else {
+            // Legacy v0: derive using static salt to maintain backward compatibility
+            if encrypted.len() < MIN_V0_LEN {
+                return Err(Error::internal("Encrypted data too short (legacy)"));
+            }
+
+            let nonce = &encrypted[..12];
+            let ciphertext = &encrypted[12..];
+
+            let mut hasher = Sha256::new();
+            hasher.update(b"dchat-key-encryption-v2:");
+            hasher.update(user_id.as_bytes());
+            hasher.update(b"\x00dchat-salt-2025\x00");
+            let derived_key: [u8; 32] = hasher.finalize().into();
+
+            (derived_key, nonce, ciphertext)
+        };
 
         // Create cipher
         let cipher = ChaCha20Poly1305::new_from_slice(&derived_key)
             .map_err(|e| Error::internal(format!("Failed to create cipher: {}", e)))?;
 
-        // Extract nonce (first 12 bytes) and ciphertext
-        let nonce = Nonce::from_slice(&encrypted[..12]);
-        let ciphertext = &encrypted[12..];
-
         // Decrypt and verify authentication tag
         let plaintext = cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(Nonce::from_slice(nonce_slice), ciphertext)
             .map_err(|e| Error::internal(format!("Decryption failed (tampering?): {}", e)))?;
 
         Ok(plaintext)

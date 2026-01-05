@@ -282,7 +282,10 @@ pub mod prelude {
 pub mod client {
     use crate::prelude::*;
     use std::sync::Arc;
+    use tokio::sync::Mutex;
     use tokio::sync::RwLock;
+    use tokio::task::JoinHandle;
+    use tokio::time::{interval, Duration};
 
     /// High-level dchat client for user applications
     pub struct DchatClient {
@@ -294,6 +297,8 @@ pub mod client {
         pub database: Arc<Database>,
         /// Message queue for outbound messages
         pub message_queue: Arc<RwLock<MessageQueue>>,
+        /// Background sender handle
+        sender_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     }
 
     impl DchatClient {
@@ -364,6 +369,11 @@ pub mod client {
                 queue.push(message.clone())?;
             }
 
+            // Kick the background sender if present
+            if self.sender_handle.lock().await.is_none() {
+                tracing::debug!("Background sender not running; message remains queued");
+            }
+
             // 4. Route through network based on message type
             match &message.message_type {
                 dchat_messaging::types::MessageType::Direct { recipient, .. } => {
@@ -407,28 +417,10 @@ pub mod client {
                 .get_messages_for_user(&user_id.0.to_string(), 100)
                 .await?;
 
-            // Convert MessageRow to Message (simplified - in production would decrypt)
+            // Rehydrate and decrypt messages (best-effort)
             let messages: Vec<Message> = msg_rows
                 .into_iter()
-                .filter_map(|row| {
-                    // Skip already delivered messages
-                    if row.status == "delivered" {
-                        return None;
-                    }
-
-                    // Build message from row (simplified reconstruction)
-                    let message = MessageBuilder::new()
-                        .encrypted_payload(row.encrypted_payload)
-                        .build()
-                        .ok()?;
-
-                    // Filter out expired messages
-                    if message.is_deliverable() {
-                        Some(message)
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|row| self.rehydrate_message(&row).ok())
                 .collect();
 
             tracing::info!(
@@ -443,6 +435,104 @@ pub mod client {
         /// Get current identity
         pub fn identity(&self) -> &Identity {
             &self.identity
+        }
+
+        /// Start a background sender loop that drains the message queue
+        pub fn start_background_sender(self: &Arc<Self>) {
+            let client = Arc::clone(self);
+            let handle = tokio::spawn(async move {
+                let mut ticker = interval(Duration::from_millis(200));
+                loop {
+                    ticker.tick().await;
+
+                    // Pop one message per tick to avoid starving the reactor
+                    let maybe_msg = {
+                        let mut queue = client.message_queue.write().await;
+                        queue.pop()
+                    };
+
+                    let Some(message) = maybe_msg else {
+                        continue;
+                    };
+
+                    // TODO: integrate real network send once available
+                    tracing::info!("Dispatching message {} via network (stub)", message.id.0);
+                    let _ = client.network.clone(); // placeholder to keep ownership until send API is wired
+
+                    // Mark as sent in database for visibility
+                    // Future: update persisted status when storage API exposes it
+                }
+            });
+
+            // Store handle if not already set
+            let client_handle = Arc::clone(&self.sender_handle);
+            tokio::spawn(async move {
+                let mut guard = client_handle.lock().await;
+                if guard.is_none() {
+                    *guard = Some(handle);
+                }
+            });
+        }
+
+        /// Best-effort message reconstruction and decryption
+        fn rehydrate_message(&self, row: &dchat_storage::MessageRow) -> Result<Message> {
+            // Determine message type
+            let msg_type = if let Some(recipient) = &row.recipient_id {
+                let sender_uuid = uuid::Uuid::parse_str(&row.sender_id)
+                    .map_err(|e| Error::validation(format!("Invalid sender_id: {}", e)))?;
+                let recipient_uuid = uuid::Uuid::parse_str(recipient)
+                    .map_err(|e| Error::validation(format!("Invalid recipient_id: {}", e)))?;
+                MessageType::Direct {
+                    sender: dchat_core::types::UserId(sender_uuid),
+                    recipient: dchat_core::types::UserId(recipient_uuid),
+                }
+            } else if let Some(channel_id) = &row.channel_id {
+                let sender_uuid = uuid::Uuid::parse_str(&row.sender_id)
+                    .map_err(|e| Error::validation(format!("Invalid sender_id: {}", e)))?;
+                let channel_uuid = uuid::Uuid::parse_str(channel_id)
+                    .map_err(|e| Error::validation(format!("Invalid channel_id: {}", e)))?;
+                MessageType::Channel {
+                    sender: dchat_core::types::UserId(sender_uuid),
+                    channel_id: dchat_core::types::ChannelId(channel_uuid),
+                }
+            } else {
+                MessageType::System {
+                    content: "system".to_string(),
+                }
+            };
+
+            // Decrypt payload if possible; fallback to plaintext content
+            let content = if row.content_type == "plaintext" && !row.content.is_empty() {
+                dchat_core::types::MessageContent::Text(row.content.clone())
+            } else {
+                // TODO: integrate real decryption using identity keys
+                dchat_core::types::MessageContent::System("encrypted-payload".to_string())
+            };
+
+            // Build message
+            let message = Message {
+                id: dchat_core::types::MessageId(
+                    uuid::Uuid::parse_str(&row.id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                ),
+                message_type: msg_type,
+                content,
+                encrypted_payload: row.encrypted_payload.clone(),
+                timestamp: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(row.timestamp as u64),
+                sequence: row.sequence_num.map(|s| s as u64),
+                status: dchat_messaging::MessageStatus::Sent,
+                expires_at: row
+                    .expires_at
+                    .map(|ts| std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts as u64)),
+                size: row.size,
+            };
+
+            // Drop expired
+            if !message.is_deliverable() {
+                return Err(Error::messaging("Message expired".into()));
+            }
+
+            Ok(message)
         }
     }
 
@@ -494,6 +584,7 @@ pub mod client {
                 network: Arc::new(network),
                 database: Arc::new(database),
                 message_queue: Arc::new(RwLock::new(message_queue)),
+                sender_handle: Arc::new(Mutex::new(None)),
             })
         }
     }

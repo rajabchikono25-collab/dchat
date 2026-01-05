@@ -1079,6 +1079,27 @@ fn default_health_addr() -> String {
     "127.0.0.1:8080".to_string()
 }
 
+/// Enforce that production builds do not run with development default binds
+#[cfg(not(debug_assertions))]
+fn enforce_production_endpoints(cli: &Cli) -> Result<()> {
+    // Health endpoint default is loopback; warn but allow
+    if cli.health_addr == default_health_addr() {
+        warn!(
+            "⚠️  Using default health address (127.0.0.1:8080). Set --health-addr for production."
+        );
+    }
+
+    if let Commands::Relay { listen, .. } = &cli.command {
+        if listen == &default_relay_listen() {
+            return Err(Error::Config(
+                "Relay listen address is using the development default (0.0.0.0:7070). Set --listen explicitly for production.".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Parser)]
 #[command(name = "dchat")]
 #[command(version = VERSION)]
@@ -3397,6 +3418,10 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = load_config(&cli.config).await?;
     info!("✓ Configuration loaded from {:?}", cli.config);
+
+    // Enforce production-safe endpoint configuration
+    #[cfg(not(debug_assertions))]
+    enforce_production_endpoints(&cli)?;
 
     // Initialize keyless onboarding (enclave + biometric hooks). Non-fatal — log and continue on error.
     match dchat::onboarding::keyless::init_keyless().await {
