@@ -7824,7 +7824,14 @@ async fn run_validator_node(
     // Initialize state validator for Byzantine fault detection
     let state_validator: Arc<tokio::sync::Mutex<StateValidator>> =
         Arc::new(tokio::sync::Mutex::new(StateValidator::new()));
-    info!("✓ State validator initialized for Byzantine fault detection");
+
+    // Seed genesis block (block 0) to establish chain anchor for state validation
+    // This is required before validating any subsequent blocks
+    {
+        let mut validator = state_validator.lock().await;
+        validator.seed_genesis_default();
+        info!("✓ State validator initialized with genesis anchor (block 0)");
+    }
 
     // Resolve currency chain RPC URL before spawning consensus task (avoid panic inside task)
     let consensus_currency_rpc_url = resolve_required_currency_chain_rpc_url(&config)?;

@@ -1,0 +1,58 @@
+# DChat Mainnet Validator Configuration - South Africa
+# For genesis validator launching the mainnet
+
+[network]
+listen_addresses = ["/ip4/0.0.0.0/tcp/7070"]
+# Bootstrap peers - full multiaddr with PeerId
+bootstrap_peers = [
+  "/dns4/ind.firebirdcomputing.com/tcp/7070/p2p/12D3KooWF8LZv7S9QUCWgAYT5FtUJCbeSByV4kA1oBCiBwwbnGVo",
+  "/dns4/uae.firebirdcomputing.com/tcp/7070/p2p/12D3KooWJFoqm3BhLm8g5eiuYcpycHpNjbV6FacvN9LimHUZ1jVu",
+]
+max_connections = 200
+connection_timeout_ms = 15000
+enable_mdns = false
+enable_upnp = false
+external_address = "/ip4/4.221.211.71/tcp/7070"
+
+[rpc]
+# Genesis mode: validators will use pre-staked genesis, these RPCs are for future operations
+currency_chain_rpc_url = "http://127.0.0.1:26657"
+chat_chain_rpc_url = "http://127.0.0.1:26658"
+
+[storage]
+data_dir = "./dchat_mainnet_data"
+max_message_cache_size = 100000
+message_retention_days = 365
+enable_backup = true
+backup_interval_hours = 1
+db_pool_size = 10
+db_connection_timeout_secs = 30
+db_idle_timeout_secs = 600
+db_max_lifetime_secs = 1800
+db_enable_wal = true
+
+[crypto]
+key_rotation_interval_hours = 168
+max_messages_per_key = 10000
+enable_post_quantum = false
+noise_protocol_pattern = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
+
+[governance]
+voting_period_hours = 168
+minimum_stake_for_proposal = 1000
+quorum_threshold = 0.33
+enable_anonymous_voting = true
+
+[relay]
+enable_relay = false
+max_relay_connections = 100
+relay_reward_threshold = 100
+uptime_reporting_interval_minutes = 60
+stake_amount = 0
+
+[monitoring]
+metrics_enabled = true
+metrics_port = 9090
+tracing_enabled = false
+health_check_enabled = true
+health_check_port = 8080

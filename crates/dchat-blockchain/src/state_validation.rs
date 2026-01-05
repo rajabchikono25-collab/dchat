@@ -246,6 +246,33 @@ impl StateValidator {
         }
     }
 
+    /// Seed the genesis block (block 0) state root
+    /// This must be called before validating any blocks to establish the chain anchor
+    pub fn seed_genesis(&mut self, genesis_state_root: Vec<u8>, genesis_post_state: Vec<u8>) {
+        tracing::info!(
+            "Seeding genesis state: root={}, post_state={}",
+            hex::encode(&genesis_state_root[..8.min(genesis_state_root.len())]),
+            hex::encode(&genesis_post_state[..8.min(genesis_post_state.len())])
+        );
+        self.verified_roots.insert(0, genesis_state_root);
+        self.last_post_states.insert(0, genesis_post_state);
+    }
+
+    /// Seed genesis with a default empty state (for bootstrapping new chains)
+    /// Uses all-zeros as the genesis anchor point
+    pub fn seed_genesis_default(&mut self) {
+        let genesis_root = vec![0u8; 32];
+        let genesis_post_state = vec![0u8; 32];
+        tracing::info!("Seeding default genesis state (zero anchor)");
+        self.verified_roots.insert(0, genesis_root);
+        self.last_post_states.insert(0, genesis_post_state);
+    }
+
+    /// Check if genesis has been seeded
+    pub fn is_genesis_seeded(&self) -> bool {
+        self.verified_roots.contains_key(&0)
+    }
+
     /// Validate a block's state transitions
     pub fn validate_block(&mut self, block: &Block) -> Result<Vec<u8>> {
         // 1. Verify block structure
