@@ -33,7 +33,9 @@ use super::genesis::{
 };
 
 /// Minimum validators required to launch mainnet
-pub const MIN_GENESIS_VALIDATORS: usize = 4;
+/// NOTE: Set to 3 for initial mainnet launch with 3 foundation validators.
+/// Should be increased to 4+ as network grows for stronger BFT guarantees.
+pub const MIN_GENESIS_VALIDATORS: usize = 3;
 
 /// Maximum validators in genesis set
 pub const MAX_GENESIS_VALIDATORS: usize = 100;
