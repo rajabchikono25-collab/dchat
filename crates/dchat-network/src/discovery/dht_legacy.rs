@@ -1,3 +1,6 @@
+use hickory_resolver::config::*;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::Resolver;
 use libp2p::{
     kad::{
         store::MemoryStore, Behaviour as Kademlia, Config as KademliaConfig, Event as KadEvent,
@@ -14,8 +17,9 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
-use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::*;
+
+/// Type alias for the async resolver
+type TokioAsyncResolver = Resolver<TokioConnectionProvider>;
 
 /// DNS refresh interval - how often to try DNS before falling back to DHT
 pub const DNS_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60); // 5 minutes
@@ -222,13 +226,17 @@ impl DhtBootstrap {
         let start = Instant::now();
         let mut discovered = Vec::new();
 
-        debug!("Attempting DNS discovery from {} seeds", self.dns_seeds.len());
+        debug!(
+            "Attempting DNS discovery from {} seeds",
+            self.dns_seeds.len()
+        );
 
         // Create DNS resolver with default configuration
-        let resolver = TokioAsyncResolver::tokio(
+        let resolver = Resolver::builder_with_config(
             ResolverConfig::default(),
-            ResolverOpts::default(),
-        );
+            TokioConnectionProvider::default(),
+        )
+        .build();
 
         // Query each DNS seed
         for seed in &self.dns_seeds {
@@ -286,7 +294,9 @@ impl DhtBootstrap {
                             if let Some(multiaddr_str) = txt_str.strip_prefix("dnsaddr=") {
                                 if let Ok(multiaddr) = Multiaddr::from_str(multiaddr_str) {
                                     // Extract PeerId from multiaddr if present
-                                    if let Some(peer_id) = extract_peer_id_from_multiaddr(&multiaddr) {
+                                    if let Some(peer_id) =
+                                        extract_peer_id_from_multiaddr(&multiaddr)
+                                    {
                                         peers.push(DiscoveredPeer::new(
                                             peer_id,
                                             vec![multiaddr],
@@ -378,7 +388,7 @@ impl DhtBootstrap {
     }
 
     /// Try DHT discovery using Kademlia
-    /// 
+    ///
     /// Queries the Kademlia DHT for peers closest to randomly generated peer IDs.
     /// This provides decentralized peer discovery when DNS seeds are unavailable.
     async fn try_dht_discovery(&self) -> Result<Vec<DiscoveredPeer>, DiscoveryError> {
@@ -404,15 +414,19 @@ impl DhtBootstrap {
                 for entry in bucket.iter() {
                     let peer_id = *entry.node.key.preimage();
                     let addresses: Vec<Multiaddr> = entry.node.value.clone().into_vec();
-                    
+
                     if !addresses.is_empty() {
-                        debug!("Found peer {} in DHT routing table with {} addresses", peer_id, addresses.len());
+                        debug!(
+                            "Found peer {} in DHT routing table with {} addresses",
+                            peer_id,
+                            addresses.len()
+                        );
                         discovered.push(DiscoveredPeer::new(
                             peer_id,
                             addresses,
                             DiscoveryMethod::Dht,
                         ));
-                        
+
                         // Limit to MAX_BOOTSTRAP_PEERS
                         if discovered.len() >= MAX_BOOTSTRAP_PEERS {
                             break;
@@ -428,7 +442,7 @@ impl DhtBootstrap {
         // If we found peers in routing table, return them
         if !discovered.is_empty() {
             info!("DHT routing table contains {} peers", discovered.len());
-            
+
             let duration = start.elapsed();
             let mut metrics = self.metrics.write().unwrap();
             if metrics.avg_dht_duration_ms == 0 {
@@ -437,12 +451,12 @@ impl DhtBootstrap {
                 metrics.avg_dht_duration_ms =
                     (metrics.avg_dht_duration_ms * 7 + duration.as_millis() as u64 * 3) / 10;
             }
-            
+
             return Ok(discovered);
         }
 
         // No peers in routing table - DHT needs bootstrap
-        // Note: Active Kademlia queries (get_closest_peers) require integration with 
+        // Note: Active Kademlia queries (get_closest_peers) require integration with
         // the libp2p Swarm event loop. When using DhtBootstrap within a Swarm context,
         // the caller should:
         // 1. Call kademlia.get_closest_peers(random_peer_id) to start a query
@@ -470,11 +484,8 @@ impl DhtBootstrap {
         let cache = self.cache.read().unwrap();
 
         // Filter fresh peers only
-        let fresh_peers: Vec<DiscoveredPeer> = cache
-            .values()
-            .filter(|p| p.is_fresh())
-            .cloned()
-            .collect();
+        let fresh_peers: Vec<DiscoveredPeer> =
+            cache.values().filter(|p| p.is_fresh()).cloned().collect();
 
         let mut metrics = self.metrics.write().unwrap();
         if fresh_peers.is_empty() {
@@ -537,19 +548,19 @@ impl DhtBootstrap {
     }
 
     /// Get mutable reference to Kademlia for Swarm integration
-    /// 
+    ///
     /// Use this to integrate with libp2p Swarm event loop:
     /// ```ignore
     /// let bootstrap = DhtBootstrap::new(seeds);
     /// bootstrap.initialize_kademlia(local_peer_id);
-    /// 
+    ///
     /// // In Swarm event loop:
     /// if let Some(kad) = bootstrap.kademlia_mut() {
     ///     // Start random walk for peer discovery
     ///     let random_id = PeerId::random();
     ///     kad.get_closest_peers(random_id);
     /// }
-    /// 
+    ///
     /// // Handle Kademlia events:
     /// match event {
     ///     SwarmEvent::Behaviour(KademliaEvent::OutboundQueryProgressed {
@@ -573,7 +584,7 @@ impl DhtBootstrap {
     }
 
     /// Add a discovered peer from Kademlia query results
-    /// 
+    ///
     /// Call this when processing KademliaEvent::OutboundQueryProgressed with GetClosestPeers
     pub fn add_discovered_peer(&self, peer_id: PeerId, addresses: Vec<Multiaddr>) {
         if !addresses.is_empty() {
@@ -585,20 +596,23 @@ impl DhtBootstrap {
     }
 
     /// Start a DHT random walk for peer discovery
-    /// 
+    ///
     /// Initiates a query to find peers close to a random ID. The caller must process
     /// the resulting Kademlia events in their Swarm event loop and call add_discovered_peer()
     /// with the results.
-    /// 
+    ///
     /// Returns the query ID for tracking, or None if Kademlia is not initialized.
     pub fn start_random_walk(&mut self) -> Option<libp2p::kad::QueryId> {
         if let Some(ref mut kademlia) = self.kademlia {
             let random_target = PeerId::random();
             debug!("Starting DHT random walk targeting {}", random_target);
-            
+
             let query_id = kademlia.get_closest_peers(random_target);
-            self.active_queries.write().unwrap().insert(format!("{:?}", query_id));
-            
+            self.active_queries
+                .write()
+                .unwrap()
+                .insert(format!("{:?}", query_id));
+
             Some(query_id)
         } else {
             warn!("Cannot start random walk: Kademlia not initialized");
@@ -607,7 +621,7 @@ impl DhtBootstrap {
     }
 
     /// Add address for a known peer to Kademlia routing table
-    /// 
+    ///
     /// Use this to bootstrap Kademlia with known relay nodes
     pub fn add_address(&mut self, peer_id: &PeerId, addr: Multiaddr) {
         if let Some(ref mut kademlia) = self.kademlia {
@@ -617,11 +631,13 @@ impl DhtBootstrap {
     }
 
     /// Bootstrap Kademlia with initial peers
-    /// 
+    ///
     /// Adds addresses and initiates bootstrap process to populate routing table
     pub fn bootstrap_with_peers(&mut self, peers: &[DiscoveredPeer]) -> Result<(), DiscoveryError> {
         if self.kademlia.is_none() {
-            return Err(DiscoveryError::DnsFailed("Kademlia not initialized".to_string()));
+            return Err(DiscoveryError::DnsFailed(
+                "Kademlia not initialized".to_string(),
+            ));
         }
 
         for peer in peers {
@@ -635,7 +651,10 @@ impl DhtBootstrap {
         // Trigger bootstrap to start populating routing table
         if let Some(ref mut kademlia) = self.kademlia {
             if let Err(e) = kademlia.bootstrap() {
-                warn!("Kademlia bootstrap returned error (expected if no peers yet): {:?}", e);
+                warn!(
+                    "Kademlia bootstrap returned error (expected if no peers yet): {:?}",
+                    e
+                );
             } else {
                 info!("Kademlia bootstrap initiated with {} peers", peers.len());
             }
@@ -658,7 +677,7 @@ impl DhtBootstrap {
 /// Extract PeerId from multiaddr if present
 fn extract_peer_id_from_multiaddr(multiaddr: &Multiaddr) -> Option<PeerId> {
     use libp2p::multiaddr::Protocol;
-    
+
     for protocol in multiaddr.iter() {
         if let Protocol::P2p(peer_id) = protocol {
             return Some(peer_id);
@@ -705,7 +724,10 @@ mod tests {
 
     #[test]
     fn test_dht_bootstrap_creation() {
-        let seeds = vec!["seed1.example.com".to_string(), "seed2.example.com".to_string()];
+        let seeds = vec![
+            "seed1.example.com".to_string(),
+            "seed2.example.com".to_string(),
+        ];
         let bootstrap = DhtBootstrap::new(seeds.clone());
 
         assert_eq!(bootstrap.dns_seeds, seeds);

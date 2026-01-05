@@ -38,3 +38,12 @@ coverage/
 dist/
 build/
 node_modules
+
+# SECURITY: Never commit private keys or validator secrets
+validator-*.json
+*.pem
+*.key
+*-secret.toml
+*-private.toml
+secrets/
+.secrets/

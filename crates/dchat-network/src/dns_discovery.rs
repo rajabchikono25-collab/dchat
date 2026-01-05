@@ -8,11 +8,15 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::Resolver;
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
+
+/// Type alias for the async resolver
+type TokioAsyncResolver = Resolver<TokioConnectionProvider>;
 
 // Result type for DNS discovery operations
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -133,7 +137,10 @@ impl DnsDiscoveryManager {
         resolver_opts.timeout = config.query_timeout;
         resolver_opts.attempts = 3;
 
-        let resolver = TokioAsyncResolver::tokio(resolver_config, resolver_opts);
+        let resolver =
+            Resolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+                .with_options(resolver_opts)
+                .build();
 
         Ok(Self {
             config,

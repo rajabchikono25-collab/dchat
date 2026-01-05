@@ -64,7 +64,7 @@ zeroize = { version = "1", features = ["derive"] }
 bitflags = { version = "2" }
 
 # Metrics - NOT used in WASM
-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.14", optional = true }
 once_cell = { version = "1" }
 
 # WebAssembly runtime - wasmi chosen for production:

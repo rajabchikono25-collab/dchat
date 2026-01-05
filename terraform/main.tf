@@ -39,7 +39,36 @@ variable "cockroachdb_connection_string" {
   description = "CockroachDB Cloud connection string"
   type        = string
   sensitive   = true
-  default     = "postgresql://rajab:sLiaFpvhwzPSBEnvBoc2jg@absurd-auroch-17923.j77.cockroachlabs.cloud:26257/dchat?sslmode=verify-full"
+  default     = ""
+
+  validation {
+    condition     = length(trim(var.cockroachdb_connection_string)) > 0
+    error_message = "cockroachdb_connection_string must be set (do not hardcode credentials in Terraform files)."
+  }
+}
+
+variable "ssh_cidrs" {
+  description = "CIDR blocks allowed to SSH to validators (restrict in production)"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "health_cidrs" {
+  description = "CIDR blocks allowed to access health endpoint (8080)"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "metrics_cidrs" {
+  description = "CIDR blocks allowed to access Prometheus metrics (9090)"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "minio_console_cidrs" {
+  description = "CIDR blocks allowed to access MinIO console (9001)"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
 
 variable "domain" {

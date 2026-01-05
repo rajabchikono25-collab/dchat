@@ -1,6 +1,6 @@
 {
   "created_at": "2025-12-30T12:29:16.731480800+00:00",
   "key_type": "ed25519",
-  "private_key": "[184, 167, 164, 153, 24, 143, 192, 88, 108, 10, 206, 50, 231, 208, 165, 8, 161, 252, 195, 211, 30, 215, 210, 58, 191, 119, 234, 242, 82, 16, 153, 165]",
+  "private_key": "REDACTED - Generate new key with: dchat keygen validator",
   "public_key": "f096e562b7a6cd16b3a263b391f89e99e30b5c6bfb882aed20cae566ab5105bf"
 }

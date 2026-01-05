@@ -2410,6 +2410,10 @@ enum BotCommand {
         /// Owner user ID
         #[arg(long)]
         owner_id: String,
+
+        /// Print the full bot token to stdout (DANGEROUS: may end up in logs/shell history)
+        #[arg(long, default_value_t = false)]
+        reveal_token: bool,
     },
 
     /// List all bots or bots by owner
@@ -2435,6 +2439,10 @@ enum BotCommand {
         /// Owner user ID
         #[arg(long)]
         owner_id: String,
+
+        /// Print the full new token to stdout (DANGEROUS: may end up in logs/shell history)
+        #[arg(long, default_value_t = false)]
+        reveal_token: bool,
     },
 
     /// Set webhook URL for bot
@@ -10159,6 +10167,21 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
 /// Run bot management commands
 async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
     use dchat::bots::{BotFather, CreateBotRequest};
+
+    fn mask_secret_for_display(value: &str) -> String {
+        const EDGE: usize = 4;
+        if value.is_empty() {
+            return "".to_string();
+        }
+        if value.len() <= EDGE * 2 {
+            return "*".repeat(value.len());
+        }
+        format!(
+            "{}…{}",
+            &value[..EDGE],
+            &value[value.len().saturating_sub(EDGE)..]
+        )
+    }
     use dchat_core::types::UserId;
 
     let bot_father = BotFather::new();
@@ -10169,6 +10192,7 @@ async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
             name,
             description,
             owner_id,
+            reveal_token,
         } => {
             info!("🤖 Creating bot: {}", username);
 
@@ -10189,7 +10213,12 @@ async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
             println!("Bot ID: {}", bot.id);
             println!("Username: @{}", bot.username);
             println!("Name: {}", bot.display_name);
-            println!("Token: {}", bot.token);
+            if reveal_token {
+                println!("Token: {}", bot.token);
+            } else {
+                println!("Token: {}", mask_secret_for_display(&bot.token));
+                println!("(Use --reveal-token to print the full token)");
+            }
             println!("\n⚠️  Keep this token secret! It cannot be recovered.");
 
             Ok(())
@@ -10252,7 +10281,11 @@ async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
             Ok(())
         }
 
-        BotCommand::RegenerateToken { bot_id, owner_id } => {
+        BotCommand::RegenerateToken {
+            bot_id,
+            owner_id,
+            reveal_token,
+        } => {
             let bot_uuid =
                 uuid::Uuid::parse_str(&bot_id).map_err(|_| Error::validation("Invalid bot ID"))?;
             let owner = UserId(
@@ -10263,7 +10296,12 @@ async fn run_bot_command(_config: Config, action: BotCommand) -> Result<()> {
             let new_token = bot_father.regenerate_token(&bot_uuid, &owner)?;
 
             println!("\n✅ Token regenerated successfully!");
-            println!("New token: {}", new_token);
+            if reveal_token {
+                println!("New token: {}", new_token);
+            } else {
+                println!("New token: {}", mask_secret_for_display(&new_token));
+                println!("(Use --reveal-token to print the full token)");
+            }
             println!("\n⚠️  Keep this token secret! Old token is now invalid.");
 
             Ok(())

@@ -88,21 +88,68 @@ impl WebhookManager {
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
-                .unwrap(),
+                .unwrap_or_else(|_| reqwest::Client::new()),
+        }
+    }
+
+    fn validate_webhook_url(url: &str) -> Result<reqwest::Url> {
+        let parsed =
+            reqwest::Url::parse(url).map_err(|_| Error::validation("Invalid webhook URL"))?;
+
+        if parsed.scheme() != "https" {
+            return Err(Error::validation("Webhook URL must use HTTPS"));
+        }
+
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| Error::validation("Webhook URL must include a host"))?;
+
+        // Block obvious SSRF targets. (DNS rebinding/internal resolution is still possible;
+        // production deployments should also enforce egress controls.)
+        if host.eq_ignore_ascii_case("localhost") {
+            return Err(Error::validation("Webhook URL must not use localhost"));
+        }
+
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if Self::is_private_ip(&ip) {
+                return Err(Error::validation(
+                    "Webhook URL must not target private or loopback IP ranges",
+                ));
+            }
+        }
+
+        Ok(parsed)
+    }
+
+    fn is_private_ip(ip: &std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+                // CGNAT
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    // link-local fe80::/10
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+                    // unique local fc00::/7
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+            }
         }
     }
 
     /// Set webhook for a bot
     pub async fn set_webhook(&self, bot: &mut Bot, config: WebhookConfig) -> Result<()> {
-        // Validate URL
-        if !config.url.starts_with("https://") {
-            return Err(Error::validation("Webhook URL must use HTTPS"));
-        }
+        // Validate URL (and block obvious SSRF targets)
+        let parsed = Self::validate_webhook_url(&config.url)?;
 
         // Test webhook URL
-        match self.test_webhook(&config.url).await {
+        match self.test_webhook(parsed.as_str()).await {
             Ok(_) => {
-                bot.webhook_url = Some(config.url);
+                bot.webhook_url = Some(parsed.to_string());
                 Ok(())
             }
             Err(e) => Err(Error::network(format!(
@@ -130,16 +177,28 @@ impl WebhookManager {
         update: WebhookUpdate,
         secret_token: Option<&str>,
     ) -> Result<WebhookDeliveryResult> {
-        let mut request = self.http_client.post(webhook_url).json(&update);
+        let webhook_url = Self::validate_webhook_url(webhook_url)?;
+        let payload = serde_json::to_vec(&update).map_err(|e| {
+            Error::validation(format!("Failed to serialize webhook payload: {}", e))
+        })?;
+
+        let mut request = self
+            .http_client
+            .post(webhook_url)
+            .header("Content-Type", "application/json")
+            .body(payload.clone());
 
         // Add secret token header if provided
         if let Some(token) = secret_token {
             request = request.header("X-Dchat-Bot-Api-Secret-Token", token);
         }
 
-        // Add signature header
-        let signature = self.compute_signature(&update, secret_token);
-        request = request.header("X-Dchat-Signature", signature);
+        // Add signature header only when a secret is configured.
+        // If no secret is configured, we intentionally do NOT emit a signature to avoid
+        // the false sense of security of a shared default.
+        if let Some(signature) = self.compute_signature(&payload, secret_token) {
+            request = request.header("X-Dchat-Signature", signature);
+        }
 
         match request.send().await {
             Ok(response) => {
@@ -166,6 +225,7 @@ impl WebhookManager {
 
     /// Test webhook URL
     async fn test_webhook(&self, url: &str) -> Result<()> {
+        let url = Self::validate_webhook_url(url)?;
         let test_update = WebhookUpdate {
             update_id: 0,
             update_type: UpdateType::Message,
@@ -175,10 +235,15 @@ impl WebhookManager {
             timestamp: Utc::now(),
         };
 
+        let payload = serde_json::to_vec(&test_update).map_err(|e| {
+            Error::validation(format!("Failed to serialize webhook payload: {}", e))
+        })?;
+
         let response = self
             .http_client
             .post(url)
-            .json(&test_update)
+            .header("Content-Type", "application/json")
+            .body(payload)
             .send()
             .await
             .map_err(|e| Error::network(format!("Webhook test failed: {}", e)))?;
@@ -194,33 +259,35 @@ impl WebhookManager {
     }
 
     /// Compute HMAC signature for webhook payload
-    fn compute_signature(&self, update: &WebhookUpdate, secret: Option<&str>) -> String {
+    fn compute_signature(&self, payload: &[u8], secret: Option<&str>) -> Option<String> {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let secret = secret.unwrap_or("dchat_default_secret");
-        let payload = serde_json::to_string(update).unwrap();
+        let secret = secret?;
 
         type HmacSha256 = Hmac<Sha256>;
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(payload.as_bytes());
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+        mac.update(payload);
         let result = mac.finalize();
 
-        format!("sha256={}", hex::encode(result.into_bytes()))
+        Some(format!("sha256={}", hex::encode(result.into_bytes())))
     }
 
     /// Verify webhook signature
     pub fn verify_signature(&self, payload: &[u8], signature: &str, secret: &str) -> bool {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
+        use subtle::ConstantTimeEq;
 
         type HmacSha256 = Hmac<Sha256>;
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
         mac.update(payload);
         let result = mac.finalize();
 
         let expected = format!("sha256={}", hex::encode(result.into_bytes()));
-        expected == signature
+        expected.as_bytes().ct_eq(signature.as_bytes()).into()
     }
 }
 
@@ -273,7 +340,10 @@ mod tests {
             timestamp: Utc::now(),
         };
 
-        let signature = manager.compute_signature(&update, Some("test_secret"));
+        let payload = serde_json::to_vec(&update).unwrap();
+        let signature = manager
+            .compute_signature(&payload, Some("test_secret"))
+            .expect("signature should be computed when secret is present");
         assert!(signature.starts_with("sha256="));
     }
 

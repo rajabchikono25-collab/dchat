@@ -8,7 +8,7 @@
 //!
 //! Uses MaxMind GeoLite2 City database (free, updated monthly)
 
-use maxminddb::{geoip2, MaxMindDBError, Reader};
+use maxminddb::{geoip2, MaxMindDbError, Reader};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::path::Path;
@@ -18,7 +18,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum GeoIPError {
     #[error("MaxMind database error: {0}")]
-    DatabaseError(#[from] MaxMindDBError),
+    DatabaseError(#[from] MaxMindDbError),
 
     #[error("IP address not found in database: {0}")]
     AddressNotFound(String),
@@ -164,39 +164,30 @@ impl GeoIPManager {
 
     /// Lookup IP address
     pub fn lookup(&self, ip: IpAddr) -> Result<GeoLocation> {
-        let city: geoip2::City = self
-            .reader
-            .lookup(ip)
-            .map_err(|e| GeoIPError::AddressNotFound(format!("{}: {}", ip, e)))?;
+        let lookup = self.reader.lookup(ip)?;
+        let city: geoip2::City = lookup
+            .decode()?
+            .ok_or_else(|| GeoIPError::AddressNotFound(format!("{}: not found", ip)))?;
 
-        let location = city
-            .location
-            .ok_or_else(|| GeoIPError::AddressNotFound(format!("No location data for {}", ip)))?;
-
-        let country = city
-            .country
-            .ok_or_else(|| GeoIPError::AddressNotFound(format!("No country data for {}", ip)))?;
-
-        let continent = city
-            .continent
-            .ok_or_else(|| GeoIPError::AddressNotFound(format!("No continent data for {}", ip)))?;
+        let location = city.location;
+        let country = city.country;
+        let continent = city.continent;
 
         Ok(GeoLocation {
             ip,
             latitude: location.latitude.unwrap_or(0.0),
             longitude: location.longitude.unwrap_or(0.0),
-            city: city
-                .city
-                .and_then(|c| c.names)
-                .and_then(|n| n.get("en").map(|s| s.to_string())),
+            city: city.city.names.english.map(|s| s.to_string()),
             country: country
                 .names
-                .and_then(|n| n.get("en").map(|s| s.to_string()))
+                .english
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".to_string()),
             country_code: country.iso_code.unwrap_or("XX").to_string(),
             continent: continent
                 .names
-                .and_then(|n| n.get("en").map(|s| s.to_string()))
+                .english
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".to_string()),
             continent_code: continent.code.unwrap_or("XX").to_string(),
             timezone: location.time_zone.map(|s| s.to_string()),
@@ -212,8 +203,9 @@ impl GeoIPManager {
             .as_ref()
             .ok_or_else(|| GeoIPError::AddressNotFound("ASN database not loaded".to_string()))?;
 
-        let asn: geoip2::Asn = asn_reader.lookup(ip).map_err(|e| {
-            GeoIPError::AddressNotFound(format!("ASN lookup failed for {}: {}", ip, e))
+        let lookup = asn_reader.lookup(ip)?;
+        let asn: geoip2::Asn = lookup.decode()?.ok_or_else(|| {
+            GeoIPError::AddressNotFound(format!("ASN lookup not found for {}", ip))
         })?;
 
         Ok((

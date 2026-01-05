@@ -48,7 +48,8 @@ x509-parser = "0.16"
 der-parser = "9.0"
 
 # RSA for Google service account JWT signing
-rsa = { version = "0.9", features = ["sha2"] }
+# SECURITY: Use 0.9.7+ to mitigate RUSTSEC-2023-0071 (Marvin timing attack)
+rsa = { version = "0.9.7", features = ["sha2"] }
 
 # Base64 encoding for attestation challenges
 base64 = "0.21"
@@ -57,7 +58,7 @@ base64 = "0.21"
 unicode-normalization = "0.1"
 
 # HTTP client for CAPTCHA verification and attestation APIs
-reqwest = { version = "0.11", features = [
+reqwest = { version = "0.12", features = [
   "json",
   "rustls-tls",
 ], default-features = false, optional = true }

@@ -58,7 +58,8 @@ console = "0.15"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# SECURITY: Use 0.3.19+ to fix RUSTSEC-2025-0055
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"

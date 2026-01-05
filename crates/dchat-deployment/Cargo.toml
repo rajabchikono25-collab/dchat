@@ -15,7 +15,8 @@ reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
 ] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# SECURITY: Use 0.3.19+ to fix RUSTSEC-2025-0055
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }

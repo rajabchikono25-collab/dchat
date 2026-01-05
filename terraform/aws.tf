@@ -30,7 +30,7 @@ resource "aws_security_group" "validator" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.ssh_cidrs
     description = "SSH access"
   }
 
@@ -56,7 +56,7 @@ resource "aws_security_group" "validator" {
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.health_cidrs
     description = "Health check endpoint"
   }
 
@@ -65,7 +65,7 @@ resource "aws_security_group" "validator" {
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.metrics_cidrs
     description = "Prometheus metrics"
   }
 
@@ -101,7 +101,7 @@ resource "aws_security_group" "validator" {
     from_port   = 9001
     to_port     = 9001
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.minio_console_cidrs
     description = "MinIO Console (restrict in production)"
   }
 

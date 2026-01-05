@@ -29,7 +29,7 @@ image = "0.24"
 rust-s3 = { version = "0.35", default-features = false, features = [
   "tokio-rustls-tls",
 ] }
-tikv-client = "0.3"
+tikv-client = { version = "0.3", default-features = false }
 
 # Serialization
 serde = { workspace = true }
