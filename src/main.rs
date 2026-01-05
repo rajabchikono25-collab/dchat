@@ -7442,12 +7442,13 @@ async fn run_validator_node(
     let min_peers_needed = required_signatures.saturating_sub(1);
 
     while tokio::time::Instant::now() < connection_deadline {
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            network_arc.lock().await.next_event(),
-        )
-        .await
-        {
+        // Get the next event, releasing the lock after the event is received
+        let event = {
+            let mut net = network_arc.lock().await;
+            tokio::time::timeout(tokio::time::Duration::from_secs(5), net.next_event()).await
+        };
+
+        match event {
             Ok(Some(NetworkEvent::PeerConnected {
                 peer_id: connected_peer_id,
                 endpoint,
@@ -7476,21 +7477,24 @@ async fn run_validator_node(
                     }
                 }
 
-                // Perform validator handshake
-                match perform_peer_handshake(
-                    connected_peer_id,
-                    &mut *network_arc.lock().await,
-                    &peer_registry_arc,
-                    NodeType::Validator,
-                    geographic_region.clone(),
-                )
-                .await
+                // Perform validator handshake (separate lock acquisition)
                 {
-                    Ok(_) => debug!("Validator handshake completed with {}", connected_peer_id),
-                    Err(e) => warn!(
-                        "Validator handshake failed with {}: {}",
-                        connected_peer_id, e
-                    ),
+                    let mut net = network_arc.lock().await;
+                    match perform_peer_handshake(
+                        connected_peer_id,
+                        &mut *net,
+                        &peer_registry_arc,
+                        NodeType::Validator,
+                        geographic_region.clone(),
+                    )
+                    .await
+                    {
+                        Ok(_) => debug!("Validator handshake completed with {}", connected_peer_id),
+                        Err(e) => warn!(
+                            "Validator handshake failed with {}: {}",
+                            connected_peer_id, e
+                        ),
+                    }
                 }
 
                 // Check if we've reached consensus threshold
