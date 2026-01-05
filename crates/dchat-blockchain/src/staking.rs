@@ -40,7 +40,7 @@ use dchat_core::motes::MOTES_PER_DCHAT;
 pub const MIN_VALIDATOR_STAKE: u64 = 10_000 * MOTES_PER_DCHAT; // 10,000 tokens with 8 decimal precision
 
 /// Maximum stake allowed per validator (1M DCHAT - anti-whale)
-pub const MAX_VALIDATOR_STAKE: u64 = 1_000_000 * MOTES_PER_DCHAT; // 1M tokens
+pub const MAX_VALIDATOR_STAKE: u64 = 100_000_000 * MOTES_PER_DCHAT; // 100M tokens (for foundation validators)
 
 /// Cooldown period for unstaking (7 days)
 pub const UNSTAKE_COOLDOWN_SECONDS: i64 = 7 * 24 * 60 * 60;
