@@ -134,6 +134,9 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 serde_json = "1.0"
 
+# Hostname for HSM simulation
+hostname = "0.4"
+
 # Configuration
 toml = "0.8"
 config = "0.13"

@@ -10,7 +10,9 @@ use std::time::Duration;
 // ============================================================================
 
 /// Minimum number of validators required for network operation
-pub const MIN_VALIDATORS: usize = 4;
+/// NOTE: Set to 3 for initial mainnet launch with 3 foundation validators.
+/// Should be increased to 4+ as network grows for stronger BFT guarantees.
+pub const MIN_VALIDATORS: usize = 3;
 
 /// Maximum supported validators in the network
 pub const MAX_VALIDATORS: usize = 100;
