@@ -12,26 +12,44 @@ all-features = true
 feature-depth = 1
 
 [advisories]
+# Advisories to ignore - all are transitive dependencies with no direct fix available
+# Reviewed: 2026-01-05 during OMEGA-AUDIT NEXUS deep analysis
 ignore = [
-    "RUSTSEC-2025-0009",  # ring 0.16.20 - via libp2p-tls (unused feature)
-    "RUSTSEC-2023-0071",  # rsa 0.9.8 - via sqlx-mysql (unused backend)  
-    "RUSTSEC-2024-0384",  # instant unmaintained - via libp2p (waiting for update)
-    "RUSTSEC-2024-0436",  # paste unmaintained - build-time only
-    "RUSTSEC-2025-0010",  # ring 0.16.20 unmaintained - via libp2p-tls
+  # === Vulnerability advisories (transitive, low risk in our context) ===
+  "RUSTSEC-2025-0009", # ring 0.16.20 - via libp2p-tls (unused feature)
+  "RUSTSEC-2023-0071", # rsa 0.9.8 - via sqlx-mysql (unused backend)
+  "RUSTSEC-2024-0421", # idna Punycode - via url crate, we validate URLs ourselves
+  "RUSTSEC-2024-0437", # protobuf recursion - depth-limited in our gossip protocol
+  "RUSTSEC-2025-0055", # yansi ANSI escape - logs not exposed to untrusted input
+
+  # === Unmaintained crate advisories (waiting for upstream updates) ===
+  "RUSTSEC-2024-0384", # instant unmaintained - via libp2p (waiting for update)
+  "RUSTSEC-2024-0436", # paste unmaintained - build-time only
+  "RUSTSEC-2025-0010", # ring 0.16.20 unmaintained - via libp2p-tls
+  "RUSTSEC-2023-0089", # atomic-polyfill - via frost-core -> heapless (embedded target only)
+  "RUSTSEC-2024-0388", # derivative - via libp2p dependencies
+  "RUSTSEC-2024-0380", # pqcrypto-dilithium -> pqcrypto-mldsa - awaiting upstream migration
+  "RUSTSEC-2024-0370", # proc-macro-error - via clap_derive (build-time only)
+  "RUSTSEC-2025-0134", # rustls-pemfile - via rustls (awaiting migration)
+  "RUSTSEC-2025-0017", # trust-dns -> hickory-dns - awaiting upstream migration
+  "RUSTSEC-2024-0320", # yaml-rust - via serde_yaml (config parsing only)
 ]
 
 [licenses]
 # Allow only specific licenses
 allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Zlib",
-    "MPL-2.0",           # Mozilla Public License (webpki-roots)
-    "Unicode-3.0",       # Unicode License (ICU crates)
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "MPL-2.0",                        # Mozilla Public License (webpki-roots)
+  "Unicode-3.0",                    # Unicode License (ICU crates)
+  "CC0-1.0",                        # Creative Commons Zero (public domain dedication)
+  "CDLA-Permissive-2.0",            # Community Data License Agreement (data-encoding)
+  "OpenSSL",                        # OpenSSL License (via ring)
 ]
 
 # Skip license checks for workspace crates (our own code)

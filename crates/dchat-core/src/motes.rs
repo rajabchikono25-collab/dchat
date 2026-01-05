@@ -37,8 +37,9 @@ pub const MOTES_PER_DCHAT: u64 = 100_000_000;
 pub const DCHAT_DECIMALS: u8 = 8;
 
 /// Maximum possible supply in motes.
-/// 100 billion DCHAT = 10^10 DCHAT * 10^8 motes = 10^18 motes.
-/// This fits comfortably in u64 (max ~1.84 * 10^19).
+/// 100 billion DCHAT = 10^11 DCHAT * 10^8 motes/DCHAT = 10^19 motes.
+/// This fits within u64::MAX (~1.84 * 10^19) but is close to the limit.
+/// Value: 10,000,000,000,000,000,000 (10 quintillion motes)
 pub const MAX_SUPPLY_MOTES: u64 = 100_000_000_000 * MOTES_PER_DCHAT;
 
 // ============================================================================
@@ -272,7 +273,10 @@ mod tests {
     fn test_constants() {
         assert_eq!(MOTES_PER_DCHAT, 100_000_000);
         assert_eq!(DCHAT_DECIMALS, 8);
-        assert_eq!(MAX_SUPPLY_MOTES, 100_000_000_000_000_000_000); // 10^20
+        // 100 billion DCHAT * 10^8 motes = 10^11 * 10^8 = 10^19 motes
+        assert_eq!(MAX_SUPPLY_MOTES, 10_000_000_000_000_000_000); // 10^19
+                                                                  // Verify it fits in u64
+        assert!(MAX_SUPPLY_MOTES < u64::MAX);
     }
 
     #[test]

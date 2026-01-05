@@ -2,6 +2,7 @@
 name = "dchat-validator"
 version = "0.1.0"
 edition = "2021"
+publish = false
 authors = ["dchat team"]
 description = "Validator node functionality for dchat blockchain"
 
@@ -25,7 +26,10 @@ tracing = "0.1"
 tokio = { version = "1.0", features = ["full"] }
 
 # Networking
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 
 # Random
 rand = "0.8"

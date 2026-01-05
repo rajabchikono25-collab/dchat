@@ -2,6 +2,7 @@
 name = "dchat-bots"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 dchat-core = { path = "../dchat-core" }
@@ -27,7 +28,10 @@ tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"
 
 # HTTP client/server
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 axum = { version = "0.7", features = ["macros"] }
 
 # Database

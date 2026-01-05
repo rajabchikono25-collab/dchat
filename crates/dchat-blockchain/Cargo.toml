@@ -2,6 +2,7 @@
 name = "dchat-blockchain"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description = "Blockchain client for parallel chain architecture (Chat Chain + Currency Chain)"
 
 [dependencies]
@@ -35,9 +36,12 @@ schnorrkel = "0.11"
 merlin = "3"
 
 once_cell = "1.19"
-prometheus = "0.13"
+prometheus = "0.14"
 reed-solomon-erasure = "6"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
@@ -59,7 +63,7 @@ pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
 
 # GeoIP database integration (Gap Fix #3)
-maxminddb = "0.24"
+maxminddb = "0.27"
 
 # Vote persistence layer (Gap Fix #2)
 sqlx = { workspace = true, features = ["postgres", "chrono", "uuid"] }
