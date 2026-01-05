@@ -1,4 +1,16 @@
 {
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix landing run dev --",
+    "build": "npm --prefix landing run build",
+    "start": "npm --prefix landing run start",
+    "lint": "npm --prefix landing run lint",
+
+    "landing:dev": "npm --prefix landing run dev --",
+    "landing:build": "npm --prefix landing run build",
+    "landing:start": "npm --prefix landing run start",
+    "landing:lint": "npm --prefix landing run lint"
+  },
   "dependencies": {
     "ts-node": "^10.9.2"
   }

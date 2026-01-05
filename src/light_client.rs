@@ -458,6 +458,13 @@ impl LightClient {
             return Err(Error::network("Already connected or connecting"));
         }
 
+        if self.config.fee_gated && self.fee_gateway.is_none() {
+            return Err(Error::Config(
+                "fee_gated=true requires FeeGateway. Call set_fee_gateway() before connect()."
+                    .to_string(),
+            ));
+        }
+
         self.set_state(ConnectionState::Connecting).await;
 
         // Build network config
@@ -752,8 +759,8 @@ impl LightClient {
                 .await;
         }
 
-        // Use fee-gated path for mainnet economics
-        if self.is_fee_gated() {
+        // If fee_gated=true, never bypass fees by falling back to the direct path.
+        if self.config.fee_gated {
             return self
                 .send_channel_message_fee_gated(channel_id, content)
                 .await;
@@ -769,10 +776,11 @@ impl LightClient {
         channel_id: &str,
         content: &str,
     ) -> Result<MessageId> {
-        let fee_gateway = self
-            .fee_gateway
-            .as_ref()
-            .ok_or_else(|| Error::internal("FeeGateway not configured but fee_gated=true"))?;
+        let fee_gateway = self.fee_gateway.as_ref().ok_or_else(|| {
+            Error::Config(
+                "fee_gated=true requires FeeGateway. Call set_fee_gateway() first.".to_string(),
+            )
+        })?;
 
         // Create deterministic ChannelId from channel name using UUID v5
         let channel_uuid = channel_name_to_uuid(channel_id);

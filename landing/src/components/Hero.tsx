@@ -7,47 +7,32 @@ const { hero } = site;
 
 export default function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center pt-32 overflow-hidden">
-      {/* Grid background */}
-      <div className="absolute inset-0 grid-bg opacity-50" />
+    <section className="relative overflow-hidden pt-28 pb-20 lg:pb-28">
+      <div className="absolute inset-0 grid-bg opacity-[0.08]" />
+      <div className="absolute inset-x-0 top-10 mx-auto h-64 w-3/4 max-w-5xl bg-gradient-to-r from-[rgba(79,209,197,0.15)] via-[rgba(106,90,205,0.18)] to-[rgba(245,158,11,0.14)] blur-[120px]" />
 
-      {/* Animated background orbs */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-20 left-10 w-[600px] h-[600px] bg-purple-500/20 rounded-full blur-[120px] animate-pulse-glow" />
-        <div className="absolute bottom-20 right-10 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[100px] animate-pulse-glow delay-1000" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-purple-600/10 rounded-full blur-[150px]" />
-      </div>
-
-      {/* Floating decorative elements */}
-      <div className="absolute top-40 right-20 w-20 h-20 border border-purple-500/20 rounded-2xl rotate-12 animate-float-slow hidden lg:block" />
-      <div className="absolute bottom-40 left-20 w-16 h-16 border border-blue-500/20 rounded-full animate-float hidden lg:block" />
-      <div className="absolute top-60 left-[15%] w-3 h-3 bg-purple-500 rounded-full animate-pulse-glow hidden lg:block" />
-      <div className="absolute bottom-60 right-[15%] w-2 h-2 bg-blue-500 rounded-full animate-pulse-glow hidden lg:block" />
-
-      <div className="container relative mx-auto px-4 lg:px-8 py-20 lg:py-32">
-        <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
-          {/* Text content */}
-          <div className="text-center lg:text-left">
-            {/* Badge */}
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-8 animate-fade-in">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-sm text-gray-400">{hero.subheadline}</span>
+      <div className="container relative mx-auto px-4 lg:px-8">
+        <div className="flex flex-col gap-12 lg:grid lg:grid-cols-2 lg:items-center lg:gap-14">
+          <div className="order-2 lg:order-1 space-y-6 text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass text-sm text-emerald-200/80">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              {hero.subheadline}
             </div>
 
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold mb-8 leading-[1.1] animate-fade-in-up">
-              <span className="text-white">Messaging</span>
+            <h1 className="heading text-4xl md:text-5xl lg:text-6xl font-semibold leading-[1.05]">
+              <span className="text-white">Messaging without limits.</span>
               <br />
-              <span className="gradient-text">Without Boundaries</span>
+              <span className="gradient-text">Owned by the people.</span>
             </h1>
 
-            <p className="text-lg md:text-xl text-gray-400 mb-10 max-w-xl mx-auto lg:mx-0 leading-relaxed animate-fade-in-up delay-200">
+            <p className="text-lg md:text-xl text-[var(--muted)] leading-relaxed max-w-xl mx-auto lg:mx-0">
               {hero.description}
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start animate-fade-in-up delay-300">
+            <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
               <a
                 href={hero.primaryCta.href}
-                className="btn-primary px-8 py-4 rounded-xl font-semibold text-white text-center inline-flex items-center justify-center gap-2"
+                className="btn-primary px-7 py-3.5 rounded-xl font-semibold text-white text-center inline-flex items-center justify-center gap-2 shadow-lg shadow-[rgba(79,209,197,0.25)]"
               >
                 {hero.primaryCta.label}
                 <svg
@@ -66,7 +51,7 @@ export default function Hero() {
               </a>
               <a
                 href={hero.secondaryCta.href}
-                className="px-8 py-4 glass rounded-xl font-semibold text-white hover:bg-white/10 transition-all text-center inline-flex items-center justify-center gap-2"
+                className="px-7 py-3.5 rounded-xl font-semibold text-white/90 border border-white/10 hover:border-white/30 transition-all text-center inline-flex items-center justify-center gap-2"
               >
                 <svg
                   className="w-5 h-5"
@@ -91,96 +76,71 @@ export default function Hero() {
               </a>
             </div>
 
-            {/* Stats row */}
-            <div className="flex flex-wrap gap-8 mt-12 justify-center lg:justify-start animate-fade-in-up delay-400">
-              <div className="text-center lg:text-left">
-                <div className="text-3xl font-bold gradient-text-purple">
-                  100K+
+            <div className="grid grid-cols-3 gap-4 pt-6 text-left">
+              {[{
+                label: "Active users",
+                value: "100K+",
+                accent: "gradient-text-purple",
+              },
+              {
+                label: "Network uptime",
+                value: "99.9%",
+                accent: "gradient-text-green",
+              },
+              {
+                label: "Messages sent",
+                value: "50M+",
+                accent: "gradient-text",
+              }].map((item) => (
+                <div key={item.label} className="glass rounded-2xl px-4 py-3 text-left">
+                  <div className={`text-xl font-semibold ${item.accent}`}>{item.value}</div>
+                  <div className="text-xs uppercase tracking-wide text-[var(--muted)]">
+                    {item.label}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-500">Active Users</div>
-              </div>
-              <div className="text-center lg:text-left">
-                <div className="text-3xl font-bold gradient-text-green">
-                  99.9%
-                </div>
-                <div className="text-sm text-gray-500">Uptime</div>
-              </div>
-              <div className="text-center lg:text-left">
-                <div className="text-3xl font-bold gradient-text">50M+</div>
-                <div className="text-sm text-gray-500">Messages Sent</div>
-              </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-3 pt-4 justify-center lg:justify-start text-sm text-[var(--muted)]">
+              {["Open-source", "Multi-region validators", "Encrypted by default"].map((pill) => (
+                <span key={pill} className="px-3 py-1 rounded-full border border-white/10 bg-white/5">
+                  {pill}
+                </span>
+              ))}
             </div>
           </div>
 
-          {/* Hero Image with glassmorphism card */}
-          <div className="flex justify-center lg:justify-end animate-fade-in-right delay-300">
+          <div className="order-1 lg:order-2">
             <div className="relative">
-              {/* Glow effect */}
-              <div className="absolute -inset-4 bg-gradient-to-r from-purple-500/30 via-blue-500/30 to-purple-500/30 rounded-3xl blur-2xl animate-pulse-glow" />
-
-              {/* Main card */}
-              <div className="relative glass-strong rounded-3xl p-8 w-full max-w-lg">
-                <div className="relative h-[400px] flex items-center justify-center">
+              <div className="absolute inset-0 blur-[70px] bg-gradient-to-br from-[rgba(79,209,197,0.15)] via-[rgba(124,141,247,0.2)] to-[rgba(245,158,11,0.15)]" />
+              <div className="relative surface shadow-2xl p-6 lg:p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    Live validator mesh
+                  </div>
+                  <span className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/80">
+                    Finality &lt; 3s
+                  </span>
+                </div>
+                <div className="rounded-2xl bg-gradient-to-br from-[#0f172a] to-[#0b1323] border border-white/5 p-6">
                   <Image
                     src="/images/network-hero.svg"
                     alt="Decentralized Network"
-                    width={450}
-                    height={450}
-                    className="w-full h-auto drop-shadow-2xl"
+                    width={480}
+                    height={360}
+                    className="w-full h-auto"
                     priority
                   />
                 </div>
-
-                {/* Floating mini cards */}
-                <div className="absolute -top-4 -right-4 glass rounded-xl px-4 py-2 animate-float">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center">
-                      <svg
-                        className="w-4 h-4 text-white"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-400">Encrypted</div>
-                      <div className="text-sm font-semibold text-white">
-                        256-bit AES
-                      </div>
-                    </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-white/80">
+                  <div className="glass rounded-xl p-3">
+                    <div className="text-[var(--muted)]">Encryption</div>
+                    <div className="font-semibold">X25519 + AES-256-GCM</div>
                   </div>
-                </div>
-
-                <div className="absolute -bottom-4 -left-4 glass rounded-xl px-4 py-2 animate-float-slow">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center">
-                      <svg
-                        className="w-4 h-4 text-white"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                        />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-400">Status</div>
-                      <div className="text-sm font-semibold text-white">
-                        Decentralized
-                      </div>
-                    </div>
+                  <div className="glass rounded-xl p-3">
+                    <div className="text-[var(--muted)]">Consensus</div>
+                    <div className="font-semibold">Tendermint BFT · 21 validators</div>
                   </div>
                 </div>
               </div>

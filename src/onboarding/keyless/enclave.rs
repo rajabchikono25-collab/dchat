@@ -55,19 +55,19 @@ pub enum EnclaveType {
 }
 
 /// Detect the platform enclave type
-fn detect_enclave_type() -> EnclaveType {
+fn detect_enclave_type() -> Result<EnclaveType> {
     #[cfg(target_os = "ios")]
     {
-        EnclaveType::IosSecureEnclave
+        Ok(EnclaveType::IosSecureEnclave)
     }
 
     #[cfg(target_os = "android")]
     {
         // Check for StrongBox support via system property
         if std::env::var("DCHAT_HAS_STRONGBOX").is_ok() {
-            EnclaveType::AndroidStrongBox
+            Ok(EnclaveType::AndroidStrongBox)
         } else {
-            EnclaveType::AndroidTee
+            Ok(EnclaveType::AndroidTee)
         }
     }
 
@@ -78,7 +78,7 @@ fn detect_enclave_type() -> EnclaveType {
         {
             // On Windows, check if TPM is available via WMI or registry
             if std::path::Path::new("C:\\Windows\\System32\\tpm.msc").exists() {
-                return EnclaveType::Tpm2;
+                return Ok(EnclaveType::Tpm2);
             }
         }
 
@@ -88,7 +88,7 @@ fn detect_enclave_type() -> EnclaveType {
             if std::path::Path::new("/dev/tpm0").exists()
                 || std::path::Path::new("/dev/tpmrm0").exists()
             {
-                return EnclaveType::Tpm2;
+                return Ok(EnclaveType::Tpm2);
             }
         }
 
@@ -98,7 +98,7 @@ fn detect_enclave_type() -> EnclaveType {
             tracing::warn!(
                 "No hardware enclave detected - using software fallback (DEBUG BUILD ONLY)"
             );
-            EnclaveType::Software
+            Ok(EnclaveType::Software)
         }
 
         #[cfg(not(debug_assertions))]
@@ -110,7 +110,7 @@ fn detect_enclave_type() -> EnclaveType {
                     "⚠️  DCHAT_ALLOW_SOFTWARE_KEYS set - using software key fallback in PRODUCTION"
                 );
                 tracing::warn!("⚠️  This reduces security - keys are not hardware-protected!");
-                return EnclaveType::Software;
+                return Ok(EnclaveType::Software);
             }
 
             // Controlled escape hatch for non-HSM hosts
@@ -121,10 +121,14 @@ fn detect_enclave_type() -> EnclaveType {
                 tracing::warn!(
                     "⚠️  DCHAT_ACCEPT_SIMULATED_HSM set - simulating hardware enclave in PRODUCTION"
                 );
-                return EnclaveType::Software;
+                return Ok(EnclaveType::Software);
             }
 
-            panic!("No hardware security module available. Production requires TPM 2.0, Secure Enclave, or StrongBox.");
+            Err(Error::Config(
+                "No hardware security module available. Production requires TPM 2.0, Secure Enclave, or StrongBox. \
+                 For non-production only, you may opt-in to insecure software keys with DCHAT_ALLOW_SOFTWARE_KEYS=1."
+                    .to_string(),
+            ))
         }
     }
 
@@ -137,22 +141,26 @@ fn detect_enclave_type() -> EnclaveType {
     {
         #[cfg(debug_assertions)]
         {
-            EnclaveType::Software
+            Ok(EnclaveType::Software)
         }
         #[cfg(not(debug_assertions))]
         {
             if std::env::var("DCHAT_ALLOW_SOFTWARE_KEYS").is_ok() {
                 tracing::warn!("⚠️  Using software keys on unsupported platform");
-                return EnclaveType::Software;
+                return Ok(EnclaveType::Software);
             }
-            panic!("Unsupported platform for production enclave");
+            Err(Error::Config(
+                "Unsupported platform for production enclave. \
+                 For non-production only, you may opt-in to insecure software keys with DCHAT_ALLOW_SOFTWARE_KEYS=1."
+                    .to_string(),
+            ))
         }
     }
 }
 
 /// Initialize the secure enclave or simulated enclave storage
 pub async fn init_enclave() -> Result<()> {
-    let enclave_type = detect_enclave_type();
+    let enclave_type = detect_enclave_type()?;
     tracing::info!("Initializing enclave: {:?}", enclave_type);
 
     match enclave_type {
@@ -195,7 +203,7 @@ pub async fn init_enclave() -> Result<()> {
 /// Generate or fetch the device private key from the hardware enclave.
 /// Returns a 32-byte key.
 pub fn generate_device_key() -> Result<Vec<u8>> {
-    let enclave_type = detect_enclave_type();
+    let enclave_type = detect_enclave_type()?;
 
     match enclave_type {
         EnclaveType::IosSecureEnclave => {
@@ -386,7 +394,7 @@ fn generate_hardware_backed_key(key_alias: &str) -> Result<Vec<u8>> {
 ///
 /// In debug builds only, returns a simulated attestation string.
 pub fn attest_device() -> Result<String> {
-    let enclave_type = detect_enclave_type();
+    let enclave_type = detect_enclave_type()?;
 
     match enclave_type {
         EnclaveType::IosSecureEnclave => {

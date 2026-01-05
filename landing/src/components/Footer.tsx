@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import site from "@/content/site.json";
 
 const { footer } = site;
@@ -52,7 +53,7 @@ export default function Footer() {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16">
           {/* Brand column */}
           <div className="lg:col-span-2">
-            <a href="/" className="inline-flex items-center gap-3 mb-6">
+            <Link href="/" className="inline-flex items-center gap-3 mb-6">
               <Image
                 src="/logo.svg"
                 alt="DChat Logo"
@@ -63,7 +64,7 @@ export default function Footer() {
               <span className="text-2xl font-bold gradient-text">
                 {footer.logo}
               </span>
-            </a>
+            </Link>
             <p className="text-gray-400 mb-8 max-w-md leading-relaxed">
               {footer.tagline}. Experience the future of secure, decentralized
               messaging built on blockchain technology.

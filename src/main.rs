@@ -382,6 +382,15 @@ async fn validate_mainnet_environment(_config: &Config, node_type: NodeType) -> 
         return Ok(());
     }
 
+    // MAINNET SAFETY: never allow implicit localhost RPC defaults in production.
+    if allow_localhost_chain_rpc_defaults() {
+        return Err(Error::Config(
+            "DCHAT_ALLOW_LOCALHOST_CHAIN_RPC_DEFAULTS must not be enabled for mainnet/production. \
+             Configure explicit RPC URLs via config.toml or environment variables instead."
+                .to_string(),
+        ));
+    }
+
     // Validate credential configuration - reject placeholder values in production
     info!("✓ Validating credential configuration...");
 
@@ -4408,11 +4417,17 @@ async fn run_relay_node(
                         .await;
                 } else {
                     // New peer not in bootstrap list - use endpoint if available
-                    let multiaddr = endpoint.unwrap_or_else(|| {
-                        FALLBACK_LISTEN_ADDR
-                            .parse()
-                            .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
-                    });
+                    let multiaddr =
+                        endpoint.unwrap_or_else(|| match FALLBACK_LISTEN_ADDR.parse() {
+                            Ok(addr) => addr,
+                            Err(e) => {
+                                error!(
+                                    "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
+                                    FALLBACK_LISTEN_ADDR, e
+                                );
+                                Multiaddr::empty()
+                            }
+                        });
                     let peer_info = PeerInfo {
                         peer_id: connected_peer_id,
                         multiaddr,
@@ -4652,7 +4667,16 @@ async fn run_relay_node(
                             } else {
                                 // New peer - add to registry using endpoint if available
                                 let multiaddr = endpoint.unwrap_or_else(|| {
-                                    FALLBACK_LISTEN_ADDR.parse().expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+                                    match FALLBACK_LISTEN_ADDR.parse() {
+                                        Ok(addr) => addr,
+                                        Err(e) => {
+                                            error!(
+                                                "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
+                                                FALLBACK_LISTEN_ADDR, e
+                                            );
+                                            Multiaddr::empty()
+                                        }
+                                    }
                                 });
 
                                 let peer_info = PeerInfo {
@@ -5005,7 +5029,10 @@ async fn run_light_client(
             use dchat_network::relay_network::{Continent, RelayInfo};
             use uuid::Uuid;
 
-            let mut relay_mgr = relay_network.write().unwrap();
+            let mut relay_mgr = relay_network.write().unwrap_or_else(|e| {
+                warn!("⚠️  relay_network RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            });
             for seed in &config.relay.seed_relays {
                 let continent = match seed.continent.to_lowercase().as_str() {
                     "northamerica" | "north_america" | "na" => Continent::NorthAmerica,
@@ -7506,10 +7533,9 @@ async fn run_validator_node(
     let validator_user_id = {
         // Use first 16 bytes of hash as UUID
         let key_hash = blake3::hash(&public_key_bytes);
-        // BLAKE3 hash is always 32 bytes, so taking first 16 bytes is always safe
-        let uuid_bytes: [u8; 16] = key_hash.as_bytes()[..16]
-            .try_into()
-            .expect("BLAKE3 hash is always 32 bytes, slice of 16 is always valid");
+        // BLAKE3 hash is always 32 bytes, so taking first 16 bytes is safe.
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&key_hash.as_bytes()[..16]);
         UserId(uuid::Uuid::from_bytes(uuid_bytes))
     };
     let validator_user_id_clone = validator_user_id.clone(); // Clone for shutdown handler
@@ -7690,12 +7716,16 @@ async fn run_validator_node(
                 rpc_url: currency_rpc_url_for_consensus,
                 ..Default::default()
             };
-            let currency_client = Arc::new(
-                CurrencyChainClient::new(currency_chain_config).unwrap_or_else(|e| {
-                    error!("Failed to create currency client: {}", e);
-                    panic!("Failed to create currency client: {}", e);
-                }),
-            );
+            let currency_client = match CurrencyChainClient::new(currency_chain_config) {
+                Ok(client) => Arc::new(client),
+                Err(e) => {
+                    error!(
+                        "Failed to create currency client for consensus task (stopping consensus loop): {}",
+                        e
+                    );
+                    return;
+                }
+            };
 
             let fee_manager = Arc::new(std::sync::RwLock::new(FeeDistributionManager::new(
                 FeeDistributionConfig::default(),
@@ -8020,7 +8050,7 @@ async fn run_validator_node(
                             let validator_id = validator_public_key_bytes.to_vec();
                             let timestamp = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .expect("system time is before UNIX epoch")
+                                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                                 .as_secs();
 
                             // Serialize transactions for network message
@@ -8123,6 +8153,8 @@ async fn run_validator_node(
         let state_validator_clone2 = state_validator.clone();
         let peer_registry_arc_clone = peer_registry_arc.clone();
         let relay_work_store_clone = Arc::clone(&relay_work_store);
+        let chain_genesis_timestamp = config.chain.genesis_timestamp;
+        let chain_block_time_secs = config.chain.block_time_secs;
         let mut shutdown = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
@@ -8428,8 +8460,8 @@ async fn run_validator_node(
                                     let proof_hash = *blake3::hash(&proof_data).as_bytes();
 
                                     // Get current block height estimate (simplified - uses time-based estimation)
-                                    let genesis_timestamp = dchat::relay_work_store::DEFAULT_GENESIS_TIMESTAMP;
-                                    let block_time = dchat::relay_work_store::DEFAULT_BLOCK_TIME_SECS;
+                                    let genesis_timestamp = chain_genesis_timestamp;
+                                    let block_time = chain_block_time_secs;
                                     let now = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .map(|d| d.as_secs())
@@ -9297,7 +9329,7 @@ async fn perform_peer_handshake(
         known_peers: peer_ads,
         timestamp: SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system time is before UNIX epoch")
+            .unwrap_or_else(|_| Duration::from_secs(0))
             .as_secs(),
     };
 
@@ -9350,10 +9382,15 @@ pub async fn handle_peer_handshake(
             .first()
             .cloned()
             // FALLBACK_LISTEN_ADDR is a compile-time constant guaranteed to be valid
-            .unwrap_or_else(|| {
-                FALLBACK_LISTEN_ADDR
-                    .parse()
-                    .expect("FALLBACK_LISTEN_ADDR is a valid multiaddr")
+            .unwrap_or_else(|| match FALLBACK_LISTEN_ADDR.parse() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    error!(
+                        "Invalid FALLBACK_LISTEN_ADDR '{}': {}",
+                        FALLBACK_LISTEN_ADDR, e
+                    );
+                    Multiaddr::empty()
+                }
             }),
         node_type: match handshake.node_type.as_str() {
             "validator" => NodeType::Validator,
@@ -9782,7 +9819,10 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
         use dchat_network::relay_network::{Continent, RelayInfo};
         use uuid::Uuid;
 
-        let mut relay_mgr = relay_network.write().unwrap();
+        let mut relay_mgr = relay_network.write().unwrap_or_else(|e| {
+            warn!("⚠️  relay_network RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
         for seed in &_config.relay.seed_relays {
             let continent = match seed.continent.to_lowercase().as_str() {
                 "northamerica" | "north_america" | "na" => Continent::NorthAmerica,
@@ -9925,7 +9965,7 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
                 payer: from_id.clone(),
                 client_nonce: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_nanos() as u64,
                 payload: OperationPayload::DirectMessage {
                     recipient: to_id,
@@ -10007,7 +10047,7 @@ async fn run_account_command(_config: Config, action: AccountCommand) -> Result<
                 payer: user.clone(),
                 client_nonce: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_else(|_| std::time::Duration::from_secs(0))
                     .as_nanos() as u64,
                 payload: OperationPayload::ChannelPost {
                     channel_id: channel,
@@ -11277,11 +11317,14 @@ async fn run_governance_command(action: GovernanceCommand) -> Result<()> {
                 "hard-fork" => UpgradeType::HardFork,
                 "security-patch" => UpgradeType::SecurityPatch,
                 name if name.starts_with("feature-toggle:") => {
-                    // Safe: condition above guarantees prefix exists
-                    let feature = name
-                        .strip_prefix("feature-toggle:")
-                        .expect("prefix verified by starts_with check")
-                        .to_string();
+                    let feature = match name.strip_prefix("feature-toggle:") {
+                        Some(f) => f.to_string(),
+                        None => {
+                            return Err(Error::validation(
+                                "Invalid upgrade type. Use feature-toggle:<name>".to_string(),
+                            ));
+                        }
+                    };
                     UpgradeType::FeatureToggle { feature }
                 }
                 _ => {
@@ -11760,7 +11803,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
 
     match action {
         TokenCommand::Stats => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let stats = manager.get_statistics();
 
             println!("\n💰 Token Supply Statistics");
@@ -11820,7 +11866,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
             reason,
             recipient,
         } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
 
             let mint_reason = match reason.to_lowercase().as_str() {
                 "genesis" => MintReason::Genesis,
@@ -11864,7 +11913,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
             amount,
             reason,
         } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
 
             let burn_reason = match reason.to_lowercase().as_str() {
                 "fee" | "transaction-fee" => BurnReason::TransactionFee,
@@ -11904,7 +11956,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
             name,
             initial_amount,
         } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let pool_id = manager.create_liquidity_pool(name.clone(), initial_amount)?;
 
             println!("\n🏊 Liquidity Pool Created");
@@ -11916,7 +11971,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::ListPools => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let pools = manager.get_all_pools();
 
             println!("\n🏪 Marketplace Liquidity Pools ({}):", pools.len());
@@ -11941,7 +11999,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::PoolInfo { pool_id } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let id = Uuid::parse_str(&pool_id).map_err(|_| Error::validation("Invalid pool ID"))?;
 
             let pool = manager
@@ -11980,7 +12041,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::ReplenishPool { pool_id, amount } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let id = Uuid::parse_str(&pool_id).map_err(|_| Error::validation("Invalid pool ID"))?;
 
             manager.replenish_pool(&id, amount)?;
@@ -11993,7 +12057,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::MintHistory { limit } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let history = manager.get_mint_history(limit);
 
             println!("\n📜 Mint History (last {}):", limit);
@@ -12024,7 +12091,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::BurnHistory { limit } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let history = manager.get_burn_history(limit);
 
             println!("\n🔥 Burn History (last {}):", limit);
@@ -12057,7 +12127,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
             interval_blocks,
             duration_blocks,
         } => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
 
             let recip_type = match recipient_type.to_lowercase().as_str() {
                 "validators" => RecipientType::Validators,
@@ -12095,7 +12168,10 @@ async fn run_token_command(app_config: Config, action: TokenCommand) -> Result<(
         }
 
         TokenCommand::ProcessInflation => {
-            let manager = tokenomics.lock().expect("tokenomics mutex poisoned");
+            let manager = tokenomics.lock().unwrap_or_else(|e| {
+                warn!("⚠️  tokenomics mutex poisoned; continuing with inner state");
+                e.into_inner()
+            });
             let mint_ids = manager.process_block_inflation()?;
 
             println!("\n⚡ Block Inflation Processed");
@@ -13379,10 +13455,14 @@ async fn run_program_command(config: Config, action: ProgramCommand) -> Result<(
             if !yes {
                 println!("\n⚠️  This will deploy a program to the blockchain.");
                 print!("   Continue? [y/N] ");
-                io::stdout().flush().unwrap();
+                io::stdout()
+                    .flush()
+                    .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).unwrap();
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| Error::internal(format!("Failed to read stdin: {}", e)))?;
                 if !input.trim().eq_ignore_ascii_case("y") {
                     println!("❌ Deployment cancelled.");
                     return Ok(());
@@ -13530,10 +13610,14 @@ async fn run_program_command(config: Config, action: ProgramCommand) -> Result<(
                 println!("\n⚠️  This will upgrade the program with new bytecode.");
                 println!("   A 24-hour timelock will be initiated for security.");
                 print!("   Continue? [y/N] ");
-                io::stdout().flush().unwrap();
+                io::stdout()
+                    .flush()
+                    .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).unwrap();
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| Error::internal(format!("Failed to read stdin: {}", e)))?;
                 if !input.trim().eq_ignore_ascii_case("y") {
                     println!("❌ Upgrade cancelled.");
                     return Ok(());
@@ -13567,10 +13651,14 @@ async fn run_program_command(config: Config, action: ProgramCommand) -> Result<(
 
             if !yes {
                 print!("\n   Type 'FREEZE' to confirm: ");
-                io::stdout().flush().unwrap();
+                io::stdout()
+                    .flush()
+                    .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).unwrap();
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| Error::internal(format!("Failed to read stdin: {}", e)))?;
                 if input.trim() != "FREEZE" {
                     println!("❌ Freeze cancelled.");
                     return Ok(());
@@ -13645,10 +13733,14 @@ async fn run_program_command(config: Config, action: ProgramCommand) -> Result<(
 
             if !yes {
                 print!("\n   Type 'DELETE' to confirm: ");
-                io::stdout().flush().unwrap();
+                io::stdout()
+                    .flush()
+                    .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).unwrap();
+                io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| Error::internal(format!("Failed to read stdin: {}", e)))?;
                 if input.trim() != "DELETE" {
                     println!("❌ Close cancelled.");
                     return Ok(());
@@ -13830,7 +13922,9 @@ async fn run_program_command(config: Config, action: ProgramCommand) -> Result<(
                         "schema_hash": hex::encode(&manifest.schema_hash),
                         "capabilities": format!("{:?}", manifest.capabilities),
                     });
-                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                    let json_str = serde_json::to_string_pretty(&json)
+                        .map_err(|e| Error::internal(format!("Failed to serialize JSON: {}", e)))?;
+                    println!("{}", json_str);
                 }
                 "yaml" => {
                     println!(
@@ -14419,11 +14513,10 @@ async fn run_miniapp_command(action: MiniAppCommand) -> Result<()> {
             });
 
             let manifest_path = project_dir.join("manifest.json");
-            std::fs::write(
-                &manifest_path,
-                serde_json::to_string_pretty(&manifest).unwrap(),
-            )
-            .map_err(|e| Error::storage(format!("Failed to write manifest: {}", e)))?;
+            let manifest_str = serde_json::to_string_pretty(&manifest)
+                .map_err(|e| Error::internal(format!("Failed to serialize manifest: {}", e)))?;
+            std::fs::write(&manifest_path, manifest_str)
+                .map_err(|e| Error::storage(format!("Failed to write manifest: {}", e)))?;
 
             // Create index.html
             let index_html = format!(
@@ -15003,7 +15096,10 @@ async fn perform_epoch_rewards(
 
     // 4. Distribute Validator Fee Pool
     let validator_pool_balance = {
-        let manager = fee_manager.read().unwrap();
+        let manager = fee_manager.read().unwrap_or_else(|e| {
+            warn!("⚠️  fee_manager RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
         manager.get_pool_balance_by_type(PoolType::ValidatorRewards)
     };
 
@@ -15013,7 +15109,10 @@ async fn perform_epoch_rewards(
             .map(|v| (v.validator_id, v.staked_amount))
             .collect();
 
-        let manager = fee_manager.read().unwrap();
+        let manager = fee_manager.read().unwrap_or_else(|e| {
+            warn!("⚠️  fee_manager RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
         match manager.distribute_rewards(
             PoolType::ValidatorRewards,
             &recipients,
@@ -15055,7 +15154,10 @@ async fn perform_epoch_rewards(
                 if successful_amount > 0 {
                     if let Err(e) = fee_manager
                         .read()
-                        .unwrap()
+                        .unwrap_or_else(|e| {
+                            warn!("⚠️  fee_manager RwLock poisoned; continuing with inner state");
+                            e.into_inner()
+                        })
                         .complete_distribution(PoolType::ValidatorRewards, successful_amount)
                     {
                         warn!("Failed to complete validator fee distribution: {}", e);
@@ -15068,7 +15170,10 @@ async fn perform_epoch_rewards(
 
     // 5. Distribute Relay Fee Pool (to eligible relay operators only)
     let relay_pool_balance = {
-        let manager = fee_manager.read().unwrap();
+        let manager = fee_manager.read().unwrap_or_else(|e| {
+            warn!("⚠️  fee_manager RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
         manager.get_pool_balance_by_type(PoolType::RelayRewards)
     };
 
@@ -15115,7 +15220,10 @@ async fn perform_epoch_rewards(
 
         match eligible_recipients {
             Some(recipients) if !recipients.is_empty() => {
-                let manager = fee_manager.read().unwrap();
+                let manager = fee_manager.read().unwrap_or_else(|e| {
+                    warn!("⚠️  fee_manager RwLock poisoned; continuing with inner state");
+                    e.into_inner()
+                });
                 match manager.distribute_rewards(
                     PoolType::RelayRewards,
                     &recipients,
@@ -15155,9 +15263,13 @@ async fn perform_epoch_rewards(
 
                         // Complete distribution only for the amount actually paid out
                         if successful_amount > 0 {
-                            if let Err(e) = fee_manager
-                                .read()
-                                .unwrap()
+                            let manager = fee_manager.read().unwrap_or_else(|e| {
+                                warn!(
+                                    "⚠️  fee_manager RwLock poisoned; continuing with inner state"
+                                );
+                                e.into_inner()
+                            });
+                            if let Err(e) = manager
                                 .complete_distribution(PoolType::RelayRewards, successful_amount)
                             {
                                 warn!("Failed to complete relay fee distribution: {}", e);

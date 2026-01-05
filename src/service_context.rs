@@ -330,6 +330,13 @@ impl ServiceContext {
 
     /// Get or initialize the currency chain client
     pub async fn currency_chain(&self) -> Result<Arc<CurrencyChainClient>> {
+        if self.config.currency_rpc_url.trim().is_empty() {
+            return Err(Error::Config(
+                "Currency chain RPC URL not configured (ServiceContext built with require_currency_chain=false)."
+                    .to_string(),
+            ));
+        }
+
         self.currency_chain
             .get_or_try_init(|| async {
                 info!(
@@ -360,6 +367,13 @@ impl ServiceContext {
 
     /// Get or initialize the chat chain client
     pub async fn chat_chain(&self) -> Result<Arc<ChatChainClient>> {
+        if self.config.chat_rpc_url.trim().is_empty() {
+            return Err(Error::Config(
+                "Chat chain RPC URL not configured (ServiceContext built with require_chat_chain=false)."
+                    .to_string(),
+            ));
+        }
+
         self.chat_chain
             .get_or_try_init(|| async {
                 info!(

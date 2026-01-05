@@ -401,7 +401,12 @@ impl FeeGateway {
         if let Ok(Some(json)) = db.get_client_kv(KV_OPERATION_MAPPINGS).await {
             match serde_json::from_str::<Vec<OperationMapping>>(&json) {
                 Ok(mappings) => {
-                    let mut cache = self.operation_mappings.write().unwrap();
+                    let mut cache = self.operation_mappings.write().unwrap_or_else(|e| {
+                        warn!(
+                            "⚠️  operation_mappings RwLock poisoned; continuing with inner state"
+                        );
+                        e.into_inner()
+                    });
                     for mapping in mappings {
                         cache.insert(mapping.operation_id, mapping);
                     }
@@ -431,7 +436,10 @@ impl FeeGateway {
         let mappings: Vec<OperationMapping> = self
             .operation_mappings
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .values()
             .cloned()
             .collect();
@@ -449,7 +457,10 @@ impl FeeGateway {
     pub fn get_operation_mapping(&self, operation_id: &[u8; 32]) -> Option<OperationMapping> {
         self.operation_mappings
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .get(operation_id)
             .cloned()
     }
@@ -458,7 +469,10 @@ impl FeeGateway {
     pub fn get_operations_for_payer(&self, payer: &UserId) -> Vec<OperationMapping> {
         self.operation_mappings
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .values()
             .filter(|m| m.payer == *payer)
             .cloned()
@@ -743,7 +757,10 @@ impl FeeGateway {
 
         self.operation_mappings
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .insert(operation_id, mapping);
 
         // Step 17: Build response
@@ -974,7 +991,10 @@ impl FeeGateway {
 
         self.operation_mappings
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .insert(operation_id, mapping);
 
         let response = FeeGatedResponse {
@@ -1121,7 +1141,10 @@ impl FeeGateway {
         if let Some(mapping) = self
             .operation_mappings
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .get_mut(&operation_id)
         {
             mapping.status = OperationStatus::FailedRefunded;
@@ -1184,7 +1207,10 @@ impl FeeGateway {
     /// to select an active relay that meets uptime and stake requirements.
     fn select_relay_for_message(&self, sender: &UserId, recipient: &UserId) -> UserId {
         // Try to get an active relay from the relay network manager
-        let mut relay_network = self.relay_network.write().unwrap();
+        let mut relay_network = self.relay_network.write().unwrap_or_else(|e| {
+            warn!("⚠️  relay_network RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
 
         match relay_network.select_relay() {
             Ok(relay_id) => {
@@ -1222,7 +1248,10 @@ impl FeeGateway {
     /// Uses the configured load balancing strategy to select an active relay.
     /// Channel posts may benefit from geographic affinity in the future.
     fn select_relay_for_channel(&self, channel_id: &ChannelId) -> UserId {
-        let mut relay_network = self.relay_network.write().unwrap();
+        let mut relay_network = self.relay_network.write().unwrap_or_else(|e| {
+            warn!("⚠️  relay_network RwLock poisoned; continuing with inner state");
+            e.into_inner()
+        });
 
         match relay_network.select_relay() {
             Ok(relay_id) => {
@@ -1334,7 +1363,10 @@ impl FeeGateway {
         let payer = self
             .operation_mappings
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                warn!("⚠️  operation_mappings RwLock poisoned; continuing with inner state");
+                e.into_inner()
+            })
             .get(&response.operation_id)
             .map(|m| m.payer.clone())
             .unwrap_or_else(|| UserId::default());
@@ -1560,7 +1592,8 @@ mod tests {
         };
 
         // Should serialize to JSON without panicking
-        let json = serde_json::to_string(&response).expect("Serialization failed");
+        let json = serde_json::to_string(&response)
+            .unwrap_or_else(|e| panic!("Serialization failed: {e}"));
         assert!(json.contains("operation_id"));
         assert!(json.contains("client_nonce"));
         assert!(json.contains("gas_fee_receipt"));
@@ -1674,7 +1707,8 @@ mod tests {
         assert_ne!(failed, pending);
 
         // Verify serialization produces expected strings
-        let json = serde_json::to_string(&success).unwrap();
+        let json =
+            serde_json::to_string(&success).unwrap_or_else(|e| panic!("Serialization failed: {e}"));
         assert!(json.contains("Success"));
     }
 }

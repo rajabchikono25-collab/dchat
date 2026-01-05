@@ -234,7 +234,7 @@ npx dchat-cli keygen --output ./my-keypair.json`}
                 <div>
                   <h4 className="font-medium text-white">Client Encryption</h4>
                   <p className="text-sm text-gray-400">
-                    Message encrypted with recipient's public key using X25519 +
+                    Message encrypted with recipient&apos;s public key using X25519 +
                     AES-256-GCM
                   </p>
                 </div>

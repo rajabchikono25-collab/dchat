@@ -346,11 +346,10 @@ pub async fn handle_init(name: String, path: PathBuf, category: String) -> Resul
     });
 
     let manifest_path = project_dir.join("manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_string_pretty(&manifest).unwrap(),
-    )
-    .map_err(|e| Error::storage(format!("Failed to write manifest: {}", e)))?;
+    let manifest_str = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| Error::internal(format!("Failed to serialize manifest: {}", e)))?;
+    std::fs::write(&manifest_path, manifest_str)
+        .map_err(|e| Error::storage(format!("Failed to write manifest: {}", e)))?;
 
     // Create index.html
     let index_html = format!(

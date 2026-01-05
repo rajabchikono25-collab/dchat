@@ -108,10 +108,14 @@ pub async fn handle_program_deploy(
     if !yes {
         println!("\n⚠️  This will deploy a program to the blockchain.");
         print!("   Continue? [y/N] ");
-        io::stdout().flush().unwrap();
+        io::stdout()
+            .flush()
+            .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| Error::internal(format!("Failed to read input: {}", e)))?;
         if !input.trim().eq_ignore_ascii_case("y") {
             println!("❌ Deployment cancelled.");
             return Ok(());
@@ -259,10 +263,14 @@ pub async fn handle_program_upgrade(
         println!("\n⚠️  This will upgrade the program with new bytecode.");
         println!("   A 24-hour timelock will be initiated for security.");
         print!("   Continue? [y/N] ");
-        io::stdout().flush().unwrap();
+        io::stdout()
+            .flush()
+            .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| Error::internal(format!("Failed to read input: {}", e)))?;
         if !input.trim().eq_ignore_ascii_case("y") {
             println!("❌ Upgrade cancelled.");
             return Ok(());
@@ -297,10 +305,14 @@ pub async fn handle_program_freeze(
 
     if !yes {
         print!("\n   Type 'FREEZE' to confirm: ");
-        io::stdout().flush().unwrap();
+        io::stdout()
+            .flush()
+            .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| Error::internal(format!("Failed to read input: {}", e)))?;
         if input.trim() != "FREEZE" {
             println!("❌ Freeze cancelled.");
             return Ok(());
@@ -375,10 +387,14 @@ pub async fn handle_program_close(
 
     if !yes {
         print!("\n   Type 'DELETE' to confirm: ");
-        io::stdout().flush().unwrap();
+        io::stdout()
+            .flush()
+            .map_err(|e| Error::internal(format!("Failed to flush stdout: {}", e)))?;
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| Error::internal(format!("Failed to read input: {}", e)))?;
         if input.trim() != "DELETE" {
             println!("❌ Close cancelled.");
             return Ok(());

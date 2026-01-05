@@ -111,10 +111,10 @@ pub async fn handle_propose_upgrade(
         "hard-fork" => UpgradeType::HardFork,
         "security-patch" => UpgradeType::SecurityPatch,
         name if name.starts_with("feature-toggle:") => {
-            let feature = name
-                .strip_prefix("feature-toggle:")
-                .expect("prefix verified by starts_with check")
-                .to_string();
+            let feature = match name.strip_prefix("feature-toggle:") {
+                Some(feature) if !feature.is_empty() => feature.to_string(),
+                _ => return Err(Error::validation("Invalid feature-toggle format")),
+            };
             UpgradeType::FeatureToggle { feature }
         }
         _ => {

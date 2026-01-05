@@ -439,7 +439,7 @@ pub mod client {
 
         /// Start a background sender loop that drains the message queue
         pub fn start_background_sender(self: &Arc<Self>) {
-            let client = Arc::clone(self);
+            let message_queue = Arc::clone(&self.message_queue);
             let handle = tokio::spawn(async move {
                 let mut ticker = interval(Duration::from_millis(200));
                 loop {
@@ -447,7 +447,7 @@ pub mod client {
 
                     // Pop one message per tick to avoid starving the reactor
                     let maybe_msg = {
-                        let mut queue = client.message_queue.write().await;
+                        let mut queue = message_queue.write().await;
                         queue.pop()
                     };
 
@@ -457,7 +457,6 @@ pub mod client {
 
                     // TODO: integrate real network send once available
                     tracing::info!("Dispatching message {} via network (stub)", message.id.0);
-                    let _ = client.network.clone(); // placeholder to keep ownership until send API is wired
 
                     // Mark as sent in database for visibility
                     // Future: update persisted status when storage API exposes it
@@ -529,7 +528,7 @@ pub mod client {
 
             // Drop expired
             if !message.is_deliverable() {
-                return Err(Error::messaging("Message expired".into()));
+                return Err(Error::messaging("Message expired"));
             }
 
             Ok(message)

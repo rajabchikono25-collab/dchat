@@ -10,7 +10,8 @@
       { "label": "Blockchain", "href": "/blockchain" },
       { "label": "Tokenomics", "href": "/tokenomics" },
       { "label": "Developers", "href": "/developers" },
-      { "label": "Roadmap", "href": "#roadmap" }
+      { "label": "Roadmap", "href": "#roadmap" },
+      { "label": "Download", "href": "#download" }
     ],
     "cta": { "label": "Get Started", "href": "#get-started" }
   },

@@ -48,7 +48,7 @@ export default function Security() {
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4 mb-12">
-              {security.stats.map((stat, index) => (
+              {security.stats.map((stat) => (
                 <div key={stat.label} className="relative group cursor-default">
                   <div className="absolute inset-0 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                   <div className="relative glass rounded-2xl p-5 text-center card-hover">

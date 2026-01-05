@@ -6,6 +6,10 @@ import Security from "@/components/Security";
 import Roadmap from "@/components/Roadmap";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
+import ProductPreview from "@/components/ProductPreview";
+import Outcomes from "@/components/Outcomes";
+import Ecosystem from "@/components/Ecosystem";
+import Download from "@/components/Download";
 
 export default function Home() {
   return (
@@ -28,10 +32,14 @@ export default function Home() {
       <Header />
       <main>
         <Hero />
+        <ProductPreview />
+        <Outcomes />
         <Features />
         <HowItWorks />
         <Security />
+        <Ecosystem />
         <Roadmap />
+        <Download />
         <CTA />
       </main>
       <Footer />
