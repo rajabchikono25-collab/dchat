@@ -1166,7 +1166,9 @@ mod tests {
             seed_deriver.record_finalized_block(i, Hash::from([i as u8; 32]));
         }
 
-        let selector = CommitteeSelector::new(relays, seed_deriver, 21);
+        // Use target_size <= MAX_RELAYS_PER_REGION (10) so selection succeeds
+        // but then the diversity check (MIN_REQUIRED_REGIONS = 3) should fail
+        let selector = CommitteeSelector::new(relays, seed_deriver, 9);
 
         let scope = CommitteeScope {
             block_height: 10,
@@ -1180,6 +1182,7 @@ mod tests {
         let sk = SigningKey::generate(&mut thread_rng());
         let result = selector.select_committee(scope, vrf_output, &sk);
 
+        // With all relays in one region, should fail diversity check (requires 3 regions)
         assert!(matches!(result, Err(CommitteeError::DiversityNotMet(_))));
     }
 

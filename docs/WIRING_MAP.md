@@ -250,7 +250,7 @@ pub struct FeaturesConfig {
 
 | Aspect | Value |
 |--------|-------|
-| **Status** | � PARTIAL (HardenedPoRW initialized, committee selector needs relay data) |
+| **Status** | 🟢 FULLY WIRED (epoch transition triggers initialization with relay data) |
 | **Module** | `dchat_blockchain::hardened_consensus::vrf_committees::CommitteeSelector` |
 | **File** | `crates/dchat-blockchain/src/hardened_consensus/vrf_committees.rs:491` |
 | **Also** | `dchat_chain::committee_selection::CommitteeSelector` at line 366 |
@@ -265,7 +265,7 @@ pub struct FeaturesConfig {
 
 | Aspect | Value |
 |--------|-------|
-| **Status** | 🔴 NOT WIRED |
+| **Status** | � WIRED (built into HardenedPoRW consensus engine) |
 | **Module** | `dchat_blockchain::hardened_consensus::two_stage_finality::TwoStageFinality` |
 | **File** | `crates/dchat-blockchain/src/hardened_consensus/two_stage_finality.rs:785` |
 | **Entrypoints** | `run_validator_node()` |

@@ -4853,11 +4853,9 @@ async fn run_relay_node(
                                                 if cell_type == 3 {
                                                     // RELAY cell - process through onion routing
                                                     if let Ok(mut mgr) = onion_mgr.write() {
-                                                        // Extract circuit ID from payload (bytes 1-5)
+                                                        // Extract circuit ID from payload
                                                         let circuit_id = encrypted_payload.get(1..5).unwrap_or(&[0,0,0,0]).to_vec();
-                                                        // Extract relay data after header
-                                                        let relay_data = encrypted_payload.get(5..).unwrap_or(&[]).to_vec();
-                                                        match mgr.handle_relay_cell(circuit_id.clone(), relay_data) {
+                                                        match mgr.handle_relay_cell(circuit_id.clone(), encrypted_payload.clone()) {
                                                             Ok(result) => {
                                                                 debug!("🧅 Onion relay cell processed: {:?}", result);
                                                             }

@@ -4,12 +4,12 @@ TOP 10 UNWIRED/PARTIALLY-WIRED FEATURES FOR MAINNET
 
 | Feature | Original Status | Current Status | Notes |
 |---------|-----------------|----------------|-------|
-| 1. Onion Routing | ❌ Not called | ✅ WIRED | `OnionRoutingManager` in relay Phase 6d with feature flag. |
-| 2. Bot Platform | ❌ Test only | ✅ WIRED | `BotFather` wired to CLI commands (dchat bot create/list). |
+| 1. Onion Routing | ❌ Not called | ✅ FULLY WIRED | `OnionRoutingManager` in relay with CREATE/RELAY/DESTROY cell handling. |
+| 2. Bot Platform | ❌ Test only | ✅ WIRED | `BotFather` wired to CLI and run_user_node with feature flag. |
 | 3. Mini-Apps | ❌ Counter only | ✅ WIRED | `MiniAppRegistry` wired to run_user_node with feature flag. |
 | 4. Marketplace | ❌ Demo only | ✅ WIRED | `MarketplaceManager` wired to run_validator_node with feature flag. |
 | 5. Payment Channels | ❌ Not integrated | ✅ WIRED | `PaymentChannelManager` wired to run_user_node with feature flag. |
-| 6. Accessibility TTS | ❌ No backend | ❌ No backend | TtsEngine not instantiated |
+| 6. Accessibility TTS | ❌ No backend | ✅ WIRED | `TtsEngine` wired to run_user_node with default voice. |
 | 7. Watchtower | ❌ Not spawned | ✅ WIRED | `WatchtowerMonitor` wired to run_validator_node with feature flag. |
 | 8. Oracle Network | ❌ No callers | ✅ WIRED | `OracleNetwork` wired to run_validator_node with feature flag. |
 | 9. Solana Bridge | ❌ No RPC | ⚠️ CONDITIONAL | `SolanaBridgeManager` initializes when `DCHAT_SOLANA_RPC` env set (Phase 6i) |
@@ -20,8 +20,8 @@ TOP 10 UNWIRED/PARTIALLY-WIRED FEATURES FOR MAINNET
 | Feature | Status | Notes |
 |---------|--------|-------|
 | E2E Crypto (GroupKeyDistribution) | ✅ WIRED | Wired to run_user_node, encrypts outbound and decrypts inbound messages. |
-| VRF Committee Selection | ⚠️ PARTIAL | HardenedPoRW initialized, needs relay data conversion for committee init. |
-| Two-Stage Finality | ⚠️ PARTIAL | Built into HardenedPoRW, ready for use. |
+| VRF Committee Selection | ✅ FULLY WIRED | Initialized at epoch transitions with relay data conversion. |
+| Two-Stage Finality | ✅ WIRED | Built into HardenedPoRW, active in consensus. |
 
 ---
 
