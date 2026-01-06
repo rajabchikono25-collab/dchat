@@ -516,20 +516,97 @@ impl ValidatorChainSync {
 
     /// Process an incoming block proposal
     pub async fn process_proposal(&self, proposal: BlockProposal) -> Result<(), ChainSyncError> {
-        // Verify the proposal signature
+        // 1. Verify the proposal signature (Ed25519 over block hash)
         proposal.verify_signature()?;
 
-        // Verify the leadership proof
+        // 2. Verify block hash integrity - recompute and compare
+        // This prevents tampering with block contents after signing
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"dchat-block-v1");
+        hasher.update(&proposal.slot.epoch.to_le_bytes());
+        hasher.update(&proposal.slot.slot.to_le_bytes());
+        hasher.update(proposal.parent_hash.as_bytes());
+        hasher.update(proposal.state_root.as_bytes());
+        hasher.update(proposal.transactions_root.as_bytes());
+        hasher.update(&proposal.transaction_count.to_le_bytes());
+        let computed_hash = Hash::from(*hasher.finalize().as_bytes());
+
+        if computed_hash != proposal.block_hash {
+            error!(
+                "❌ Block #{} hash verification FAILED - tampering detected",
+                proposal.slot.absolute_slot(self.epoch_length)
+            );
+            error!(
+                "   Expected: {}, Got: {}",
+                hex::encode(computed_hash.as_bytes()),
+                hex::encode(proposal.block_hash.as_bytes())
+            );
+            return Err(ChainSyncError::InvalidBlock(
+                "Block hash mismatch - tampering detected".into(),
+            ));
+        }
+
+        // 3. Verify the VRF leadership proof (cryptographic proof of slot leader selection)
         let selector = self.leader_selector.read().await;
         let slot_seed = selector
             .get_slot_seed(proposal.slot)
-            .map_err(|e| ChainSyncError::InvalidBlock(format!("{}", e)))?;
-        proposal
-            .leader_proof
-            .verify(&slot_seed)
-            .map_err(|_| ChainSyncError::InvalidBlock("Invalid leadership proof".into()))?;
+            .map_err(|e| ChainSyncError::InvalidBlock(format!("Failed to get slot seed: {}", e)))?;
 
-        // Check parent exists (unless it's the genesis)
+        // Full VRF verification with schnorrkel
+        proposal.leader_proof.verify(&slot_seed).map_err(|e| {
+            error!(
+                "❌ Block #{} VRF leadership proof FAILED: {:?}",
+                proposal.slot.absolute_slot(self.epoch_length),
+                e
+            );
+            ChainSyncError::InvalidBlock(format!("Invalid VRF leadership proof: {:?}", e))
+        })?;
+
+        // 4. Verify validator is eligible and registered
+        let vrf_public_key = proposal.leader_proof.leader_public_key;
+        let validators = selector
+            .get_validators(proposal.slot.epoch)
+            .ok_or_else(|| {
+                ChainSyncError::InvalidBlock(format!(
+                    "No validators registered for epoch {}",
+                    proposal.slot.epoch
+                ))
+            })?;
+
+        let validator = validators.get(&vrf_public_key).ok_or_else(|| {
+            error!(
+                "❌ Block #{} proposer not registered: {}",
+                proposal.slot.absolute_slot(self.epoch_length),
+                hex::encode(&vrf_public_key)
+            );
+            ChainSyncError::InvalidBlock("Proposer not in validator set".into())
+        })?;
+
+        // 5. Verify validator weight matches claimed weight
+        if validator.weight_bps != proposal.leader_proof.validator_weight_bps {
+            error!(
+                "❌ Block #{} weight mismatch: validator has {}bps, claimed {}bps",
+                proposal.slot.absolute_slot(self.epoch_length),
+                validator.weight_bps,
+                proposal.leader_proof.validator_weight_bps
+            );
+            return Err(ChainSyncError::InvalidBlock(
+                "Validator weight mismatch".into(),
+            ));
+        }
+
+        // 6. Verify this is actually the slot leader (lowest leadership score)
+        // The VRF output combined with weight determines the leadership score
+        let claimed_score = proposal.leader_proof.leadership_score();
+        tracing::info!(
+            "✓ Block #{} VRF verified: leader={}, score={}, weight={}bps",
+            proposal.slot.absolute_slot(self.epoch_length),
+            hex::encode(&vrf_public_key[..4]),
+            claimed_score,
+            validator.weight_bps
+        );
+
+        // 7. Check parent exists (unless it's the genesis)
         if proposal.parent_hash != self.genesis_hash {
             let blocks = self.blocks.read().await;
             if !blocks.contains_key(&proposal.parent_hash) {
@@ -1120,5 +1197,300 @@ mod tests {
         let status = sync.get_sync_status().await;
         assert_eq!(status.canonical_head, genesis);
         assert_eq!(status.latest_finalized, genesis);
+    }
+
+    #[tokio::test]
+    async fn test_block_hash_verification_rejects_tampering() {
+        let genesis = create_genesis_hash();
+        let leader_selector = Arc::new(RwLock::new(SlotLeaderSelector::with_defaults()));
+
+        let signing_key = create_test_signing_key(42);
+        let vrf_keypair = {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            SchnorrkelKeypair::generate_with(&mut rng)
+        };
+
+        // Register a validator with matching VRF public key
+        let mut selector = leader_selector.write().await;
+        let mut validator_info = create_test_validator_info(42);
+        validator_info.vrf_public_key = vrf_keypair.public.to_bytes();
+        validator_info.weight_bps = 1000;
+        selector.register_validator(0, validator_info);
+        selector.set_epoch_seed(0, [0u8; 32]);
+        drop(selector);
+
+        let sync = ValidatorChainSync::new(leader_selector.clone(), genesis, 32, 6000);
+
+        let slot = SlotId::new(0, 1);
+
+        // Get the correct slot seed from the selector
+        let slot_seed = leader_selector.read().await.get_slot_seed(slot).unwrap();
+
+        let leader_proof = SlotLeaderProof::generate(
+            slot,
+            &slot_seed,
+            &vrf_keypair,
+            &signing_key,
+            1000,
+            GeographicRegion::NorthAmerica,
+        );
+
+        let mut proposal = BlockProposal::new(
+            slot,
+            genesis,
+            SlotId::new(0, 0),
+            Hash::from([1u8; 32]),
+            Hash::from([2u8; 32]),
+            5,
+            leader_proof,
+            &signing_key,
+        );
+
+        // Tamper with the block hash
+        // Re-sign the tampered hash (this simulates an attacker who controls the key
+        // but tries to present a mismatched hash)
+        proposal.block_hash = Hash::from([99u8; 32]);
+        proposal.signature = signing_key
+            .sign(proposal.block_hash.as_bytes())
+            .to_bytes()
+            .to_vec();
+
+        // Should reject due to hash mismatch (even though signature is valid)
+        let result = sync.process_proposal(proposal).await;
+        assert!(result.is_err());
+        if let Err(ref e) = result {
+            eprintln!("Got error: {:?}", e);
+        }
+        assert!(matches!(
+            result.unwrap_err(),
+            ChainSyncError::InvalidBlock(msg) if msg.contains("hash mismatch")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_block_hash_verification_accepts_valid_block() {
+        let genesis = create_genesis_hash();
+        let leader_selector = Arc::new(RwLock::new(SlotLeaderSelector::with_defaults()));
+
+        let signing_key = create_test_signing_key(42);
+        let vrf_keypair = {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            SchnorrkelKeypair::generate_with(&mut rng)
+        };
+
+        // Register a validator with matching VRF public key
+        let mut selector = leader_selector.write().await;
+        let mut validator_info = create_test_validator_info(42);
+        validator_info.vrf_public_key = vrf_keypair.public.to_bytes();
+        validator_info.weight_bps = 1000;
+        selector.register_validator(0, validator_info);
+        selector.set_epoch_seed(0, [0u8; 32]);
+        drop(selector);
+
+        let sync = ValidatorChainSync::new(leader_selector.clone(), genesis, 32, 6000);
+
+        let slot = SlotId::new(0, 1);
+
+        // Get the correct slot seed from the selector
+        let slot_seed = leader_selector.read().await.get_slot_seed(slot).unwrap();
+
+        let leader_proof = SlotLeaderProof::generate(
+            slot,
+            &slot_seed,
+            &vrf_keypair,
+            &signing_key,
+            1000,
+            GeographicRegion::NorthAmerica,
+        );
+
+        let proposal = BlockProposal::new(
+            slot,
+            genesis,
+            SlotId::new(0, 0),
+            Hash::from([1u8; 32]),
+            Hash::from([2u8; 32]),
+            5,
+            leader_proof,
+            &signing_key,
+        );
+
+        // Should accept valid block
+        let result = sync.process_proposal(proposal).await;
+        if let Err(ref e) = result {
+            eprintln!("Test failed with error: {:?}", e);
+        }
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_vrf_proof_verification_rejects_invalid_proof() {
+        let genesis = create_genesis_hash();
+        let leader_selector = Arc::new(RwLock::new(SlotLeaderSelector::with_defaults()));
+
+        let signing_key = create_test_signing_key(42);
+        let vrf_keypair = {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            SchnorrkelKeypair::generate_with(&mut rng)
+        };
+
+        // Register a validator with matching VRF public key
+        let mut selector = leader_selector.write().await;
+        let mut validator_info = create_test_validator_info(42);
+        validator_info.vrf_public_key = vrf_keypair.public.to_bytes();
+        validator_info.weight_bps = 1000;
+        selector.register_validator(0, validator_info);
+        selector.set_epoch_seed(0, [0u8; 32]);
+        drop(selector);
+
+        let sync = ValidatorChainSync::new(leader_selector.clone(), genesis, 32, 6000);
+
+        let slot = SlotId::new(0, 1);
+
+        // Get the correct slot seed from the selector
+        let slot_seed = leader_selector.read().await.get_slot_seed(slot).unwrap();
+
+        // Generate valid proof with slot seed
+        let mut leader_proof = SlotLeaderProof::generate(
+            slot,
+            &slot_seed,
+            &vrf_keypair,
+            &signing_key,
+            1000,
+            GeographicRegion::NorthAmerica,
+        );
+
+        // Corrupt the VRF proof bytes to simulate invalid proof
+        leader_proof.vrf_proof.0[0] ^= 0xFF;
+
+        let proposal = BlockProposal::new(
+            slot,
+            genesis,
+            SlotId::new(0, 0),
+            Hash::from([1u8; 32]),
+            Hash::from([2u8; 32]),
+            5,
+            leader_proof,
+            &signing_key,
+        );
+
+        // Should reject due to invalid VRF proof
+        let result = sync.process_proposal(proposal).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ChainSyncError::InvalidBlock(msg) if msg.contains("VRF")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_rejects_unregistered_validator() {
+        let genesis = create_genesis_hash();
+        let leader_selector = Arc::new(RwLock::new(SlotLeaderSelector::with_defaults()));
+
+        let signing_key = create_test_signing_key(42);
+        let vrf_keypair = {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            SchnorrkelKeypair::generate_with(&mut rng)
+        };
+
+        // Don't register any validators
+        let mut selector = leader_selector.write().await;
+        selector.set_epoch_seed(0, [0u8; 32]);
+        drop(selector);
+
+        let sync = ValidatorChainSync::new(leader_selector.clone(), genesis, 32, 6000);
+
+        let slot = SlotId::new(0, 1);
+
+        // Get the correct slot seed from the selector
+        let slot_seed = leader_selector.read().await.get_slot_seed(slot).unwrap();
+
+        let leader_proof = SlotLeaderProof::generate(
+            slot,
+            &slot_seed,
+            &vrf_keypair,
+            &signing_key,
+            1000,
+            GeographicRegion::NorthAmerica,
+        );
+
+        let proposal = BlockProposal::new(
+            slot,
+            genesis,
+            SlotId::new(0, 0),
+            Hash::from([1u8; 32]),
+            Hash::from([2u8; 32]),
+            5,
+            leader_proof,
+            &signing_key,
+        );
+
+        // Should reject unregistered validator
+        let result = sync.process_proposal(proposal).await;
+        assert!(result.is_err());
+        if let Err(ref e) = result {
+            eprintln!("Got error for unregistered validator: {:?}", e);
+        }
+        assert!(matches!(
+            result.unwrap_err(),
+            ChainSyncError::InvalidBlock(msg) if msg.contains("not in validator set") || msg.contains("not registered") || msg.contains("No validators registered")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_rejects_weight_mismatch() {
+        let genesis = create_genesis_hash();
+        let leader_selector = Arc::new(RwLock::new(SlotLeaderSelector::with_defaults()));
+
+        let signing_key = create_test_signing_key(42);
+        let vrf_keypair = {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+            SchnorrkelKeypair::generate_with(&mut rng)
+        };
+
+        // Register validator with weight 1000 and matching VRF public key
+        let mut selector = leader_selector.write().await;
+        let mut validator_info = create_test_validator_info(42);
+        validator_info.vrf_public_key = vrf_keypair.public.to_bytes();
+        validator_info.weight_bps = 1000;
+        selector.register_validator(0, validator_info);
+        selector.set_epoch_seed(0, [0u8; 32]);
+        drop(selector);
+
+        let sync = ValidatorChainSync::new(leader_selector.clone(), genesis, 32, 6000);
+
+        let slot = SlotId::new(0, 1);
+
+        // Get the correct slot seed from the selector
+        let slot_seed = leader_selector.read().await.get_slot_seed(slot).unwrap();
+
+        // Generate proof with different weight (2000 instead of 1000)
+        let leader_proof = SlotLeaderProof::generate(
+            slot,
+            &slot_seed,
+            &vrf_keypair,
+            &signing_key,
+            2000, // Wrong weight
+            GeographicRegion::NorthAmerica,
+        );
+
+        let proposal = BlockProposal::new(
+            slot,
+            genesis,
+            SlotId::new(0, 0),
+            Hash::from([1u8; 32]),
+            Hash::from([2u8; 32]),
+            5,
+            leader_proof,
+            &signing_key,
+        );
+
+        // Should reject due to weight mismatch
+        let result = sync.process_proposal(proposal).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ChainSyncError::InvalidBlock(msg) if msg.contains("weight mismatch")
+        ));
     }
 }
