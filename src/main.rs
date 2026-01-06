@@ -96,7 +96,8 @@ use dchat_network::relay::staking::RelayStakingValidator;
 use dchat_network::relay_network::{MIN_STAKE_CONFIRMATIONS, RELAY_LOCK_DURATION};
 use dchat_network::swarm::RateLimitConfig as SwarmRateLimitConfig;
 use dchat_network::{
-    DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId, StakingBackend,
+    current_epoch_id, DchatMessage, Multiaddr, NetworkConfig, NetworkEvent, NetworkManager, PeerId,
+    StakingBackend, EPOCH_DURATION_SECS,
 };
 use dchat_storage::{BackupManager, Database, DatabaseConfig};
 use ed25519_dalek::SigningKey;
@@ -8425,6 +8426,9 @@ async fn run_validator_node(
                 hex::encode(&vrf_public_key[..8])
             );
 
+            // Store the last VRF proof for block messages
+            let mut last_vrf_proof: Option<SlotLeaderProof> = None;
+
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(6)) => {
@@ -8444,6 +8448,9 @@ async fn run_validator_node(
                                     3333, // Our weight in basis points (~33%)
                                     GeographicRegion::Africa,
                                 );
+
+                                // Store proof for block message
+                                last_vrf_proof = Some(our_proof.clone());
 
                                 // Claim leadership - will succeed if we have the best score
                                 match slot_leader_selector.claim_leadership(our_proof.clone()) {
@@ -8838,6 +8845,35 @@ async fn run_validator_node(
                                 .filter_map(|tx| bincode::serialize(tx).ok())
                                 .collect();
 
+                            // Prepare subblock metadata for network transmission
+                            // Convert SystemTime timestamps to u64 for serialization
+                            let subblock_metadata: Vec<(u16, u64, u16)> = block.subblocks.iter()
+                                .map(|sb| {
+                                    let timestamp_u64 = sb.timestamp
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+                                        .as_secs();
+                                    (sb.index, timestamp_u64, sb.miniblocks.len() as u16)
+                                })
+                                .collect();
+
+                            // Prepare VRF proof for transmission (if this validator was leader)
+                            let vrf_proof_option = if let Some(ref proof) = last_vrf_proof {
+                                Some((
+                                    proof.vrf_output.to_vec(),
+                                    proof.vrf_proof.0.to_vec(),
+                                    proof.validator_weight_bps
+                                ))
+                            } else {
+                                None
+                            };
+
+                            // Get current epoch and slot index
+                            // Epoch duration is 6 hours = 21600 seconds, blocks every 6 seconds = 3600 blocks/epoch
+                            let current_epoch = current_epoch_id();
+                            let blocks_per_epoch = EPOCH_DURATION_SECS / 6; // 6 second block time
+                            let epoch_block_count = (block_height - 1) % blocks_per_epoch;
+
                             let block_message = DchatMessage::ValidatorBlock {
                                 height: block_height,
                                 validator_id: validator_id.clone(),
@@ -8845,6 +8881,12 @@ async fn run_validator_node(
                                 signature: block_signature.to_bytes().to_vec(),
                                 timestamp,
                                 transactions: tx_bytes,
+                                prev_hash: block.previous_hash.as_bytes().to_vec(),
+                                state_root: state_root.to_vec(),
+                                subblock_metadata,
+                                vrf_proof: vrf_proof_option,
+                                slot_epoch: current_epoch,
+                                slot_index: epoch_block_count,
                             };
 
                             // Broadcast block to validator network via gossipsub
@@ -8975,6 +9017,12 @@ async fn run_validator_node(
                                     signature,
                                     timestamp: _,
                                     transactions,
+                                    prev_hash,
+                                    state_root,
+                                    subblock_metadata,
+                                    vrf_proof,
+                                    slot_epoch,
+                                    slot_index,
                                 } => {
                                     info!("📨 Received validator block #{} from {}", height, hex::encode(&validator_id[..4]));
 

@@ -128,6 +128,13 @@ pub enum DchatMessage {
         signature: Vec<u8>,
         timestamp: u64,
         transactions: Vec<Vec<u8>>,
+        // NEW FIELDS for full block hash verification (Option A)
+        prev_hash: Vec<u8>,
+        state_root: Vec<u8>,
+        subblock_metadata: Vec<(u16, u64, u16)>, // (subblock_id, timestamp, miniblock_count)
+        vrf_proof: Option<(Vec<u8>, Vec<u8>, u64)>, // (output, proof, weight)
+        slot_epoch: u64,
+        slot_index: u64,
     },
     /// Validator block acknowledgment (vote)
     BlockAcknowledgment {

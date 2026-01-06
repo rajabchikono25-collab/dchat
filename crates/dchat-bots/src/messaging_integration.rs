@@ -2879,6 +2879,13 @@ impl MessageRouter {
             signature,
             timestamp,
             transactions: vec![message.encrypted_payload.clone()],
+            // Default values for system messages
+            prev_hash: vec![0u8; 32],
+            state_root: vec![0u8; 32],
+            subblock_metadata: vec![],
+            vrf_proof: None,
+            slot_epoch: 0,
+            slot_index: 0,
         };
 
         // Subscribe to validator topic if not already
