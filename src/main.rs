@@ -8336,8 +8336,12 @@ async fn run_validator_node(
                 ExecutionContext, ExecutionEngine, Hash as BlockHash, LaneId, MiniblockBody,
             };
             use dchat_blockchain::{Block, MerkleTree, Miniblock, StateValidationError, Subblock};
+            use std::sync::atomic::{AtomicU64, Ordering};
 
-            let mut block_height = 0u64;
+            // Shared block height for synchronization across network events
+            let shared_block_height = Arc::new(AtomicU64::new(0));
+            let block_height_for_events = Arc::clone(&shared_block_height);
+
             let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
 
             // World state for transaction execution
@@ -8465,9 +8469,10 @@ async fn run_validator_node(
                             }
                             Err(e) => {
                                 // Slot seed not yet available (epoch not finalized)
-                                // Fall back to deterministic selection based on block height
+                                // Fall back to deterministic selection based on current slot
                                 debug!("Slot seed not available: {}, using fallback selection", e);
-                                let leader_index = (block_height % 3) as usize;
+                                let current_height = shared_block_height.load(Ordering::SeqCst);
+                                let leader_index = ((current_height + 1) % 3) as usize;
                                 let our_index = (vrf_public_key[0] as usize) % 3;
                                 leader_index == our_index
                             }
@@ -8477,7 +8482,7 @@ async fn run_validator_node(
                         let is_leader = slot_leader_selector.is_leader(current_slot, &vrf_public_key) || is_vrf_leader;
 
                         if is_producer && is_leader {
-                            block_height += 1;
+                            let block_height = shared_block_height.fetch_add(1, Ordering::SeqCst) + 1;
                             info!("📦 Producing block #{} (slot {}) - WE ARE THE LEADER", block_height, current_slot);
 
                             // Advance tokenomics block counter for inflation tracking
@@ -8884,9 +8889,9 @@ async fn run_validator_node(
                             }
                         } else if is_producer {
                             // We are a producer but not the leader for this slot
-                            // Skip block production, just track height
-                            block_height += 1;
-                            debug!("⏳ Slot {}: Not our turn to produce (VRF selection)", current_slot);
+                            // Do NOT increment block_height locally - wait for leader's block via network
+                            let current_height = shared_block_height.load(Ordering::SeqCst);
+                            debug!("⏳ Slot {}: Not our turn to produce (VRF selection), current height={}", current_slot, current_height);
 
                             // Still advance tokenomics for consistent state
                             if let Err(e) = tokenomics_manager.advance_block() {
@@ -8895,7 +8900,9 @@ async fn run_validator_node(
                         } else {
                             // Non-producer validator: wait for blocks from network
                             // Blocks will be validated when received via gossipsub events
-                            block_height += 1;
+                            // Do NOT increment block_height locally - wait for leader's block via network
+                            let current_height = shared_block_height.load(Ordering::SeqCst);
+                            debug!("⏳ Non-producer waiting for block, current height={}", current_height);
 
                             // Advance tokenomics block counter for consistent state across validators
                             if let Err(e) = tokenomics_manager.advance_block() {
@@ -8905,7 +8912,8 @@ async fn run_validator_node(
                     }
 
                     _ = stats_interval.tick() => {
-                        info!("📊 Validator stats: height={}, stake={}", block_height, stake_amount);
+                        let current_height = shared_block_height.load(Ordering::SeqCst);
+                        info!("📊 Validator stats: height={}, stake={}", current_height, stake_amount);
                         let acks = block_acks_clone.lock().await;
                         info!("   Pending acknowledgments: {} blocks", acks.len());
 
@@ -8937,9 +8945,11 @@ async fn run_validator_node(
         let relay_work_store_clone = Arc::clone(&relay_work_store);
         let chain_genesis_timestamp = config.chain.genesis_timestamp;
         let chain_block_time_secs = config.chain.block_time_secs;
+        let shared_block_height_clone = Arc::clone(&block_height_for_events);
         let mut shutdown = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
+            use std::sync::atomic::Ordering;
             info!("Starting network event handler for consensus messages...");
 
             loop {
@@ -9113,6 +9123,15 @@ async fn run_validator_node(
                                     }
 
                                     info!("✓ Block #{} passed Byzantine fault check", height);
+
+                                    // Update shared block height if this block is higher than current
+                                    // This ensures consensus loop knows we've received a valid block at this height
+                                    let current_height = shared_block_height_clone.load(Ordering::SeqCst);
+                                    if height > current_height {
+                                        shared_block_height_clone.store(height, Ordering::SeqCst);
+                                        info!("📊 Updated shared block height from {} to {} (received from leader)",
+                                              current_height, height);
+                                    }
 
                                     // Create and sign acknowledgment
                                     let our_validator_id = validator_public_key_bytes_clone.to_vec();
