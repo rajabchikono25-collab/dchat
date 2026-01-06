@@ -22,6 +22,26 @@ pub struct Config {
 
     #[serde(default)]
     pub chain: ChainConfig,
+
+    /// Feature flags for enabling/disabling subsystems
+    #[serde(default)]
+    pub features: FeaturesConfig,
+
+    /// Payment channels configuration
+    #[serde(default)]
+    pub payment_channels: PaymentChannelsConfig,
+
+    /// Oracle network configuration
+    #[serde(default)]
+    pub oracle: OracleConfig,
+
+    /// Onion routing configuration
+    #[serde(default)]
+    pub onion_routing: OnionRoutingConfig,
+
+    /// Storage provider configuration
+    #[serde(default)]
+    pub storage_provider: StorageProviderConfig,
 }
 
 /// Chain timing configuration for epoch calculations
@@ -247,6 +267,181 @@ fn default_continent() -> String {
     "Europe".to_string()
 }
 
+/// Feature flags configuration for enabling/disabling subsystems
+/// All features default to disabled for safe rollout
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeaturesConfig {
+    /// Enable onion routing for metadata protection (Phase 2)
+    pub enable_onion_routing: bool,
+    /// Enable off-chain payment channels for micropayments (Phase 2)
+    pub enable_payment_channels: bool,
+    /// Enable end-to-end encryption with Double Ratchet (Phase 1)
+    /// Default: true - always enable E2E for security
+    pub enable_e2e_encryption: bool,
+    /// Enable watchtower service for fraud detection (Phase 3, validator only)
+    pub enable_watchtower: bool,
+    /// Enable oracle network for external price feeds (Phase 3, validator only)
+    pub enable_oracle: bool,
+    /// Enable bot platform with BotFather (Phase 4, relay only)
+    pub enable_bots: bool,
+    /// Enable mini-app platform (Phase 4)
+    pub enable_miniapps: bool,
+    /// Enable marketplace for digital goods (Phase 4)
+    pub enable_marketplace: bool,
+    /// Enable VRF-based committee selection (Phase 5, validator only)
+    pub enable_vrf_committees: bool,
+    /// Enable two-stage finality for faster confirmation (Phase 5, validator only)
+    pub enable_two_stage_finality: bool,
+    /// Enable decentralized storage providers (Phase 1)
+    pub enable_storage_providers: bool,
+    /// Enable admission control for rate limiting (Phase 5)
+    pub enable_admission_control: bool,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            enable_onion_routing: false,
+            enable_payment_channels: false,
+            enable_e2e_encryption: true, // Always enable E2E by default
+            enable_watchtower: false,
+            enable_oracle: false,
+            enable_bots: false,
+            enable_miniapps: false,
+            enable_marketplace: false,
+            enable_vrf_committees: false,
+            enable_two_stage_finality: false,
+            enable_storage_providers: false,
+            enable_admission_control: false,
+        }
+    }
+}
+
+/// Payment channels configuration for off-chain micropayments
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaymentChannelsConfig {
+    /// Minimum channel capacity in motes (default: 10 DCHAT)
+    pub min_channel_capacity: u64,
+    /// Maximum channel capacity in motes (default: 100,000 DCHAT)
+    pub max_channel_capacity: u64,
+    /// Dispute window in seconds (default: 48 hours)
+    pub dispute_window_secs: u64,
+    /// Auto-close threshold as fraction of capacity (0.1 = 10% remaining)
+    pub auto_close_threshold: f64,
+    /// Maximum pending payments before forcing settlement
+    pub max_pending_payments: u32,
+}
+
+impl Default for PaymentChannelsConfig {
+    fn default() -> Self {
+        Self {
+            min_channel_capacity: 10_000_000_000,      // 10 DCHAT
+            max_channel_capacity: 100_000_000_000_000, // 100,000 DCHAT
+            dispute_window_secs: 48 * 60 * 60,         // 48 hours
+            auto_close_threshold: 0.1,                 // 10%
+            max_pending_payments: 1000,
+        }
+    }
+}
+
+/// Oracle network configuration for external price feeds
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OracleConfig {
+    /// Minimum stake required to participate as oracle (in motes)
+    pub min_stake: u64,
+    /// Price update interval in seconds
+    pub update_interval_secs: u64,
+    /// Maximum deviation from median before considered outlier (0.5 = 50%)
+    pub max_outlier_deviation: f64,
+    /// Slash rate for bad predictions (0.1 = 10%)
+    pub outlier_slash_rate: f64,
+    /// Minimum number of oracle submissions for consensus
+    pub min_submissions: u32,
+}
+
+impl Default for OracleConfig {
+    fn default() -> Self {
+        Self {
+            min_stake: 1_000_000_000_000, // 1000 DCHAT
+            update_interval_secs: 60,
+            max_outlier_deviation: 0.5,
+            outlier_slash_rate: 0.10,
+            min_submissions: 3,
+        }
+    }
+}
+
+/// Onion routing configuration for metadata protection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OnionRoutingConfig {
+    /// Routing mode: "direct" (default) or "onion"
+    pub routing_mode: String,
+    /// Minimum circuit hops (default: 3)
+    pub min_circuit_hops: usize,
+    /// Maximum circuit hops (default: 5)
+    pub max_circuit_hops: usize,
+    /// Circuit rotation interval in seconds (default: 10 minutes)
+    pub circuit_rotation_secs: u64,
+    /// Circuit build timeout in seconds
+    pub circuit_build_timeout_secs: u64,
+    /// Enable cover traffic to mask real traffic patterns
+    pub enable_cover_traffic: bool,
+}
+
+impl Default for OnionRoutingConfig {
+    fn default() -> Self {
+        Self {
+            routing_mode: "direct".to_string(),
+            min_circuit_hops: 3,
+            max_circuit_hops: 5,
+            circuit_rotation_secs: 600, // 10 minutes
+            circuit_build_timeout_secs: 30,
+            enable_cover_traffic: true,
+        }
+    }
+}
+
+/// Storage provider configuration for decentralized storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageProviderConfig {
+    /// Storage provider type: "local", "s3", "ipfs"
+    pub provider: String,
+    /// Inline threshold in bytes - messages smaller than this stored in DB
+    pub inline_threshold_bytes: usize,
+    /// Maximum blob size in bytes
+    pub max_blob_size_bytes: usize,
+    /// Enable at-rest encryption for stored data
+    pub enable_at_rest_encryption: bool,
+    /// Default user storage quota in bytes
+    pub default_user_quota_bytes: u64,
+    /// S3 bucket name (if using S3)
+    pub s3_bucket: Option<String>,
+    /// S3 region (if using S3)
+    pub s3_region: Option<String>,
+    /// IPFS gateway URL (if using IPFS)
+    pub ipfs_gateway: Option<String>,
+}
+
+impl Default for StorageProviderConfig {
+    fn default() -> Self {
+        Self {
+            provider: "local".to_string(),
+            inline_threshold_bytes: 65536,    // 64KB
+            max_blob_size_bytes: 104_857_600, // 100MB
+            enable_at_rest_encryption: true,
+            default_user_quota_bytes: 10_737_418_240, // 10GB
+            s3_bucket: None,
+            s3_region: None,
+            ipfs_gateway: None,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -298,6 +493,11 @@ impl Default for Config {
 
             rpc: RpcConfig::default(),
             chain: ChainConfig::default(),
+            features: FeaturesConfig::default(),
+            payment_channels: PaymentChannelsConfig::default(),
+            oracle: OracleConfig::default(),
+            onion_routing: OnionRoutingConfig::default(),
+            storage_provider: StorageProviderConfig::default(),
         }
     }
 }

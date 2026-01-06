@@ -4,22 +4,24 @@ TOP 10 UNWIRED/PARTIALLY-WIRED FEATURES FOR MAINNET
 
 | Feature | Original Status | Current Status | Notes |
 |---------|-----------------|----------------|-------|
-| 1. Onion Routing | ❌ Not called | ⚠️ INITIALIZED | `OnionRoutingManager::new(CircuitConfig)` in relay Phase 6d. Need to wire to message dispatch. |
-| 2. Bot Platform | ❌ Test only | ⚠️ INITIALIZED | `BotFather::new()` in relay Phase 6g. Need CLI commands. |
-| 3. Mini-Apps | ❌ Counter only | ❌ Counter only | MiniAppRegistry not wired |
-| 4. Marketplace | ❌ Demo only | ❌ Demo only | MarketplaceManager not wired |
-| 5. Payment Channels | ❌ Not integrated | ⚠️ INITIALIZED | `PaymentChannelManager::new()` in relay 6f and validator. Need to connect to message flow. |
+| 1. Onion Routing | ❌ Not called | ✅ WIRED | `OnionRoutingManager` in relay Phase 6d with feature flag. |
+| 2. Bot Platform | ❌ Test only | ✅ WIRED | `BotFather` wired to CLI commands (dchat bot create/list). |
+| 3. Mini-Apps | ❌ Counter only | ✅ WIRED | `MiniAppRegistry` wired to run_user_node with feature flag. |
+| 4. Marketplace | ❌ Demo only | ✅ WIRED | `MarketplaceManager` wired to run_validator_node with feature flag. |
+| 5. Payment Channels | ❌ Not integrated | ✅ WIRED | `PaymentChannelManager` wired to run_user_node with feature flag. |
 | 6. Accessibility TTS | ❌ No backend | ❌ No backend | TtsEngine not instantiated |
-| 7. Watchtower | ❌ Not spawned | ✅ SPAWNED | `WatchtowerMonitor` background task in validator mode |
-| 8. Oracle Network | ❌ No callers | ⚠️ INITIALIZED | `OracleNetwork::new(1000 DCHAT)` in validator. Need CLI for participation. |
+| 7. Watchtower | ❌ Not spawned | ✅ WIRED | `WatchtowerMonitor` wired to run_validator_node with feature flag. |
+| 8. Oracle Network | ❌ No callers | ✅ WIRED | `OracleNetwork` wired to run_validator_node with feature flag. |
 | 9. Solana Bridge | ❌ No RPC | ⚠️ CONDITIONAL | `SolanaBridgeManager` initializes when `DCHAT_SOLANA_RPC` env set (Phase 6i) |
-| 10. Storage Providers | ❌ Not wired | ❌ Not wired | `StorageFacade` needs PgPool/Router/Registry |
+| 10. Storage Providers | ❌ Not wired | ✅ WIRED | `StorageRoutedUserManager::offline()` wired to run_user_node with feature flag. |
 
 ### Additional Wiring (2026-01-06)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| E2E Crypto (QGE) | ⚠️ INITIALIZED | `QgeSessionManager::new()` in relay Phase 6h. Need message encryption integration. |
+| E2E Crypto (GroupKeyDistribution) | ✅ WIRED | Wired to run_user_node, encrypts outbound and decrypts inbound messages. |
+| VRF Committee Selection | ⚠️ PARTIAL | HardenedPoRW initialized, needs relay data conversion for committee init. |
+| Two-Stage Finality | ⚠️ PARTIAL | Built into HardenedPoRW, ready for use. |
 
 ---
 

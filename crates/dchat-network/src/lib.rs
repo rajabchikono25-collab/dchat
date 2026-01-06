@@ -58,7 +58,9 @@ pub use handshake_rate_limit::{
 pub use keystore::{default_keystore_path, RelayKeystore};
 pub use nat::{NatConfig, NatTraversal};
 pub use nat_traversal::{NatStrategy, NatTraversalManager, NatType};
-pub use onion_routing::{CircuitId, CircuitStatus, OnionRoutingManager, RelayResult};
+pub use onion_routing::{
+    CircuitConfig, CircuitId, CircuitStatus, OnionRoutingManager, RelayResult,
+};
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use rate_limiting::{RateLimitManager, ReputationScore};
 pub use relay::epoch_token::{
