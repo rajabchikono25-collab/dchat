@@ -7926,6 +7926,11 @@ async fn run_validator_node(
     let verifying_key = Ed25519VerifyingKey::from_bytes(&public_key_bytes)
         .map_err(|e| Error::crypto(format!("Failed to create verifying key: {}", e)))?;
 
+    // Collect authorized genesis validator public keys for block verification
+    // This set is shared with the network event handler to verify incoming blocks
+    let authorized_validators: Arc<std::collections::HashSet<[u8; 32]>> =
+        Arc::new(std::collections::HashSet::new());
+
     let genesis_stake_amount = if let Some(ref genesis_path) = genesis_dir {
         // Load pre-stake genesis and verify this validator is included
         use dchat_chain::chain::genesis::CurrencyGenesisBlock;
@@ -7942,6 +7947,24 @@ async fn run_validator_node(
             .map_err(|e| Error::io(format!("Failed to read genesis file: {}", e)))?;
         let currency_genesis: CurrencyGenesisBlock = serde_json::from_str(&genesis_json)
             .map_err(|e| Error::serialization(format!("Failed to parse genesis: {}", e)))?;
+
+        // Collect all authorized validator public keys from genesis
+        let mut auth_validators = std::collections::HashSet::new();
+        for v in &currency_genesis.initial_validators {
+            if let Ok(pubkey_bytes) = hex::decode(&v.public_key) {
+                if pubkey_bytes.len() == 32 {
+                    let mut key_array = [0u8; 32];
+                    key_array.copy_from_slice(&pubkey_bytes);
+                    auth_validators.insert(key_array);
+                    info!(
+                        "   📋 Authorized genesis validator: {}",
+                        &v.public_key[..16]
+                    );
+                }
+            }
+        }
+        // Replace the empty set with the populated one
+        let authorized_validators = Arc::new(auth_validators);
 
         // Find this validator in genesis
         let validator_pubkey_hex = hex::encode(&public_key_bytes);
@@ -7961,7 +7984,7 @@ async fn run_validator_node(
                 );
                 info!("   Voting Power: {}", v.voting_power);
                 info!("   ✅ No RPC required - stake is embedded in genesis block");
-                Some(v.stake_amount)
+                Some((v.stake_amount, authorized_validators))
             }
             None => {
                 error!("❌ Validator public key not found in genesis file!");
@@ -7979,6 +8002,15 @@ async fn run_validator_node(
     } else {
         None
     };
+
+    // Extract authorized validators set (empty if not using genesis)
+    let authorized_validators: Arc<std::collections::HashSet<[u8; 32]>> = genesis_stake_amount
+        .as_ref()
+        .map(|(_, auth)| Arc::clone(auth))
+        .unwrap_or_else(|| Arc::new(std::collections::HashSet::new()));
+
+    // Extract just the stake amount for later use
+    let genesis_stake_amount = genesis_stake_amount.map(|(stake, _)| stake);
 
     // Either use genesis stake or submit via RPC
     let effective_stake_motes = if let Some(genesis_motes) = genesis_stake_amount {
@@ -8791,11 +8823,14 @@ async fn run_validator_node(
                             info!("  • Block has {} subblocks, {} transactions total",
                                 block.subblocks.len(), block.transaction_count());
 
-                            // Calculate block hash
-                            let block_hash_obj = block.calculate_hash();
+                            // Calculate consensus hash for signing and network transmission
+                            // Uses consensus_hash() which only includes fields transmitted in ValidatorBlock:
+                            // height, prev_hash, state_root, subblock_count, transaction_count
+                            // This allows receivers to verify the hash without full block reconstruction
+                            let block_hash_obj = block.consensus_hash();
                             let block_hash = block_hash_obj.as_bytes().to_vec();
 
-                            info!("  • Block hash: {}", hex::encode(&block_hash[..8]));
+                            info!("  • Block consensus hash: {}", hex::encode(&block_hash[..8]));
 
                             // Sign the block with validator key
                             let signature_result = {
@@ -8991,6 +9026,7 @@ async fn run_validator_node(
         let chain_genesis_timestamp = config.chain.genesis_timestamp;
         let chain_block_time_secs = config.chain.block_time_secs;
         let shared_block_height_clone = Arc::clone(&shared_block_height_global);
+        let authorized_validators_clone = Arc::clone(&authorized_validators);
         let mut shutdown = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
@@ -9072,14 +9108,36 @@ async fn run_validator_node(
 
                                     info!("✓ Block #{} signature verified from validator {}", height, hex::encode(&validator_id[..4]));
 
-                                    // TODO: Block hash verification temporarily disabled during initial sync development
-                                    // The producer uses block.calculate_hash() which includes full block structure
-                                    // but we only receive height + transactions, so hashes won't match.
-                                    // Once proper block serialization is implemented, re-enable this check.
-                                    //
-                                    // For now, we rely on signature verification (above) to authenticate the block.
-                                    // The signature is computed over the block_hash, so if signature is valid,
-                                    // the block_hash was produced by the validator.
+                                    // Verify the validator is authorized (in genesis validator set)
+                                    if !authorized_validators_clone.is_empty() && !authorized_validators_clone.contains(&validator_id_bytes) {
+                                        warn!("⚠️  Block #{} from UNAUTHORIZED validator {}", height, hex::encode(&validator_id[..8]));
+                                        warn!("   Block rejected - validator not in genesis set");
+                                        warn!("   Expected one of {} authorized validators", authorized_validators_clone.len());
+                                        continue;
+                                    }
+
+                                    // Verify block hash matches the consensus hash of transmitted fields
+                                    // The consensus hash includes: height, prev_hash, state_root, subblock_count, tx_count
+                                    {
+                                        use blake3::Hasher;
+                                        let mut hasher = Hasher::new();
+                                        hasher.update(b"dchat/block/consensus/v1");
+                                        hasher.update(&height.to_le_bytes());
+                                        hasher.update(&prev_hash);
+                                        hasher.update(&state_root);
+                                        hasher.update(&[subblock_metadata.len() as u8]);
+                                        hasher.update(&(transactions.len() as u32).to_le_bytes());
+                                        let computed_hash = hasher.finalize();
+
+                                        if computed_hash.as_bytes() != block_hash.as_slice() {
+                                            warn!("⚠️  Block #{} hash verification FAILED", height);
+                                            warn!("   Expected: {}", hex::encode(&block_hash[..8]));
+                                            warn!("   Computed: {}", hex::encode(&computed_hash.as_bytes()[..8]));
+                                            warn!("   Block rejected - hash mismatch indicates tampering or corruption");
+                                            continue;
+                                        }
+                                        info!("✓ Block #{} consensus hash verified", height);
+                                    }
 
                                     info!("✓ Block #{} accepted from validator {} ({} transactions)",
                                           height, hex::encode(&validator_id[..4]), transactions.len());
@@ -9256,6 +9314,13 @@ async fn run_validator_node(
                                     use ed25519_dalek::Verifier;
                                     if let Err(e) = verifying_key.verify(&block_hash, &sig) {
                                         warn!("⚠️  Acknowledgment signature verification FAILED: {}", e);
+                                        continue;
+                                    }
+
+                                    // Verify the acknowledging validator is authorized (in genesis validator set)
+                                    if !authorized_validators_clone.is_empty() && !authorized_validators_clone.contains(&validator_id_bytes) {
+                                        warn!("⚠️  Acknowledgment from UNAUTHORIZED validator {}", hex::encode(&validator_id[..8]));
+                                        warn!("   Acknowledgment rejected - validator not in genesis set");
                                         continue;
                                     }
 

@@ -703,10 +703,21 @@ impl Block {
         self.subblocks.iter().map(|sb| sb.transaction_count()).sum()
     }
 
-    /// Calculate block hash
+    /// Calculate block hash (full block serialization)
     pub fn calculate_hash(&self) -> Hash {
         let serialized = canonical::canonical_serialize(self);
         Hash::from(*blake3::hash(&serialized).as_bytes())
+    }
+
+    /// Calculate consensus hash for network verification
+    ///
+    /// This hash uses only the essential fields that are transmitted
+    /// in ValidatorBlock messages, allowing receivers to verify
+    /// the block hash without reconstructing the full Block structure.
+    ///
+    /// Fields included: height, previous_hash, state_root, subblock_count, tx_count
+    pub fn consensus_hash(&self) -> Hash {
+        self.header_only().consensus_hash()
     }
 
     /// Verify block integrity
@@ -782,6 +793,24 @@ impl BlockHeader {
     pub fn hash(&self) -> Hash {
         let bytes = canonical::canonical_serialize(self);
         canonical::domain_hash(b"dchat/block/header/v1", &bytes)
+    }
+
+    /// Compute a consensus hash that can be verified by receivers
+    /// Uses only fields that are transmitted in ValidatorBlock messages:
+    /// height, prev_hash, state_root, subblock_count, transaction_count
+    ///
+    /// This hash is deterministic and can be reconstructed by any node
+    /// receiving the ValidatorBlock message.
+    pub fn consensus_hash(&self) -> Hash {
+        use blake3::Hasher;
+        let mut hasher = Hasher::new();
+        hasher.update(b"dchat/block/consensus/v1");
+        hasher.update(&self.height.to_le_bytes());
+        hasher.update(self.previous_hash.as_bytes());
+        hasher.update(self.state_root.as_bytes());
+        hasher.update(&[self.subblock_count]);
+        hasher.update(&self.transaction_count.to_le_bytes());
+        Hash::from(*hasher.finalize().as_bytes())
     }
 }
 
