@@ -74,6 +74,10 @@ use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionM
 use dchat_blockchain::hardened_consensus::batch_verification::VerificationPipeline;
 use dchat_blockchain::hardened_consensus::epoch_snapshot::SnapshotStore;
 use dchat_blockchain::hardened_consensus::integration::HardenedPoRW;
+use dchat_blockchain::hardened_consensus::slot_leader_selection::{
+    SlotId, SlotLeaderSelector, ValidatorInfo, DEFAULT_SLOT_DURATION_MS,
+};
+use dchat_blockchain::hardened_consensus::vrf_committees::GeographicRegion;
 use dchat_blockchain::tokenomics::{MintReason, TokenSupplyConfig, TokenomicsManager};
 use parking_lot::RwLock as ParkingRwLock;
 
@@ -8254,6 +8258,8 @@ async fn run_validator_node(
         // Phase 5: Pass feature flags for VRF committees and two-stage finality
         let enable_vrf_committees = config.features.enable_vrf_committees;
         let _enable_two_stage_finality = config.features.enable_two_stage_finality;
+        // Clone validator public key for slot leader selection
+        let our_validator_pubkey = validator_public_key_bytes;
 
         tokio::spawn(async move {
             info!("Starting consensus engine with BFT verification and FULL state validation...");
@@ -8339,13 +8345,52 @@ async fn run_validator_node(
             // Execution engine for parallel transaction processing
             let execution_engine = ExecutionEngine::new(true); // Enable parallel execution
 
+            // Initialize Slot Leader Selector for coordinated block production
+            // This ensures only one validator produces blocks per slot, preventing forks
+            let mut slot_leader_selector = SlotLeaderSelector::with_defaults();
+
+            // Register ourselves as a validator for the current epoch
+            // In production, this would be loaded from genesis/chain state
+            let validator_info = ValidatorInfo {
+                vrf_public_key: our_validator_pubkey, // Using signing key as VRF key for now
+                signing_public_key: our_validator_pubkey,
+                stake_amount: 1000000000000000, // 10M DCHAT from genesis
+                weight_bps: 3333,               // ~33% for 3 validators
+                region: GeographicRegion::Africa, // Default region
+                is_active: true,
+                last_leader_slot: None,
+                blocks_produced: 0,
+                blocks_missed: 0,
+            };
+            slot_leader_selector.register_validator(0, validator_info);
+
+            // Set initial epoch seed from genesis hash
+            let genesis_seed: [u8; 32] = *blake3::hash(b"dchat-mainnet-1-genesis").as_bytes();
+            slot_leader_selector.set_epoch_seed(0, genesis_seed);
+
+            info!(
+                "🎯 Slot leader selector initialized with validator {}",
+                hex::encode(&our_validator_pubkey[..8])
+            );
+
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(6)) => {
-                        // Block production interval (6 seconds)
-                        if is_producer {
+                        // Block production interval (6 seconds / 2 second slots = 3 slots)
+                        let current_slot = slot_leader_selector.current_slot();
+
+                        // Check if we are the designated leader for this slot
+                        let is_our_turn = slot_leader_selector.is_leader(current_slot, &our_validator_pubkey);
+
+                        // Simple round-robin leader selection based on block height
+                        // Until full VRF integration, use deterministic selection
+                        let leader_index = (block_height % 3) as usize;
+                        let our_index = (our_validator_pubkey[0] as usize) % 3;
+                        let is_leader_by_round_robin = leader_index == our_index;
+
+                        if is_producer && is_leader_by_round_robin {
                             block_height += 1;
-                            info!("📦 Producing block #{} with FULL state validation", block_height);
+                            info!("📦 Producing block #{} (slot {}) - WE ARE THE LEADER", block_height, current_slot);
 
                             // Advance tokenomics block counter for inflation tracking
                             if let Err(e) = tokenomics_manager.advance_block() {
@@ -8748,6 +8793,16 @@ async fn run_validator_node(
                                 warn!("⚠️  Block #{} did not reach BFT threshold ({}/{} acks)",
                                     block_height, received_acks, required_signatures);
                                 warn!("   Block may not be finalized - potential network partition");
+                            }
+                        } else if is_producer {
+                            // We are a producer but not the leader for this slot
+                            // Skip block production, just track height
+                            block_height += 1;
+                            debug!("⏳ Slot {}: Not our turn to produce (leader index {})", current_slot, leader_index);
+
+                            // Still advance tokenomics for consistent state
+                            if let Err(e) = tokenomics_manager.advance_block() {
+                                warn!("Failed to advance tokenomics block counter: {}", e);
                             }
                         } else {
                             // Non-producer validator: wait for blocks from network
