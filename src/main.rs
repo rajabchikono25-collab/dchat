@@ -8247,12 +8247,17 @@ async fn run_validator_node(
         None
     };
 
+    // Create shared block height for synchronization between consensus and network event handlers
+    use std::sync::atomic::AtomicU64;
+    let shared_block_height_global = Arc::new(AtomicU64::new(0));
+
     let consensus_handle = {
         let network_arc_clone = network_arc.clone();
         let validator_key_arc_clone = Arc::clone(&validator_key_arc);
         let block_acks_clone = block_acknowledgments.clone();
         let state_validator_clone = state_validator.clone();
         let staking_manager_consensus = staking_manager.clone();
+        let shared_block_height = Arc::clone(&shared_block_height_global);
         let currency_rpc_url_for_consensus = consensus_currency_rpc_url.clone();
         let relay_registry_store = Arc::clone(&relay_registry_store);
         let relay_work_store = Arc::clone(&relay_work_store);
@@ -8336,11 +8341,9 @@ async fn run_validator_node(
                 ExecutionContext, ExecutionEngine, Hash as BlockHash, LaneId, MiniblockBody,
             };
             use dchat_blockchain::{Block, MerkleTree, Miniblock, StateValidationError, Subblock};
-            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::sync::atomic::Ordering;
 
-            // Shared block height for synchronization across network events
-            let shared_block_height = Arc::new(AtomicU64::new(0));
-            let block_height_for_events = Arc::clone(&shared_block_height);
+            // shared_block_height is passed in from outer scope for cross-task synchronization
 
             let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
 
@@ -8945,7 +8948,7 @@ async fn run_validator_node(
         let relay_work_store_clone = Arc::clone(&relay_work_store);
         let chain_genesis_timestamp = config.chain.genesis_timestamp;
         let chain_block_time_secs = config.chain.block_time_secs;
-        let shared_block_height_clone = Arc::clone(&block_height_for_events);
+        let shared_block_height_clone = Arc::clone(&shared_block_height_global);
         let mut shutdown = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
