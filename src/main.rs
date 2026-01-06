@@ -74,8 +74,9 @@ use dchat_blockchain::fee_distribution::{FeeDistributionConfig, FeeDistributionM
 use dchat_blockchain::hardened_consensus::batch_verification::VerificationPipeline;
 use dchat_blockchain::hardened_consensus::epoch_snapshot::SnapshotStore;
 use dchat_blockchain::hardened_consensus::integration::HardenedPoRW;
+use dchat_blockchain::hardened_consensus::slot_leader_selection::SchnorrkelKeypair;
 use dchat_blockchain::hardened_consensus::slot_leader_selection::{
-    SlotId, SlotLeaderSelector, ValidatorInfo, DEFAULT_SLOT_DURATION_MS,
+    SlotId, SlotLeaderProof, SlotLeaderSelector, ValidatorInfo, DEFAULT_SLOT_DURATION_MS,
 };
 use dchat_blockchain::hardened_consensus::vrf_committees::GeographicRegion;
 use dchat_blockchain::tokenomics::{MintReason, TokenSupplyConfig, TokenomicsManager};
@@ -8349,10 +8350,50 @@ async fn run_validator_node(
             // This ensures only one validator produces blocks per slot, preventing forks
             let mut slot_leader_selector = SlotLeaderSelector::with_defaults();
 
+            // Create VRF keypair from validator's private key for cryptographic leader selection
+            // The VRF keypair is derived deterministically from the validator's Ed25519 seed
+            let vrf_keypair = {
+                // Get validator's private key bytes for VRF derivation
+                let validator_key = validator_key_arc_clone.lock().await;
+                let vrf_seed = if let Some(priv_bytes) = validator_key.private_key_bytes() {
+                    // Derive VRF seed from validator's private key using domain separation
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"dchat-vrf-keypair-derivation-v1");
+                    hasher.update(&priv_bytes);
+                    *hasher.finalize().as_bytes()
+                } else {
+                    // For KMS keys, use public key as seed (deterministic per validator)
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"dchat-vrf-keypair-derivation-v1");
+                    hasher.update(&our_validator_pubkey);
+                    *hasher.finalize().as_bytes()
+                };
+                drop(validator_key);
+
+                // Generate schnorrkel keypair from deterministic seed
+                use rand::SeedableRng;
+                let mut rng = rand::rngs::StdRng::from_seed(vrf_seed);
+                SchnorrkelKeypair::generate_with(&mut rng)
+            };
+
+            // Create Ed25519 signing key for block signatures
+            let signing_key = {
+                let validator_key = validator_key_arc_clone.lock().await;
+                if let Some(priv_bytes) = validator_key.private_key_bytes() {
+                    ed25519_dalek::SigningKey::from_bytes(&priv_bytes)
+                } else {
+                    // For KMS, generate a local signing key (blocks will be signed via KMS separately)
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"dchat-signing-key-derivation-v1");
+                    hasher.update(&our_validator_pubkey);
+                    ed25519_dalek::SigningKey::from_bytes(hasher.finalize().as_bytes())
+                }
+            };
+
             // Register ourselves as a validator for the current epoch
             // In production, this would be loaded from genesis/chain state
             let validator_info = ValidatorInfo {
-                vrf_public_key: our_validator_pubkey, // Using signing key as VRF key for now
+                vrf_public_key: vrf_keypair.public.to_bytes(), // Proper VRF public key
                 signing_public_key: our_validator_pubkey,
                 stake_amount: 1000000000000000, // 10M DCHAT from genesis
                 weight_bps: 3333,               // ~33% for 3 validators
@@ -8368,9 +8409,13 @@ async fn run_validator_node(
             let genesis_seed: [u8; 32] = *blake3::hash(b"dchat-mainnet-1-genesis").as_bytes();
             slot_leader_selector.set_epoch_seed(0, genesis_seed);
 
+            // Store VRF public key for leadership checks
+            let vrf_public_key = vrf_keypair.public.to_bytes();
+
             info!(
-                "🎯 Slot leader selector initialized with validator {}",
-                hex::encode(&our_validator_pubkey[..8])
+                "🎯 Slot leader selector initialized with validator {} (VRF: {})",
+                hex::encode(&our_validator_pubkey[..8]),
+                hex::encode(&vrf_public_key[..8])
             );
 
             loop {
@@ -8379,16 +8424,59 @@ async fn run_validator_node(
                         // Block production interval (6 seconds / 2 second slots = 3 slots)
                         let current_slot = slot_leader_selector.current_slot();
 
-                        // Check if we are the designated leader for this slot
-                        let is_our_turn = slot_leader_selector.is_leader(current_slot, &our_validator_pubkey);
+                        // VRF-based leader selection: Compute our leadership proof for this slot
+                        // Each validator computes VRF(slot_seed, private_key) and the lowest score wins
+                        let is_vrf_leader = match slot_leader_selector.get_slot_seed(current_slot) {
+                            Ok(slot_seed) => {
+                                // Generate our VRF leadership proof
+                                let our_proof = SlotLeaderProof::generate(
+                                    current_slot,
+                                    &slot_seed,
+                                    &vrf_keypair,
+                                    &signing_key,
+                                    3333, // Our weight in basis points (~33%)
+                                    GeographicRegion::Africa,
+                                );
 
-                        // Simple round-robin leader selection based on block height
-                        // Until full VRF integration, use deterministic selection
-                        let leader_index = (block_height % 3) as usize;
-                        let our_index = (our_validator_pubkey[0] as usize) % 3;
-                        let is_leader_by_round_robin = leader_index == our_index;
+                                // Claim leadership - will succeed if we have the best score
+                                match slot_leader_selector.claim_leadership(our_proof.clone()) {
+                                    Ok(true) => {
+                                        debug!(
+                                            "🎲 VRF leadership claimed for slot {} (score: {})",
+                                            current_slot,
+                                            our_proof.leadership_score()
+                                        );
+                                        true
+                                    }
+                                    Ok(false) => {
+                                        // Another validator has a better score
+                                        debug!(
+                                            "🎲 VRF leadership not won for slot {} (our score: {})",
+                                            current_slot,
+                                            our_proof.leadership_score()
+                                        );
+                                        false
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to claim VRF leadership: {}", e);
+                                        false
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                // Slot seed not yet available (epoch not finalized)
+                                // Fall back to deterministic selection based on block height
+                                debug!("Slot seed not available: {}, using fallback selection", e);
+                                let leader_index = (block_height % 3) as usize;
+                                let our_index = (vrf_public_key[0] as usize) % 3;
+                                leader_index == our_index
+                            }
+                        };
 
-                        if is_producer && is_leader_by_round_robin {
+                        // Check if we are the designated leader for this slot via VRF
+                        let is_leader = slot_leader_selector.is_leader(current_slot, &vrf_public_key) || is_vrf_leader;
+
+                        if is_producer && is_leader {
                             block_height += 1;
                             info!("📦 Producing block #{} (slot {}) - WE ARE THE LEADER", block_height, current_slot);
 
@@ -8798,7 +8886,7 @@ async fn run_validator_node(
                             // We are a producer but not the leader for this slot
                             // Skip block production, just track height
                             block_height += 1;
-                            debug!("⏳ Slot {}: Not our turn to produce (leader index {})", current_slot, leader_index);
+                            debug!("⏳ Slot {}: Not our turn to produce (VRF selection)", current_slot);
 
                             // Still advance tokenomics for consistent state
                             if let Err(e) = tokenomics_manager.advance_block() {

@@ -32,9 +32,12 @@ use super::vrf_committees::{
 use crate::block_hierarchy::Hash;
 use ed25519_dalek::SigningKey;
 use merlin::Transcript;
+// Re-export schnorrkel Keypair type for external use in VRF leader selection
+pub use schnorrkel::Keypair as SchnorrkelKeypair;
+
 use schnorrkel::{
     vrf::{VRFPreOut, VRFProof},
-    Keypair as SchnorrkelKeypair, PublicKey as SchnorrkelPublicKey,
+    Keypair, PublicKey as SchnorrkelPublicKey,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
