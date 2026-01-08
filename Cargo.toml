@@ -21,7 +21,6 @@ members = [
   "crates/dchat-bots",
   "crates/dchat-data",
   "crates/dchat-deployment",
-  "crates/dchat-vr",
   "crates/dchat-programs",
   "crates/dchat-miniapps",
   "crates/dchat-dpl",

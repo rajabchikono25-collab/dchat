@@ -138,7 +138,6 @@ graph LR
         deployment[dchat-deployment]
         testing[dchat-testing]
         accessibility[dchat-accessibility]
-        vr[dchat-vr]
         data[dchat-data]
         sdk[dchat-sdk-rust]
         cli[ironclad-cli]

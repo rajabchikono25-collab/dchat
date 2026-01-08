@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-dchat is a **cohesively integrated Rust monorepo** containing 27 crates that form a proper dependency DAG (Directed Acyclic Graph) with well-defined responsibilities. The system implements a decentralized, end-to-end encrypted chat platform with blockchain-enforced message ordering, sovereign identity, and novel cryptographic protocols.
+dchat is a **cohesively integrated Rust monorepo** containing 26 crates that form a proper dependency DAG (Directed Acyclic Graph) with well-defined responsibilities. The system implements a decentralized, end-to-end encrypted chat platform with blockchain-enforced message ordering, sovereign identity, and novel cryptographic protocols.
 
 ---
 
@@ -11,11 +11,11 @@ dchat is a **cohesively integrated Rust monorepo** containing 27 crates that for
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           LAYER 7: APPLICATIONS                              │
-│  ┌─────────────┐  ┌────────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │ ironclad-cli│  │ dchat-sdk-rust │  │  dchat-vr   │  │  src/main.rs    │  │
-│  │  (Anchor-   │  │ (High-level    │  │ (VR/AR UI)  │  │  (Node Binary)  │  │
-│  │   style CLI)│  │  SDK wrapper)  │  │             │  │                 │  │
-│  └─────────────┘  └────────────────┘  └─────────────┘  └─────────────────┘  │
+│  ┌─────────────┐  ┌────────────────┐  ┌─────────────────┐                   │
+│  │ ironclad-cli│  │ dchat-sdk-rust │  │  src/main.rs    │                   │
+│  │  (Anchor-   │  │ (High-level    │  │  (Node Binary)  │                   │
+│  │   style CLI)│  │  SDK wrapper)  │  │                 │                   │
+│  └─────────────┘  └────────────────┘  └─────────────────┘                   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
@@ -395,13 +395,6 @@ Complete Solana-style smart contract platform with Anchor-like developer experie
 - Keyboard navigation
 - Color contrast validation
 - TTS integration
-
-#### `dchat-vr`
-- Spatial audio
-- 3D avatars
-- Immersive environments
-- Gesture controls
-- OpenXR/VisionOS support
 
 ---
 
